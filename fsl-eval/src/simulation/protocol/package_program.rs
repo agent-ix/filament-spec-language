@@ -561,14 +561,13 @@ impl<'a> PackageProtocolProgram<'a> {
                 let invariant = member(body, "proof")
                     .and_then(|proof| member(proof, "invariant"))
                     .and_then(|term| match term {
-                        fsl_package::CheckedTerm::Reference { target } => {
-                            (admitted.node_kind(target)
-                                == Some(fsl_package::CheckedNodeKind::Value(
-                                    fsl_package::ValueForm::Literal,
-                                )))
-                            .then(|| admitted.term(target))
-                            .flatten()
-                        }
+                        fsl_package::CheckedTerm::Reference { target } => (admitted
+                            .node_kind(target)
+                            == Some(fsl_package::CheckedNodeKind::Value(
+                                fsl_package::ValueForm::Literal,
+                            )))
+                        .then(|| admitted.term(target))
+                        .flatten(),
                         _ => Some(term),
                     })
                     .and_then(|term| term.literal_read())
@@ -592,8 +591,9 @@ impl<'a> PackageProtocolProgram<'a> {
                 }
                 _ => Err(absent()),
             };
-            let Some(fsl_package::CheckedTerm::Aggregate { members: maximum, .. }) =
-                member(body, "maximum")
+            let Some(fsl_package::CheckedTerm::Aggregate {
+                members: maximum, ..
+            }) = member(body, "maximum")
             else {
                 return Err(absent());
             };
@@ -607,8 +607,9 @@ impl<'a> PackageProtocolProgram<'a> {
                 },
                 _ => return Err(absent()),
             };
-            let Some(fsl_package::CheckedTerm::Aggregate { members: exhausted, .. }) =
-                member(body, "exhausted")
+            let Some(fsl_package::CheckedTerm::Aggregate {
+                members: exhausted, ..
+            }) = member(body, "exhausted")
             else {
                 return Err(absent());
             };

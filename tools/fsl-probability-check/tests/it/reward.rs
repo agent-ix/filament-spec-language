@@ -7,7 +7,7 @@ use super::bounded::{
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/reward.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
@@ -828,12 +828,10 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
     foreign_item["item"]["ordinal"] = json!(99);
     let (code, output) = run(&foreign_item);
     assert_eq!(code, 2, "{output}");
-    assert!(
-        output["reason"]
-            .as_str()
-            .unwrap()
-            .contains("conflicting_identity")
-    );
+    assert!(output["reason"]
+        .as_str()
+        .unwrap()
+        .contains("conflicting_identity"));
 }
 
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
@@ -841,10 +839,10 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
 fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_work() {
     use filament_checked::key::DeclarationKey;
     use filament_exact::{Cancel, CancelCause};
-    use fsl_eval::simulation::TransitionSystem;
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
     };
+    use fsl_eval::simulation::TransitionSystem;
     use fsl_replay::spine::SpineLimits;
     use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
     use std::sync::atomic::{AtomicBool, Ordering};

@@ -14,8 +14,8 @@ use super::{
 };
 use crate::outcome::ItemLabel;
 use crate::proof_result::{
-    CertificationPolicy,
-    Certification, InconclusiveCause, PremiseOutcome, TerminalValue, TransferReason,
+    Certification, CertificationPolicy, InconclusiveCause, PremiseOutcome, TerminalValue,
+    TransferReason,
 };
 
 /// The work one transfer spends: one unit for each of its two premise slots

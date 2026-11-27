@@ -3,7 +3,7 @@
 use super::bounded::{alter_keys, document, mutate, request_with, request_with_accounting, run};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const CYCLIC_MDP_PRODUCER_WORK: u64 = 10_000_000;

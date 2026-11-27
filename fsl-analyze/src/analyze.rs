@@ -56,12 +56,12 @@ pub use task_product_item::TaskProductReport;
 pub(crate) mod simulation_item;
 mod state_graph_item;
 mod timed_item;
-pub(crate) use request::{AnalyzeExecution, analyze_bound};
+pub(crate) use request::{analyze_bound, AnalyzeExecution};
 
 pub use request::{
-    ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,
-    NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision,
-    TemporalItem, analyze,
+    analyze, ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm,
+    ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal,
+    SourceProvision, TemporalItem,
 };
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
@@ -94,13 +94,13 @@ use ix_trace_rs::implements;
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
+pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
 pub use clause_item::{
-    CLAUSE_TRANSCRIPT, ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject,
+    ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
 };
-pub(crate) use clause_item::{ProtocolReplayInputs, ReplayShape, replay_protocol_over};
-pub(crate) use derived_item::{NoLetters, derived_target};
-pub use derived_item::{PackageDeadlockSubject, deadlock_model_item};
-pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
+pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
+pub(crate) use derived_item::{derived_target, NoLetters};
+pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{
     exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered,
@@ -110,9 +110,9 @@ pub use exact::{
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
-    DerivedItemMismatch, ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem,
-    TimedRefinementItem, derived_model_item, derived_protocol_item, derived_zone_item,
-    hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
+    derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
+    protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
+    ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 #[cfg(feature = "test-support")]
@@ -1520,18 +1520,16 @@ impl AnalyzeRefusal {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
                 OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
-                    .with_diagnostics(vec![
-                        OutcomeDiagnostic::new(
-                            Some(catalog.cause()),
-                            catalog.code(),
-                            None,
-                            refusal.to_string(),
-                        )
-                        .with_selection(
-                            (catalog == CatalogCode::new("missing_import", "missing-selection"))
-                                .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
-                        ),
-                    ])
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
+                        Some(catalog.cause()),
+                        catalog.code(),
+                        None,
+                        refusal.to_string(),
+                    )
+                    .with_selection(
+                        (catalog == CatalogCode::new("missing_import", "missing-selection"))
+                            .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
+                    )])
             }
         }
     }
@@ -1561,10 +1559,13 @@ pub(crate) fn refusal_document(
         }
         AdmissionFailure::Fault(fault) => (fault.catalog_code(), fault.category(), None),
     };
-    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![
-        OutcomeDiagnostic::new(Some(catalog.cause()), catalog.code(), None, message)
-            .with_details(details),
-    ])
+    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![OutcomeDiagnostic::new(
+        Some(catalog.cause()),
+        catalog.code(),
+        None,
+        message,
+    )
+    .with_details(details)])
 }
 
 impl AnalyzeOutcome {
@@ -1972,7 +1973,7 @@ impl Payload {
     /// `family`).
     #[must_use]
     pub fn detail(&self) -> serde_json::Map<String, serde_json::Value> {
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
         let entries: Vec<(&str, Value)> = match self {
             Self::None => Vec::new(),
             Self::Kind(kind) => vec![("kind", json!(kind.to_wire()))],
@@ -4061,10 +4062,15 @@ mod tests {
                 &ran,
             )
             .disposed(disposition, handed_diagnostic);
-            let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny)
-                .into_iter()
-                .next()
-                .expect("one requested item has one result");
+            let record = analyze_items(
+                &engines,
+                vec![item],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            )
+            .into_iter()
+            .next()
+            .expect("one requested item has one result");
             let Settlement::Disposed(disposed) = record.settlement else {
                 panic!("inapplicable item must settle by disposition");
             };
@@ -4129,7 +4135,12 @@ mod tests {
             .collect();
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
-        let records = analyze_items(&engines, items, &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), 12 * 7);
         assert_eq!(ran.get(), expected_runs);
@@ -4152,10 +4163,8 @@ mod tests {
                 panic!("inapplicable pair has its typed family diagnostic");
             };
             assert_eq!(*request_index, record.request_index);
-            assert!(
-                !capability
-                    .applies_to_declaration(family.expect("this matrix row has a known family"))
-            );
+            assert!(!capability
+                .applies_to_declaration(family.expect("this matrix row has a known family")));
             assert_eq!(code.cause(), "inapplicable-kind");
         }
     }
@@ -4204,7 +4213,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].request_index, RequestIndex::new(0));
@@ -4239,7 +4253,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(calls.get(), 1);
         assert_eq!(
@@ -4256,7 +4275,12 @@ mod tests {
         let requirements: Vec<_> = items.iter().map(AnalyzeItem::requirement).collect();
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
-        let mut records = analyze_items(&engines, items, &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let mut records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         let last = records.pop().expect("two records");
 
         assert_eq!(
@@ -4312,7 +4336,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), 7 * 4);
         assert_eq!(calls.get(), 7);
@@ -4370,7 +4399,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), cases.len());
         assert_eq!(calls.get(), 2);
@@ -4457,33 +4491,24 @@ mod tests {
             en7.advertises().collect::<Vec<_>>(),
             [(Capability::Schedulability, Mode::Unbounded)]
         );
-        assert!(
-            registrations
-                .iter()
-                .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked)
-        );
-        assert!(
-            en1.advertises()
-                .any(|(kind, _)| kind == Capability::TemporalSatisfaction)
-        );
-        assert!(
-            en4.advertises()
-                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
-        );
-        assert!(
-            en5.advertises()
-                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
-        );
-        assert!(
-            value
-                .advertises()
-                .any(|(kind, _)| kind == Capability::ValueValidity)
-        );
-        assert!(
-            contract
-                .advertises()
-                .any(|(kind, _)| kind == Capability::OperationContract)
-        );
+        assert!(registrations
+            .iter()
+            .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked));
+        assert!(en1
+            .advertises()
+            .any(|(kind, _)| kind == Capability::TemporalSatisfaction));
+        assert!(en4
+            .advertises()
+            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
+        assert!(en5
+            .advertises()
+            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
+        assert!(value
+            .advertises()
+            .any(|(kind, _)| kind == Capability::ValueValidity));
+        assert!(contract
+            .advertises()
+            .any(|(kind, _)| kind == Capability::OperationContract));
         let mut kinds: Vec<_> = protocol.advertises().map(|(kind, _)| kind).collect();
         kinds.sort_by_key(|kind| kind.to_wire());
         assert_eq!(
@@ -4567,9 +4592,9 @@ mod tests {
             assert_eq!(
                 matches!(
                     value,
-                    TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ProofNotCertified {
-                        ..
-                    })
+                    TerminalValue::Inconclusive(
+                        fsl_replay::InconclusiveCause::ProofNotCertified { .. }
+                    )
                 ),
                 !proved,
                 "{value:?}"
@@ -4683,7 +4708,12 @@ mod tests {
             .expect("first");
         let ran = std::cell::Cell::new(false);
         let written = |item: AnalyzeItem<'_>| {
-            let records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+            let records = analyze_items(
+                &engines,
+                vec![item],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            );
             let records = terminal_records(records);
             serde_json::to_value(OutcomeItem::from_terminal(&records[0])).expect("serializes")
         };
@@ -4770,7 +4800,12 @@ mod tests {
                     finite_bound_available: available,
                 },
             );
-            let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny));
+            let mut records = terminal_records(analyze_items(
+                &engines,
+                vec![item],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            ));
             let record = records.remove(0);
             let document = analyze_document(std::slice::from_ref(&record), &[])
                 .expect("the disposed analyzer record serializes");
@@ -4855,7 +4890,12 @@ mod tests {
             ))
         })
         .disposed(Disposition::Unsupported, Some(diagnostic));
-        let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny));
+        let mut records = terminal_records(analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        ));
         let record = records.remove(0);
         let document = analyze_document(std::slice::from_ref(&record), &[])
             .expect("the negotiated disposition serializes");
@@ -4920,7 +4960,12 @@ mod tests {
                 detail,
             )
         });
-        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny));
+        let records = terminal_records(analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        ));
         let record = &records[0];
         assert_eq!(record.backend(), Some(&BackendId::new("test-a")));
         let detail = record.disposition_detail().expect("the refusal's detail");
@@ -4945,7 +4990,12 @@ mod tests {
                 detail,
             )
         });
-        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny));
+        let records = terminal_records(analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        ));
         assert_eq!(records[0].backend(), Some(&BackendId::new("test-a")));
         let detail = records[0].disposition_detail().expect("the detail");
         assert_eq!(detail["backend"], "provider-x");
@@ -4962,7 +5012,12 @@ mod tests {
             .with(engine("test-a", Capability::OperationContract))
             .expect("first");
         let run = |refusal: fn() -> Refusal| {
-            analyze_items(&engines, vec![refusing(refusal)], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny)
+            analyze_items(
+                &engines,
+                vec![refusing(refusal)],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            )
         };
 
         let records = run(|| Refusal::RequiresBound);
@@ -5056,7 +5111,12 @@ mod tests {
         }
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
-        let uncancelled = analyze_items(&engines, vec![item(0, |_| failed())], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let uncancelled = analyze_items(
+            &engines,
+            vec![item(0, |_| failed())],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         let cancel = Cancel::new();
         let (blocked, wait_for_block) = std::sync::mpsc::channel();
@@ -5089,7 +5149,12 @@ mod tests {
                 failed()
             }),
         ];
-        let records = analyze_items(&engines, items, &cancel, fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            items,
+            &cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         canceller.join().expect("the canceller finished");
 
         let cancelled = Some(&TerminalValue::Incomplete(IncompleteCause::Cancelled {
@@ -5128,7 +5193,12 @@ mod tests {
                 failed()
             },
         );
-        let records = analyze_items(&engines, vec![item], &cancel, fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            vec![item],
+            &cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(cancel.cause(), Some(CancelCause::Requested));
         assert_eq!(cancel.tripped(), None);
@@ -5190,7 +5260,7 @@ fn proof_value(
 #[cfg(test)]
 mod proof_value_tests {
     use super::task_product_item::{ProofVerdict, TaskProof};
-    use super::{TerminalValue, proof_value};
+    use super::{proof_value, TerminalValue};
     use crate::zone_check::{TaskProductSearchOutcome, TaskProductSearchStop};
     use filament_exact::CancelCause;
     use fsl_replay::{

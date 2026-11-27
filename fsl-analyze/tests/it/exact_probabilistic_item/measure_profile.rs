@@ -1488,7 +1488,13 @@ fn settle_mean_document(
             ));
         },
     );
-    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
+    analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 #[trace("FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28", "FR-202-AC-29")]
@@ -2356,7 +2362,13 @@ fn a_slack_mean_bound_emits_the_checked_policy_and_refuses_the_old_optimizer_pol
             ));
         },
     );
-    let result = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
+    let result = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert_eq!(
         result.terminal().unwrap().value(),
         &TerminalValue::Refuted,

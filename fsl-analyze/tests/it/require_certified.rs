@@ -168,7 +168,12 @@ fn a_recording_conformance_proof_is_withheld_when_certification_is_required() {
     assert_eq!(closed["global"]["label"], "proved", "{closed}");
     assert_eq!(
         closed,
-        engine("require-1052-9-engine-default", false, "at-most-once", false)
+        engine(
+            "require-1052-9-engine-default",
+            false,
+            "at-most-once",
+            false
+        )
     );
     // FR-896-AC-11: an `exactly-once-premise` channel is not read by the
     // closure check, so the proof is `uncertified` and withheld.
@@ -208,7 +213,7 @@ fn a_premise_channel_conformance_proof_is_uncertified_and_withheld() {
 }
 
 fn obligations_all_satisfied(item: &Value) -> bool {
-    item["obligations"]
-        .as_array()
-        .is_some_and(|all| !all.is_empty() && all.iter().all(|entry| entry["verdict"] == "satisfied"))
+    item["obligations"].as_array().is_some_and(|all| {
+        !all.is_empty() && all.iter().all(|entry| entry["verdict"] == "satisfied")
+    })
 }

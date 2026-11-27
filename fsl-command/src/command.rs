@@ -55,8 +55,8 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
 use fsl_replay::spine::SpineLimits;
-use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
 use fsl_replay::CertificationPolicy;
+use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
 use ix_trace_rs::implements;
 use settle::Settle;
 use std::{

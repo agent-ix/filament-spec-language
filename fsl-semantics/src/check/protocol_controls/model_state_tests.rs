@@ -19,7 +19,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model};
+use fixture::{obligation_model, HEADER};
 
 /// A protocol whose one channel `Q` carries `carries`, ordered `ordering`.
 fn with_channel(carries: &str, ordering: &str) -> String {

@@ -8,10 +8,10 @@ use filament_semantic_value::catalog::Category;
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::spine::SpineStage;
 use fsl_replay::{
-    CallSiteUnit, CanonicalAssignment, DependencyInput, DisagreementCause, Identifier,
-    QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource,
-    RequestClocks, RequestTargetWire, SourceIdentity, StateEnvironment, Verdict, WitnessValue,
-    call_site, replay,
+    call_site, replay, CallSiteUnit, CanonicalAssignment, DependencyInput, DisagreementCause,
+    Identifier, QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire,
+    ReplaySource, RequestClocks, RequestTargetWire, SourceIdentity, StateEnvironment, Verdict,
+    WitnessValue,
 };
 use ix_trace_rs::trace;
 
@@ -44,10 +44,8 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 
 fn request(source_text: &str, function: &str, argument: i64) -> ReplayRequestWire {
     let source = SourceIdentity::new("agent-ix", "test:tc-921");
-    let name = QualifiedName::new(vec![
-        Identifier::new(function).expect("function identifier"),
-    ])
-    .expect("qualified function name");
+    let name = QualifiedName::new(vec![Identifier::new(function).expect("function identifier")])
+        .expect("qualified function name");
     let site = call_site(
         source.clone(),
         CallSiteUnit::new("fixture".to_owned(), "unit.native", source_text.as_bytes()),

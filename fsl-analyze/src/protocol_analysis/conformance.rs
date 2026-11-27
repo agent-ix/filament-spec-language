@@ -6,15 +6,15 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
-    live_instance_bound,
+    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
+    SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
-use ix_trace_rs::implements;
 use fsl_replay::{
     CounterexampleKind, FamilyPayload, ProtocolConformanceOutput, ReplayLimits, TerminalRecord,
 };
+use ix_trace_rs::implements;
 
 /// The independently settled global-conformance record and its FR-990 output.
 ///
@@ -1498,11 +1498,9 @@ mod tests {
         ));
         assert_eq!(code.to_string(), "invalid_runtime_input/invalid-value");
         assert_eq!(detail["prefix"], serde_json::json!(3));
-        assert!(
-            detail["detail"]
-                .as_str()
-                .is_some_and(|text| text.contains("a prefix was refused"))
-        );
+        assert!(detail["detail"]
+            .as_str()
+            .is_some_and(|text| text.contains("a prefix was refused")));
     }
 
     #[trace("TC-2805", "FR-990-AC-1")]

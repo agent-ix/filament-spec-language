@@ -660,21 +660,18 @@ mod tests {
         let mut analyze = vec!["replay.input_bytes", "emit.output_bytes"];
         analyze.extend(engine_names());
         assert_eq!(names(&CommandLimits::analyze()), expected(&analyze));
-        assert_eq!(
-            names(&monitor()),
-            {
-                let mut monitor = vec![
-                    "monitor.max_window_values",
-                    "monitor.retained_positions",
-                    "monitor.retained_identities",
-                    "monitor.preparation_work_units",
-                    "monitor.preparation_storage",
-                    "emit.output_bytes",
-                ];
-                monitor.extend(engine_names());
-                expected(&monitor)
-            }
-        );
+        assert_eq!(names(&monitor()), {
+            let mut monitor = vec![
+                "monitor.max_window_values",
+                "monitor.retained_positions",
+                "monitor.retained_identities",
+                "monitor.preparation_work_units",
+                "monitor.preparation_storage",
+                "emit.output_bytes",
+            ];
+            monitor.extend(engine_names());
+            expected(&monitor)
+        });
         assert_eq!(
             names(&CommandLimits::replay()),
             expected(&[

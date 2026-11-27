@@ -4275,7 +4275,12 @@ fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
             RequestIndex::new(0),
             world.request(name, ModelCheckLimits::default()),
         );
-        let mut records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let mut records = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         assert_eq!(records.len(), 1);
         let record = records.remove(0);
         let terminal = record.terminal().expect("exact analysis settles");

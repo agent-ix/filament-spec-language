@@ -596,7 +596,13 @@ fn replay_parity_and_refusal_settle_inconclusive_without_evidence() {
                 }
             },
         );
-        let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         if duplicate {
             assert!(matches!(
                 record.terminal().unwrap().value(),
@@ -1000,7 +1006,13 @@ fn an_unfair_witness_settles_inconclusive_replay_parity() {
             witness.scheduler.remove(0);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert!(matches!(
         record.terminal().unwrap().value(),
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(_))

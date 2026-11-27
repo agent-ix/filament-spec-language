@@ -14,7 +14,7 @@ use std::path::Path;
 
 use fsl_replay::CertificationPolicy;
 
-use super::{FileCounts, Result, RunCause, RunResult, output, wire};
+use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
@@ -344,8 +344,8 @@ fn prepare_clause(
     overrides: &super::RequestOverrides<'_>,
 ) -> Result<PreparedPackageRun> {
     use fsl_replay::spine::{
-        ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation, TraceInput,
-        read_clause_selection,
+        read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation,
+        TraceInput,
     };
 
     if request.call.is_some() || request.tl_lowering.is_some() {

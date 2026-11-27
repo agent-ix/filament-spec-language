@@ -12,11 +12,11 @@ use fsl_semantics::check::{
     Owner,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::model_operations::{
-    PACKAGE_IDENTITY, admit_and_assemble_with_body, config_version_document, empty_frame,
-    operation, wire_field, wire_type,
+    admit_and_assemble_with_body, config_version_document, empty_frame, operation, wire_field,
+    wire_type, PACKAGE_IDENTITY,
 };
 use fsl_foundation::IntakeLimits;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -25,7 +25,7 @@ use fsl_semantics::model::domain_package::{
 };
 use fsl_semantics::model::intake::{admit, meaning, package_input, read_domain_package};
 use fsl_semantics::model::normalize::{
-    ModelRefusal, ModelRefusalCause, NormalizeOutcome, normalize_with_meter,
+    normalize_with_meter, ModelRefusal, ModelRefusalCause, NormalizeOutcome,
 };
 
 fn identity(path: &str) -> String {

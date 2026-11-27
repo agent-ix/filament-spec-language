@@ -1054,7 +1054,13 @@ fn closure_round_trip(formula: &str, stem: usize) {
         engines
             .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
             .expect("one engine");
-        analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
+        analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0)
     }
 
     let source_subject = subject(&world, ClauseLimits::default()).configured(temporal());

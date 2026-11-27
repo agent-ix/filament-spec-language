@@ -4,11 +4,11 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    Engines, Settlement, analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered,
+    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, Engines, Settlement,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
@@ -18,7 +18,7 @@ use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub(crate) mod mutation;
 
@@ -343,7 +343,12 @@ fn requests_for(
         Some(offered) => exact_probabilistic_item_tampered(RequestIndex::new(0), request, offered),
         None => exact_probabilistic_item(RequestIndex::new(0), request),
     };
-    let mut records = analyze_items(&engines, vec![item], &cancel, fsl_replay::CertificationPolicy::AdmitAny);
+    let mut records = analyze_items(
+        &engines,
+        vec![item],
+        &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
+    );
     let record = records.remove(0);
     let Some(terminal) = record.terminal() else {
         return (Vec::new(), record.settlement);

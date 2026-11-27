@@ -72,7 +72,13 @@ fn settle(
         .at_claim(package, item_kind, claim);
     let mut engines = Engines::default();
     engines.with(Engine::probe(PROBE)).expect("one engine");
-    let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     Settled {
         record,
         ran: ran.get(),
@@ -98,7 +104,12 @@ fn settle_many(
         .collect();
     let mut engines = Engines::default();
     engines.with(Engine::probe(PROBE)).expect("one engine");
-    let records = analyze_items(&engines, items, &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+    let records = analyze_items(
+        &engines,
+        items,
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    );
     assert_eq!(records.len(), requests.len(), "one record per item");
     records
         .into_iter()

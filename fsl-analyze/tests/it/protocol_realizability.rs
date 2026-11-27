@@ -6,36 +6,36 @@ use std::collections::BTreeSet;
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::Cancel;
-use fsl_analyze::analyze::{AnalyzeRecord, Engines, analyze_items};
+use fsl_analyze::analyze::{analyze_items, AnalyzeRecord, Engines};
 use fsl_analyze::protocol_analysis::{
-    self, ProjectionRequest, ProtocolAnalysisArtifact, RealizabilityOutcome, RealizabilityRefusal,
-    RealizabilityRequest, projection_item, realizability_item, realize, realize_tampered,
-    replay_counterexample, replay_strategy,
+    self, projection_item, realizability_item, realize, realize_tampered, replay_counterexample,
+    replay_strategy, ProjectionRequest, ProtocolAnalysisArtifact, RealizabilityOutcome,
+    RealizabilityRefusal, RealizabilityRequest,
 };
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::protocol::StepKind;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
 use fsl_replay::protocol_analysis::{
-    AnalysisOutcome, AssessedRoot, BoundsDraft, InconclusiveCause, Observed, Play,
+    node_text, AnalysisOutcome, AssessedRoot, BoundsDraft, InconclusiveCause, Observed, Play,
     ProjectionBoundsDraft, RealizabilityCounterexample, RealizabilityDisagreement,
-    RealizabilityWitness, RunBudget, RunLimit, StrategyAction, UnsupportedSlug, node_text,
+    RealizabilityWitness, RunBudget, RunLimit, StrategyAction, UnsupportedSlug,
 };
-use fsl_replay::spine::{NativeRunResult, ProtocolAnalysisKind, read_native_run_result};
+use fsl_replay::spine::{read_native_run_result, NativeRunResult, ProtocolAnalysisKind};
 use fsl_replay::{
     Certification, DecidingElement, Execution, IncompleteCause, InconclusiveCause as Fr331Cause,
     ModelCheckLimit, ProofBasis, ResultLabel, SeparatingWitnessRecord, SettlementBasis,
     TerminalValue, Truth, UnavailabilityCause,
 };
 use fsl_route::{
-    Candidate, CandidateOutcome, NegotiationCause, NegotiationSettlement, Registry,
-    settle_candidates,
+    settle_candidates, Candidate, CandidateOutcome, NegotiationCause, NegotiationSettlement,
+    Registry,
 };
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
-use crate::fill::{Documents, PACKAGE, instance, model_subject, package, source_memory};
+use crate::fill::{instance, model_subject, package, source_memory, Documents, PACKAGE};
 use crate::protocol_projection::{admitted_source, clause, named, root as assessed_root};
 
 const RECORDS: &str = "record Ack { ok: Boolean; }\nrecord PickMsg { ok: Boolean; }\n\
@@ -490,13 +490,11 @@ fn an_admitted_loss_is_an_environment_defeat() {
     let [defeat] = &defeats_per_branch[..] else {
         panic!("one branch: the environment fixes the choice");
     };
-    assert!(
-        defeat
-            .play
-            .steps
-            .iter()
-            .any(|step| step.transition.kind() == StepKind::Lose)
-    );
+    assert!(defeat
+        .play
+        .steps
+        .iter()
+        .any(|step| step.transition.kind() == StepKind::Lose));
     assert_eq!(obligation, fixture.named("Done"));
     assert_eq!(
         separating_witness.deciding_element,
@@ -1004,8 +1002,8 @@ fn a_pair_ending_where_another_role_can_move_is_refused() {
 /// first state where two `send` steps are enabled, and the first of those
 /// two steps.
 fn to_two_sends(fixture: &Fixture) -> (Play, fsl_replay::protocol_analysis::PlayStep) {
-    use fsl_eval::simulation::TransitionSystem;
     use fsl_eval::simulation::protocol::{ProtocolSystem, Sc};
+    use fsl_eval::simulation::TransitionSystem;
     let subject = fixture.subject();
     let model = fsl_eval::simulation::model::ModelSystem::new(subject.model.simulation.clone())
         .expect("the model admits");
@@ -1791,7 +1789,7 @@ fn a_symbolic_capacity_is_decided_at_its_bound_value_under_bounded() {
 )]
 #[test]
 fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
-    use fsl_analyze::analyze::{Counterexample, analyze_document, split_records};
+    use fsl_analyze::analyze::{analyze_document, split_records, Counterexample};
     use fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample;
 
     let hidden = worked("exactly-once-premise", PICK, "");

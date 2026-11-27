@@ -615,7 +615,12 @@ fn a_deadlock_verdict_is_joined_on_the_terminal_declaration() {
 
     let engines = Engines::fsl().expect("the layer-A manifests register");
     let run = |item| {
-        let mut records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let mut records = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         settled(&records.remove(0)).1
     };
     let value =

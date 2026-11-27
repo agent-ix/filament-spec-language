@@ -20,12 +20,12 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{
-    BuiltinType, ClauseKind, ExprNode, ExpressionForm, ExtensionClauseForm, ExtensionForm,
-    TypeFormHead, parse_type_text,
+    parse_type_text, BuiltinType, ClauseKind, ExprNode, ExpressionForm, ExtensionClauseForm,
+    ExtensionForm, TypeFormHead,
 };
-use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
+use fsl_foundation::Span;
 use ix_trace_rs::string_edge;
 
 use super::check::{Scope, Signatures, Typer};

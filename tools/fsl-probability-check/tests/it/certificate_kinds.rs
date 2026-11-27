@@ -327,9 +327,8 @@ fn value_bounds_certificates_are_accepted() {
         partial_limits,
         domain().as_bytes(),
     );
-    let partial = partial.unwrap_or_else(|| {
-        panic!("a lower proof on the explored prefix settles: {settlement:?}")
-    });
+    let partial = partial
+        .unwrap_or_else(|| panic!("a lower proof on the explored prefix settles: {settlement:?}"));
     let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
         panic!("partial evidence settles with a terminal record: {settlement:?}");
     };

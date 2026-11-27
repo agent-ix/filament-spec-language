@@ -1479,7 +1479,12 @@ fn negotiated_refusals_run_no_arm() {
         });
         let item: AnalyzeItem<'_> =
             value_item(index(), &package, &key, request).disposed(disposition, None);
-        let records = analyze_items(&Engines::fsl().unwrap(), vec![item], &guarded(), fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![item],
+            &guarded(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         let Settlement::Disposed(disposed) = &records[0].settlement else {
             panic!()
         };

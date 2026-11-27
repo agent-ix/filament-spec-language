@@ -78,17 +78,24 @@ impl ReaderProtocolProjection {
                             return true;
                         };
                         match declaration.shape() {
-                            filament_semantic_value::declaration::CompositeShape::Record(fields) => {
-                                pending.extend(fields.iter().map(|field| field.value_type().clone()));
+                            filament_semantic_value::declaration::CompositeShape::Record(
+                                fields,
+                            ) => {
+                                pending
+                                    .extend(fields.iter().map(|field| field.value_type().clone()));
                             }
-                            filament_semantic_value::declaration::CompositeShape::Tuple(positions) => {
+                            filament_semantic_value::declaration::CompositeShape::Tuple(
+                                positions,
+                            ) => {
                                 pending.extend(positions.iter().cloned());
                             }
-                            filament_semantic_value::declaration::CompositeShape::Union(members) => {
+                            filament_semantic_value::declaration::CompositeShape::Union(
+                                members,
+                            ) => {
                                 pending.extend(
                                     members
                                         .iter()
-                                    .flat_map(|member| member.positions().iter().cloned()),
+                                        .flat_map(|member| member.positions().iter().cloned()),
                                 );
                             }
                         }

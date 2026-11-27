@@ -333,7 +333,8 @@ impl Chain {
             &read,
             Budget::default(),
             CertificationPolicy::AdmitAny,
-        ).expect("the item settles")
+        )
+        .expect("the item settles")
     }
 
     /// The refusal of `request`: code, cause and pointer.

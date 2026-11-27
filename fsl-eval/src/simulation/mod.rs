@@ -37,34 +37,34 @@ mod sampled;
 mod subject;
 mod trace;
 
-pub use choice::{ChoicePoint, TotalAboveDrawRange, Weights, WeightsRefusal, weighted_choice};
+pub use choice::{weighted_choice, ChoicePoint, TotalAboveDrawRange, Weights, WeightsRefusal};
 pub use discovery::{
-    Coverage, Discovered, Enumeration, EnumerationBounds, EnumerationEnd, EnumerationRequest,
-    FrontierPosition, enumerate_request, sampled_coverage,
+    enumerate_request, sampled_coverage, Coverage, Discovered, Enumeration, EnumerationBounds,
+    EnumerationEnd, EnumerationRequest, FrontierPosition,
 };
 pub use expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
 pub use explore::{
-    CANCELLED_STOP, Exploration, Limits, Outcome, Stats, TransitionSystem, explore_request,
+    explore_request, Exploration, Limits, Outcome, Stats, TransitionSystem, CANCELLED_STOP,
 };
-pub use footprint::{Footprint, Location, any_affects, independent};
+pub use footprint::{any_affects, independent, Footprint, Location};
 pub use frontier::{Frontier, Limit};
 pub use key::{EncodingRefusal, StateKey};
-pub use not_simulated::{BOUND_POSITIONS, ClockReferenceDomain, NotSimulated, RequiresBound, Root};
+pub use not_simulated::{ClockReferenceDomain, NotSimulated, RequiresBound, Root, BOUND_POSITIONS};
 pub use progress::{FairLoop, ZeroProgress, ZeroProgressError};
 pub use reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryClass, SymmetryGroup,
 };
 pub use sample::{
-    ObservedSample, ObserverDecision, SampleExpansion, SampleObservation, SamplePrefix,
-    SampleRequest, SampleSuccessorRef, SampleSuccessors, sample_request, sample_request_observed,
-    sample_request_until,
+    sample_request, sample_request_observed, sample_request_until, ObservedSample,
+    ObserverDecision, SampleExpansion, SampleObservation, SamplePrefix, SampleRequest,
+    SampleSuccessorRef, SampleSuccessors,
 };
 pub use sampled::{
-    ProbabilisticSampler, SampleStop, SampledBehaviour, SampledDisagreement, SampledPosition,
-    SampledRecord, SampledReplay, SampledReplayRefusal, SampledStep, StepAt, TimedDelayRefusal,
-    draw_timed_delay, replay_sampled, sample_probabilistic,
+    draw_timed_delay, replay_sampled, sample_probabilistic, ProbabilisticSampler, SampleStop,
+    SampledBehaviour, SampledDisagreement, SampledPosition, SampledRecord, SampledReplay,
+    SampledReplayRefusal, SampledStep, StepAt, TimedDelayRefusal,
 };
 pub use subject::{
     Bounded, ConstraintError, Cut, InitialStateRefusal, SubjectSystem, SubjectTransition,
 };
-pub use trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
+pub use trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};

@@ -46,15 +46,15 @@ use fsl_forms::{
     ProtocolDeclarationForm, ProtocolMemberForm, ProtocolNodeKind, ReplicatedRoleForm, RoleForm,
     RoleLifetime, TerminalForm,
 };
-use fsl_foundation::{Span, diagnostic::Locus};
+use fsl_foundation::{diagnostic::Locus, Span};
 
 use super::check::{NamedScope, Scope};
 use super::ir::CheckedBody;
-use super::lowering::{ProtocolSite, protocol_location};
+use super::lowering::{protocol_location, ProtocolSite};
 use super::protocol_clause::{
-    BoundAttempt, CheckedProtocol, ProtocolNodeId, record_binder, written_owner,
+    record_binder, written_owner, BoundAttempt, CheckedProtocol, ProtocolNodeId,
 };
-use super::protocol_obligation::{Goal, model_state_reads, span_of, type_named_body, wraps};
+use super::protocol_obligation::{model_state_reads, span_of, type_named_body, wraps, Goal};
 use super::refusal::{
     ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
     ShadowedDeclaration, SlotKind,
@@ -448,8 +448,15 @@ impl Checker<'_, '_> {
                 // retain both names here so typing cannot conceal it.
                 continue;
             }
-            let retained = visible.first().copied().or_else(|| indices.first().copied());
-            for index in indices.iter().copied().filter(|index| Some(*index) != retained) {
+            let retained = visible
+                .first()
+                .copied()
+                .or_else(|| indices.first().copied());
+            for index in indices
+                .iter()
+                .copied()
+                .filter(|index| Some(*index) != retained)
+            {
                 bound[index].0 = format!("\0inactive-protocol-binder-{index}");
             }
         }
@@ -1334,9 +1341,7 @@ pub(crate) fn check(
             .iter()
             .filter_map(|index| checker.binders.get(*index).map(|binder| (*index, binder)))
             .find(|(_, earlier)| earlier.name == current.name)
-            .and_then(|(index, earlier)| {
-                binder_span(protocol, earlier).map(|span| (index, span))
-            });
+            .and_then(|(index, earlier)| binder_span(protocol, earlier).map(|span| (index, span)));
         if let Some((_index, shadowed)) = conflict {
             checker.refuse(ProtocolAnchorCause::Shadow {
                 name: current.name.clone(),
@@ -1534,7 +1539,13 @@ pub(crate) fn check(
             continue;
         }
         let guards: Vec<&ExpressionForm> = choice.cases.iter().map(|case| &case.guard).collect();
-        if !checker.facts(node, &choice.owner.name, &choice.visible, &guards, &readable) {
+        if !checker.facts(
+            node,
+            &choice.owner.name,
+            &choice.visible,
+            &guards,
+            &readable,
+        ) {
             continue;
         }
         match partition(choice, &guards, &mut cx, regions) {

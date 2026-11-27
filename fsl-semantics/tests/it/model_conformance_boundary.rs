@@ -12,10 +12,11 @@ use fsl_semantics::check::{
     CheckCause, CheckRefusal, ModelConformanceFailure, PackageDeclarations, RefinementObligation,
 };
 use fsl_semantics::model::accounting::{
-    NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationLimitKind,
 };
-use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use fsl_semantics::model::domain_package::ValueTypeRef;
+use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use fsl_semantics::model::normalize::{EffectiveParameterType, ModelRefusalCause};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};

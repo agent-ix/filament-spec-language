@@ -14,7 +14,7 @@
 //! abstraction-relation binding it also has a second requirement, the code
 //! claim.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
@@ -31,26 +31,26 @@ use fsl_forms::{
     QuantifierKind, SpanId, StepLabelForm, TemporalFormulaForm, TemporalNodeForm, TemporalOperator,
     TypeFormHead,
 };
-use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Span;
 use ix_trace_rs::implements;
 
-use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
 use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
 use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
-use super::state_clause::{PopulationDomain, populations_overlapping};
+use super::state_clause::{populations_overlapping, PopulationDomain};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
-    CheckedFormula, CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
-    build_formula, checked_constraint, checked_operators, in_safety_fragment,
+    build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
+    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
 };
+use super::Scope;
 use super::{AdmittedModel, Capability};
-use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
+use crate::family::requirements::{classify_domains, ClaimExtent, ClassifyFailure, Requirements};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
 use crate::model::state::StateModel;
@@ -58,7 +58,7 @@ use crate::model::state::StateModel;
 pub(crate) mod emission;
 pub(crate) mod lowering;
 
-pub use lowering::{AtomSlot, STUTTER_TEXT, operation_text};
+pub use lowering::{operation_text, AtomSlot, STUTTER_TEXT};
 
 /// The stage name this module's faults report.
 const STAGE: &str = "check.hyper";
@@ -3372,18 +3372,11 @@ impl QuantifierFacts for (QuantifierKind, bool) {
     }
 }
 
-fn classify_facts<Q: QuantifierFacts>(
-    quantifiers: &[Q],
-    aligned: bool,
-    safety: bool,
-) -> HyperForm {
+fn classify_facts<Q: QuantifierFacts>(quantifiers: &[Q], aligned: bool, safety: bool) -> HyperForm {
     let any_exists = quantifiers
         .iter()
         .any(|quantifier| quantifier.kind() == QuantifierKind::Exists);
-    if quantifiers.len() == 1
-        && quantifiers[0].kind() == QuantifierKind::Exists
-        && !aligned
-    {
+    if quantifiers.len() == 1 && quantifiers[0].kind() == QuantifierKind::Exists && !aligned {
         return HyperForm::SingleExistential;
     }
     let first_exists = quantifiers
@@ -3402,9 +3395,7 @@ fn classify_facts<Q: QuantifierFacts>(
     }
     let existential_fairness = quantifiers
         .iter()
-        .any(|quantifier| {
-            quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness()
-        });
+        .any(|quantifier| quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness());
     if any_exists && quantifiers.len() >= 2 && (!safety || existential_fairness) {
         return HyperForm::Other {
             reason: HyperUnsupported::ExistentialOutsideSafety,

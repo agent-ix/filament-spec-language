@@ -5,8 +5,8 @@ use ix_trace_rs::trace;
 
 use super::attempt_fixture::shared_binder_protocols;
 use super::{checks, protocol_causes, recovery_flow, refusals};
-use crate::check::CheckRefusal;
 use crate::check::refusal::{ProtocolAnchorCause, ShadowedDeclaration};
+use crate::check::CheckRefusal;
 
 /// The `Shadow` cause of `refusals`, expecting exactly one.
 fn shadow_cause(refusals: &[CheckRefusal]) -> (&str, &ShadowedDeclaration) {

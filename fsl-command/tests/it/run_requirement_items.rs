@@ -891,9 +891,15 @@ fn package_call_union_parameter_requirement_items_match_the_source() {
         .unwrap_or_else(|error| panic!("source call with argument {argument} settles the union parameter's requirement: {error}"));
         let source_arguments = source_request["request"]["call"]["arguments"].clone();
         let mut package_request = source_request;
-        package_request["request"].as_object_mut().unwrap().remove("program");
+        package_request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("program");
         package_request["request"]["package"] = json!({"directory":"handoff"});
-        assert_eq!(package_request["request"]["call"]["arguments"], source_arguments);
+        assert_eq!(
+            package_request["request"]["call"]["arguments"],
+            source_arguments
+        );
         std::fs::write(&path, package_request.to_string()).unwrap();
         std::fs::remove_file(directory.path().join("unit.native")).unwrap();
         let package_seen = Arc::new(Mutex::new(Seen::default()));

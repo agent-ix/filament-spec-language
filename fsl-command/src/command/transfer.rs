@@ -350,8 +350,9 @@ impl Transfer<'_> {
                     (facts.abstract_claim_identity.clone(), claim),
                 ],
             );
-            let result = fsl_replay::planner::settle_transfer(&settlement, budget, self.certification)
-                .map_err(|_| RunCause::AnalyzeFault)?;
+            let result =
+                fsl_replay::planner::settle_transfer(&settlement, budget, self.certification)
+                    .map_err(|_| RunCause::AnalyzeFault)?;
             transfers.push(json!({"clause": node.clause().name(), "result": result}));
         }
         let exit_code = if transfers

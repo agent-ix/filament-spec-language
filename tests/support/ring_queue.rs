@@ -230,7 +230,9 @@ pub fn population(package: &str, name: &str, member: &str) -> Value {
 }
 
 pub fn document(package: &str, types: Vec<Value>, populations: Vec<Value>) -> Vec<u8> {
-    let has_record = types.iter().any(|ty| ty["kind"]["name"] == "record_value_type");
+    let has_record = types
+        .iter()
+        .any(|ty| ty["kind"]["name"] == "record_value_type");
     let has_tuple = types.iter().any(|ty| ty["kind"]["name"] == "tuple_type");
     let has_variant = types.iter().any(|ty| ty["kind"]["name"] == "variant_type");
     let mut constructs = vec![

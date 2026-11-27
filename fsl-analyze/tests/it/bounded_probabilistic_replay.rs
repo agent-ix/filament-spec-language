@@ -910,7 +910,13 @@ fn an_exact_engine_value_cannot_settle_refuted_after_bounded_replay_disagrees() 
                 }
             },
         );
-        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
+        let record = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         if duplicate {
             assert!(matches!(
                 record.terminal().unwrap().value(),

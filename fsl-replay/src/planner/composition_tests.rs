@@ -9,6 +9,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+use super::settle::settle_declared_under;
 use super::tests::{
     constraint, declaration as guarantee_declaration, entry_of, invalid, item_json, local, node,
     node_in, node_key_json, premise, proved_entry, read, refusal, request_for as guarantee_request,
@@ -20,10 +21,9 @@ use crate::proof_result::{
     Certification, CertificationPolicy, InconclusiveCause, PremiseOutcome, ProofBasis,
     TerminalRecord, TerminalValue,
 };
-use super::settle::settle_declared_under;
-use fsl_foundation::{BackendId, RequestIndex};
 use filament_exact::NodeKey;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
+use fsl_foundation::{BackendId, RequestIndex};
 
 const PRODUCER: &str = "producer@1";
 const CONSUMER: &str = "consumer@1";

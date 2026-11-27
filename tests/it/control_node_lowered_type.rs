@@ -8,7 +8,7 @@ use filament_contract_model::{
     RequirementRecord,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const NARROW: &str = "filament.op.numeric.narrow";

@@ -21,7 +21,7 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{EffectiveId, Identifier, NodeKey, Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{Binder, Binders, Lowering, PlaceStep, refuse, require_admitted};
+use super::{refuse, require_admitted, Binder, Binders, Lowering, PlaceStep};
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{

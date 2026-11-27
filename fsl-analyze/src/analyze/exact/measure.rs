@@ -2,13 +2,13 @@
 //! Shared-control finite-horizon induction and independently accepted proofs.
 use super::*;
 use crate::exact_probabilistic::{
-    Dyadic, FhObjective, QualifiedFhError, backward_induction, decide_measure_exact,
+    backward_induction, decide_measure_exact, Dyadic, FhObjective, QualifiedFhError,
 };
 use fsl_replay::{
-    MeasurePayoffKind, conditional_measure_probability_certificate,
-    measure_probability_objective, measure_probability_product_key,
+    conditional_measure_probability_certificate, measure_probability_objective,
+    measure_probability_product_key,
     partial_lower_measure_probability_certificate_document_with_work_scope,
-    write_measure_probability_certificate,
+    write_measure_probability_certificate, MeasurePayoffKind,
 };
 use ix_trace_rs::implements;
 
@@ -130,14 +130,15 @@ pub(super) fn run(
     {
         let empty = ExactProbabilityCertificate { values: Vec::new() };
         let checked = (|| {
-            let document = fsl_replay::vacuous_measure_probability_certificate_document_with_work_scope(
-                &system,
-                claims,
-                &item,
-                document_limits,
-                cancel,
-                Some(&work),
-            )?;
+            let document =
+                fsl_replay::vacuous_measure_probability_certificate_document_with_work_scope(
+                    &system,
+                    claims,
+                    &item,
+                    document_limits,
+                    cancel,
+                    Some(&work),
+                )?;
             let bytes = write_measure_probability_certificate(&document, document_limits, cancel)?;
             fsl_replay::check_probability_certificate_document_as_with_work_scope(
                 &system,
@@ -763,7 +764,7 @@ fn refute(
         work,
     } = context;
     use crate::exact_probabilistic::{
-        WitnessError, WitnessScope, WitnessWork, produce_quantile_witness, produce_witness,
+        produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let kind = if matches!(claim.form, ProbForm::Quantile { .. }) {

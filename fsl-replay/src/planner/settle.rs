@@ -24,9 +24,8 @@ use super::request::{
 };
 use crate::outcome::{ItemLabel, OutcomeItem};
 use crate::proof_result::{
-    CertificationPolicy,
-    Certification, IncompleteCause, InconclusiveCause, PremiseOutcome, SettlementBasis,
-    TerminalRecord, TerminalValue, TransferReason, UnavailabilityCause,
+    Certification, CertificationPolicy, IncompleteCause, InconclusiveCause, PremiseOutcome,
+    SettlementBasis, TerminalRecord, TerminalValue, TransferReason, UnavailabilityCause,
 };
 use filament_exact::NodeKey;
 use fsl_foundation::node_wire::node_key_to_json;
@@ -291,9 +290,7 @@ pub(super) fn under_policy(
     certification: Option<Certification>,
 ) -> (PlannerValue, Option<PlannerCause>, Option<Certification>) {
     match certification {
-        Some(certification)
-            if value == PlannerValue::Proved && policy.withholds(certification) =>
-        {
+        Some(certification) if value == PlannerValue::Proved && policy.withholds(certification) => {
             (
                 PlannerValue::Inconclusive,
                 Some(PlannerCause::Inconclusive(

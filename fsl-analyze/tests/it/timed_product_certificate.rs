@@ -183,7 +183,13 @@ fn request<'a>(world: &'a World, claim: &str) -> ProductRequest<'a> {
 fn settle(world: &World, claim: &str) -> AnalyzeRecord {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request(world, claim));
-    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 fn settle_tampered(
@@ -194,7 +200,13 @@ fn settle_tampered(
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item =
         exact_probabilistic_item_tampered(RequestIndex::new(0), request(world, claim), tamper);
-    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 /// The exact value of a `proved` record.
@@ -1180,7 +1192,13 @@ fn settle_witness_tampered(
         request(world, claim),
         tamper,
     );
-    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 /// FR-923-AC-1: a forged path into a decided state the chosen choice has no
@@ -1812,7 +1830,12 @@ fn timed_dense_working_bytes_limit_settles_incomplete() {
         let mut request = request(world, claim);
         request.limits.document.storage_bytes = 1;
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
-        let records = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny);
+        let records = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         let terminal = records[0].terminal().unwrap_or_else(|| {
             panic!(
                 "{claim} must settle incomplete: {:?}",
@@ -2210,7 +2233,13 @@ fn settle_with_rational_bits(world: &World, claim: &str, bits: u64) -> AnalyzeRe
     let mut request = request(world, claim);
     request.limits.max_rational_bits = bits;
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0)
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 /// FR-203-AC-1: a timed deadline whose exact value outgrows
@@ -2362,7 +2391,13 @@ fn cancelling_a_timed_refutation_at_any_poll_settles_cancelled_or_refuted() {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let run = |cancel: &Cancel| {
         let item = exact_probabilistic_item(RequestIndex::new(0), request(&world, "Strict"));
-        analyze_items(&engines, vec![item], cancel, fsl_replay::CertificationPolicy::AdmitAny).remove(0)
+        analyze_items(
+            &engines,
+            vec![item],
+            cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0)
     };
     let live = Cancel::new();
     let _counting = live.count_charges();
@@ -2413,7 +2448,13 @@ fn a_timed_refutation_settles_refuted_or_incomplete_at_every_storage_budget() {
         let mut request = request(&world, "Strict");
         request.limits.document.storage_bytes = bytes;
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
-        let record = analyze_items(&engines, vec![item], &Cancel::new(), fsl_replay::CertificationPolicy::AdmitAny).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         let value = record.terminal().expect("a terminal record").value();
         assert!(
             matches!(value, TerminalValue::Refuted | TerminalValue::Incomplete(_)),
