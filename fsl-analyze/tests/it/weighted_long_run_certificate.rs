@@ -43,12 +43,9 @@ fn every_scheduler_reward_weighting_checks_minimum_and_maximum_mec_values() {
         ("Maximum", LongRunOptimization::Maximum, ratio(1800, 1801)),
     ] {
         let bytes = produce(&world, name);
-        let document = read_weighted_long_run_probability_certificate(
-            &bytes,
-            limits(),
-            &Cancel::new(),
-        )
-        .expect("the every-scheduler result carries weighted MEC evidence");
+        let document =
+            read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new())
+                .expect("the every-scheduler result carries weighted MEC evidence");
         assert_eq!(document.certificate.optimization, optimization, "{name}");
         assert_eq!(document.certificate.components.len(), 1, "{name}");
         assert_eq!(document.certificate.components[0].value, value, "{name}");
@@ -57,7 +54,9 @@ fn every_scheduler_reward_weighting_checks_minimum_and_maximum_mec_values() {
 }
 
 fn claim(name: &str, predicate: &str, bound: &str) -> String {
-    format!("probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) weighted by duration {bound} }}\n")
+    format!(
+        "probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) weighted by duration {bound} }}\n"
+    )
 }
 fn availability() -> World {
     availability_with_claims(
@@ -213,12 +212,44 @@ fn periodic_model(initial: i64, a_rewards: &str, b_reward: &str, terminal: bool)
             deletes: false,
         },
     ];
-    let mut model = Model {package,object:"Server",population:"servers",key:"s",
-        integers:vec![("Phase",0,3),("Weight",1,6)],fields:vec![("phase",format!("ix://{package}/Phase"))],operations,
-        body: format!("pre A using v on M::Server::a {{ self.phase = 0 }}\npost NextA using v on M::Server::a {{ self.phase = 1 }}\npre B using v on M::Server::b {{ self.phase = 1 }}\npost NextB using v on M::Server::b {{ self.phase = 0 }}\npre Enter using v on M::Server::enter {{ self.phase = 2 }}\npost Entered using v on M::Server::enter {{ (heads and self.phase = 0) or (not heads and self.phase = 3) }}\npre Stay using v on M::Server::stay {{ self.phase = 3 }}\nrandom Server::a(d) ~ {{ {a_rewards} }};\nrandom Server::enter(heads) ~ {{ true: 1, false: 3 }};\nreward duration on Server::a = d;\nreward duration on Server::b = {b_reward};\nreward duration on Server::stay = 1;\nworkload Steady on M {{ weight Server::a = 1; weight Server::b = 1; weight Server::enter = 1; weight Server::stay = 1; }}\n{}{}",
-            if terminal { "terminal End using v on M when { self.phase = 3 };\n" } else {""},
-            [claim("Fraction","s.phase = 0 or s.phase = 3",if initial == 2 {">= rational(11,12)"} else {">= rational(2,3)"}), claim("Upper","s.phase = 0 or s.phase = 3",if initial == 2 {"<= rational(11,12)"} else {"<= rational(2,3)"})].concat()),
-        initial:serde_json::json!({"phase":{"integer":initial.to_string()}}),
+    let mut model = Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![("Phase", 0, 3), ("Weight", 1, 6)],
+        fields: vec![("phase", format!("ix://{package}/Phase"))],
+        operations,
+        body: format!(
+            "pre A using v on M::Server::a {{ self.phase = 0 }}\npost NextA using v on M::Server::a {{ self.phase = 1 }}\npre B using v on M::Server::b {{ self.phase = 1 }}\npost NextB using v on M::Server::b {{ self.phase = 0 }}\npre Enter using v on M::Server::enter {{ self.phase = 2 }}\npost Entered using v on M::Server::enter {{ (heads and self.phase = 0) or (not heads and self.phase = 3) }}\npre Stay using v on M::Server::stay {{ self.phase = 3 }}\nrandom Server::a(d) ~ {{ {a_rewards} }};\nrandom Server::enter(heads) ~ {{ true: 1, false: 3 }};\nreward duration on Server::a = d;\nreward duration on Server::b = {b_reward};\nreward duration on Server::stay = 1;\nworkload Steady on M {{ weight Server::a = 1; weight Server::b = 1; weight Server::enter = 1; weight Server::stay = 1; }}\n{}{}",
+            if terminal {
+                "terminal End using v on M when { self.phase = 3 };\n"
+            } else {
+                ""
+            },
+            [
+                claim(
+                    "Fraction",
+                    "s.phase = 0 or s.phase = 3",
+                    if initial == 2 {
+                        ">= rational(11,12)"
+                    } else {
+                        ">= rational(2,3)"
+                    }
+                ),
+                claim(
+                    "Upper",
+                    "s.phase = 0 or s.phase = 3",
+                    if initial == 2 {
+                        "<= rational(11,12)"
+                    } else {
+                        "<= rational(2,3)"
+                    }
+                )
+            ]
+            .concat()
+        ),
+        initial: serde_json::json!({"phase":{"integer":initial.to_string()}}),
     };
     if terminal {
         model.body = model.body.replace(
@@ -647,7 +678,7 @@ fn undefined_actual_weights_and_predicates_preserve_typed_nonacceptance() {
             Some(fsl_replay::TerminalValue::Proved { .. } | fsl_replay::TerminalValue::Refuted)
         ));
     }
-    let source="reward duration on Coin::drop = 1;\nprobabilistic Fraction using inf on M over (c: M::Coin) under Even on origin { long_run_fraction holds(c.v = 0) weighted by duration >= rational(1,2) }\n";
+    let source = "reward duration on Coin::drop = 1;\nprobabilistic Fraction using inf on M over (c: M::Coin) under Even on origin { long_run_fraction holds(c.v = 0) weighted by duration >= rational(1,2) }\n";
     let world = World::new(&prob_world::coin(source));
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let identity = fsl_replay::probabilistic_claim_identity(world.claim("Fraction")).unwrap();
@@ -657,7 +688,9 @@ fn undefined_actual_weights_and_predicates_preserve_typed_nonacceptance() {
 }
 
 fn quantity_availability(tick: &str, repair: &str) -> World {
-    let extra=format!("dimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(1000,1) * ms;\ndimension Length;\nunit m : Length = rational(1,1);\nreward duration on Server::tick = {tick};\nreward duration on Server::repair = {repair};\n");
+    let extra = format!(
+        "dimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(1000,1) * ms;\ndimension Length;\nunit m : Length = rational(1,1);\nreward duration on Server::tick = {tick};\nreward duration on Server::repair = {repair};\n"
+    );
     availability_with_claims(
         claim("Lower", "s.phase = 0", ">= rational(600,601)"),
         &extra,

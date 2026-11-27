@@ -1567,52 +1567,27 @@ fn delay_weighting_and_elapsed_quantiles_check_over_retx() {
     }
 }
 
-/// G11's timed-form boundary: Delay remains typed Unsupported(NOT_YET) under
-/// QSL-3580, and FR-199's weighted workload requirement does not imply
-/// weighted every-scheduler. EN-5 remains the deciding backend on both rows.
+/// G11's held timed-form boundary: the existing Delay route remains unchanged
+/// while FR-199-AC-6 covers weighted every-scheduler Reward support.
 #[trace("TC-2169", "FR-186-AC-15")]
 #[test]
 fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
     let claims = "probabilistic DelayLongRun using ev on M over (c: M::Call) under every scheduler on origin \
-         { long_run_fraction holds(c.late) weighted by delay <= 0.5 }\n\
-         probabilistic EveryRewardLongRun using ev on M over (c: M::Call) under every scheduler on origin \
-         { long_run_fraction holds(c.late) weighted by cost <= 0.5 }\n";
-    let world = retx(
-        GUARD,
-        true,
-        "reward cost on M::Call::send = 1;\n",
-        claims,
-    );
+         { long_run_fraction holds(c.late) weighted by delay <= 0.5 }\n";
+    let world = retx(GUARD, true, "reward cost on M::Call::send = 1;\n", claims);
     let model = world.package.graph().probabilistic_model();
     assert!(matches!(
-        &model.claim("DelayLongRun").expect("FR-186 delay claim checks").form,
+        &model
+            .claim("DelayLongRun")
+            .expect("FR-186 delay claim checks")
+            .form,
         ProbForm::LongRunFraction {
             weight: Some(Weighting::Delay),
             ..
         }
     ));
-    assert!(matches!(
-        &model
-            .claim("EveryRewardLongRun")
-            .expect("weighted every-scheduler claim checks")
-            .form,
-        ProbForm::LongRunFraction {
-            weight: Some(Weighting::Reward(name)),
-            ..
-        } if name.as_str() == "cost"
-    ));
-
     let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
-    let rows = [
-        (
-            "DelayLongRun",
-            "FR-186-AC-15 / FSpec FR-407; QSL-3580 owns the deferred route",
-        ),
-        (
-            "EveryRewardLongRun",
-            "FR-199-AC-2 defines weighted workload, not weighted every-scheduler",
-        ),
-    ];
+    let rows = [("DelayLongRun", "FR-186-AC-15 / FSpec FR-407")];
     for (name, ownership) in rows {
         let claim = model.claim(name).expect("the guarded claim checks");
         let item = exact_probabilistic_item(
