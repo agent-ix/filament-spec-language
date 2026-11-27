@@ -447,8 +447,8 @@ impl Explorer<'_, '_, '_, '_> {
 
     fn pin_dead(&self, zone: &mut Zone, info: &LocationInfo) -> Explored<()> {
         let zero = Integer::zero();
-        for clock in 1..self.dim {
-            if !info.live[clock] {
+        for (clock, live) in info.live[..self.dim].iter().enumerate().skip(1) {
+            if !live {
                 zone.reset(clock, &zero)?;
             }
         }
@@ -541,8 +541,8 @@ impl Explorer<'_, '_, '_, '_> {
                 post.assign_clocks(&carries, &resets)?;
                 let (target_key, target) = self.data(&edge.target)?;
                 let zero = Integer::zero();
-                for clock in 1..self.dim {
-                    if !target.info.live[clock] {
+                for (clock, live) in target.info.live[..self.dim].iter().enumerate().skip(1) {
+                    if !live {
                         post.reset(clock, &zero)?;
                     }
                 }

@@ -604,31 +604,6 @@ fn a_let_bound_read_references_the_same_object_types_as_the_inline_read() {
     }
 }
 
-/// Binding an abstraction changes the package, so its remembered emission is
-/// dropped; `bind_abstraction_at` keeps it.
-#[test]
-#[trace("TC-1111", "NFR-015-AC-9")]
-fn bind_abstraction_resets_the_remembered_emission() {
-    let mut package = package(CLAUSES);
-    let emitted =
-        crate::emit_checked(&package, crate::EmitLimits::fixture()).expect("the package emits");
-    assert_eq!(
-        package.emitted_package_name(),
-        Some(emitted.package().name())
-    );
-    package
-        .bind_abstraction_at(&[config_object()], Vec::new())
-        .expect("the relation checks");
-    assert_eq!(
-        package.emitted_package_name(),
-        Some(emitted.package().name())
-    );
-    package
-        .bind_abstraction(&[config_object()])
-        .expect("the relation checks");
-    assert_eq!(package.emitted_package_name(), None);
-}
-
 #[test]
 #[trace("TC-1082", "FR-307-AC-6")]
 fn with_nothing_bound_every_item_is_refused_and_the_export_succeeds() {

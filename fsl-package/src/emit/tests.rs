@@ -48,6 +48,7 @@ use crate::checked_v2::{read_v2, Read, V2ReadLimits};
 mod abstraction;
 mod admission_corpus;
 mod bare_world;
+mod body_location_walk;
 mod bytes_operations;
 mod carried_quantity_paths;
 mod check_mode;
@@ -79,6 +80,7 @@ mod navigation;
 mod one_occurrence;
 mod operation_bodies;
 mod operation_effects;
+mod operation_member_form;
 mod option_nesting;
 mod option_value;
 mod output_limit;
@@ -5476,10 +5478,21 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         filament_contract_model::CheckedPackageRefusalCode::InvalidSemanticGraph,
         "inconsistent cycle: {cycle_refusal:?}; node={mutated_cycle_node}"
     );
+    // IR-FR-063-AC-4 and FSpec FR-322-AC-268 (IR-1625): the refused edge is
+    // the latest, in node-id order, of the inconsistent cycle it closes. The
+    // three equivalence rows form one triangle, so the cycle's latest edge is
+    // the last equivalence row of the wire (rows are in node-id order),
+    // whichever row was edited.
+    let latest_equivalence_position = inconsistent_cycle["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the nodes")
+        .iter()
+        .rposition(|node| node["semantic_form"] == "dimension_equivalence")
+        .expect("the cycle's equivalence rows");
     assert_eq!(
         cycle_path.as_deref(),
-        Some(format!("/semantic_graph/nodes/{clock_equivalence_position}").as_str()),
-        "inconsistent cycle must identify the closing edge's equivalence node"
+        Some(format!("/semantic_graph/nodes/{latest_equivalence_position}").as_str()),
+        "an inconsistent cycle is refused at its latest equivalence row"
     );
     assert_eq!(cycle_cause, None);
     for (numerator, denominator, refusal) in invalid_scale_refusals {

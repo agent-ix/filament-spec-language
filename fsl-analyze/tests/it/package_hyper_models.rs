@@ -319,6 +319,7 @@ fn check_two_model_atoms_and_certificate(ws: &Workspace, bytes: &[u8], holds: bo
             max_depth: None,
             meter: UNLIMITED,
             reductions: fsl_route::reductions::Reductions::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

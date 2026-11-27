@@ -5126,6 +5126,7 @@ impl Payoff<'_> {
     }
 }
 
+#[implements("FR-204-AC-14")]
 fn price_paths(
     graph: &CheckerGraph,
     scheduler: &BTreeMap<ProbabilityProductKey, usize>,
@@ -5305,7 +5306,7 @@ fn price_paths(
                 at = step.clone();
             }
             let end = graph.states.get(&at).ok_or(Error::Refused)?;
-            if sequence.is_empty() || !payoff.ends(&at, end.terminal) {
+            if !payoff.ends(&at, end.terminal) {
                 return Ok(None);
             }
             if !seen.insert(sequence) {

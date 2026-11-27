@@ -1285,16 +1285,19 @@ fn read_task_zone(value: &Value, pointer: &str) -> Result<(), Defect> {
                 .as_object()
                 .ok_or_else(|| Defect::wrong_kind(base.clone()))?;
             check_task_members(object, &["bound", "strict"], &base)?;
-            let bound = object
-                .get("bound")
-                .ok_or_else(|| Defect::missing(format!("{base}/bound")))?;
-            read_text(bound, &format!("{base}/bound"))?;
-            let strict = object
-                .get("strict")
-                .ok_or_else(|| Defect::missing(format!("{base}/strict")))?;
-            if !strict.is_boolean() {
-                return Err(Defect::wrong_kind(format!("{base}/strict")));
-            }
+            // The shared DBM entry reader (FSpec FR-418): the `bound` is a
+            // canonical integer string and `strict` a boolean.
+            crate::shared_wire::DbmBound::read(cell).map_err(|defect| {
+                let pointer = format!("{base}{}", defect.pointer);
+                match defect.kind {
+                    WireDefectKind::Missing => Defect::missing(pointer),
+                    WireDefectKind::UnknownMember => Defect::unknown(pointer),
+                    WireDefectKind::WrongKind => Defect::wrong_kind(pointer),
+                    WireDefectKind::Invalid | WireDefectKind::UnknownVariant => {
+                        Defect::invalid(pointer)
+                    }
+                }
+            })?;
         }
     }
     Ok(())

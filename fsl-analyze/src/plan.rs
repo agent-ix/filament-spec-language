@@ -1117,6 +1117,7 @@ fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static s
         }
         crate::analyze::AnalyzeRefusal::HostAllocationFailed(_) => "host-allocation-failed",
         crate::analyze::AnalyzeRefusal::Emission(_) => "resource-exhausted",
+        crate::analyze::AnalyzeRefusal::EngineConflict { .. } => "invalid-value",
     }
 }
 
