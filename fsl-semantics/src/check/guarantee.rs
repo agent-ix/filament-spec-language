@@ -34,8 +34,8 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, Span};
 
 use super::abstraction::{
-    AbstractionKey, AbstractionNodeRefusal, CheckedAbstractionRelation, CheckedBinding,
-    OperationKey, RustPath, name_parts,
+    name_parts, AbstractionKey, AbstractionNodeRefusal, CheckedAbstractionRelation, CheckedBinding,
+    OperationKey, RustPath,
 };
 use super::capability::{Capability, DeclarationFamily};
 use super::lowering::SemanticNode;
@@ -1222,13 +1222,15 @@ impl CheckedGraph {
             .ok_or_else(|| internal("guarantee-relation-is-checked"))?;
         let relation_node = self
             .abstraction_nodes(relation)
-            .map_err(|reason| match super::abstraction::classify_node_refusal(reason) {
-                Err(fault) => GuaranteeRefusal::Internal(fault),
-                Ok(reason) => GuaranteeRefusal::RelationNode {
-                    span: form.relation.span,
-                    reason: Box::new(reason),
+            .map_err(
+                |reason| match super::abstraction::classify_node_refusal(reason) {
+                    Err(fault) => GuaranteeRefusal::Internal(fault),
+                    Ok(reason) => GuaranteeRefusal::RelationNode {
+                        span: form.relation.span,
+                        reason: Box::new(reason),
+                    },
                 },
-            })?
+            )?
             .relation()
             .key();
         let key = self

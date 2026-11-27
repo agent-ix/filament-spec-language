@@ -2827,8 +2827,7 @@ mod tests {
             .successors
             .into_iter()
             .find(|(step, _)| {
-                step.operation()
-                    == operation_identity_text(&key(CAS, "Counter/bump")).unwrap()
+                step.operation() == operation_identity_text(&key(CAS, "Counter/bump")).unwrap()
             })
             .expect("bump is enabled");
         let StepVerdict::Passes { post, taken } = check_protocol_step(
@@ -2892,31 +2891,33 @@ mod tests {
         };
         let path_ref = ProtocolPathRef {
             seed: std::sync::Arc::new(empty_seed),
-            tail: Some(std::sync::Arc::new(
-                ProtocolPathNode {
-                    previous: None,
-                    transition: std::sync::Arc::new(expected_first),
-                    candidate: std::sync::Arc::new(expected_candidate),
-                    candidate_key: expected_key,
-                },
-            )),
+            tail: Some(std::sync::Arc::new(ProtocolPathNode {
+                previous: None,
+                transition: std::sync::Arc::new(expected_first),
+                candidate: std::sync::Arc::new(expected_candidate),
+                candidate_key: expected_key,
+            })),
         };
         let empty_seed_taken = Taken::ProtocolPathRefs(vec![path_ref.clone()]);
-        let ProtocolHiddenGraph::Built(_, steps) =
-            protocol_hidden_graph(
-                protocol,
-                &[*initial, *post],
-                std::slice::from_ref(&empty_seed_taken),
-            )
-                .expect("the replay candidate graph rebuilds")
-        else {
+        let ProtocolHiddenGraph::Built(_, steps) = protocol_hidden_graph(
+            protocol,
+            &[*initial, *post],
+            std::slice::from_ref(&empty_seed_taken),
+        )
+        .expect("the replay candidate graph rebuilds") else {
             panic!("the candidate graph is built");
         };
         let rows: Vec<_> = steps.iter().flatten().collect();
-        assert!(rows.iter().any(|row| {
-            row.1 == path_ref.seed.start_key
-                && row.3 == path_ref.endpoint_key()
-                && row.2.as_ref().is_some_and(|transition| add.covers(transition))
-        }), "replay counts the expected add application in the first-taken slot");
+        assert!(
+            rows.iter().any(|row| {
+                row.1 == path_ref.seed.start_key
+                    && row.3 == path_ref.endpoint_key()
+                    && row
+                        .2
+                        .as_ref()
+                        .is_some_and(|transition| add.covers(transition))
+            }),
+            "replay counts the expected add application in the first-taken slot"
+        );
     }
 }

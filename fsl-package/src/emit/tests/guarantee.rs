@@ -10,11 +10,10 @@ use filament_exact::Identifier;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind, PropertyForm};
 use fsl_semantics::check::{
-    AbstractionKey, AbstractionNodeRefusal, AbstractionRefusal, AssemblyCause, CheckCause,
-    CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot,
-    ModelFamily, SemanticCheckRefusal, SlotBacking, SlotRole,
-    AuthoredBinding, FrameBinding, ObjectBinding, OperationKey, PopulationBinding, RustField,
-    RustPath, RustReceiver,
+    AbstractionKey, AbstractionNodeRefusal, AbstractionRefusal, AssemblyCause, AuthoredBinding,
+    CheckCause, CheckedImplementationGuarantee, FrameBinding, GuaranteeName, GuaranteeRefusal,
+    GuaranteeSlot, ModelFamily, ObjectBinding, OperationKey, PopulationBinding, RustField,
+    RustPath, RustReceiver, SemanticCheckRefusal, SlotBacking, SlotRole,
 };
 use ix_trace_rs::trace;
 use std::collections::BTreeMap;

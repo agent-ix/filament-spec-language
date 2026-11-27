@@ -15,8 +15,8 @@ use fsl_route::reductions::{Reductions, SymmetryDeclaration};
 use fsl_semantics::check::{HyperForm, TemporalProfile};
 use ix_trace_rs::trace;
 
-use crate::hyper_support::refuted;
 use crate::counter::UNLIMITED;
+use crate::hyper_support::refuted;
 use crate::hyper_world::{key, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
 
 /// The two vaults `v` and `w` of one initial state.
@@ -107,7 +107,13 @@ fn a_one_byte_retention_allowance_stops_a_hyper_search_before_its_first_state() 
     };
     let (stopped, retained): (HyperOutcome, Budget) = run(1);
     assert_eq!(retained.consumed(Setting::AnalysisRetainedBytes), 0);
-    let HyperOutcome::Stopped { cause, limit, stats, .. } = &stopped else {
+    let HyperOutcome::Stopped {
+        cause,
+        limit,
+        stats,
+        ..
+    } = &stopped
+    else {
         panic!("expected a stop, got {stopped:?}");
     };
     assert_eq!(*cause, fsl_replay::IncompleteCause::ResourceExhausted);
@@ -129,7 +135,10 @@ fn a_one_byte_retention_allowance_stops_a_hyper_search_before_its_first_state() 
     let unbounded = secure
         .run(ModelCheckLimits::default(), &Cancel::new())
         .expect("not refused");
-    assert!(matches!(published, HyperOutcome::HoldsReduced { .. }), "{published:?}");
+    assert!(
+        matches!(published, HyperOutcome::HoldsReduced { .. }),
+        "{published:?}"
+    );
     assert_eq!(format!("{published:?}"), format!("{unbounded:?}"));
 }
 

@@ -3889,7 +3889,8 @@ mod tests {
         let item = |value: serde_json::Value| -> document::ItemSelection {
             serde_json::from_value(value).expect("a well-formed item")
         };
-        let silent = item(serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate"}}));
+        let silent =
+            item(serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate"}}));
         let stating = item(
             serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}),
         );

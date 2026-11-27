@@ -859,10 +859,7 @@ fn checked_graph_declaring(bindings: &str) -> fsl_semantics::check::CheckedGraph
 /// The check of the unit declaring `bindings`.
 fn check_declaring(
     bindings: &str,
-) -> Result<
-    fsl_semantics::check::CheckedGraph,
-    Vec<fsl_semantics::check::SemanticCheckRefusal>,
-> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let unit = format!(
         "{}abstraction A using v {{\n{bindings}}}\n",
