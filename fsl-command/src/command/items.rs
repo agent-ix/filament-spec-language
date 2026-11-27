@@ -1340,14 +1340,19 @@ mod tests {
     }
 
     /// FR-267-AC-8, FSpec FR-352: the item-level documents that carry the
-    /// label omit an absent disposition member (never `null`), and both read as clause
-    /// runs.
+    /// label omit an absent disposition member (never `null`), keep every
+    /// axis member present, and both read as clause runs.
     #[ix_trace_rs::trace("FR-267-AC-8")]
     #[test]
     fn the_item_documents_with_the_run_result_label_are_read_by_the_strict_reader() {
         let usage = fsl_semantics::model::observation::AdmissionUsage::default();
         let settled = invariant_result("success", "evaluate", Some(true), None, &usage);
         assert_eq!(read_label(&settled), Ok(()));
+        assert_eq!(settled["axes"]["truth"], "true");
+        let unsettled = invariant_result("refusal", "admit", None, None, &usage);
+        assert!(unsettled["disposition"].get("truth").is_none());
+        assert!(unsettled["axes"]["truth"].is_null());
+        assert!(unsettled["axes"]["execution"].is_null());
         let refusal = population_refusal("Order");
         assert_eq!(read_label(&refusal), Ok(()));
         assert!(refusal["disposition"].get("truth").is_none());
