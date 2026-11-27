@@ -175,3 +175,40 @@ fn a_recording_conformance_proof_is_withheld_when_certification_is_required() {
     let premise = engine("require-1052-9-premise", true, "exactly-once-premise", true);
     assert_eq!(premise["global"]["label"], "inconclusive", "{premise}");
 }
+
+/// A global-conformance claim over a protocol with an
+/// `exactly-once-premise` channel, every obligation satisfied: the default
+/// run is `proved`, `uncertified`; with `require_certified` it is withheld.
+#[trace("TC-3240", "FR-1052-AC-16")]
+#[test]
+fn a_premise_channel_conformance_proof_is_uncertified_and_withheld() {
+    let run = |name: &str, required: bool| {
+        let ws = Workspace::new(name);
+        let extra = json!({"items": [{"claim": "Flow", "kind": "global-conformance"}],
+            "require_certified": required});
+        analyze(&litmus_request(&ws, &order_protocol(true), extra)).item(0)
+    };
+    let default = run("require-1052-16-default", false);
+    assert_eq!(default["global"]["label"], "proved", "{default}");
+    assert_eq!(
+        default["record"]["certification"], "uncertified",
+        "{default}"
+    );
+    assert!(
+        obligations_all_satisfied(&default),
+        "every obligation is satisfied: {default}"
+    );
+    let required = run("require-1052-16-required", true);
+    assert_eq!(
+        required["global"],
+        json!({"label": "inconclusive", "basis": "unsettled", "complete": false,
+            "cause": "proof-not-certified"}),
+        "{required}"
+    );
+}
+
+fn obligations_all_satisfied(item: &Value) -> bool {
+    item["obligations"]
+        .as_array()
+        .is_some_and(|all| !all.is_empty() && all.iter().all(|entry| entry["verdict"] == "satisfied"))
+}
