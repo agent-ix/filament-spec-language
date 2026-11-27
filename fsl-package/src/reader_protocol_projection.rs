@@ -23,8 +23,8 @@ use filament_contract_model::{
     OperationModeKind,
 };
 use filament_exact::{
-    ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload, Timestamp,
-    Uuid, Value, ValueType, admit_text,
+    admit_text, ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload,
+    Timestamp, Uuid, Value, ValueType,
 };
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{
@@ -38,7 +38,7 @@ use ix_trace_rs::implements;
 
 use crate::equality_file::{EqualityWitnessRefusal, ReadEqualityRows};
 use crate::introduced_binders::is_sum_identity;
-use crate::wire_form::{OperationSuffix, WireForm, WireTag, has_form, has_tag, split_tag_form};
+use crate::wire_form::{has_form, has_tag, split_tag_form, OperationSuffix, WireForm, WireTag};
 
 /// One projected protocol slot: owned evaluator nodes, the admitted function
 /// table its calls reach, and the frame its locals and case binders use.
@@ -3141,11 +3141,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.seq") => {
                 // FR-322 `seq`: two bounds outside the binder, the body inside.
-                let [
-                    low_term,
-                    high_term,
-                    CheckedTerm::Binding { name, value, .. },
-                ] = arguments
+                let [low_term, high_term, CheckedTerm::Binding { name, value, .. }] = arguments
                 else {
                     return Err(fault("reader-seq-has-two-bounds-and-binder").into());
                 };
@@ -3567,12 +3563,9 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                 return Err(fault("reader-union-case-arm-has-body").into());
             };
-            let [
-                CheckedTerm::Aggregate {
-                    members: binders, ..
-                },
-                body,
-            ] = members.as_slice()
+            let [CheckedTerm::Aggregate {
+                members: binders, ..
+            }, body] = members.as_slice()
             else {
                 return Err(fault("reader-union-case-arm-has-binders-and-body").into());
             };

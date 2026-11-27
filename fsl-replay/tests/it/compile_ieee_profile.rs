@@ -120,12 +120,10 @@ fn qsl_3473_no_float_package_has_no_ieee_profile_selection_or_law() {
     assert!(ieee_selection(&wire).is_empty());
     for node in wire["semantic_graph"]["nodes"].as_array().unwrap() {
         let laws = node["body"]["operation"]["laws"].as_array();
-        assert!(
-            !laws
-                .into_iter()
-                .flatten()
-                .any(|law| law["role"] == "ieee_profile")
-        );
+        assert!(!laws
+            .into_iter()
+            .flatten()
+            .any(|law| law["role"] == "ieee_profile"));
     }
 }
 
@@ -146,9 +144,7 @@ fn qsl_3473_unused_float_composite_metadata_maps_to_declaration_names() {
             .expect("semantic nodes");
         let text_type = nodes
             .iter()
-            .find(|node| {
-                node["node_tag"] == "scalar_type" && node["semantic_form"] == "text"
-            })
+            .find(|node| node["node_tag"] == "scalar_type" && node["semantic_form"] == "text")
             .expect("generated text type for the composite declaration");
         let generated = text_type["occurrences"]
             .as_array()
@@ -156,7 +152,10 @@ fn qsl_3473_unused_float_composite_metadata_maps_to_declaration_names() {
             .iter()
             .filter(|occurrence| occurrence["role"] == "generated")
             .collect::<Vec<_>>();
-        assert!(!generated.is_empty(), "composite type metadata is generated");
+        assert!(
+            !generated.is_empty(),
+            "composite type metadata is generated"
+        );
         let rows = wire["source_map"]
             .as_array()
             .expect("source-map rows")
@@ -167,8 +166,7 @@ fn qsl_3473_unused_float_composite_metadata_maps_to_declaration_names() {
             let row = rows
                 .iter()
                 .find(|row| {
-                    row["role"] == occurrence["role"]
-                        && row["ordinal"] == occurrence["ordinal"]
+                    row["role"] == occurrence["role"] && row["ordinal"] == occurrence["ordinal"]
                 })
                 .expect("source-map row for generated metadata occurrence");
             assert_eq!(row["regions"][0]["start"], name_start, "{declaration}");
