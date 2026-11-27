@@ -39,10 +39,9 @@ fn nested_option_record_tuple_walk_emits_one_row_per_application_visit() {
         .map(|node| &node["node_id"])
         .collect();
     assert_eq!(option_ids.len(), 3, "outer and field options are emitted");
-    assert!(
-        rows.iter()
-            .all(|row| !option_ids.contains(&&row["application"]))
-    );
+    assert!(rows
+        .iter()
+        .all(|row| !option_ids.contains(&&row["application"])));
 
     for row in rows {
         let app = nodes

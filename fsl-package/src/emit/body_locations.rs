@@ -109,11 +109,7 @@ fn references<'a>(
 /// Every captured row, in the wire's (application, occurrence, term ordinal)
 /// order, with deltas computed in each function's actual body-walk order.
 #[ix_trace_rs::string_edge]
-#[implements(
-    "FSpec-FR-322-AC-540",
-    "FSpec-FR-322-AC-541",
-    "FSpec-FR-322-AC-543"
-)]
+#[implements("FSpec-FR-322-AC-540", "FSpec-FR-322-AC-541", "FSpec-FR-322-AC-543")]
 pub(super) fn checked_body_locations(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
