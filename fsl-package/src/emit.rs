@@ -108,6 +108,8 @@ pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
 
 #[cfg(feature = "test-support")]
 static NODE_ID_REWRITE_CANDIDATE_CHECKS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "test-support")]
+static READ_INDEX_REWRITE_CANDIDATE_CHECKS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(feature = "test-support")]
 pub(crate) fn reset_node_id_rewrite_candidate_checks() {
@@ -117,6 +119,16 @@ pub(crate) fn reset_node_id_rewrite_candidate_checks() {
 #[cfg(feature = "test-support")]
 pub(crate) fn node_id_rewrite_candidate_checks() -> usize {
     NODE_ID_REWRITE_CANDIDATE_CHECKS.load(Ordering::Relaxed)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_read_index_rewrite_candidate_checks() {
+    READ_INDEX_REWRITE_CANDIDATE_CHECKS.store(0, Ordering::Relaxed);
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn read_index_rewrite_candidate_checks() -> usize {
+    READ_INDEX_REWRITE_CANDIDATE_CHECKS.load(Ordering::Relaxed)
 }
 
 /// The diagnostics catalog the package's (empty) diagnostics are qualified
@@ -11437,7 +11449,11 @@ fn read_index_segments(
         for id in reachable_ids(node) {
             if holds_segment(id, is_index) {
                 let new = structural(id)?;
-                if !changes.iter().any(|(old, _)| old == id) {
+                if !changes.iter().any(|(old, _)| {
+                    #[cfg(feature = "test-support")]
+                    READ_INDEX_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+                    old == id
+                }) {
                     changes.push((id.clone(), new.clone()));
                 }
                 *id = new;
@@ -11445,6 +11461,21 @@ fn read_index_segments(
         }
         // As in `write_index_segments`: IR substitutes where this reader
         // cannot reach.
+        #[cfg(feature = "test-support")]
+        {
+            // Count the candidate slots each repeated replacement scans. The
+            // public IR replacement method owns that traversal, so observe its
+            // exact slot count once and multiply by the exact replacement count.
+            let mut candidate_slots = 0usize;
+            node.map_node_ids(|_| {
+                candidate_slots = candidate_slots.saturating_add(1);
+                None
+            });
+            READ_INDEX_REWRITE_CANDIDATE_CHECKS.fetch_add(
+                candidate_slots.saturating_mul(changes.len()),
+                Ordering::Relaxed,
+            );
+        }
         for (old, new) in &changes {
             node.replace_node_id(old, new);
         }

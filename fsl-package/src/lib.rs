@@ -282,6 +282,16 @@ pub mod test_support {
     pub fn node_id_rewrite_candidate_checks() -> usize {
         crate::emit::node_id_rewrite_candidate_checks()
     }
+
+    /// Reset the number of node-ID candidate comparisons during index reading.
+    pub fn reset_read_index_rewrite_candidate_checks() {
+        crate::emit::reset_read_index_rewrite_candidate_checks();
+    }
+
+    /// The number of node-ID candidate comparisons during index reading.
+    pub fn read_index_rewrite_candidate_checks() -> usize {
+        crate::emit::read_index_rewrite_candidate_checks()
+    }
 }
 
 // ADR-011 §4 I2: `read_checked_package_v2` and its staged outcome remain
