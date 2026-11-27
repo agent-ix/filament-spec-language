@@ -2,16 +2,20 @@
 //! FR-1041-AC-1: the analyzer's fair-MDP W document is accepted by the
 //! independent `fsl-probability-check` process.
 
-use super::bounded::{document, mutate, request_with, requests_with_mode, run};
+use super::bounded::{document, mutate, request_with, requests_with_accounting, run};
 use fsl_analyze::analyze::Settlement;
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use fsl_replay::{ProofBasis, TerminalValue};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+
+pub(crate) mod mutation;
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const LINK_SOURCE: &str = include_str!("../fixtures/link.native");
+// Checker conformance fixtures need room for analyzer certificate production.
+const CHECKER_FIXTURE_WORK: u64 = 10_000_000;
 
 fn fair_w_source() -> String {
     let header = LINK_SOURCE.lines().take(4).collect::<Vec<_>>().join("\n");
@@ -99,7 +103,10 @@ fn fair_eventual_interval_documents_are_accepted_by_separate_checker_processes()
         max_precision_bits: 16,
         ..ExactProbLimits::default()
     };
-    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = CHECKER_FIXTURE_WORK;
+    let (requests, settlement) =
+        requests_with_accounting(&source, SNAPSHOT, limits, DOMAIN, accounting, false);
     let [lower, upper] = requests.as_slice() else {
         panic!("the interval proof carries both documents: {settlement:?}");
     };

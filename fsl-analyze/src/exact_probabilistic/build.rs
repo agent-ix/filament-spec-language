@@ -14,13 +14,13 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov,
-    PredicateReading, ScheduledIdentity, Unsteppable,
-};
-use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::{
+    Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov, PredicateReading,
+    ScheduledIdentity, Unsteppable, same_rewards,
+};
+use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
@@ -66,6 +66,17 @@ pub fn build_product(
     build_retaining_monitor(request, cancel).map(|(build, _)| build)
 }
 
+/// Build a product under a caller-owned item work scope.
+#[cfg(feature = "test-support")]
+#[implements("FR-203-AC-29")]
+pub fn build_product_with_work_scope(
+    request: ProductRequest<'_>,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<ProbBuild, ProductRefusal> {
+    build_retaining_monitor_in_scope(request, work, cancel).map(|(build, _)| build)
+}
+
 /// Retain the reached semantic owner for certificate key projection. The
 /// monitor cache moves once after exploration, never once per product node.
 pub(crate) fn build_retaining_monitor(
@@ -78,6 +89,7 @@ pub(crate) fn build_retaining_monitor(
 
 /// [`build_retaining_monitor`] under the item's `work` allowance, so that a
 /// later reading of the same item spends only what the build left (FR-203).
+#[implements("FR-203-AC-29")]
 pub(crate) fn build_retaining_monitor_in_scope(
     request: ProductRequest<'_>,
     work: WorkScope,
@@ -111,19 +123,8 @@ struct KeyPolicy<'a> {
     budget: RefCell<&'a mut dyn ModelKeyBudget>,
 }
 
-/// Retain the semantic monitor while every key uses the same caller admission.
-pub(crate) fn build_retaining_monitor_with_budget(
-    request: ProductRequest<'_>,
-    identity: IdentityLimits,
-    budget: &mut dyn ModelKeyBudget,
-    cancel: &Cancel,
-) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
-    let work = WorkScope::new(request.subject.simulation.meter);
-    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
-}
-
-/// [`build_retaining_monitor_with_budget`] under the item's `work` allowance,
-/// as [`build_retaining_monitor_in_scope`] is for an unbudgeted build.
+/// Retain the semantic monitor while every key uses the item's work allowance.
+#[implements("FR-203-AC-29")]
 pub(crate) fn build_retaining_monitor_with_budget_in_scope(
     request: ProductRequest<'_>,
     identity: IdentityLimits,
@@ -146,7 +147,9 @@ pub fn build_product_with_key_budget(
     budget: &mut dyn ModelKeyBudget,
     cancel: &Cancel,
 ) -> Result<ProbBuild, BudgetedProductError> {
-    build_retaining_monitor_with_budget(request, identity, budget, cancel).map(|(build, _)| build)
+    let work = WorkScope::new(request.subject.simulation.meter);
+    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
+        .map(|(build, _)| build)
 }
 
 /// Admit `simulation` under the item's `work` allowance.
@@ -362,7 +365,7 @@ pub(crate) fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{lower_completion, plan_refusal, OmittedEdge, PlanFault, ProductRefusal};
+    use super::{OmittedEdge, PlanFault, ProductRefusal, lower_completion, plan_refusal};
     use crate::exact_probabilistic::{
         ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction, ProductKind,
     };

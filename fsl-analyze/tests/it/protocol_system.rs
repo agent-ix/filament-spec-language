@@ -1468,6 +1468,7 @@ fn a_protocol_deadlock_is_spelled_with_its_blocked_list_through_analyze() {
             max_messages: None,
             max_live_instances: None,
         },
+        engines: Default::default(),
         replay: Box::new(|payload| case.replay("Fill", payload.clone())),
     };
     let records = analyze_items(
@@ -1564,6 +1565,7 @@ fn a_protocol_replay_allocation_keeps_the_actual_item_resource_evidence() {
             max_messages: None,
             max_live_instances: None,
         },
+        engines: Default::default(),
         replay: Box::new(|payload| {
             assert!(!payload.prefix.is_empty(), "actual native counterexample");
             calls.set(calls.get() + 1);
@@ -2266,6 +2268,7 @@ fn analyzed(
             max_messages: None,
             max_live_instances: None,
         },
+        engines: Default::default(),
         replay: Box::new(|payload| case.replay("P", payload.clone())),
     };
     let records = analyze_items(

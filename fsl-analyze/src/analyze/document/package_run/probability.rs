@@ -169,9 +169,8 @@ pub(super) fn item<'a>(
                     super::super::super::Refusal::Failed(super::super::super::items::BROKEN),
                 );
             };
-            let mut simulation =
-                super::super::super::request::simulation(&model, &binding, &limits);
-            simulation.expansion.max_candidates = 1_000_000;
+            let simulation =
+                super::super::super::request::probability_simulation(&model, &binding, &limits);
             super::super::super::exact::run_package_exact(
                 crate::exact_probabilistic::ProductRequest {
                     subject: fsl_eval::model_subject::ModelSubject {

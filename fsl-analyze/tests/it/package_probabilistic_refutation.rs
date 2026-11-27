@@ -289,6 +289,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     use fsl_analyze::analyze::document::{
         resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{AnalyzeLimits, Counterexample, Engines, SubjectBinding};
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PopulationUniverse,
@@ -376,7 +377,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     };
     let limits = AnalyzeLimits {
         emit: compiled.emit_limits(),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let items = resolve_items(
         checked,
