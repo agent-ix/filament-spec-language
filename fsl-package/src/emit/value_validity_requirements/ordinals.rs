@@ -98,7 +98,7 @@ impl Renumbering {
         data: &mut filament_contract_model::CheckedTermDataV2,
     ) {
         let by_id = self.by_id(ids);
-        relabel_term_data_inner(&by_id, &self.synthetics(ids), data);
+        relabel_term_data_inner(&by_id, &self.synthetics(ids), data, true);
     }
 
     /// Relabel the equality rows to the final owner-walk occurrence ordinals.
@@ -665,14 +665,18 @@ fn rewalk_slots(
     Some(slots)
 }
 
-/// Move the checked-term rows that name a renumbered expression occurrence of
-/// the nodes `by_id` holds, and drop the rows of a dropped use.
+/// Move the checked-term rows that name a rewalked expression occurrence of
+/// the nodes `by_id` holds. This is the carry of an already walk-numbered base
+/// package through a rekey of declaration-less owners (QSL-3613): the
+/// `body_locations` rows are left at their keys, because they pair with a
+/// function's visits by rank, not by occurrence (see
+/// [`relabel_term_data_inner`]).
 pub(in crate::emit) fn relabel_term_data(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
     synthetics: &Synthetics,
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
-    relabel_term_data_inner(by_id, synthetics, data);
+    relabel_term_data_inner(by_id, synthetics, data, false);
 }
 
 /// The rows of a node a rekey gave synthetic occurrences, one copy per new
@@ -814,10 +818,22 @@ fn relabel_occurrences<T: Clone>(
     rows.extend(copies);
 }
 
+/// `follow_body_rows` says whether the `body_locations` rows follow the
+/// renumbering. A body row names an occurrence only to be a valid, ordered key:
+/// the reader pairs the k-th visit of function F at application A with the row
+/// of F and A of rank k in (occurrence, term ordinal) order, and checks that
+/// the occurrence and its source-map entry exist, nothing more. Rows of a
+/// package the checker numbered in its own order (`renumber`) must be moved to
+/// the walk's ordinals, and rows of a dropped use dropped. A rewalk only
+/// reorders the owners of a package whose rows already pair with the walk and
+/// never removes an ordinal: following it would swap the rows of two
+/// functions that share an application and so change their ranks' keys, with
+/// no change to what any row says, so the rows stay at their keys.
 fn relabel_term_data_inner(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
     synthetics: &Synthetics,
     data: &mut filament_contract_model::CheckedTermDataV2,
+    follow_body_rows: bool,
 ) {
     if by_id.is_empty() {
         return;
@@ -889,6 +905,9 @@ fn relabel_term_data_inner(
             ))
         });
     }
+    if !follow_body_rows {
+        return;
+    }
     let mut changed = false;
     data.body_locations.retain_mut(|row| {
         let moved = relabel(&row.application, &mut row.occurrence);
@@ -910,9 +929,14 @@ fn relabel_term_data_inner(
 mod rewalk_tests {
     use super::{rewalk_slots, Slot};
 
-    use super::{relabel_occurrences, synthetic_copies, Mapping, Synthetics};
+    use super::{
+        relabel_occurrences, relabel_term_data, relabel_term_data_inner, synthetic_copies,
+        Mapping, Synthetics,
+    };
     use filament_contract_model::{
+        CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation,
         CheckedNodeId, CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole,
+        CheckedTermDataV2,
     };
     use std::collections::BTreeMap;
 
@@ -998,6 +1022,62 @@ mod rewalk_tests {
         let copies = synthetic_copies(&rows, &synthetics, |row| (&row.0, &row.1), |row| &mut row.1);
         assert_eq!(ordinals(&copies), [(id("app"), 9)]);
         assert_eq!(ordinals(&rows), [(id("app"), 4)]);
+    }
+
+    fn body_row(function: &str, ordinal: u64) -> CheckedBodySemanticLocation {
+        CheckedBodySemanticLocation {
+            application: id("app"),
+            occurrence: CheckedOccurrence {
+                role: CheckedOccurrenceRole::Expression,
+                ordinal,
+            },
+            term_ordinal: 0,
+            location: CheckedBodyLocation {
+                origin: CheckedBodyLocationOrigin::FunctionBody {
+                    function: id(function),
+                    name: function.into(),
+                    index: 0,
+                },
+                up: 0,
+                down: Vec::new(),
+            },
+        }
+    }
+
+    fn functions(data: &CheckedTermDataV2) -> Vec<(String, u64)> {
+        data.body_locations
+            .iter()
+            .map(|row| {
+                let CheckedBodyLocationOrigin::FunctionBody { name, .. } = &row.location.origin;
+                (name.to_string(), row.occurrence.ordinal)
+            })
+            .collect()
+    }
+
+    /// FSpec FR-322 (QSL-3613): a rewalk that swaps two owners' occurrences of
+    /// a shared application leaves the `body_locations` rows at their keys
+    /// (the reader pairs them with a function's visits by rank), while the
+    /// renumbering of the checker's own numbering moves them with their uses.
+    #[test]
+    fn a_rewalk_leaves_body_rows_at_their_keys_and_a_renumbering_moves_them() {
+        let data = || CheckedTermDataV2 {
+            body_locations: vec![body_row("g", 0), body_row("h", 1)],
+            ..CheckedTermDataV2::default()
+        };
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(0))];
+        let by_id: BTreeMap<_, _> = [(id("app"), mapping)].into_iter().collect();
+        let mut rewalked = data();
+        relabel_term_data(&by_id, &Synthetics::new(), &mut rewalked);
+        assert_eq!(
+            functions(&rewalked),
+            [("g".to_owned(), 0), ("h".to_owned(), 1)]
+        );
+        let mut renumbered = data();
+        relabel_term_data_inner(&by_id, &Synthetics::new(), &mut renumbered, true);
+        assert_eq!(
+            functions(&renumbered),
+            [("h".to_owned(), 0), ("g".to_owned(), 1)]
+        );
     }
 
     fn pairs(slots: &[Slot]) -> Vec<(bool, u64, u64)> {
