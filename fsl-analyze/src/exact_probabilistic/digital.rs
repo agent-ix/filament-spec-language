@@ -47,10 +47,12 @@ use num_traits::{One, ToPrimitive, Zero};
 use serde_json::{json, Value as JsonValue};
 
 use super::unbounded::{maximal_end_components_from, same_action, Choice, Graph};
+use super::window_formula::{Plan as WindowFormulaPlan, ResidualState as WindowResidual};
 use super::{
-    DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
-    MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId,
-    ProductAction, ProductKind, ProductRefusal, ProductStop, UndefinedPath, UndefinedRead,
+    DeadlineKind, DeadlinePhase, ExactProbLimits, FormulaState, FreeDelayRow, MeasurePhase,
+    MonitorState, MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct,
+    ProbStateId, ProductAction, ProductKind, ProductRefusal, ProductStop, UndefinedPath,
+    UndefinedRead,
 };
 
 pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
@@ -131,6 +133,7 @@ pub(super) fn build<'s, 'a>(
         edges: Vec::new(),
         zero_delay: Vec::new(),
         queue: VecDeque::new(),
+        window_states: fsl_eval::automaton::Numbering::new(u64::MAX),
         decisions: false,
         time_locked: Vec::new(),
     };
@@ -190,6 +193,8 @@ enum Form<'c> {
     /// One punctual nested occurrence under its dual bounded operator:
     /// `always` under `eventually`, or `eventually` under `always`.
     NestedDeadline(Box<NestedDeadline<'c>>),
+    /// A flat typed plan for bounded nested and Boolean temporal formulas.
+    WindowFormula(WindowFormulaPlan<'c>),
     /// Expected elapsed time until a checked state predicate holds.
     MeanTime {
         /// The expected-time comparison threshold in the model's time unit.
@@ -234,9 +239,74 @@ impl<'c> Form<'c> {
                 reads: vec![(UndefinedRead::Predicate(super::PredicateRole::Until), until)],
             }),
             ProbForm::Probability {
-                event: Event::Formula { formula, .. },
+                event:
+                    Event::Formula {
+                        formula,
+                        timed_horizon,
+                        ..
+                    },
                 ..
             } => {
+                // Preserve the established direct and punctual-dual routes.
+                // Other closed, bounded future formulas use the general plan.
+                if timed_horizon.is_some() {
+                    if let Ok(plan) = WindowFormulaPlan::compile(formula) {
+                        let nodes = formula.formula().nodes();
+                        let root = nodes.get(formula.formula().root().index());
+                        let simple = match root {
+                            Some(FormulaNode::Unary { operand, .. }) => {
+                                matches!(
+                                    nodes.get(operand.index()),
+                                    Some(FormulaNode::Holds { .. })
+                                )
+                            }
+                            Some(FormulaNode::Binary {
+                                operator: BinaryTemporal::Until,
+                                left,
+                                right,
+                                ..
+                            }) => {
+                                matches!(nodes.get(left.index()), Some(FormulaNode::Holds { .. }))
+                                    && matches!(
+                                        nodes.get(right.index()),
+                                        Some(FormulaNode::Holds { .. })
+                                    )
+                            }
+                            _ => false,
+                        };
+                        let punctual_dual = match root {
+                            Some(FormulaNode::Unary {
+                                operator: outer,
+                                interval: Some(CheckedInterval::Timed(outer_interval)),
+                                operand,
+                            }) => match nodes.get(operand.index()) {
+                                Some(FormulaNode::Unary {
+                                    operator: inner,
+                                    interval: Some(CheckedInterval::Timed(inner_interval)),
+                                    ..
+                                }) => {
+                                    let dual = matches!(
+                                        (outer, inner),
+                                        (UnaryTemporal::Eventually, UnaryTemporal::Always)
+                                            | (UnaryTemporal::Always, UnaryTemporal::Eventually)
+                                    );
+                                    dual && outer_interval.lower_closed()
+                                        && outer_interval.upper_closed()
+                                        && inner_interval.lower_closed()
+                                        && inner_interval.upper_closed()
+                                        && inner_interval
+                                            .upper()
+                                            .is_some_and(|upper| upper == inner_interval.lower())
+                                }
+                                _ => false,
+                            },
+                            _ => false,
+                        };
+                        if !simple && !punctual_dual {
+                            return Ok(Self::WindowFormula(plan));
+                        }
+                    }
+                }
                 let checked = formula.formula();
                 let nodes = checked.nodes();
                 let root_at = checked.root().index();
@@ -387,6 +457,7 @@ impl<'c> Form<'c> {
             | Self::Elapsed { reads, .. }
             | Self::Labels(reads) => reads,
             Self::NestedDeadline(deadline) => &deadline.reads,
+            Self::WindowFormula(plan) => plan.reads(),
         }
     }
 }
@@ -514,6 +585,12 @@ fn scale_of(
             note(&deadline.inner_lower);
             note(&deadline.inner_upper);
         }
+        Form::WindowFormula(plan) => {
+            note(plan.horizon());
+            for constant in plan.time_constants() {
+                note(constant);
+            }
+        }
         Form::MeanTime { bound, .. } => note(bound),
         Form::Elapsed {
             threshold, window, ..
@@ -547,7 +624,10 @@ fn scale_of(
             .len()
             .checked_add(usize::from(matches!(
                 form,
-                Form::Deadline { .. } | Form::NestedDeadline(_) | Form::Elapsed { .. }
+                Form::Deadline { .. }
+                    | Form::NestedDeadline(_)
+                    | Form::WindowFormula(_)
+                    | Form::Elapsed { .. }
             )))
             .and_then(|count| count.checked_add(1))
             .and_then(|count| u64::try_from(count).ok())
@@ -577,14 +657,44 @@ pub(super) fn region_route(timed: &TimedSystem<'_, '_>, claim: &CheckedProbabili
                 event: Event::Formula { formula, .. },
                 ..
             } if formula.formula().nodes().iter().any(|node| match node {
-                FormulaNode::Unary {
-                    interval: Some(CheckedInterval::Timed(interval)),
-                    ..
-                }
+                FormulaNode::And(..)
+                | FormulaNode::Or(..)
+                | FormulaNode::Implies(..)
+                | FormulaNode::Not(..)
                 | FormulaNode::Binary {
-                    interval: Some(CheckedInterval::Timed(interval)),
+                    operator: BinaryTemporal::Release,
                     ..
-                } => !interval.upper_closed() || !interval.lower_closed(),
+                } => true,
+                FormulaNode::Unary {
+                    operand, interval, ..
+                } => {
+                    let nested = matches!(
+                        formula.formula().nodes().get(operand.index()),
+                        Some(FormulaNode::Unary { .. } | FormulaNode::Binary { .. })
+                    );
+                    let open = matches!(
+                        interval,
+                        Some(CheckedInterval::Timed(interval))
+                            if !interval.upper_closed() || !interval.lower_closed()
+                    );
+                    nested || open
+                }
+                FormulaNode::Binary {
+                    left, right, interval, ..
+                } => {
+                    let nested = [left, right].iter().any(|child| {
+                        matches!(
+                            formula.formula().nodes().get(child.index()),
+                            Some(FormulaNode::Unary { .. } | FormulaNode::Binary { .. })
+                        )
+                    });
+                    let open = matches!(
+                        interval,
+                        Some(CheckedInterval::Timed(interval))
+                            if !interval.upper_closed() || !interval.lower_closed()
+                    );
+                    nested || open
+                }
                 _ => false,
             })
         )
@@ -895,6 +1005,7 @@ struct Builder<'r, 'a, 'c> {
     edges: Vec<ProbEdge>,
     zero_delay: Vec<bool>,
     queue: VecDeque<usize>,
+    window_states: fsl_eval::automaton::Numbering<WindowResidual>,
     decisions: bool,
     time_locked: Vec<usize>,
 }
@@ -904,6 +1015,18 @@ fn timed_refusal(stop: TimedStop) -> Halt {
         TimedStop::Expansion(stop) => Halt::Refusal(ProductRefusal::Expansion(stop)),
         _ => Halt::Refusal(fault("timed-moves-decide")),
     }
+}
+
+#[implements("FR-196-AC-20", "FR-204-AC-21")]
+fn intern_window_state(
+    states: &mut fsl_eval::automaton::Numbering<WindowResidual>,
+    state: WindowResidual,
+) -> Step<MonitorState> {
+    let id = states
+        .intern(state)
+        .map_err(|_| fault("window-formula-state-id-fits-u64"))?
+        .state;
+    Ok(MonitorState::Formula(FormulaState::Running(id)))
 }
 
 impl<'c> Builder<'_, '_, 'c> {
@@ -968,6 +1091,7 @@ impl<'c> Builder<'_, '_, 'c> {
             Form::NestedDeadline(deadline) => self
                 .bound_units(&deadline.outer_upper.add(&deadline.inner_upper))
                 .map(Some),
+            Form::WindowFormula(plan) => self.bound_units(plan.horizon()).map(Some),
             Form::Elapsed { window, .. } => self.bound_units(window).map(Some),
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
@@ -1236,6 +1360,23 @@ impl<'c> Builder<'_, '_, 'c> {
             None => None,
         };
         let monitor = monitor.map(|monitor| match monitor {
+            MonitorState::Formula(FormulaState::Running(id)) => {
+                if let Form::WindowFormula(plan) = &self.form {
+                    self.window_states
+                        .key(id)
+                        .map(|state| plan.encode(state, self.subdivisions))
+                        .unwrap_or(JsonValue::Null)
+                } else {
+                    JsonValue::Null
+                }
+            }
+            MonitorState::Formula(FormulaState::Decided(verdict)) => json!([
+                "formula",
+                match verdict {
+                    MonitorVerdict::Accept => "accept",
+                    MonitorVerdict::Reject => "reject",
+                }
+            ]),
             MonitorState::Deadline { kind, phase } => json!([
                 "deadline",
                 match kind {
@@ -1460,7 +1601,11 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     #[implements("FR-204-AC-21")]
-    fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Step<Option<MonitorState>> {
+    fn deadline_start(
+        &mut self,
+        truths: &[bool],
+        state: &mut DState,
+    ) -> Step<Option<MonitorState>> {
         match &self.form {
             Form::Elapsed { .. } => {
                 let mut phase = MeasurePhase::Inactive;
@@ -1519,6 +1664,26 @@ impl<'c> Builder<'_, '_, 'c> {
                     nested: Some(child),
                 }))
             }
+            Form::WindowFormula(plan) => {
+                state.deadline = Some(0);
+                let residual = plan
+                    .start(truths, self.scale)
+                    .map_err(|_| fault("window-formula-initial-state-is-valid"))?;
+                if let Some(verdict) = WindowFormulaPlan::is_decided(&residual) {
+                    Ok(Some(MonitorState::Formula(FormulaState::Decided(
+                        if verdict {
+                            MonitorVerdict::Accept
+                        } else {
+                            MonitorVerdict::Reject
+                        },
+                    ))))
+                } else {
+                    Ok(Some(intern_window_state(
+                        &mut self.window_states,
+                        residual,
+                    )?))
+                }
+            }
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
     }
@@ -1531,6 +1696,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn delay_letters(&self, truths: &[bool]) -> Vec<Vec<bool>> {
         match self.form {
             Form::NestedDeadline(_) => vec![truths.to_vec()],
+            Form::WindowFormula(_) => vec![truths.to_vec()],
             Form::Deadline { .. }
             | Form::Elapsed { .. }
             | Form::MeanTime { .. }
@@ -1547,6 +1713,47 @@ impl<'c> Builder<'_, '_, 'c> {
         reached: &mut DState,
         letters: &[Vec<bool>],
     ) -> Step<Option<MonitorState>> {
+        if matches!(
+            (&self.form, source),
+            (
+                Form::WindowFormula(_),
+                Some(MonitorState::Formula(FormulaState::Decided(_)))
+            )
+        ) {
+            return Ok(source);
+        }
+        if let (Form::WindowFormula(plan), Some(MonitorState::Formula(FormulaState::Running(id)))) =
+            (&self.form, source)
+        {
+            let previous = self
+                .window_states
+                .key(id)
+                .cloned()
+                .ok_or_else(|| fault("window-residual-handle-exists"))?;
+            let elapsed = reached.deadline.unwrap_or(previous.time());
+            let mut residual = plan
+                .delay(&previous, elapsed)
+                .map_err(|_| fault("window-residual-delay-is-monotone"))?;
+            for truths in letters {
+                residual = plan
+                    .observe(&residual, truths, elapsed, self.scale)
+                    .map_err(|_| fault("window-residual-observation-is-valid"))?;
+            }
+            return if let Some(verdict) = WindowFormulaPlan::is_decided(&residual) {
+                Ok(Some(MonitorState::Formula(FormulaState::Decided(
+                    if verdict {
+                        MonitorVerdict::Accept
+                    } else {
+                        MonitorVerdict::Reject
+                    },
+                ))))
+            } else {
+                Ok(Some(intern_window_state(
+                    &mut self.window_states,
+                    residual,
+                )?))
+            };
+        }
         if matches!(self.form, Form::Elapsed { .. }) {
             let Some(MonitorState::Measure { mut phase, .. }) = source else {
                 return Ok(None);
@@ -1655,6 +1862,7 @@ impl<'c> Builder<'_, '_, 'c> {
                                 let mut state = state.clone();
                                 self.deadline_start(&[], &mut state)?
                             }
+                            Form::WindowFormula(_) => None,
                             Form::Elapsed { .. } => Some(MonitorState::Measure {
                                 remaining: 0,
                                 phase: MeasurePhase::Inactive,
@@ -2010,7 +2218,12 @@ impl<'c> Builder<'_, '_, 'c> {
     #[implements("FR-922-AC-4")]
     fn packed_representative(&self, state: &DState) -> Step<DState> {
         let parts = self.subdivisions;
-        if parts == 1 || matches!(self.form, Form::MeanTime { .. } | Form::NestedDeadline(_)) {
+        if parts == 1
+            || matches!(
+                self.form,
+                Form::MeanTime { .. } | Form::NestedDeadline(_) | Form::WindowFormula(_)
+            )
+        {
             return Ok(state.clone());
         }
         // The deadline or measure clock has a fraction while it is inside the
@@ -3167,6 +3380,7 @@ impl<'c> Builder<'_, '_, 'c> {
         maximal_end_components_from(&graph, (0..count).collect()).unwrap_or_default()
     }
 
+    #[implements("FR-196-AC-20", "FR-204-AC-21")]
     fn finish(
         mut self,
         initial: Vec<(u32, Option<ModelInstance>, ProbStateId)>,
@@ -3240,6 +3454,9 @@ impl<'c> Builder<'_, '_, 'c> {
                     DeadlinePhase::Reject => Some((ProbStateId(index), MonitorVerdict::Reject)),
                     DeadlinePhase::Pending => None,
                 },
+                Some(MonitorState::Formula(FormulaState::Decided(verdict))) => {
+                    Some((ProbStateId(index), verdict))
+                }
                 // FR-877: a completed or censored measure is decided; it is in
                 // the transform's event when `M <= c` (`M < c`) holds.
                 Some(MonitorState::Measure { phase, .. }) => {

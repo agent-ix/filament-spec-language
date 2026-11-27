@@ -14,6 +14,7 @@ use num_traits::Zero;
 use serde_json::{json, Value as JsonValue};
 
 mod elapsed;
+mod window_formula;
 
 #[implements("FR-203-AC-30", "FR-204-AC-21")]
 #[allow(clippy::too_many_arguments)]
@@ -116,6 +117,23 @@ pub(super) fn check(
     }
     if objective.form != TimedProbabilityForm::Deadline {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if let Some(monitor) = window_formula::monitor(claim, scale) {
+        return window_formula::check(
+            system,
+            claim,
+            bytes,
+            document,
+            &timed,
+            route,
+            scale,
+            limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+            relation,
+            monitor,
+        );
     }
     let Some((bound, watch)) = bounded_event(claim, objective.scale) else {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -4785,14 +4803,50 @@ fn region_route(
                 event: fsl_semantics::check::Event::Formula { formula, .. },
                 ..
             } if formula.formula().nodes().iter().any(|node| match node {
-                fsl_semantics::check::FormulaNode::Unary {
-                    interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
-                    ..
-                }
+                fsl_semantics::check::FormulaNode::And(..)
+                | fsl_semantics::check::FormulaNode::Or(..)
+                | fsl_semantics::check::FormulaNode::Implies(..)
+                | fsl_semantics::check::FormulaNode::Not(..)
                 | fsl_semantics::check::FormulaNode::Binary {
-                    interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
+                    operator: fsl_semantics::check::BinaryTemporal::Release,
                     ..
-                } => !interval.upper_closed() || !interval.lower_closed(),
+                } => true,
+                fsl_semantics::check::FormulaNode::Unary {
+                    operand, interval, ..
+                } => {
+                    let nested = matches!(
+                        formula.formula().nodes().get(operand.index()),
+                        Some(
+                            fsl_semantics::check::FormulaNode::Unary { .. }
+                                | fsl_semantics::check::FormulaNode::Binary { .. }
+                        )
+                    );
+                    let open = matches!(
+                        interval,
+                        Some(fsl_semantics::check::CheckedInterval::Timed(interval))
+                            if !interval.upper_closed() || !interval.lower_closed()
+                    );
+                    nested || open
+                }
+                fsl_semantics::check::FormulaNode::Binary {
+                    left, right, interval, ..
+                } => {
+                    let nested = [left, right].iter().any(|child| {
+                        matches!(
+                            formula.formula().nodes().get(child.index()),
+                            Some(
+                                fsl_semantics::check::FormulaNode::Unary { .. }
+                                    | fsl_semantics::check::FormulaNode::Binary { .. }
+                            )
+                        )
+                    });
+                    let open = matches!(
+                        interval,
+                        Some(fsl_semantics::check::CheckedInterval::Timed(interval))
+                            if !interval.upper_closed() || !interval.lower_closed()
+                    );
+                    nested || open
+                }
                 _ => false,
             })
         )
@@ -4846,6 +4900,7 @@ fn certificate_scale(
     if let fsl_semantics::check::ProbForm::Probability {
         event:
             fsl_semantics::check::Event::Formula {
+                formula,
                 timed_horizon: Some(horizon),
                 ..
             },
@@ -4853,6 +4908,25 @@ fn certificate_scale(
     } = &claim.form
     {
         denominators.push(horizon.denominator().as_big().clone());
+        for node in formula.formula().nodes() {
+            let interval = match node {
+                fsl_semantics::check::FormulaNode::Unary {
+                    interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
+                    ..
+                }
+                | fsl_semantics::check::FormulaNode::Binary {
+                    interval: Some(fsl_semantics::check::CheckedInterval::Timed(interval)),
+                    ..
+                } => Some(interval),
+                _ => None,
+            };
+            if let Some(interval) = interval {
+                denominators.push(interval.lower().denominator().as_big().clone());
+                if let Some(upper) = interval.upper() {
+                    denominators.push(upper.denominator().as_big().clone());
+                }
+            }
+        }
     }
     if let Some(query) = elapsed::query(claim) {
         denominators.push(query.within.denominator().as_big().clone());
@@ -4971,7 +5045,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     // A bounded monitor keeps the claim's whole horizon, as the certificate
     // check does: a nested window ends past its root operator's upper bound.
     let clock_bound = match &watch {
-        Watch::Bounded { .. } | Watch::Nested { .. } => watch.horizon(),
+        Watch::Bounded { .. } | Watch::Nested { .. } | Watch::Formula(_) => watch.horizon(),
         Watch::Deadline(_) | Watch::Elapsed(_) => {
             time_bound(claim, scale).map_err(from_document)?
         }

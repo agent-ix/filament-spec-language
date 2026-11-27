@@ -37,6 +37,7 @@ mod rows;
 mod settle;
 mod unbounded;
 mod witness;
+mod window_formula;
 
 use ix_trace_rs::implements;
 
