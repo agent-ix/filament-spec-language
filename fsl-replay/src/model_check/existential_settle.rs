@@ -2,7 +2,7 @@
 //! HP-5 settlement with independently checked closure and replayed lassos.
 
 use filament_exact::{Cancel, ValueType};
-use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::{ModelEvaluator, ModelSystem};
 use ix_trace_rs::implements;
 
 use super::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
@@ -37,8 +37,115 @@ pub fn settle_existential(
     method: &StateGraphMethod,
     cancel: &Cancel,
 ) -> Result<ExistentialRecord, ProductClosureRefusal> {
-    let clause = request.hyper_clause()?;
-    let [subject] = request.subjects else {
+    settle_existential_from(
+        ExistentialRequest::Source(request),
+        instance,
+        method,
+        cancel,
+    )
+}
+
+/// Settle an HP-5 binding from admitted package bytes and package model facts.
+///
+/// # Errors
+/// Refuses an inconsistent package form, binding or missing proof certificate.
+#[implements("FR-940-AC-17")]
+pub fn settle_package_existential(
+    request: &crate::PackageHyperClosureRequest<'_>,
+    instance: &ExistentialInstanceOutcome,
+    method: &StateGraphMethod,
+    cancel: &Cancel,
+) -> Result<ExistentialRecord, ProductClosureRefusal> {
+    settle_existential_from(
+        ExistentialRequest::Package(request),
+        instance,
+        method,
+        cancel,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ExistentialRequest<'a> {
+    Source(&'a ProductClosureRequest<'a>),
+    Package(&'a crate::PackageHyperClosureRequest<'a>),
+}
+
+impl ExistentialRequest<'_> {
+    fn clause(&self) -> Result<&CheckedHyperClause, ProductClosureRefusal> {
+        match self {
+            Self::Source(request) => request.hyper_clause(),
+            Self::Package(request) => Ok(request.clause()),
+        }
+    }
+
+    fn subjects(&self) -> &[ModelSubject<'_>] {
+        match self {
+            Self::Source(request) => request.subjects,
+            Self::Package(request) => request.subjects(),
+        }
+    }
+
+    fn evaluator(&self) -> &dyn ModelEvaluator {
+        match self {
+            Self::Source(request) => request.package,
+            Self::Package(request) => request.evaluator(),
+        }
+    }
+
+    fn checked_package(&self) -> Option<&fsl_package::CheckedPackage> {
+        match self {
+            Self::Source(request) => Some(request.package),
+            Self::Package(_) => None,
+        }
+    }
+
+    fn meter(&self) -> filament_exact::ScalarLimits {
+        match self {
+            Self::Source(request) => request.meter,
+            Self::Package(request) => request.meter(),
+        }
+    }
+
+    fn check_certificate(
+        &self,
+        certificate: &crate::ProductClosureCertificate,
+        limits: &crate::ModelCheckLimits,
+        cancel: &Cancel,
+    ) -> Result<crate::ProductClosureCheck, ProductClosureRefusal> {
+        match self {
+            Self::Source(request) => {
+                crate::check_product_closure(request, certificate, limits, cancel)
+            }
+            Self::Package(request) => request.check_certificate(certificate, limits, cancel),
+        }
+    }
+
+    fn contract_location(
+        &self,
+        name: &str,
+    ) -> Option<filament_semantic_value::location::ExpressionLocation> {
+        match self {
+            Self::Source(request) => request
+                .package
+                .graph()
+                .state_clauses()
+                .iter()
+                .find(|candidate| candidate.name() == name)
+                .map(|candidate| candidate.body().location().clone()),
+            Self::Package(_) => None,
+        }
+    }
+}
+
+#[implements("FR-181-AC-5", "FR-181-AC-12", "FR-940-AC-17")]
+fn settle_existential_from(
+    request: ExistentialRequest<'_>,
+    instance: &ExistentialInstanceOutcome,
+    method: &StateGraphMethod,
+    cancel: &Cancel,
+) -> Result<ExistentialRecord, ProductClosureRefusal> {
+    let clause = request.clause()?;
+    let [subject] = request.subjects() else {
         return Err(ProductClosureRefusal::Input("HP-5-subject"));
     };
     let alias = clause
@@ -80,14 +187,15 @@ pub fn settle_existential(
     let mut replay = |candidate: GraphEvidence, decided: Row| {
         let replayed = super::graph_hyper::replay_evidence(
             &system,
-            request.package,
+            request.evaluator(),
+            request.checked_package(),
             clause,
             &candidate,
             method.limits.limits.max_states,
             method.limits.limits.max_transitions,
             method.limits.max_automaton_states,
             subject.simulation.expansion.max_candidates,
-            request.meter,
+            request.meter(),
             cancel,
         );
         match replayed {
@@ -115,7 +223,7 @@ pub fn settle_existential(
             if certificate.instance != instance.instance {
                 return Err(ProductClosureRefusal::Input("HP-5-certificate-instance"));
             }
-            match crate::check_product_closure(request, certificate, &method.limits, cancel)? {
+            match request.check_certificate(certificate, &method.limits, cancel)? {
                 ProductClosureCheck::Accepted => replay(
                     GraphEvidence::Witness {
                         paths: lassos
@@ -199,13 +307,11 @@ pub fn settle_existential(
                 state_key: finding.site.state_key.clone(),
                 locus: match &finding.site.locus {
                     UndefinedLocus::Atom(atom) => atom_location(clause, *atom).cloned(),
-                    UndefinedLocus::Contract(name) => request
-                        .package
-                        .graph()
-                        .state_clauses()
-                        .iter()
-                        .find(|candidate| candidate.name() == name)
-                        .map(|candidate| candidate.body().location().clone()),
+                    UndefinedLocus::Contract(name) => request.contract_location(name),
+                    _ => None,
+                },
+                contract_name: match &finding.site.locus {
+                    UndefinedLocus::Contract(name) => Some(name.clone()),
                     _ => None,
                 },
                 cause: finding.cause.clone(),
@@ -267,8 +373,9 @@ pub fn settle_existential(
 /// closed-tuple judgement, so a witness counts only when its own execution is
 /// found and holds the body, and a trap only when no execution from the initial
 /// state does.
+#[implements("FR-181-AC-12", "FR-940-AC-17")]
 fn settle_closed(
-    request: &ProductClosureRequest<'_>,
+    request: ExistentialRequest<'_>,
     system: &ModelSystem<'_>,
     over: Vec<fsl_eval::model_subject::ModelInstance>,
     instance: &ExistentialInstanceOutcome,
@@ -279,7 +386,7 @@ fn settle_closed(
         closed_executions, horizon, judge_closed_tuple, CheckedHyperLetters, CheckedStepMatch,
         ClosedInputs, ClosedStop, ClosedVerdict, ParameterBinding,
     };
-    let clause = request.hyper_clause()?;
+    let clause = request.clause()?;
     let binding: Vec<ParameterBinding> = clause
         .parameters()
         .iter()
@@ -289,9 +396,9 @@ fn settle_closed(
             instance: found.clone(),
         })
         .collect();
-    let letters = CheckedHyperLetters::new(request.package, clause, vec![system])
+    let letters = CheckedHyperLetters::for_evaluator(request.evaluator(), clause, vec![system])
         .map_err(|_| ProductClosureRefusal::Input("HP-5-letters"))?;
-    let matcher = CheckedStepMatch::new(request.package, clause);
+    let matcher = CheckedStepMatch::for_evaluator(request.evaluator(), clause);
     let depth = horizon(clause.body()).ok_or(ProductClosureRefusal::Input("HP-5-horizon"))?;
     let mut evidence = None;
     let row = match closed_executions(
@@ -329,7 +436,7 @@ fn settle_closed(
                 instance: &binding,
                 letters: &letters,
                 matcher: &matcher,
-                meter: request.meter,
+                meter: request.meter(),
                 cancel,
             };
             let judged = |initial: usize, steps: Option<&[super::counterexample::ModelStep]>| {

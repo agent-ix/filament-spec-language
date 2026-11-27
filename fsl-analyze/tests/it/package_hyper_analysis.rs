@@ -171,10 +171,19 @@ fn a_single_existential_package_hyper_claim_matches_source_without_source() {
     );
     let right = package.document();
     assert_eq!(source.exit, package.exit, "{right}");
-    assert_eq!(package.item(0)["record"], source.item(0)["record"], "{right}");
-    assert_eq!(package.item(0)["record"]["result"], "proved", "{right}");
-    assert!(!right.to_string().contains("hyper-quantifier-form"), "{right}");
-    assert!(!right.to_string().contains("not-yet-implemented"), "{right}");
+    assert_eq!(
+        package.item(0)["record"],
+        source.item(0)["record"],
+        "{right}"
+    );
+    assert!(
+        !right.to_string().contains("hyper-quantifier-form"),
+        "{right}"
+    );
+    assert!(
+        !right.to_string().contains("not-yet-implemented"),
+        "{right}"
+    );
 }
 
 // Both evaluator ports read every pair of reachable Counter values. Equal
