@@ -712,9 +712,10 @@ pub(super) enum Badness {
     /// The claim's atom is false for the instance.
     False(ModelInstance),
     /// A condition of the claim, an atom or the activation's, is undefined
-    /// for the instance.
+    /// for the instance, or (no instance, as for a derived item) a step
+    /// guard of the node's state is undefined (ADR-018 UE-6).
     Undefined(
-        ModelInstance,
+        Option<ModelInstance>,
         fsl_eval::temporal::UndefinedCause,
         UndefinedLocus,
     ),
@@ -1191,7 +1192,7 @@ pub(super) struct Run<'r, 's, 'a> {
     escape_states: u64,
     escape_edges: u64,
     /// The guarded steps of each model state reached, by its key.
-    steps: BTreeMap<Vec<u8>, Vec<GuardedStep>>,
+    steps: BTreeMap<Vec<u8>, fsl_eval::simulation::model::GuardedSteps>,
     /// Undefined timed guards retained by state-graph exploration.
     undefined: Vec<(Vec<u8>, UndecidedReading)>,
     /// The first instance an admitted behaviour read short of data for.
@@ -1895,22 +1896,78 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         self.steps_for(&state)
     }
 
-    /// The guarded steps of `state`, computed once per model state.
+    /// The guarded steps of `state`, computed once per model state. A state
+    /// whose expansion evaluated a guard undefined settles nothing from its
+    /// steps (ADR-018 UE-6): the search is undecided unless the route
+    /// refutes it first through [`Self::undefined_of`].
     pub(super) fn steps_for(&mut self, state: &ModelSimState) -> Result<Vec<GuardedStep>, Halt> {
+        let expanded = self.expanded_steps(state)?;
+        match expanded.undefined {
+            // The route refutes an undefined guard when it enters the
+            // state, so what reads the steps after (divergence, the
+            // counterexample's path) reads the guard as a disabled step.
+            Some(_) if self.refutes_undefined_guards() => Ok(expanded.steps),
+            Some(finding) => Err(self.undecided(ZoneUndecided::UndecidedSuccessor(
+                TimedStop::Undefined(Box::new(finding)),
+            ))),
+            None => Ok(expanded.steps),
+        }
+    }
+
+    /// Whether the route refutes a state whose step guard is undefined as
+    /// it enters the state ([`Self::badness`] for a claim or deadlock-freedom
+    /// item, the liveness product's `take` without a fairness). Every other
+    /// route is undecided there (ADR-018 UE-6).
+    fn refutes_undefined_guards(&self) -> bool {
+        match &self.judged {
+            Judged::Claim(_) | Judged::DeadlockFreedom => true,
+            Judged::Liveness(claim) => claim.clause.fairness().is_empty(),
+            Judged::StateGraph
+            | Judged::SourceClosure
+            | Judged::TimeLockFreedom
+            | Judged::Refinement => false,
+        }
+    }
+
+    /// The first undefined finding of `state`'s expansion (ADR-018 UE-6) as
+    /// the locus and cause an undefined evaluation names.
+    #[implements("FR-239-AC-10")]
+    pub(super) fn undefined_of(
+        &mut self,
+        state: &ModelSimState,
+    ) -> Result<Option<(UndefinedLocus, fsl_eval::temporal::UndefinedCause)>, Halt> {
+        let expanded = self.expanded_steps(state)?;
+        Ok(expanded.undefined.and_then(|finding| {
+            fsl_replay::undefined_finding(std::slice::from_ref(&finding))
+                .map(|(locus, _, cause)| (locus, cause))
+        }))
+    }
+
+    fn expanded_steps(
+        &mut self,
+        state: &ModelSimState,
+    ) -> Result<fsl_eval::simulation::model::GuardedSteps, Halt> {
         let key = self.key(state)?;
         if let Some(steps) = self.steps.get(&key) {
             return Ok(steps.clone());
         }
-        let steps = match self.timed.guarded_steps(state) {
-            Ok(steps) => steps,
-            Err(TimedStop::Undecided(reading))
-                if matches!(self.judged, Judged::StateGraph) && reading.cause.is_some() =>
-            {
-                self.undefined.push((key.clone(), *reading));
-                Vec::new()
+        let mut steps = self.timed(self.timed.guarded_expansion(state))?;
+        if matches!(self.judged, Judged::StateGraph) {
+            // The state-graph route retains the undefined guard and
+            // explores no step past it.
+            if let Some(finding) = steps.undefined.clone() {
+                match self.timed.undefined_stop(finding) {
+                    TimedStop::Undecided(reading) if reading.cause.is_some() => {
+                        self.undefined.push((key.clone(), *reading));
+                        steps = fsl_eval::simulation::model::GuardedSteps {
+                            steps: Vec::new(),
+                            undefined: None,
+                        };
+                    }
+                    stop => return self.timed(Err(stop)),
+                }
             }
-            Err(stop) => return self.timed(Err(stop)),
-        };
+        }
         self.steps.insert(key, steps.clone());
         Ok(steps)
     }
@@ -2175,7 +2232,20 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         clippy::type_complexity,
         reason = "no violation, a violation, or one only after a delay"
     )]
+    #[implements("FR-239-AC-10")]
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
+        // ADR-018 UE-6: a step guard with no value at the node's state is
+        // read as a disabled step by the expansion, so the node is refuted
+        // as an undefined evaluation before any verdict reads its steps.
+        if self.refutes_undefined_guards() {
+            let state = self.nodes[node].state.clone();
+            if let Some((locus, cause)) = self.undefined_of(&state)? {
+                let instance = self
+                    .claim()
+                    .and_then(|claim| claim.instances.first().cloned());
+                return Ok(Some(Ok(Badness::Undefined(instance, cause, locus))));
+            }
+        }
         let claim = match &self.judged {
             Judged::Claim(claim) => claim,
             Judged::StateGraph | Judged::SourceClosure => return Ok(None),
@@ -2194,7 +2264,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             };
             if let Some(undefined) = window.undefined(q) {
                 return Ok(Some(Ok(Badness::Undefined(
-                    instance(undefined.instance)?,
+                    Some(instance(undefined.instance)?),
                     undefined.cause.clone(),
                     UndefinedLocus::Atom(undefined.atom),
                 ))));
@@ -2217,7 +2287,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 AtomReading::False => return Ok(Some(Ok(Badness::False(instance.clone())))),
                 AtomReading::Undefined(cause) => {
                     return Ok(Some(Ok(Badness::Undefined(
-                        instance.clone(),
+                        Some(instance.clone()),
                         cause,
                         UndefinedLocus::Atom(atom),
                     ))));
@@ -2594,9 +2664,11 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         // canonical state; σ carries them to the concrete one.
         let badness = match badness {
             Badness::False(instance) => Badness::False(lift_instance(instance, &sigma)),
-            Badness::Undefined(instance, cause, locus) => {
-                Badness::Undefined(lift_instance(instance, &sigma), cause, locus)
-            }
+            Badness::Undefined(instance, cause, locus) => Badness::Undefined(
+                instance.map(|instance| lift_instance(instance, &sigma)),
+                cause,
+                locus,
+            ),
             Badness::Deadlock(zone) => Badness::Deadlock(self.renamed(&zone, &sigma)?),
         };
         self.finite_counterexample((initial, stages, stutters), state, badness, escape, &sigma)
@@ -2685,9 +2757,17 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     .map_or_else(Vec::new, |claim| claim.clause.fairness().to_vec()),
             ),
             Badness::Undefined(instance, cause, locus) => {
-                let claim = self
+                let fairness = self
                     .claim()
-                    .ok_or(ZoneCheckRefusal::Fault("undefined-claim"))?;
+                    .map_or_else(Vec::new, |claim| claim.clause.fairness().to_vec());
+                // The guarded transition of an undefined precondition,
+                // which a replay rebuilds the site with.
+                let transition = match &locus {
+                    UndefinedLocus::Contract(_) | UndefinedLocus::Protocol(_) => {
+                        self.expanded_steps(&state)?.undefined_guard_of()
+                    }
+                    _ => None,
+                };
                 (
                     CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
                         site: UndefinedSite {
@@ -2696,7 +2776,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                                 discrete_key,
                             ),
                             locus,
-                            transition: None,
+                            transition,
                             time: Some(Box::new(TimedPoint {
                                 stamp: concrete.last_stamp.clone(),
                                 clocks: present,
@@ -2704,8 +2784,8 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                         },
                         cause,
                     }),
-                    Some(instance),
-                    claim.clause.fairness().to_vec(),
+                    instance,
+                    fairness,
                 )
             }
             Badness::Deadlock(_) => (CounterexampleKind::Deadlock, None, Vec::new()),

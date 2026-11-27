@@ -1173,6 +1173,14 @@ impl Run<'_, '_, '_> {
                 }
             }
         }
+        // ADR-018 UE-6: a step guard with no value at the state is an
+        // undefined position like an undefined letter. Under a fairness the
+        // route stays undecided there (`steps_for`).
+        if reading.is_none() && self.refutes_undefined_guards() {
+            if let Some((locus, cause)) = self.undefined_of(state)? {
+                reading = Some(Reading::Undefined(locus, cause));
+            }
+        }
         let reading = reading.unwrap_or(Reading::Defined(letter));
         live.readings.insert(key, reading.clone());
         Ok(reading)
