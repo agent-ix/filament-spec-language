@@ -190,14 +190,48 @@ impl Run<'_, '_> {
                         // A contract conjunction with no value is no disabled
                         // step (ADR-018 UE-6); a refused one leaves the
                         // successors unknown.
-                        if expanded
+                        if let Some(contract) = expanded
                             .findings
                             .iter()
-                            .any(|finding| finding.undefined_contract().is_some())
+                            .find_map(fsl_eval::simulation::model::ModelFinding::undefined_contract)
                         {
-                            return Err(Stop::Refused(Box::new(
-                                super::HyperRefusal::ClosedUndefined.into(),
-                            )));
+                            // The tuple is the joint prefix that reaches the
+                            // state: the instance is refuted there, never read
+                            // as a disabled step (ADR-018 UE-6, ADR-023 HV-8).
+                            let (_, state_key) = system
+                                .state_key(state, fsl_foundation::IdentityLimits::default())
+                                .map_err(|refusal| {
+                                    Stop::Refused(Box::new(
+                                        crate::model_check::ModelCheckRefusal::Encoding(refusal),
+                                    ))
+                                })?;
+                            let variable = self
+                                .variables()
+                                .into_iter()
+                                .nth(component)
+                                .ok_or_else(|| fault("an-undefined-component-is-quantified"))?;
+                            let position = widen(path.steps.len());
+                            let tuple = node.paths.iter().collect::<Vec<_>>();
+                            return Err(Stop::Outcome(Box::new(HyperOutcome::Violated {
+                                counterexample: Box::new(HyperCounterexample {
+                                    kind: HyperCounterexampleKind::Undefined(
+                                        fsl_replay::HyperUndefined {
+                                            position,
+                                            state_keys: vec![state_key],
+                                            variables: vec![variable],
+                                            locus: fsl_replay::HyperLocus::Contract(
+                                                contract.clause,
+                                            ),
+                                            transition: contract.guard_of,
+                                            cause: contract.cause,
+                                        },
+                                    ),
+                                    instance: Self::instance_of(inputs.instance),
+                                    traces: self.closed_traces(&tuple)?,
+                                    trace_position: position,
+                                }),
+                                stats: totals.stats(),
+                            })));
                         }
                         if expanded
                             .findings

@@ -9,7 +9,7 @@
 //! `step(0)` never does.
 
 use filament_exact::{Cancel, Undefined};
-use fsl_analyze::model_check::{HyperRefusal, ModelCheckRefusal};
+use fsl_analyze::model_check::ModelCheckRefusal;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
     ExistentialOutcome, HyperCounterexampleKind, HyperLocus, HyperOutcome, ModelCheckLimits,
@@ -266,14 +266,19 @@ fn assert_refuted(
     assert_eq!(label, "Refuted");
 }
 
-fn assert_closed_undefined_refused(run: Result<(HyperOutcome, String), ModelCheckRefusal>) {
-    assert!(
-        matches!(
-            run,
-            Err(ModelCheckRefusal::Hyper(HyperRefusal::ClosedUndefined))
-        ),
-        "expected the ClosedUndefined refusal, got {run:?}"
-    );
+/// The closed forms refute at the state whose guard has no value, with the
+/// contract clause as the locus (ADR-023 HV-8).
+fn assert_closed_undefined_refuted(run: Result<(HyperOutcome, String), ModelCheckRefusal>) {
+    let (outcome, label) = run.expect("not refused");
+    let HyperOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected a violation, got {outcome:?}");
+    };
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!("expected undefined, got {:?}", counterexample.kind);
+    };
+    assert_eq!(undefined.locus, HyperLocus::Contract("Guard".to_owned()));
+    assert_eq!(undefined.cause, DIVISION);
+    assert_eq!(label, "Refuted");
 }
 
 /// Universal, infinite: the body is decided true at position 0 on every
@@ -341,19 +346,19 @@ fn an_existential_member_at_the_guard_refutes_the_universal_side() {
     );
 }
 
-/// Item level: `HyperRefusal::ClosedUndefined` settles `unsupported`, the
-/// `NOT_YET` cause, by the pinned mapping in `analyze/items.rs`. Closed finite executions of length 4 reach `(0, 1)` by `step(1)` from `(0, 0)`
-/// and start there from `(0, 1)`: no execution ends at a state whose guard has no
-/// value, so the clause is not proved.
+/// Closed finite executions of length 4 reach `(0, 1)` by `step(1)` from
+/// `(0, 0)` and start there from `(0, 1)`: the state's guard has no value, so
+/// both closed forms refute there with the contract clause as the locus
+/// (ADR-023 HV-8), never proving the clause.
 #[trace("TC-2243", "FR-173-AC-7")]
 #[test]
-fn closed_universal_and_forall_exists_do_not_prove_past_the_guard() {
+fn closed_universal_and_forall_exists_refute_at_the_guard() {
     for start in [(0, 0), (0, 1)] {
-        assert_closed_undefined_refused(hyper(
+        assert_closed_undefined_refuted(hyper(
             &universal("ep", "", "eventually [0, 3] holds(v.h @ a = v.h @ a)"),
             &[start],
         ));
-        assert_closed_undefined_refused(hyper(
+        assert_closed_undefined_refuted(hyper(
             &forall_exists("ep", "", "eventually [0, 3] holds(v.h @ a = v.h @ b)"),
             &[start],
         ));

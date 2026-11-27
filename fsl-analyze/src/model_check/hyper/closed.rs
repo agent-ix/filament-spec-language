@@ -38,9 +38,9 @@ use fsl_eval::hyper::{
 };
 use fsl_eval::simulation::ConstraintValue;
 use fsl_replay::{
-    AppliedReduction, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
-    HyperTrace, IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark,
-    UndecidedCause,
+    AppliedReduction, HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperOutcome,
+    HyperStep, HyperTrace, HyperUndefined, IncompleteCause, ModelCheckLimit, ModelStep,
+    ReachedLimit, StepMark, UndecidedCause,
 };
 
 use super::{
@@ -93,7 +93,7 @@ impl Run<'_, '_> {
                     totals.states = totals.states.saturating_add(widen(list.len()));
                     lists.push(list);
                 }
-                Err(stop) => return self.closed_stop(stop, index, &totals),
+                Err(stop) => return self.closed_stop(stop, index, instances, &totals),
             }
         }
         totals.depth = depth;
@@ -453,6 +453,7 @@ impl Run<'_, '_> {
         &self,
         stop: ClosedStop,
         index: usize,
+        instances: &[Vec<ParameterBinding>],
         totals: &Totals,
     ) -> Result<HyperOutcome, ModelCheckRefusal> {
         match stop {
@@ -461,7 +462,55 @@ impl Run<'_, '_> {
             ClosedStop::Executions { limit } => {
                 Ok(exhausted(ModelCheckLimit::MaxStates, widen(limit), totals))
             }
-            ClosedStop::Undefined { .. } => Err(HyperRefusal::ClosedUndefined.into()),
+            ClosedStop::Undefined { prefix, contract } => {
+                // A contract conjunction with no value at a reachable state
+                // refutes (ADR-018 UE-6, ADR-023 HV-8). The tuple is that
+                // prefix for every variable, which needs every variable over
+                // this subject; over several subjects the other components'
+                // paths are not known here, so the form stays refused.
+                let (Some(instance), true) = (
+                    instances.first(),
+                    self.slots.iter().all(|slot| *slot == index),
+                ) else {
+                    return Err(HyperRefusal::ClosedUndefined.into());
+                };
+                let system = self
+                    .systems
+                    .get(index)
+                    .ok_or_else(|| fault("an-undefined-subject-is-admitted"))?;
+                let (_, state_key) = prefix
+                    .states
+                    .last()
+                    .ok_or_else(|| fault("a-closed-prefix-has-a-state"))
+                    .and_then(|state| {
+                        system
+                            .state_key(state, fsl_foundation::IdentityLimits::default())
+                            .map_err(ModelCheckRefusal::Encoding)
+                    })?;
+                let variable = self
+                    .variables()
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| fault("an-undefined-component-is-quantified"))?;
+                let position = widen(prefix.steps.len());
+                let tuple = vec![&prefix; self.slots.len()];
+                Ok(HyperOutcome::Violated {
+                    counterexample: Box::new(HyperCounterexample {
+                        kind: HyperCounterexampleKind::Undefined(HyperUndefined {
+                            position,
+                            state_keys: vec![state_key],
+                            variables: vec![variable],
+                            locus: HyperLocus::Contract(contract.clause),
+                            transition: contract.guard_of,
+                            cause: contract.cause,
+                        }),
+                        instance: Self::instance_of(instance),
+                        traces: self.closed_traces(&tuple)?,
+                        trace_position: position,
+                    }),
+                    stats: totals.stats(),
+                })
+            }
             ClosedStop::Refused => Ok(HyperOutcome::Undecided {
                 cause: UndecidedCause::UndecidedSuccessor,
                 stats: totals.stats(),
