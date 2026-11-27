@@ -9019,40 +9019,36 @@ fn source_object_rows(
         // order and the type itself last: a field's place in the view is its
         // owner's rank, then its declared position (FR-569 "Source-object
         // identity rows").
-        let owner_chain = {
-            let supertypes_of = |key: &_| object_records.get(key).map(|found| &found.supertypes);
-            let mut chain = Vec::new();
-            let mut stack = vec![(&object.key, 0_usize)];
-            while let Some((key, next)) = stack.pop() {
-                let supertypes = supertypes_of(key).map_or(&[][..], |found| found.as_slice());
-                match supertypes.get(next) {
-                    Some(parent) => {
-                        stack.push((key, next + 1));
-                        if !chain.contains(&parent)
-                            && !stack.iter().any(|(held, _)| *held == parent)
-                        {
-                            stack.push((parent, 0));
-                        }
-                    }
-                    None => {
-                        if !chain.contains(&key) {
-                            chain.push(key);
-                        }
-                    }
-                }
-            }
-            chain
-        };
+        let owner_chain = fsl_semantics::check::source_object_owner_chain(
+            |key| {
+                object_records
+                    .get(key)
+                    .map(|found| found.supertypes.as_slice())
+            },
+            &object.key,
+        );
         let mut placed: Vec<(
             (usize, usize),
             SelectedSourceObjectMember,
             SourceObjectMemberFacts,
         )> = Vec::with_capacity(source_members.len());
-        for ((name, target, optional), attribute) in source_members.into_iter().zip(attributes) {
+        let mut bound: Vec<&str> = Vec::with_capacity(source_members.len());
+        for (name, target, optional) in source_members {
+            // The body's binding names are exactly the view's field names,
+            // each once.
+            if bound.contains(&name) {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            bound.push(name);
+            // The body binds the view order; the scope lists an object's own
+            // fields before its supertypes', so each binding finds its
+            // attribute by name.
+            let attribute = attributes
+                .iter()
+                .find(|attribute| attribute.field().name() == name)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
             let field = attribute.field();
-            if name != field.name()
-                || optional != (field.presence() == filament_exact::Presence::Optional)
-            {
+            if optional != (field.presence() == filament_exact::Presence::Optional) {
                 return Err(EmitRefusal::SourceMapInvariant);
             }
             let field_owner = graph

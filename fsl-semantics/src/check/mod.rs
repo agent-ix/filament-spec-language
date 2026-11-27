@@ -634,7 +634,7 @@ pub use fsl_forms::AggregateComparison;
 pub use lowering::{
     CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion, SelectedModelUnionCase,
     SelectedModelUnionPayload, SourceClockEntry, SourceClockMembers, clock_field_member_type,
-    collection_kind,
+    collection_kind, source_object_owner_chain,
 };
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
