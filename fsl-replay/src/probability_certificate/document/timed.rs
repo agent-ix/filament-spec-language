@@ -309,9 +309,16 @@ fn check_expected_elapsed(
     if !some_policy_reaches_almost_surely(&graph, cancel, meter)?.contains(&graph.initial) {
         return check_infinite_mean_time(graph.initial, bytes, &document, &bound);
     }
-    // A finite expectation reads every state's delay and steps, which a
-    // quiescent state does not have.
+    // Some policy reaches the target, so the expectation is not infinite and a
+    // value-free infinity document is false. A finite value over a quiescent
+    // state, which may idle without end, is not derived here.
     if quiescent {
+        if document.values.is_empty() && document.ranking.is_empty() {
+            return Ok(rejected(
+                ProbabilityCertificateRule::Malformed,
+                graph.initial,
+            ));
+        }
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let checked = check_mean_time_values(
@@ -402,7 +409,7 @@ fn check_workload_mean_time(
 struct MeanTimeGraph {
     graph: CheckerGraph,
     costs: RegionPolicyWeights,
-    /// Whether a reached non-target state is quiescent, listed with no choice.
+    /// Whether a reached non-target state is quiescent.
     quiescent: bool,
 }
 
@@ -1107,25 +1114,15 @@ fn enumerate_region_mean_time(
             )?;
             continue;
         }
-        // A quiescent state changes no discrete state again, so a target it
-        // does not satisfy is never reached from it.
+        // Quiescent means no time invariant and not urgent; steps still fire
+        // there (FR-231). The state keeps its delay and steps, derived below
+        // by this pass; the flag only bars a finite value the checker has not
+        // derived for a state that may idle without end.
         if timed
             .is_quiescent(current.timed.discrete())
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
         {
             quiescent = true;
-            costs.insert(key.clone(), Vec::new());
-            insert_checker_state(
-                key,
-                CheckerState {
-                    terminal: Some(false),
-                    choices: Vec::new(),
-                },
-                &mut states,
-                storage,
-                limits,
-            )?;
-            continue;
         }
         let mut choices = Vec::new();
         let mut choice_costs = Vec::new();
