@@ -2248,6 +2248,7 @@ fn fr852_gap_request_item(variant: &str, claim: &str, options: Option<Value>) ->
 struct Fr852GapRun {
     items: Vec<Value>,
     records: Vec<fsl_analyze::analyze::AnalyzeRecord>,
+    wire_loci: Vec<Value>,
 }
 
 impl Fr852GapRun {
@@ -2257,6 +2258,10 @@ impl Fr852GapRun {
 
     fn record(&self, index: usize) -> &fsl_analyze::analyze::AnalyzeRecord {
         &self.records[index]
+    }
+
+    fn wire_locus(&self, index: usize) -> &Value {
+        &self.wire_loci[index]
     }
 }
 
@@ -2317,6 +2322,27 @@ fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
     let selections = items
         .as_array()
         .expect("the scenario supplies item selections");
+    let wire_loci = selections
+        .iter()
+        .map(|selection| {
+            let name = selection["claim"]
+                .as_str()
+                .expect("each selection names its claim");
+            let claim = package
+                .graph()
+                .state_graph_claim(name)
+                .expect("the checked package contains the selected claim");
+            let occurrence = claim.occurrence().expect("the claim has an occurrence");
+            json!({
+                "node": fsl_foundation::node_wire::node_key_to_json(occurrence.node())
+                    .expect("the claim node has an FR-364 wire spelling"),
+                "occurrence": {
+                    "role": occurrence.origin().role().as_str(),
+                    "ordinal": occurrence.origin().ordinal(),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
     let records = selections
         .iter()
         .enumerate()
@@ -2383,7 +2409,11 @@ fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
             serde_json::to_value(outcome).expect("the outcome serializes")
         })
         .collect();
-    Fr852GapRun { items, records }
+    Fr852GapRun {
+        items,
+        records,
+        wire_loci,
+    }
 }
 
 fn fr852_gap_assert_undefined_record(
@@ -2633,15 +2663,14 @@ fn fr852_gap_digital_clocks_declines_unsupported_forms_for_all_sources() {
     }
 }
 
-/// FR-852-AC-18/19/26/27: retain the exact terminal-predicate versus selected
-/// constraint source in the typed FR-393 evidence; the wire locus carries the
-/// claim node and occurrence, while the typed record distinguishes the source.
+/// FR-852-AC-18/19/26/27: the full FR-364 wire locus identifies the selected
+/// claim occurrence for both terminal-predicate and state-constraint cases.
 #[trace("TC-2412", "FR-852-AC-18")]
 #[trace("TC-2412", "FR-852-AC-19")]
 #[trace("TC-2412", "FR-852-AC-26")]
 #[trace("TC-2412", "FR-852-AC-27")]
 #[test]
-fn fr852_gap_zone_records_distinguish_terminal_and_constraint_loci() {
+fn fr852_gap_zone_records_name_the_selected_claim_occurrence() {
     for (variant, claim, locus, name) in [
         ("U-T", "UndefinedAlways", "terminal", "terminal-always"),
         ("U-C", "UndefinedAlways", "constraint", "constraint-always"),
@@ -2653,7 +2682,13 @@ fn fr852_gap_zone_records_distinguish_terminal_and_constraint_loci() {
             &fr852_gap_undefined_unit(variant),
             json!([fr852_gap_request_item(variant, claim, None)]),
         );
-        fr852_gap_assert_undefined_record(&run.item(0), locus, 2, run.record(0));
+        let item = run.item(0);
+        fr852_gap_assert_undefined_record(&item, locus, 2, run.record(0));
+        assert_eq!(
+            item["counterexample"]["undefined"]["where"]["locus"],
+            *run.wire_locus(0),
+            "FR-364 names the selected claim's full occurrence: {item}"
+        );
     }
 }
 
