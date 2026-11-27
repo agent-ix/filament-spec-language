@@ -60,10 +60,10 @@
 use fsl_eval::automaton::translate_negation;
 use fsl_eval::hyper::{
     closed_executions, closed_state_key, horizon as closed_horizon, judge_closed_tuple,
-    read_closed_undefined, search_partner, ClosedExecution, ClosedInputs, ClosedRead,
-    ClosedStep, ClosedStop, ClosedVerdict, ComponentStep, Halt,
-    HyperFinding, HyperLetters, HyperState, HyperTransition, MatchReading, ParameterBinding,
-    PartnerSearch, Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
+    read_closed_undefined, search_partner, ClosedExecution, ClosedInputs, ClosedRead, ClosedStep,
+    ClosedStop, ClosedVerdict, ComponentStep, Halt, HyperFinding, HyperLetters, HyperState,
+    HyperTransition, MatchReading, ParameterBinding, PartnerSearch, Property, StepLabel, StepMatch,
+    WitnessInputs, WitnessProduct,
 };
 use fsl_eval::model_subject::AtomStop;
 use fsl_eval::simulation::model::{
@@ -360,8 +360,8 @@ pub fn replay_hyper_trace_tuple(
             "marks its steps other than as its kind does: every step of a projected one and none of any other",
         ));
     }
-    let closed_profile =
-        replay.clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension;
+    let closed_profile = replay.clause.profile()
+        == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension;
     if let HyperCounterexampleKind::Undefined(claimed) = &counterexample.kind {
         // An event-position clause is read over tuples of closed finite
         // executions of any lengths, `align skip` or not, with the producer's
@@ -1352,8 +1352,7 @@ fn closed_undefined(
         return Ok(no_value());
     };
     let mut executions = Vec::with_capacity(executed.len());
-    for (component, (trace, positions)) in counterexample.traces.iter().zip(&executed).enumerate()
-    {
+    for (component, (trace, positions)) in counterexample.traces.iter().zip(&executed).enumerate() {
         let mut steps = Vec::with_capacity(trace.steps.len());
         for (index, step) in trace.steps.iter().enumerate() {
             match step {

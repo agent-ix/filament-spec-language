@@ -1524,10 +1524,14 @@ fn decide_closed(
                         };
                         let position = usize::try_from(found.position)
                             .map_err(|_| fault("a-position-fits-usize"))?;
-                        let state_key =
-                            fsl_eval::hyper::closed_state_key(system, clause, execution, found.position)
-                                .map_err(ModelCheckRefusal::Encoding)?
-                                .ok_or_else(|| fault("an-undefined-position-is-a-state"))?;
+                        let state_key = fsl_eval::hyper::closed_state_key(
+                            system,
+                            clause,
+                            execution,
+                            found.position,
+                        )
+                        .map_err(ModelCheckRefusal::Encoding)?
+                        .ok_or_else(|| fault("an-undefined-position-is-a-state"))?;
                         undefined = Some((
                             ModelPath {
                                 initial: u32::try_from(initial)

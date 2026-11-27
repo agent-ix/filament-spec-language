@@ -51,14 +51,20 @@ fn refuted_with(contracts: &str) -> (u64, String) {
         panic!("expected a refutation (RE-5): {outcome:?}");
     };
     assert!(
-        matches!(counterexample.kind, CounterexampleKind::UndefinedEvaluation(_)),
+        matches!(
+            counterexample.kind,
+            CounterexampleKind::UndefinedEvaluation(_)
+        ),
         "an undefined evaluation: {:?}",
         counterexample.kind
     );
     let Some(RefinementFailure::UndefinedContract { position, clause }) =
         counterexample.refinement.clone()
     else {
-        panic!("the failure is an undefined contract: {:?}", counterexample.refinement);
+        panic!(
+            "the failure is an undefined contract: {:?}",
+            counterexample.refinement
+        );
     };
     (position, clause)
 }

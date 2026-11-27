@@ -24,8 +24,7 @@ use crate::hyper::seam::{
 };
 use crate::temporal::{
     evaluate_closed_tuple, read_closed_atom, AtomReading, ComponentPosition, LetterStop,
-    TemporalOutcome,
-    TemporalPosition, TupleLetters,
+    TemporalOutcome, TemporalPosition, TupleLetters,
 };
 
 use crate::simulation::model::{ModelSimState, ModelSystem};

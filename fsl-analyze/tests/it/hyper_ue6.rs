@@ -383,7 +383,6 @@ fn match_run(declaration: &str) -> Result<HyperOutcome, ModelCheckRefusal> {
     world.run(ModelCheckLimits::default(), &Cancel::new())
 }
 
-
 #[trace("TC-602")]
 #[test]
 fn an_undefined_match_refutes_the_infinite_universal_and_forall_exists() {
@@ -435,7 +434,10 @@ fn an_undefined_match_refutes_the_closed_forms() {
             panic!("{quantifier}: expected a counterexample, got {outcome:?}");
         };
         let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-            panic!("{quantifier}: expected undefined, got {:?}", counterexample.kind);
+            panic!(
+                "{quantifier}: expected undefined, got {:?}",
+                counterexample.kind
+            );
         };
         assert!(
             matches!(

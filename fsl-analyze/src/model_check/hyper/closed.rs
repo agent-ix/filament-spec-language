@@ -173,8 +173,7 @@ impl Run<'_, '_> {
                         existentials,
                     } => {
                         let mut tuple = universal.clone();
-                        for (slot, index) in self.slots.iter().skip(universals).zip(&existentials)
-                        {
+                        for (slot, index) in self.slots.iter().skip(universals).zip(&existentials) {
                             tuple.push(
                                 lists
                                     .get(*slot)
