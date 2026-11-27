@@ -74,7 +74,7 @@ pub struct CheckedModelRelation {
 }
 ```
 
-- A typed `CheckRefusal` with a span, and no checked clause, on refusal.
+- A typed `SemanticCheckRefusal` with a span, and no checked clause, on refusal.
 
 ## Behavior
 

@@ -818,7 +818,8 @@ impl World {
         atoms: Vec<Atom>,
         outcome: &ModelCheckOutcome,
     ) -> fsl_replay::ModelCheckRecord {
-        self.settle_clause_with_replay_count(clause, atoms, outcome).0
+        self.settle_clause_with_replay_count(clause, atoms, outcome)
+            .0
     }
 
     /// FR-128: replay `payload` as clause `clause`'s counterexample, its

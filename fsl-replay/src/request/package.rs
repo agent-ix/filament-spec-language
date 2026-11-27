@@ -306,6 +306,7 @@ impl ReplayPackage {
     /// which the recompile checks that function's body under. A node whose
     /// member is absent or not `linked`/`kernel` selects nothing: the
     /// native reader refuses it at admission (FR-952-AC-4).
+    #[ix_trace_rs::string_edge]
     pub(crate) fn function_modes(
         &self,
     ) -> std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode> {

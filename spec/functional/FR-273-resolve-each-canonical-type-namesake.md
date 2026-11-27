@@ -163,6 +163,18 @@ gate. Row n is checked by FR-273-AC-n, and FR-273-AC-51 checks both.
 | 49 | `filament_exact::location::Location` (O-12) | `filament_semantic_value::location::Location` | a declaration and a child-index path to an expression | rename `ExpressionLocation`; checked by a scan of `filament-semantic-value` |
 | 50 | `filament_exact::location::Origin` (an occurrence key within a node, O-07) | `filament_semantic_value::location::Origin` | the declaration a location belongs to | rename `ExpressionOwner`; checked by a scan of `filament-semantic-value` |
 
+## Additional workspace namesakes
+
+These namesakes were reported after the original verdict table was authored.
+Row n is checked by FR-273-AC-n.
+
+| Row | Canonical type | Namesake | Namesake's meaning | Verdict |
+| --- | --- | --- | --- | --- |
+| 52 | `fsl_semantics::value::member::Member` (O-06 member identity) | `fsl_analyze::model_check::hyper::closed::reduction::Member` | one joint-position orbit member with positions and a permutation | rename `ClosedOrderMember` |
+| 53 | same | `fsl_replay::planner::from_admitted::Member<'p>` | one source composition member with a value and source region | rename `CompositionSourceMember` |
+| 54 | `fsl_cst::ParsedSource` (O-15) | `fsl_forms::cst::ParsedSource` | the forms-layer facade over the CST parse result, exposing a token view | rename `FormsSource` |
+| 55 | `fsl_semantics::check::refusal::CheckRefusal` (the semantic checking stage's located refusal) | `filament_contract_runtime::exact::expression::CheckRefusal` | one refusal from generated-package admission, whose cause vocabulary is deliberately narrowed | rename the FSL type `SemanticCheckRefusal`; retain the runtime type's stage-specific name |
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -218,6 +230,10 @@ gate. Row n is checked by FR-273-AC-n, and FR-273-AC-51 checks both.
 | FR-273-AC-49 | A scan of the module-level items, type aliases and `pub use` items of `filament-semantic-value`'s `location` module finds `ExpressionLocation`, a declaration and a child-index path to an expression, and no item, alias or re-export whose identifier is `Location`; the same scan over a copy of the module with `pub type Location = ExpressionLocation;` added reports that alias. | Test (TC-748) |
 | FR-273-AC-50 | A scan of the module-level items, type aliases and `pub use` items of `filament-semantic-value`'s `location` module finds `ExpressionOwner`, the declaration a location belongs to, and no item, alias or re-export whose identifier is `Origin`; the same scan over a copy of the module with `pub use self::ExpressionOwner as Origin;` added reports that re-export. | Test (TC-748) |
 | FR-273-AC-51 | FR-401's interface type that locates an expression resolves at `filament_semantic_value::location::ExpressionLocation`, the owner of an `ExpressionLocation` at `filament_semantic_value::location::ExpressionOwner`, and neither `filament_semantic_value::location::Location` nor `filament_semantic_value::location::Origin` resolves. | Test (TC-748) |
+| FR-273-AC-52 | The item that was `fsl_analyze::model_check::hyper::closed::reduction::Member` is named `ClosedOrderMember` in its definition and uses, and the canonical-types gate reports no `identifier` finding for `Member` at that path. | Test (TC-748) |
+| FR-273-AC-53 | The item that was `fsl_replay::planner::from_admitted::Member<'p>` is named `CompositionSourceMember` in its definition and uses, and the canonical-types gate reports no `identifier` finding for `Member` at that path. | Test (TC-748) |
+| FR-273-AC-54 | The item that was `fsl_forms::cst::ParsedSource` is named `FormsSource` in its definition and uses, and the canonical-types gate reports no `identifier` finding for `ParsedSource` at that path. | Test (TC-748) |
+| FR-273-AC-55 | The semantic stage's former `CheckRefusal` is named `SemanticCheckRefusal` and retains the canonical marker; the generated-package admission type remains `filament_contract_runtime::exact::expression::CheckRefusal`; and the canonical-types gate reports no `identifier` finding for the former FSL name. | Test (TC-748) |
 
 ## Dependencies
 

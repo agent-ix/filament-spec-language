@@ -488,6 +488,7 @@ struct QueuedMessage {
     ordered: bool,
 }
 
+#[ix_trace_rs::string_edge]
 fn without_delivery(entry: &Entry) -> Enc {
     let mut encoded = entry.enc.clone();
     if let Enc::Object(members) = &mut encoded {

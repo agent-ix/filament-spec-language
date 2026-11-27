@@ -9,7 +9,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    AssemblyCause, AssemblyError, CheckRefusal, CheckedGraph, TerminalDeclaration,
+    AssemblyCause, AssemblyError, CheckedGraph, SemanticCheckRefusal, TerminalDeclaration,
 };
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -120,7 +120,7 @@ fn a_second_declaration_for_one_model_refuses_naming_both() {
 }
 
 /// The code and cause of each refusal, and the checker's own refusals.
-fn refusals_of(declarations: &str) -> Vec<CheckRefusal> {
+fn refusals_of(declarations: &str) -> Vec<SemanticCheckRefusal> {
     let declarations =
         admit_and_assemble_with_body(&document(), declarations).expect("the unit assembles");
     declarations
@@ -132,7 +132,7 @@ fn refusals_of(declarations: &str) -> Vec<CheckRefusal> {
         .expect_err("the unit refuses")
 }
 
-fn code_and_cause(refusals: &[CheckRefusal]) -> Vec<(Code, Option<&'static str>)> {
+fn code_and_cause(refusals: &[SemanticCheckRefusal]) -> Vec<(Code, Option<&'static str>)> {
     refusals
         .iter()
         .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))

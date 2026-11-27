@@ -165,6 +165,7 @@ fn enum_member_name(owner: &str, member: &str) -> String {
     format!("{}_{}", mangle("e_", owner), mangle("", member))
 }
 
+#[ix_trace_rs::string_edge]
 fn kind_of(type_ref: &str, values: &BTreeMap<String, Kind>) -> Lower<Kind> {
     match type_ref {
         "ix://filament/native/Integer" => Ok(Kind::Int { lo: None, hi: None }),
@@ -182,6 +183,7 @@ fn kind_of(type_ref: &str, values: &BTreeMap<String, Kind>) -> Lower<Kind> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn read_object(node: &Value, id: &str, values: &BTreeMap<String, Kind>) -> Lower<ObjectParts> {
     if !items(node, "supertypes").is_empty() {
         return refuse(
@@ -260,6 +262,7 @@ fn read_object(node: &Value, id: &str, values: &BTreeMap<String, Kind>) -> Lower
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
     let mut documents = Vec::new();
     for bytes in models {
@@ -543,6 +546,7 @@ impl Lowering<'_, '_> {
         }
     }
 
+    #[ix_trace_rs::string_edge]
     fn node(
         &mut self,
         position: usize,
@@ -580,6 +584,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Check the application `body` and name its operands, left first.
+    #[ix_trace_rs::string_edge]
     fn application(
         &mut self,
         construct: String,
@@ -735,6 +740,7 @@ impl Lowerer<'_> {
         self.lower_visit(Visit::Node { position, primed })
     }
 
+    #[ix_trace_rs::string_edge]
     fn literal(&self, term: &Value) -> Lower<E> {
         let value = &term["value"];
         let value = match str_of(term, "value_kind") {
@@ -770,6 +776,7 @@ impl Lowerer<'_> {
     }
 
     /// Whether the parameter node at `position` is typed by an object type.
+    #[ix_trace_rs::string_edge]
     fn is_object_typed(&self, position: usize) -> bool {
         let node = self.graph.node(position);
         let Some(ty) = self.graph.position(&node.semantic_type) else {
@@ -805,6 +812,7 @@ impl Lowerer<'_> {
     }
 
     /// The bounds of a conversion, checked before its operand is lowered.
+    #[ix_trace_rs::string_edge]
     fn narrow(&self, construct: &str, body: &Value) -> Lower<Combine> {
         let target = self
             .graph
@@ -847,6 +855,7 @@ fn parameter_name(graph: &Graph<'_>, position: usize) -> Option<String> {
 
 /// The object type the `over` binder at `position` ranges over: its
 /// identity and its node.
+#[ix_trace_rs::string_edge]
 fn context_of(graph: &Graph<'_>, position: usize) -> Lower<(String, usize)> {
     let fail = |detail: &str| refusal("temporal/temporal_clause", detail);
     let node = graph.node(position);
@@ -1207,6 +1216,7 @@ struct StateClause {
     expression: Value,
 }
 
+#[ix_trace_rs::string_edge]
 fn state_clauses(graph: &Graph<'_>) -> Lower<Vec<StateClause>> {
     let nodes = &graph.package.resolved_graph().nodes;
     let mut clauses = Vec::new();
@@ -1342,6 +1352,7 @@ fn tla_domain(kind: &Kind) -> String {
 /// # Errors
 ///
 /// A [`Refusal`] naming the first construct this build does not lower.
+#[ix_trace_rs::string_edge]
 pub(super) fn lower(
     graph: &Graph<'_>,
     models: &[Vec<u8>],
@@ -1645,6 +1656,7 @@ impl Lit {
 
 /// The objects of the snapshot's population of `object`, sorted by key
 /// scalars, with each field's value.
+#[ix_trace_rs::string_edge]
 fn snapshot_rows(object: &Object, snapshot: &Value) -> Lower<Vec<(String, Vec<Lit>)>> {
     let mut rows = Vec::new();
     for population in items(snapshot, "populations") {
@@ -2626,6 +2638,7 @@ fn assemble(
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn operation_anchor(graph: &Graph<'_>, object: &Object, operation: &Operation) -> Option<usize> {
     graph
         .package
@@ -2654,6 +2667,7 @@ fn operation_anchor(graph: &Graph<'_>, object: &Object, operation: &Operation) -
         })
 }
 
+#[ix_trace_rs::string_edge]
 fn operation_parameter_node(
     graph: &Graph<'_>,
     clauses: &[StateClause],

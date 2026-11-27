@@ -23,14 +23,14 @@ use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
 use fsl_semantics::model::intake::{admit, admit_unit, package_input, read_domain_package};
-use fsl_semantics::model::normalize::{NormalizeOutcome, normalize_with_meter};
+use fsl_semantics::model::normalize::{normalize_with_meter, NormalizeOutcome};
 use fsl_semantics::model::observation::{
-    AdmissionFailure, DocumentRef, FrameChange, FrameFacts, FrameVerdict, ObservationLimits,
-    OperationFacts, PathStep, Provisions, admit_current_snapshot, admit_frame_invocation,
-    population_universe_for,
+    admit_current_snapshot, admit_frame_invocation, population_universe_for, AdmissionFailure,
+    DocumentRef, FrameChange, FrameFacts, FrameVerdict, ObservationLimits, OperationFacts,
+    PathStep, Provisions,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 use crate::tc235_k2 as base;
@@ -179,7 +179,10 @@ fn assembled_without_record_reader(document: &Value) -> PackageDeclarations {
     assembled_with_record_reader(document, false)
 }
 
-fn assembled_with_record_reader(document: &Value, include_record_reader: bool) -> PackageDeclarations {
+fn assembled_with_record_reader(
+    document: &Value,
+    include_record_reader: bool,
+) -> PackageDeclarations {
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(

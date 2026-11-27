@@ -22,7 +22,7 @@ while leaving `value::expression`'s `mod check;`, `mod facts;`, `mod ir;` and
 `mod termination;` declarations (and their file contents) in place passes an
 absence-only check but fails this one. This test also extends the same
 one-defining-location search, and a shape-equality comparison, to every
-symbol FR-068-CON-3 names (`CheckCause`, `CheckRefusal`, `Obligation`,
+symbol FR-068-CON-3 names (`CheckCause`, `SemanticCheckRefusal`, `Obligation`,
 `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`,
 `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `Location`, `Origin`,
 `ProvedInterval`, `CheckedPackage`, `CheckedExpression`,
@@ -50,7 +50,7 @@ ran would not surface it. Scope: FR-068-AC-1, FR-068-CON-1, FR-068-CON-3.
    for every location defining a method of that name on that type, and
    record each location found.
 5. Extend step 4's one-defining-location search to every symbol
-   FR-068-CON-3 names (`CheckCause`, `CheckRefusal`, `Obligation`,
+   FR-068-CON-3 names (`CheckCause`, `SemanticCheckRefusal`, `Obligation`,
    `MeasureObligation`, `CheckingStage`, `CheckingLimitKind`,
    `DispatchFunctionRole`, `InvalidDispatchDeclaration`, `Location`,
    `Origin`, `ProvedInterval`, `CheckedPackage`,

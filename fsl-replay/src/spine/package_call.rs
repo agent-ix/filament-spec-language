@@ -21,8 +21,8 @@ use fsl_package::{BarePackage, BareSelectionFailure};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::call::{
-    Call, CallOutcome, CallValue, RunRefusal, admit_wire_arguments, bind_arguments,
-    convert_call_failure, convert_outcome_resolving, is_identifier,
+    admit_wire_arguments, bind_arguments, convert_call_failure, convert_outcome_resolving,
+    is_identifier, Call, CallOutcome, CallValue, RunRefusal,
 };
 use super::run_value::{Forms, WriteStop};
 

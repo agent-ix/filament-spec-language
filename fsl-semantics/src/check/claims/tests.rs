@@ -650,12 +650,10 @@ fn a_record_can_carry_a_guard_at_a_non_checked_node() {
         .next()
         .expect("a record");
     let ghost = OccurrenceKey::new(wire(node_key(250)), key.origin().clone());
-    assert!(
-        checked
-            .graph
-            .occurrences()
-            .all(|(node, _, _)| wire(node.clone()) != *ghost.node())
-    );
+    assert!(checked
+        .graph
+        .occurrences()
+        .all(|(node, _, _)| wire(node.clone()) != *ghost.node()));
     let guard = PathGuard::new(ghost.clone(), false);
     let altered = record.clone().with_path_condition(vec![guard.clone()]);
     assert_eq!(altered.path_condition(), [guard]);
@@ -994,9 +992,10 @@ fn tc_160_two_sites_of_one_node_pair_by_location_not_order() {
 fn family_check(
     declarations: &str,
     node_count: u64,
-) -> crate::family::CheckOutcome<crate::check::CheckedDeclaration, crate::check::CheckRefusal> {
-    use crate::check::family::SCALAR_LIMITS_UNLIMITED;
+) -> crate::family::CheckOutcome<crate::check::CheckedDeclaration, crate::check::SemanticCheckRefusal>
+{
     use crate::check::family::fixtures::{check_context, declarations_for, empty_scope, limits};
+    use crate::check::family::SCALAR_LIMITS_UNLIMITED;
     use crate::check::{Signature, Signatures, ValueFunctionFamily};
     use crate::family::{DiagnosticSink, FamilyContract, ScopeStack, StageLimits};
 

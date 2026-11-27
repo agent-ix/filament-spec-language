@@ -26,7 +26,7 @@ The admitted shared type environment, declared `ValueType` and existing source
 
 ## Outputs
 
-Successful validation, the existing located semantic `CheckRefusal`, or a
+Successful validation, the existing located semantic `SemanticCheckRefusal`, or a
 located typed storage refusal at the existing `CheckingStage::Typing` stage.
 No checked result is produced by a failed check.
 
@@ -35,7 +35,7 @@ No checked result is produced by a failed check.
 When the owner returns `Ok(())`, the checker SHALL continue its existing
 FSL-owned enum and variant binding validation.
 When the owner returns `TypeCheckError::Refused(IllTyped)`, the checker SHALL
-apply the existing `CheckRefusal::from_ill_typed` mapping at the original
+apply the existing `SemanticCheckRefusal::from_ill_typed` mapping at the original
 location, preserving diagnostic code, cause, refusal priority and order.
 
 When the owner returns `TypeCheckError::Allocation(StorageRequest)`, the

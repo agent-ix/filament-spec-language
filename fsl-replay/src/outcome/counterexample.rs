@@ -369,6 +369,7 @@ pub fn read_task_temporal_document(
 /// `closure-stutter` step into [`TemporalCounterexample::closure_stutters`]
 /// when `closure_alphabet`, which only the model alphabet has. Where the
 /// alphabet has none the step is the alphabet refusal of any foreign step.
+#[ix_trace_rs::string_edge]
 fn read_document(
     document: &Json,
     closure_alphabet: bool,
@@ -465,6 +466,7 @@ fn read_document(
             .map(StateLocus::into_key)
             .map_err(|defect| shared_defect(&format!("{pointer}/post_state"), defect))
     }
+    #[ix_trace_rs::string_edge]
     fn task_transition(
         value: &Json,
         pointer: &str,
@@ -568,6 +570,7 @@ fn read_document(
                 .transpose()?,
         })
     }
+    #[ix_trace_rs::string_edge]
     fn check_step_shape(
         value: &Json,
         pointer: &str,
@@ -633,6 +636,7 @@ fn read_document(
         )?;
         Ok(())
     }
+    #[ix_trace_rs::string_edge]
     fn parse_step(
         value: &Json,
         pointer: &str,
@@ -1690,6 +1694,7 @@ fn valid_queue_growth_envelope(witness: &Json) -> bool {
     cycle_elapsed == elapsed
 }
 
+#[ix_trace_rs::string_edge]
 fn valid_queue_growth_identity_map(value: &Json) -> bool {
     let Some(mappings) = value.as_array() else {
         return false;

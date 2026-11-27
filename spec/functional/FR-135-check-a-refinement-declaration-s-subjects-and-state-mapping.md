@@ -86,7 +86,7 @@ pub struct ObjectRow {
 pub struct FieldRow { pub field: DeclarationKey, pub expr: CheckedExpr }
 ```
 
-A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
+A typed `SemanticCheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
 
 ## Behavior
 

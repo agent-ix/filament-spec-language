@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use filament_exact::{Cancel, CancelCause};
 use filament_semantic_value::supplied_stop::{SuppliedCause, SuppliedEvent, SuppliedPhase};
 use fsl_replay::{
-    CallSiteUnit, CanonicalAssignment, DependencyInput, Identifier, QualifiedName, ReplayLimits,
-    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource, RequestClocks,
-    RequestTargetWire, SourceIdentity, StateEnvironment, WitnessValue, replay_with_cancel,
+    replay_with_cancel, CallSiteUnit, CanonicalAssignment, DependencyInput, Identifier,
+    QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource,
+    RequestClocks, RequestTargetWire, SourceIdentity, StateEnvironment, WitnessValue,
 };
 use ix_trace_rs::trace;
 

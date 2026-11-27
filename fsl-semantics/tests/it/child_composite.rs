@@ -13,7 +13,9 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, NodeTag, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckCause, CheckedGraph, NodeTag, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use ix_trace_rs::trace;
@@ -62,7 +64,7 @@ fn assemble_document(document: &Value, alias: &str, declarations: &str) -> Packa
     .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
 }
 
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     assemble_as("M", declarations).check(
         CheckMode::Linked,
         CheckingLimits::default(),
@@ -264,7 +266,7 @@ fn a_collection_literal_of_the_parent_admits_a_child_element() {
 }
 
 /// The refusals of `declarations` over the event fixture package.
-fn refused_with_events(declarations: &str) -> Vec<CheckRefusal> {
+fn refused_with_events(declarations: &str) -> Vec<SemanticCheckRefusal> {
     assemble_document(&fixture::document_with_event(), "M", declarations)
         .check(
             CheckMode::Linked,

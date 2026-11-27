@@ -152,6 +152,7 @@ pub struct SourcePlan<'a> {
 impl<'a> SourcePlan<'a> {
     /// Whether a checked policy has a canonical positive-length source adapter.
     /// Model compatibility is admitted separately against the plan grammar.
+    #[ix_trace_rs::string_edge]
     pub fn supports_positive_policy(node: &TemporalClauseNode) -> bool {
         node.clause().clock() == "model-steps" && StepPolicy::new(node.clause()).is_some()
     }

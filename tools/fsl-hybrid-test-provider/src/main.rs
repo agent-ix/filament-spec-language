@@ -44,6 +44,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn run(script: &Value) -> Result<(), String> {
     if let Some(text) = script["stderr"].as_str() {
         eprintln!("{text}");
