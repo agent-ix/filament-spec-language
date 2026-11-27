@@ -1084,7 +1084,7 @@ fn source_two_test_p95_provenance_keeps_identity_across_methods() {
                 "{test}"
             );
             assert_eq!(test["initial_state"], 0, "{test}");
-            assert_eq!(test["binding"]["reference"]["key"], key, "{test}");
+            assert_eq!(test["binding"]["identity"], key, "{test}");
             assert_eq!(test["first_trace_index"], index.to_string(), "{test}");
             let first = test["first_trace_index"]
                 .as_str()
