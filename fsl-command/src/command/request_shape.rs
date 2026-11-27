@@ -654,6 +654,7 @@ fn another_defect(
 
 /// Serde's derived readers report an absent required member as
 /// ``missing field `name` ``; every other error is another defect.
+#[ix_trace_rs::string_edge]
 fn is_missing_member(error: &serde_json::Error) -> bool {
     error.classify() == serde_json::error::Category::Data
         && error.to_string().starts_with("missing field `")

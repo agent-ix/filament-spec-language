@@ -3626,7 +3626,7 @@ fn a_quantity_argument_of_another_unit_is_a_type_mismatch() {
         )
         .expect_err("a Quantity<s> argument is not a Quantity<ms>");
     let argument = last(&text, "3 s");
-    let located = |refusal: &crate::check::CheckRefusal| {
+    let located = |refusal: &crate::check::SemanticCheckRefusal| {
         regions.region(&refusal.location).is_some_and(|region| {
             (region.start(), region.end()) == (argument.start as u64, argument.end as u64)
         })

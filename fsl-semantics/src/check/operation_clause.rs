@@ -23,7 +23,7 @@ use filament_semantic_value::location::{
 use fsl_forms::StateClauseKind;
 
 use super::observation::Observations;
-use super::refusal::CheckRefusal;
+use super::refusal::SemanticCheckRefusal;
 use super::state_clause::{ClauseOperation, ClauseView, TypedStateClause};
 use super::StatePredicate;
 use crate::model::domain_package::ParsedOperationClause;
@@ -215,7 +215,7 @@ impl StatePredicate for CheckedOperationClause {
     }
 }
 
-impl CheckRefusal {
+impl SemanticCheckRefusal {
     /// The operation a refusal in a kept `requires`/`ensures` clause is
     /// about, by its declaration node identity; `None` for a refusal located
     /// anywhere else.

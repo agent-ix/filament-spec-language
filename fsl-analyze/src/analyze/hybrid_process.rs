@@ -184,6 +184,7 @@ fn compose(call: &ProcessCall<'_>) -> Result<HybridProcessRequest, EngineReport>
     clippy::result_large_err,
     reason = "failure directly settles the item with its existing EngineReport API rather than an intermediate error"
 )]
+#[ix_trace_rs::string_edge]
 fn item_entry<'a>(
     outcome: &'a Value,
     backend: &BackendId,

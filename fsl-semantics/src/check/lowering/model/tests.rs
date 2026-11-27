@@ -983,8 +983,8 @@ fn unmappable_model_inputs_are_internal_faults() {
                 lowering.model_node(&key("Order/total"), &location),
             )
         });
-    let fault = |result: Result<NodeKey, CheckRefusal>| match result {
-        Err(CheckRefusal { cause, .. }) => match *cause {
+    let fault = |result: Result<NodeKey, SemanticCheckRefusal>| match result {
+        Err(SemanticCheckRefusal { cause, .. }) => match *cause {
             CheckCause::InternalFault(fault) => *fault,
             cause => panic!("expected an internal fault cause, got {cause:?}"),
         },
@@ -1033,7 +1033,7 @@ fn keying_a_second_declaration_onto_a_recorded_node_refuses() {
         let keyed = lowering.model_node(&d2, &location);
         (keyed, lowering.correspondence.resolve(n.clone()).cloned())
     });
-    let Err(CheckRefusal { ref cause, .. }) = keyed else {
+    let Err(SemanticCheckRefusal { ref cause, .. }) = keyed else {
         panic!("expected an internal fault, got {keyed:?}");
     };
     let CheckCause::InternalFault(fault) = cause.as_ref() else {
@@ -2105,7 +2105,7 @@ mod quantities {
         let (result, graph) = lower(&[], units(), |lowering| {
             lowering.type_node(&ValueType::Quantity(unheld.clone()), &generated_location())
         });
-        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+        assert!(matches!(result, Err(SemanticCheckRefusal { cause, .. })
             if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldUnit(unheld))));
         assert_eq!(graph.nodes().count(), 0);
     }
@@ -2128,7 +2128,7 @@ mod quantities {
         let (result, graph) = lower(&[], table, |lowering| {
             lowering.type_node(&quantity(METRE), &generated_location())
         });
-        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+        assert!(matches!(result, Err(SemanticCheckRefusal { cause, .. })
             if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldNominal(node_key(METRE)))));
         assert_eq!(graph.nodes().count(), 0);
     }

@@ -163,6 +163,7 @@ impl SuppliedTrace {
     /// missing, extra or mistyped member, and a `send` step without a
     /// `send_record` or another step with one, are each a wire-shape defect,
     /// and the first one is reported (FR-941 "Read", FSpec FR-433-AC-8).
+    #[ix_trace_rs::string_edge]
     pub(crate) fn read(bytes: &[u8]) -> Result<Self, TraceDefect> {
         use DefectKind::{InvalidValue, MissingMember, UnknownMember, WrongValueKind};
         let document: Value =
@@ -1197,7 +1198,7 @@ pub(crate) fn package_finite_replay_item<'a>(
                         defect.cause(),
                         defect.position(),
                         Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
-                    )
+                    );
                 }
             };
             let Some(form) = input.evaluator.package_protocol(&protocol) else {
@@ -1286,7 +1287,7 @@ pub(crate) fn package_finite_replay_item<'a>(
                     Ok(ReplayVerdict::Replayed(steps)) => {
                         return finite_report(FiniteReplayReport::Replayed(
                             u64::try_from(steps).unwrap_or(u64::MAX),
-                        ))
+                        ));
                     }
                     Ok(ReplayVerdict::StaleStep(position)) => {
                         furthest = Some(furthest.map_or(position, |held: usize| held.max(position)))
@@ -1296,7 +1297,7 @@ pub(crate) fn package_finite_replay_item<'a>(
                         return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new(
                             "unsupported_construct",
                             "not-yet-implemented",
-                        )))
+                        )));
                     }
                     Err(error) => return report_fault(error),
                 }

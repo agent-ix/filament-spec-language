@@ -319,13 +319,7 @@ pub fn retain_reduced<S: TransitionSystem>(
 where
     S::State: Clone,
 {
-    let hooks = RetainHooks::<S, _, _, _, _>::new(
-        |_: &S, _: &[S::State], _: usize| {},
-        poll,
-        |state: &S::State| encode(&system.key(state), identity),
-        |_: &S::State, _: usize| Ok(()),
-    );
-    retain_reduced_with_key(
+    retain_reduced_admitting(
         system,
         group,
         ample,
@@ -334,9 +328,36 @@ where
             identity,
             max_depth,
         },
-        1,
-        hooks,
+        poll,
+        |_: &S::State, _: usize| Ok(()),
     )
+}
+
+/// [`retain_reduced`] that calls `admit` with each new state and its key
+/// length before the graph stores it; a refusal stops the run with its cause
+/// (FR-255 "Charge before the step").
+///
+/// # Errors
+/// As [`retain`].
+pub(super) fn retain_reduced_admitting<S: TransitionSystem>(
+    system: &S,
+    group: &SymmetryGroup,
+    ample: Option<&dyn Ample<S>>,
+    config: RetainConfig,
+    poll: impl FnMut() -> bool,
+    admit: impl FnMut(&S::State, usize) -> Result<(), CatalogCode>,
+) -> RetainResult<S>
+where
+    S::State: Clone,
+{
+    let identity = config.identity;
+    let hooks = RetainHooks::<S, _, _, _, _>::new(
+        |_: &S, _: &[S::State], _: usize| {},
+        poll,
+        |state: &S::State| encode(&system.key(state), identity),
+        admit,
+    );
+    retain_reduced_with_key(system, group, ample, config, 1, hooks)
 }
 
 /// `retain_reduced` with an internal canonical-key provider. The bytes it

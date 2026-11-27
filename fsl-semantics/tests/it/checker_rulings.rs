@@ -13,8 +13,8 @@ use filament_exact::{CardinalityBound, CollectionKind, CollectionType, NodeKey, 
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    ApplicationTerm, Binding, BindingValue, BodyTerm, CheckRefusal, CheckedGraph, LeafTerm,
-    LiteralValue, MemberTerm, NodeRef, NodeTag, Owner, SemanticGraph,
+    ApplicationTerm, Binding, BindingValue, BodyTerm, CheckedGraph, LeafTerm, LiteralValue,
+    MemberTerm, NodeRef, NodeTag, Owner, SemanticCheckRefusal, SemanticGraph,
 };
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, RelationshipDirection,
@@ -30,7 +30,7 @@ use crate::named_population::fixture as population_fixture;
 
 /// Check `body` after a header selecting the value profile as `v` and, when
 /// `temporal`, the temporal layer as `t`; no model is selected.
-fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let temporal = if temporal {
         "profile t = \"filament.temporal.complete/v1\";\n"
     } else {
@@ -66,7 +66,7 @@ fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<CheckRef
 
 /// `result` is exactly one refusal with `code` and `cause`.
 fn assert_one_refusal(
-    result: Result<CheckedGraph, Vec<CheckRefusal>>,
+    result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>,
     what: &str,
     code: Code,
     cause: &str,
@@ -83,7 +83,7 @@ fn assert_one_refusal(
     );
 }
 
-fn checks(result: Result<CheckedGraph, Vec<CheckRefusal>>, what: &str) -> CheckedGraph {
+fn checks(result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>, what: &str) -> CheckedGraph {
     result.unwrap_or_else(|refusals| panic!("{what} checks: {refusals:?}"))
 }
 

@@ -552,7 +552,7 @@ fn the_type_and_lowering_matches_have_no_catch_all_arm() {
 fn check_under(
     source: RawSourceRef,
     functions: Vec<FunctionDeclaration>,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     PackageDeclarations {
         functions,
         ..PackageDeclarations::new(source, "fixture", fsl_foundation::IdentityLimits::default())
@@ -564,7 +564,7 @@ fn check_under(
     )
 }
 
-fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     check_under(fixture_source(), functions)
 }
 

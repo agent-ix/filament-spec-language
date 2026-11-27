@@ -1002,6 +1002,7 @@ pub fn decide_long_run_workload(
 /// Decide a long-run fraction over every scheduler by MEC optima and exact
 /// Dinkelbach updates (FR-199).
 #[implements("FR-199-AC-2")]
+#[implements("FR-199-AC-6")]
 pub fn decide_long_run_mdp(
     product: &ProbProduct,
     predicate: &[bool],

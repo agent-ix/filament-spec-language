@@ -22,7 +22,7 @@ use crate::check::extension::{
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedNode;
 use crate::check::node_key::{BodyTerm, ExtensionClauseTerm, ExtensionTerm, NodeRef, NodeTag};
-use crate::check::refusal::{CheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 
 /// One checked extension form, as lowering reads it.
 pub(crate) struct ExtensionFormInput<'a> {
@@ -41,7 +41,7 @@ impl Lowering<'_> {
     pub(crate) fn extension_form(
         &mut self,
         input: &ExtensionFormInput<'_>,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let at = extension_location(input.index);
         let mut clauses = Vec::with_capacity(input.form.clauses.len());
         for (position, clause) in input.form.clauses.iter().enumerate() {
@@ -76,7 +76,7 @@ impl Lowering<'_> {
         clause: &CheckedClause,
         lowered: &[Option<NodeKey>],
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let (expected, scalar, body, slot_names) = match &clause.value {
             // A node-kind clause is a `reference` to the target form's node.
             ClauseValue::Form(target) => {

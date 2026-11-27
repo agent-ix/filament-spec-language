@@ -44,13 +44,14 @@ use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
     SubjectBinding, TemporalItem,
 };
+use crate::model_check::digitisable::{digitisation_decline, DigitalItem};
 use crate::model_check::manifest as en1;
 use crate::model_check::{
     check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    certificate_item, explore_timed_state_graph, TimedStateGraphDecision, ZoneCheckLimit,
-    ZoneCheckRefusal, ZoneStop,
+    certificate_item, decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
+    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
 };
 
 /// The property form of a checked claim.
@@ -69,6 +70,7 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
     clippy::too_many_arguments,
     reason = "the item binds source provision, subject, request identity, method, and independent budgets"
 )]
+#[ix_trace_rs::string_edge]
 pub(super) fn state_graph_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
@@ -181,6 +183,10 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if let Some(samples) = form.witness_samples {
         model_limits.witness_samples = samples;
     }
+    let retained = read
+        .limits
+        .engines
+        .item_budget(read.limits.accounting, cancel);
     let request = StateGraphRequest {
         subject: ModelSubject {
             simulation: read.simulation(),
@@ -193,6 +199,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         max_depth: form.max_depth,
         limits: model_limits,
         seed: form.seed,
+        retained: Some(&retained),
     };
     let replay = |instance: &StateGraphInstanceOutcome| {
         #[cfg_attr(not(feature = "test-support"), allow(unused_mut))]
@@ -277,6 +284,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
 }
 
 #[implements(
+    "FR-243-AC-6",
     "FR-852-AC-12",
     "FR-852-AC-13",
     "FR-852-AC-14",
@@ -313,6 +321,15 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     if let Some(refusal) = digital_closed_refusal(&timed) {
         return EngineReport::Refused(refusal);
+    }
+    // FR-243: `always possible` and `unique path` quantify over timed states
+    // the integer-clock reading does not visit.
+    match digitisation_decline(DigitalItem::StateGraph(read.claim)) {
+        Ok(None) => {}
+        Ok(Some(declined)) => {
+            return EngineReport::Refused(super::digital_item::not_digitisable(declined));
+        }
+        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     }
     let instances = match read.claim.over() {
         Some(parameter) => {

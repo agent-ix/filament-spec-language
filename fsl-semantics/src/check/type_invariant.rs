@@ -23,7 +23,7 @@ use fsl_forms::StateClauseKind;
 use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 
 use super::ir::{CheckedBody, CheckedNode};
-use super::refusal::{CheckCause, CheckRefusal};
+use super::refusal::{CheckCause, SemanticCheckRefusal};
 use super::state_clause::ClauseView;
 use crate::model::domain_package::ParsedTypeInvariant;
 use crate::model::refusal::MemberPath;
@@ -95,8 +95,8 @@ impl TypeInvariantDeclaration {
 
     /// A refusal of this clause's checking, located at
     /// `TypeDefinition.clauses[k]` of its owner.
-    pub(crate) fn refusal(&self, refusal: CheckRefusal) -> CheckRefusal {
-        CheckRefusal {
+    pub(crate) fn refusal(&self, refusal: SemanticCheckRefusal) -> SemanticCheckRefusal {
+        SemanticCheckRefusal {
             location: refusal.location,
             cause: Box::new(CheckCause::TypeInvariant(Box::new(TypeInvariantRefusal {
                 clause: self.invariant.clause.clone(),
@@ -135,7 +135,7 @@ impl TypeInvariantRefusal {
     }
 }
 
-impl CheckRefusal {
+impl SemanticCheckRefusal {
     /// The type invariant a refusal is about, by its declaration key; `None`
     /// for a refusal located anywhere else.
     #[must_use]

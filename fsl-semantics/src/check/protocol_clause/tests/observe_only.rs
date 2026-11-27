@@ -6,9 +6,9 @@
 use ix_trace_rs::trace;
 
 use super::rules::{located_refusals, protocol, TRIED};
-use crate::check::{CheckCause, CheckRefusal};
+use crate::check::{CheckCause, SemanticCheckRefusal};
 
-fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
+fn catalog(refusal: &SemanticCheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
 }
 

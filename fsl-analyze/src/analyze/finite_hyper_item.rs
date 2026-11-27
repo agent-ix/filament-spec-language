@@ -43,6 +43,7 @@ impl PartialEq for FiniteRecord {
     }
 }
 
+#[ix_trace_rs::string_edge]
 pub(super) fn item<'a>(
     analysis: &'a RunInput<'a>,
     binding: &SubjectBinding<'a>,

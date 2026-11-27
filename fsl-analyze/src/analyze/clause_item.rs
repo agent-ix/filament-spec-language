@@ -1136,6 +1136,7 @@ pub(super) fn package_protocol_freedom_item<'a>(
 }
 
 impl<'a> PackageProtocolWork<'a> {
+    #[ix_trace_rs::string_edge]
     fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
         let claim = self.occurrence.clone();
         let family = match self.form.item_kind {

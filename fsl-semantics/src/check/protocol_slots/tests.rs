@@ -13,7 +13,7 @@ use ix_trace_rs::trace;
 use super::{CheckedLifetime, CheckedTerminalMember};
 use crate::check::protocol_clause::ProtocolNodeId;
 use crate::check::refusal::{ProtocolAnchorCause, ProtocolReferenceCause, SlotKind};
-use crate::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 
 mod fixture {
     use crate as semantics;
@@ -94,7 +94,7 @@ fn assembled(text: &str) -> PackageDeclarations {
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
 }
 
-fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     assembled(text).check(
         CheckMode::Linked,
         CheckingLimits::default(),
@@ -113,7 +113,7 @@ fn checks(text: &str) -> CheckedGraph {
             &crate::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
-    let refusals: Vec<&CheckRefusal> = graph
+    let refusals: Vec<&SemanticCheckRefusal> = graph
         .protocol_refusals()
         .iter()
         .flat_map(|result| result.refusals.iter())

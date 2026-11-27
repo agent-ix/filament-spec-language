@@ -9,7 +9,7 @@ use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use super::{assemble, BASE};
-use crate::check::{CheckCause, CheckRefusal};
+use crate::check::{CheckCause, SemanticCheckRefusal};
 
 /// One reserved-name refusal: the identifier, its tag and the text of the
 /// region the refusal names.
@@ -22,7 +22,7 @@ struct Found {
 
 /// Every refusal of `declarations`, with the reserved-name ones read out
 /// beside the text of their region, and whether the unit checked.
-fn reserved(declarations: &str) -> (Vec<Found>, Vec<CheckRefusal>) {
+fn reserved(declarations: &str) -> (Vec<Found>, Vec<SemanticCheckRefusal>) {
     let (text, assembled) = assemble(declarations);
     let regions = assembled.regions();
     let refusals = match assembled.check(

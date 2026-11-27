@@ -258,6 +258,7 @@ enum StepWire {
 }
 
 impl StepWire {
+    #[ix_trace_rs::string_edge]
     fn of(document: &fsl_semantics::model::observation::DocumentRef) -> Self {
         if document.authority == crate::spine::clause::SAMPLE_AUTHORITY {
             Self::Sample {
@@ -1077,6 +1078,7 @@ impl TemporalRecord {
     /// the budget's counters. A family undefined cause restores with an
     /// empty `fields`: the outcome carries its reason only. An unwitnessed
     /// model undefined row also returns `None`: its reason is in `outcome`.
+    #[ix_trace_rs::string_edge]
     pub fn verdict(&self) -> Option<TemporalVerdict> {
         Some(match self {
             Self::Inactive {} => TemporalVerdict::Inactive,
@@ -1597,6 +1599,7 @@ where
 /// Read `disposition.temporal`: select the row by its `kind`, then read the
 /// row's other members as one closed object, naming any failing member by
 /// its path.
+#[ix_trace_rs::string_edge]
 pub(super) fn decode(value: &serde_json::Value) -> Result<TemporalRecord, NativeRunReadError> {
     let serde_json::Value::Object(members) = value else {
         return Err(invalid("disposition.temporal", "expected an object"));

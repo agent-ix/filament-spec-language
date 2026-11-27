@@ -47,6 +47,11 @@ const BUILD_INPUT_PATHS: &[&str] = &[
     ".cargo",
     "rust-toolchain.toml",
 ];
+const REPOSITORY_STATIC_CHECKS: &[&str] = &[
+    "cargo fmt --all -- --check",
+    "cargo run --locked -p xtask -- string-edge",
+    "cargo run --locked -p xtask -- canonical-types",
+];
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TestTarget {
@@ -1209,6 +1214,7 @@ const RULES: &[Rule] = &[
 ];
 
 impl TestSelector {
+    #[ix_trace_rs::string_edge]
     fn command(&self, list_only: bool) -> Vec<String> {
         let mut arguments = vec![
             "test".to_owned(),
@@ -1346,6 +1352,7 @@ pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<String> {
 }
 
 #[implements("NFR-142-AC-1")]
+#[ix_trace_rs::string_edge]
 fn select_workspace(_tool_root: &Path, operands: &[OsString]) -> Result<(PathBuf, Vec<OsString>)> {
     let mut selected = None;
     let mut remaining = Vec::with_capacity(operands.len());
@@ -1582,8 +1589,10 @@ fn run_with_runner(
     run_with_verified_main(workspace_root, operands, runner, recipe, verification)
 }
 
+#[ix_trace_rs::string_edge]
 #[implements("NFR-142-AC-6")]
 #[implements("NFR-142-AC-9")]
+#[implements("NFR-142-AC-10")]
 fn run_with_verified_main(
     workspace_root: &Path,
     operands: &[OsString],
@@ -1657,6 +1666,10 @@ fn run_with_verified_main(
     for selector in &recipe.selectors {
         output.push_str(&format!("{}\n", selector.display()));
     }
+    for check in REPOSITORY_STATIC_CHECKS {
+        output.push_str(check);
+        output.push('\n');
+    }
     for note in &recipe.notes {
         output.push_str(&format!("NOTE: {note}\n"));
     }
@@ -1692,13 +1705,21 @@ fn changed_paths(operands: &[OsString]) -> Result<Vec<String>> {
         .collect()
 }
 
+#[implements("NFR-142-AC-5")]
 fn normalize_path(path: &str) -> String {
-    let path = path.replace('\\', "/");
-    path.trim_start_matches("./")
-        .trim_end_matches('/')
-        .to_owned()
+    let normalized = path.replace('\\', "/");
+    let mut start = normalized.as_str();
+    while start.as_bytes().starts_with(b"./") {
+        start = &start[2..];
+    }
+    let mut end = start.len();
+    while start.as_bytes().get(end.saturating_sub(1)) == Some(&b'/') {
+        end -= 1;
+    }
+    start[..end].to_owned()
 }
 
+#[ix_trace_rs::string_edge]
 fn plan_paths(workspace_root: &Path, paths: &[String]) -> Result<Recipe> {
     let mut recipe = Recipe::default();
     for path in paths {
@@ -1737,6 +1758,7 @@ fn plan_paths(workspace_root: &Path, paths: &[String]) -> Result<Recipe> {
     Ok(recipe)
 }
 
+#[ix_trace_rs::string_edge]
 fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<()> {
     if path == "Cargo.toml" || path == "Cargo.lock" {
         apply_manifest_rule(workspace_root, recipe)?;
@@ -1821,6 +1843,7 @@ fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<(
 /// The checker is a tool outside the `fsl-` crate directories: a changed IT module
 /// runs that module, and any other change (IT root, fixtures, source) runs
 /// every module.
+#[ix_trace_rs::string_edge]
 fn plan_probability_check(
     workspace_root: &Path,
     path: &str,
@@ -1838,12 +1861,14 @@ fn plan_probability_check(
 
 /// A file under the workspace root's `tests/support/` or `tests/fixtures/`,
 /// which the test binaries of any package may declare by `#[path]`.
+#[ix_trace_rs::string_edge]
 fn is_root_shared_test_path(path: &str) -> bool {
     path.starts_with("tests/support/") || path.starts_with("tests/fixtures/")
 }
 
 /// The packages whose integration binaries can declare a root shared file: the
 /// root package, the probability checker, and every `fsl-` crate directory.
+#[ix_trace_rs::string_edge]
 fn integration_packages(workspace_root: &Path) -> Result<BTreeSet<String>> {
     let unlisted = |error: std::io::Error| {
         Error::MergeGateRecipe(format!(
@@ -1898,6 +1923,7 @@ fn plan_root_shared_test_file(
     add_all_it_modules(workspace_root, "filament-spec-language", recipe)
 }
 
+#[ix_trace_rs::string_edge]
 fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<()> {
     if path.starts_with("xtask/tests/") {
         let file = workspace_root.join(path);
@@ -1973,12 +1999,14 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 fn is_test_path(path: &str) -> bool {
     path.split('/').any(|component| component == "tests")
         || path.ends_with("_tests.rs")
         || path.ends_with("/tests.rs")
 }
 
+#[ix_trace_rs::string_edge]
 fn is_non_crate_path(path: &str) -> bool {
     path == "README.md"
         || path == "Makefile"
@@ -1986,6 +2014,7 @@ fn is_non_crate_path(path: &str) -> bool {
         || path.starts_with(".github/")
 }
 
+#[ix_trace_rs::string_edge]
 fn is_virtual_path(path: &str) -> bool {
     matches!(path, "Cargo.toml" | "Cargo.lock") || path.ends_with("/Cargo.toml")
 }
@@ -1994,11 +2023,13 @@ fn path_exists(workspace_root: &Path, path: &str) -> bool {
     workspace_root.join(path).exists()
 }
 
+#[ix_trace_rs::string_edge]
 fn crate_name(path: &str) -> Option<&str> {
     let name = path.split('/').next()?;
     (name.starts_with("fsl-") || name == "xtask").then_some(name)
 }
 
+#[ix_trace_rs::string_edge]
 fn test_package(path: &str) -> &str {
     if path.starts_with("tests/") {
         "filament-spec-language"
@@ -2007,6 +2038,7 @@ fn test_package(path: &str) -> &str {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn integration_path(path: &str) -> Option<&str> {
     path.strip_prefix("tests/it/")
         .or_else(|| path.split_once("/tests/it/").map(|(_, relative)| relative))
@@ -2025,6 +2057,7 @@ fn matching_rule(path: &str) -> Option<&'static Rule> {
         .max_by_key(|rule| rule.prefix.len())
 }
 
+#[ix_trace_rs::string_edge]
 fn apply_rule(workspace_root: &Path, path: &str, rule: &Rule, recipe: &mut Recipe) -> Result<()> {
     if let (Some(package), Some(lib)) = (rule.package, rule.lib) {
         match lib {
@@ -2084,6 +2117,7 @@ fn apply_it_filters(
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 fn integration_roots(package: &str) -> Vec<(String, String)> {
     if package == "fsl-analyze" {
         return ANALYZE_IT_ROOTS
@@ -2259,6 +2293,7 @@ impl ModuleWalk {
 
 /// The top-level modules of the binary rooted at `root` that hold a test, each
 /// with its tests.
+#[ix_trace_rs::string_edge]
 fn modules_in_root(
     workspace_root: &Path,
     package: &str,
@@ -2409,6 +2444,7 @@ fn apply_manifest_rule(workspace_root: &Path, recipe: &mut Recipe) -> Result<()>
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) -> Result<()> {
     let Some(package) = crate_name(path) else {
         recipe
@@ -2535,6 +2571,7 @@ fn add_package_replay_controls(recipe: &mut Recipe) {
     );
 }
 
+#[ix_trace_rs::string_edge]
 fn add_named_library_modules(
     workspace_root: &Path,
     recipe: &mut Recipe,
@@ -2876,6 +2913,7 @@ fn recipe_relevant_paths(
 }
 
 #[implements("NFR-142-AC-5")]
+#[ix_trace_rs::string_edge]
 fn package_footprint(package: &str) -> BTreeSet<String> {
     let prefix = match package {
         "filament-spec-language" => {
@@ -2923,6 +2961,7 @@ fn find_path_overlaps(
 }
 
 #[implements("NFR-142-AC-5")]
+#[ix_trace_rs::string_edge]
 fn unconditional_overlap(path: &str) -> bool {
     matches!(
         path,
@@ -2959,6 +2998,7 @@ fn os_args(arguments: &[&str]) -> Vec<OsString> {
     arguments.iter().map(OsString::from).collect()
 }
 
+#[ix_trace_rs::string_edge]
 fn ignore_attribute_changed(
     workspace_root: &Path,
     path: &str,
@@ -3023,6 +3063,7 @@ fn module_filter(path: &str, marker: &str) -> Result<String> {
     module_name_filter(relative, path)
 }
 
+#[ix_trace_rs::string_edge]
 fn module_name_filter(relative: &str, path: &str) -> Result<String> {
     let mut modules = relative.split('/').map(str::to_owned).collect::<Vec<_>>();
     let Some(file) = modules.pop() else {
@@ -3056,6 +3097,7 @@ fn module_name_filter(relative: &str, path: &str) -> Result<String> {
     Ok(format!("{}::", modules.join("::")))
 }
 
+#[ix_trace_rs::string_edge]
 fn collect_test_names(items: &[syn::Item], modules: &mut Vec<String>, names: &mut Vec<String>) {
     for item in items {
         match item {
@@ -4759,7 +4801,7 @@ mod tests {
     }
 
     #[test]
-    fn non_crate_changes_emit_only_final_workspace_check() {
+    fn non_crate_changes_emit_static_checks_and_final_workspace_check() {
         let runner = FakeRunner::new();
         let output = run_with_runner(workspace_root(), &[OsString::from("README.md")], &runner)
             .expect("recipe");
@@ -4768,8 +4810,33 @@ mod tests {
                 .lines()
                 .filter(|line| line.starts_with("cargo "))
                 .collect::<Vec<_>>(),
-            ["cargo check --locked --workspace --all-targets"]
+            [
+                "cargo fmt --all -- --check",
+                "cargo run --locked -p xtask -- string-edge",
+                "cargo run --locked -p xtask -- canonical-types",
+                "cargo check --locked --workspace --all-targets"
+            ]
         );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-10")]
+    fn recipe_includes_repository_static_gate_commands() {
+        let runner = FakeRunner::new();
+        let output = run_with_runner(workspace_root(), &[OsString::from("README.md")], &runner)
+            .expect("ordinary PR recipe");
+        for check in REPOSITORY_STATIC_CHECKS {
+            assert!(output.lines().any(|line| line == *check), "{check}");
+        }
+
+        let spec_only = run_with_runner(
+            workspace_root(),
+            &[OsString::from("spec/new-requirement.md")],
+            &FakeRunner::new(),
+        )
+        .expect("spec-only recipe");
+        assert!(spec_only.contains("NO CARGO: spec-only change."));
+        assert!(!spec_only.lines().any(|line| line.starts_with("cargo ")));
     }
 
     #[test]

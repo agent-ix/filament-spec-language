@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use serde_json::{json, Value};
@@ -410,7 +410,7 @@ pub fn ring_is_queue_over(rows: &str, cell_rows: &str) -> String {
 /// A refusal with the text of the unit it is located at.
 pub struct Refused {
     /// The refusal.
-    pub refusal: CheckRefusal,
+    pub refusal: SemanticCheckRefusal,
     /// The text of the unit at its region.
     pub at: String,
 }

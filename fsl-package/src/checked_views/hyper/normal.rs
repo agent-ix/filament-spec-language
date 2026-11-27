@@ -223,6 +223,7 @@ fn is_lookup(identity: &str) -> bool {
 }
 
 #[implements("FR-176-AC-7")]
+#[ix_trace_rs::string_edge]
 fn expression(
     inputs: &Inputs<'_, '_>,
     root: &CheckedNodeId,
@@ -355,12 +356,21 @@ fn expression(
                             declaration,
                             name,
                             read_form,
+                            population,
                         }) => encode(
                             b"field",
                             &[
                                 inputs.key(declaration, claim, budget)?,
                                 budget.copy(name.as_bytes())?,
                                 format!("{read_form:?}").into_bytes(),
+                                match population {
+                                    Some(population) => encode(
+                                        b"population",
+                                        &[inputs.key(population, claim, budget)?],
+                                        budget,
+                                    )?,
+                                    None => Vec::new(),
+                                },
                             ],
                             budget,
                         )?,

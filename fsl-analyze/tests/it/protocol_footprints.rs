@@ -1057,6 +1057,38 @@ fn role_step(
     found.into_iter().next().expect("one step")
 }
 
+/// ADR-027 FT-3: a `retire` predicate reads the field on every object of the
+/// subject's universe, among them `d`, which no state holds yet, so a write
+/// of (`d`, `v`) by a transition on a later-created `d` is dependent with it.
+#[trace("TC-661")]
+#[test]
+fn a_predicate_read_includes_a_universe_key_no_state_holds() {
+    let body = roles::unit(
+        roles::ORIGIN,
+        &roles::role(1, "until(r.v >= 0)"),
+        "",
+        "sequence Main { event E by r as (e: Boolean) { true }; }",
+    );
+    let mut unit = Cells::new(&body, &["c"]);
+    unit.keys.push("d");
+    let subject = unit.subject("R");
+    let system = sc_system(&subject);
+    let reached = reachable(&system);
+    let (c, d) = (cell(&system, "c"), cell(&system, "d"));
+    let (_, spawned) = role_step(&system, &reached, 0, StepKind::Spawn, &c);
+    let (retire, _) = role_step(&system, &reached, spawned, StepKind::Retire, &c);
+    for expected in [field(&c, "v"), field(&d, "v")] {
+        assert!(retire.reads.contains(&expected), "{expected:?}");
+        assert!(retire.enabling.contains(&expected), "{expected:?}");
+    }
+    let writer = Footprint {
+        reads: BTreeSet::new(),
+        writes: BTreeSet::from([field(&d, "v")]),
+        enabling: BTreeSet::new(),
+    };
+    assert!(!independent(&retire, &writer));
+}
+
 /// FR-216-AC-6 (TC-661): a `retire` predicate `r.v >= 0` over the replicated
 /// role `r` of `Cell`, which declares `v`, with universe `{c, d}`, has a
 /// read footprint holding (`c`, `v`), (`d`, `v`) and `role(r)`; a writer of

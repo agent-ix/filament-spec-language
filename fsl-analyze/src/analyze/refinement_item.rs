@@ -27,6 +27,8 @@ use fsl_semantics::check::{AbstractSide, Capability, CheckedRefinement, Declarat
 use fsl_semantics::model::state::ModelState;
 use serde_json::{json, Value};
 
+use fsl_foundation::budget::Budget;
+
 use super::items::model_refusal;
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, SubjectBinding, TemporalItem};
 use crate::model_check::manifest as en1;
@@ -90,12 +92,14 @@ pub(super) fn refinement_item<'a>(
             fsl_route::Mode::Bounded,
             en1::BACKEND_ID,
             move |cancel| {
+                let retained = limits.engines.item_budget(limits.accounting, cancel);
                 run(
                     refinement,
                     package,
                     &concrete,
                     abstract_initial,
                     &form,
+                    &retained,
                     cancel,
                 )
             },
@@ -111,6 +115,7 @@ fn run(
     concrete: &ModelSimulationRequest<'_>,
     abstract_initial: AbstractInitial,
     form: &TemporalItem,
+    retained: &Budget,
     cancel: &Cancel,
 ) -> EngineReport {
     let checked = check_refinement(
@@ -125,6 +130,7 @@ fn run(
             abstract_protocol_binding: None,
             max_depth: form.max_depth,
             limits: form.limits,
+            retained: Some(retained),
         },
         cancel,
     );
@@ -154,7 +160,7 @@ fn run(
                     "the-refinement-subjects-reopen",
                 ))
             })?;
-        let settled = replay_refinement_trace(refinement, &systems, payload)?;
+        let settled = replay_refinement_trace(refinement, &systems, payload, &form.limits)?;
         if let RefinementTraceSettlement::Reproduced { mapped, .. } = &settled {
             steps = Some(counterexample_steps(refinement, &systems, mapped)?);
         }
@@ -258,12 +264,17 @@ impl<'a> PackageRefinementSubject<'a> {
                     meter: self.limits.accounting,
                     emit: self.limits.emit,
                 };
+                let retained = self
+                    .limits
+                    .engines
+                    .item_budget(self.limits.accounting, cancel);
                 run(
                     &self.refinement,
                     self.input,
                     &concrete,
                     AbstractInitial::from(self.form.abstract_initial.clone()),
                     &self.form,
+                    &retained,
                     cancel,
                 )
             },

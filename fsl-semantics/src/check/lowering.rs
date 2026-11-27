@@ -64,7 +64,7 @@ use super::node_key::{
 };
 use super::node_key::{NodeRef, PlaceholderId};
 use super::refusal::{
-    CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, KeyFault, StageLimitCause,
+    CheckCause, CheckingLimitKind, CheckingStage, KeyFault, SemanticCheckRefusal, StageLimitCause,
 };
 use crate::value::definition::{DefinitionReference, DefinitionRole};
 use crate::value::member::Member;
@@ -109,10 +109,11 @@ pub(crate) use model::{
     record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
 };
 pub use model::{
-    clock_field_member_type, collection_kind, model_root_key, AdmittedModel, CollectionShape,
-    ForeignView, ModelClause, PlaceRow, PlaceStep, SelectedModelEnumDeclaration,
-    SelectedModelEnumMember, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
-    SelectedOperationMember, SourceClockEntry, SourceClockMembers,
+    clock_field_member_type, collection_kind, model_root_key, source_object_owner_chain,
+    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
+    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
+    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember, SourceClockEntry,
+    SourceClockMembers,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
@@ -384,6 +385,7 @@ impl SemanticNode {
 
     /// The effective field bindings of a source object type, each with the
     /// exact checked target and optional-group shape used by FR-569's row.
+    #[ix_trace_rs::string_edge]
     pub fn source_object_member_nodes(&self) -> Option<Vec<(&str, NodeKey, bool)>> {
         if self.node_tag() != NodeTag::Model || self.semantic_form() != "object_type" {
             return None;
@@ -1248,7 +1250,7 @@ pub(crate) struct Lowering<'a> {
 pub(crate) fn require_admitted(
     node: NodeRef,
     location: &Location,
-) -> Result<NodeKey, CheckRefusal> {
+) -> Result<NodeKey, SemanticCheckRefusal> {
     match node {
         NodeRef::Admitted(key) => Ok(key),
         NodeRef::Pending(_) => Err(fault(location, KeyFault::UnresolvedDraft)),
@@ -1291,7 +1293,7 @@ pub(crate) fn admitted_step_relation_key(
     package_name: &str,
     content: &NodeContent,
     location: &Location,
-) -> Result<NodeKey, CheckRefusal> {
+) -> Result<NodeKey, SemanticCheckRefusal> {
     let names = content
         .declaration
         .as_ref()
@@ -1354,15 +1356,15 @@ fn data_at_lowered_types(
     data
 }
 
-fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
-    CheckRefusal {
+fn refuse(location: &Location, cause: CheckCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(cause),
     }
 }
 
 /// A broken invariant of the union lowering, never a refusal of the input.
-fn union_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+fn union_fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
     fault(
         location,
         KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
@@ -1371,7 +1373,7 @@ fn union_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
     )
 }
 
-fn fault(location: &Location, fault: KeyFault) -> CheckRefusal {
+fn fault(location: &Location, fault: KeyFault) -> SemanticCheckRefusal {
     refuse(location, CheckCause::InternalFault(Box::new(fault)))
 }
 
@@ -1389,7 +1391,7 @@ fn charge_work(meter: &mut Meter, work: u64) -> Result<(), NodeKeyRefusal> {
         })
 }
 
-fn preimage_refusal(location: &Location, refusal: NodeKeyRefusal) -> CheckRefusal {
+fn preimage_refusal(location: &Location, refusal: NodeKeyRefusal) -> SemanticCheckRefusal {
     match refusal {
         NodeKeyRefusal::WorkBudget { limit, actual } => refuse(
             location,
@@ -1688,7 +1690,10 @@ enum FoldStage {
 }
 
 /// `name`'s `::`-separated segments, each an identifier.
-fn qualified_name(name: &str, location: &Location) -> Result<Vec<Identifier>, CheckRefusal> {
+fn qualified_name(
+    name: &str,
+    location: &Location,
+) -> Result<Vec<Identifier>, SemanticCheckRefusal> {
     identifiers(name.split("::"), location)
 }
 
@@ -1697,7 +1702,7 @@ fn qualified_name(name: &str, location: &Location) -> Result<Vec<Identifier>, Ch
 fn identifiers<'s>(
     segments: impl IntoIterator<Item = &'s str>,
     location: &Location,
-) -> Result<Vec<Identifier>, CheckRefusal> {
+) -> Result<Vec<Identifier>, SemanticCheckRefusal> {
     segments
         .into_iter()
         .map(|segment| {
@@ -1898,13 +1903,13 @@ struct LeafFrame {
 impl<'w> filament_walk::Walk for LeafWalk<'w> {
     type Node = LeafVisit<'w>;
     type Frame = LeafFrame;
-    type Stop = CheckRefusal;
+    type Stop = SemanticCheckRefusal;
 
     fn enter(
         &mut self,
         visit: LeafVisit<'w>,
         children: &mut filament_walk::Children<'_, LeafVisit<'w>>,
-    ) -> ControlFlow<CheckRefusal, LeafFrame> {
+    ) -> ControlFlow<SemanticCheckRefusal, LeafFrame> {
         let mut queued = Vec::new();
         let frame = match visit {
             LeafVisit::Type {
@@ -1965,7 +1970,7 @@ impl<'w> filament_walk::Walk for LeafWalk<'w> {
         ControlFlow::Continue(frame)
     }
 
-    fn exit(&mut self, frame: LeafFrame) -> ControlFlow<CheckRefusal> {
+    fn exit(&mut self, frame: LeafFrame) -> ControlFlow<SemanticCheckRefusal> {
         if let Some(open) = frame.opened {
             for closed in self.open.drain(open..) {
                 self.entered_at.remove(&closed);
@@ -1979,7 +1984,7 @@ impl<'w> filament_walk::Walk for LeafWalk<'w> {
 }
 
 /// `result` as the walk's control flow.
-fn into_flow<T>(result: Result<T, CheckRefusal>) -> ControlFlow<CheckRefusal, T> {
+fn into_flow<T>(result: Result<T, SemanticCheckRefusal>) -> ControlFlow<SemanticCheckRefusal, T> {
     match result {
         Ok(value) => ControlFlow::Continue(value),
         Err(refusal) => ControlFlow::Break(refusal),
@@ -1989,7 +1994,7 @@ fn into_flow<T>(result: Result<T, CheckRefusal>) -> ControlFlow<CheckRefusal, T>
 impl<'w> LeafWalk<'w> {
     /// Walk `value_type`, appending each text, float and recursion leaf in the
     /// order the walk reaches it.
-    fn run(&mut self, value_type: &'w ValueType) -> Result<(), CheckRefusal> {
+    fn run(&mut self, value_type: &'w ValueType) -> Result<(), SemanticCheckRefusal> {
         let root = LeafVisit::Type {
             segment: None,
             value_type,
@@ -2015,7 +2020,7 @@ impl<'w> LeafWalk<'w> {
         &mut self,
         value_type: &'w ValueType,
         queued: &mut Vec<LeafVisit<'w>>,
-    ) -> Result<Option<usize>, CheckRefusal> {
+    ) -> Result<Option<usize>, SemanticCheckRefusal> {
         let location = self.location;
         match value_type {
             // Rule 1.
@@ -2109,7 +2114,7 @@ impl<'w> LeafWalk<'w> {
         &mut self,
         declaration: NodeKey,
         location: &Location,
-    ) -> Result<bool, CheckRefusal> {
+    ) -> Result<bool, SemanticCheckRefusal> {
         if let Some(reaches) = self.reach.get(&declaration) {
             return Ok(*reaches);
         }
@@ -2229,7 +2234,7 @@ impl<'w> LeafWalk<'w> {
 
     /// Append `leaf` at the current path, charging one unit of the node
     /// limit and then the leaf's materialized key bytes to the work meter.
-    fn append(&mut self, leaf: Leaf, location: &Location) -> Result<(), CheckRefusal> {
+    fn append(&mut self, leaf: Leaf, location: &Location) -> Result<(), SemanticCheckRefusal> {
         self.budget = self.budget.checked_sub(1).ok_or_else(|| {
             refuse(
                 location,
@@ -2282,7 +2287,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         result_type: &ValueType,
         location: &Location,
-    ) -> Result<Operation, CheckRefusal> {
+    ) -> Result<Operation, SemanticCheckRefusal> {
         let object = self.referenced_object(result_type, location)?;
         Ok(Operation {
             member: Some(Member::TypeArgument {
@@ -2381,14 +2386,14 @@ impl<'a> Lowering<'a> {
 
     /// Charge `work` units of checking work (`declaration.check`), refusing
     /// `stage_limit_exceeded` on the work budget at `location`.
-    fn charge(&mut self, work: u64, location: &Location) -> Result<(), CheckRefusal> {
+    fn charge(&mut self, work: u64, location: &Location) -> Result<(), SemanticCheckRefusal> {
         charge_work(self.meter, work).map_err(|refusal| preimage_refusal(location, refusal))
     }
 
     /// The finished graph, its model correspondence and each
     /// function's key. Every node that no region denotes gets its one
     /// `generated` occurrence (FR-093), at `root`.
-    pub(crate) fn finish(mut self, root: &Location) -> Result<Lowered, CheckRefusal> {
+    pub(crate) fn finish(mut self, root: &Location) -> Result<Lowered, SemanticCheckRefusal> {
         let checked_node_keys = self.finish_checked_node_keys()?;
         self.graph.rank();
         let enclosing = enclosing_declarations(&self.graph, self.occurrences);
@@ -2425,7 +2430,7 @@ impl<'a> Lowering<'a> {
             .protocol_members
             .into_iter()
             .map(|(name, members)| Ok((name, members.into_admitted(root)?)))
-            .collect::<Result<_, CheckRefusal>>()?;
+            .collect::<Result<_, SemanticCheckRefusal>>()?;
         // Ranked first, so collecting compares each key with one neighbour.
         let composites: BTreeMap<NodeKey, NodeKey> = super::key_order::sorted_by_key(
             self.composites
@@ -2509,7 +2514,7 @@ impl<'a> Lowering<'a> {
     fn resolve_checked_node_keys(
         &mut self,
         mut resolve: impl FnMut(&NodeRef) -> Result<NodeRef, ()>,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         for (owner, index) in std::mem::take(&mut self.pending_checked_node_keys) {
             let Some(body) = self.checked_body_keys.get_mut(&owner) else {
                 return Err(fault(&generated_location(), KeyFault::UnresolvedDraft));
@@ -2524,7 +2529,7 @@ impl<'a> Lowering<'a> {
 
     fn finish_checked_node_keys(
         &mut self,
-    ) -> Result<BTreeMap<usize, CheckedNodeKeys>, CheckRefusal> {
+    ) -> Result<BTreeMap<usize, CheckedNodeKeys>, SemanticCheckRefusal> {
         let mut retained = BTreeMap::new();
         for (identity, body) in std::mem::take(&mut self.checked_body_keys) {
             let mut keys = vec![None; body.length];
@@ -2577,7 +2582,7 @@ impl<'a> Lowering<'a> {
         role: OccurrenceRole,
         ordinal: u64,
         location: Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let at = location.clone();
         self.occurrences
             .record_at(key.clone(), role, ordinal, location)
@@ -2605,7 +2610,7 @@ impl<'a> Lowering<'a> {
         name: &str,
         frame: impl Into<NodeRef>,
         location: &Location,
-    ) -> Result<OccurrenceOrigin, CheckRefusal> {
+    ) -> Result<OccurrenceOrigin, SemanticCheckRefusal> {
         let key = (declaring, name.to_owned());
         if let Some(origin) = self.frame_origins.get(&key) {
             return Ok(origin.clone());
@@ -2660,7 +2665,7 @@ impl<'a> Lowering<'a> {
         semantic_type: Option<NodeKey>,
         declaration: Option<Vec<Identifier>>,
         body: BodyTerm,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let node = self.insert_ref(
             location,
             node_tag,
@@ -2682,7 +2687,7 @@ impl<'a> Lowering<'a> {
         semantic_type: Option<NodeRef>,
         declaration: Option<Vec<Identifier>>,
         body: BodyTerm,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let owner = declaration.as_ref().map(|segments| {
             let source_owner = segments
                 .iter()
@@ -2714,7 +2719,7 @@ impl<'a> Lowering<'a> {
         semantic_type: Option<NodeRef>,
         owner: Owner,
         body: BodyTerm,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         self.insert_node(
             location,
             NodeContent {
@@ -2735,7 +2740,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         location: &Location,
         content: NodeContent,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         self.charge(1, location)?;
         let mut names_pending = content.semantic_type.as_ref().is_some_and(Self::pending);
         content
@@ -2775,7 +2780,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         location: &Location,
         content: NodeContent,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let node = self.insert_node(location, content)?;
         require_admitted(node, location)
     }
@@ -2791,7 +2796,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         location: &Location,
         content: &NodeContent,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         if let Some(key) = self.node_index.get(content) {
             return Ok(key.clone());
         }
@@ -2822,7 +2827,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         location: &Location,
         build: impl Fn(u64) -> Result<NodeKey, filament_exact::InvalidNodeKey>,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let invalid = |refusal: filament_exact::InvalidNodeKey| {
             fault(location, KeyFault::ModelRootKey(refusal.to_string()))
         };
@@ -2855,7 +2860,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         members: &[&Draft],
         location: &Location,
-    ) -> Result<Vec<NodeKey>, CheckRefusal> {
+    ) -> Result<Vec<NodeKey>, SemanticCheckRefusal> {
         let package = self.package_name.clone();
         let mut keys: Vec<Option<NodeKey>> = Vec::with_capacity(members.len());
         for draft in members {
@@ -2899,7 +2904,11 @@ impl<'a> Lowering<'a> {
     // ------------------------------------------------------------------
 
     /// A builtin `scalar_type` node: its own semantic type, empty body.
-    fn scalar(&mut self, form: &'static str, location: &Location) -> Result<NodeKey, CheckRefusal> {
+    fn scalar(
+        &mut self,
+        form: &'static str,
+        location: &Location,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let node = self.insert_ref(
             location,
             NodeTag::ScalarType,
@@ -2916,7 +2925,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         value: Integer,
         location: &Location,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let integer = self.scalar("integer", location)?;
         Ok(LeafTerm::literal(integer, LiteralValue::Integer(value)))
     }
@@ -2927,7 +2936,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         value: u64,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let integer = self.scalar("integer", location)?;
         let node = self.insert_ref(
             location,
@@ -2941,7 +2950,11 @@ impl<'a> Lowering<'a> {
     }
 
     /// A text literal typed at the builtin text scalar node (T3).
-    fn text_literal(&mut self, value: &str, location: &Location) -> Result<LeafTerm, CheckRefusal> {
+    fn text_literal(
+        &mut self,
+        value: &str,
+        location: &Location,
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let text = self.scalar("text", location)?;
         // Generated type metadata can be the only use of the builtin Text
         // scalar in an expression-only unit; root it at that source use.
@@ -2961,7 +2974,7 @@ impl<'a> Lowering<'a> {
         base: impl Into<NodeRef>,
         bindings: Vec<(&'static str, LeafTerm)>,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let members = bindings
             .into_iter()
             .map(|(name, value)| MemberTerm::bound(name, value))
@@ -2986,7 +2999,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         value_type: &'v ValueType,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal>
+    ) -> Result<NodeRef, SemanticCheckRefusal>
     where
         'a: 'v,
     {
@@ -3016,7 +3029,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         value_type: &'v ValueType,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal>
+    ) -> Result<NodeKey, SemanticCheckRefusal>
     where
         'a: 'v,
     {
@@ -3030,7 +3043,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         value_type: &'v ValueType,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal>
+    ) -> Result<NodeRef, SemanticCheckRefusal>
     where
         'a: 'v,
     {
@@ -3065,7 +3078,7 @@ impl<'a> Lowering<'a> {
         value_type: &'v ValueType,
         location: &Location,
         frames: &mut Vec<TypeFrame<'v>>,
-    ) -> Result<TypeStep<'v>, CheckRefusal>
+    ) -> Result<TypeStep<'v>, SemanticCheckRefusal>
     where
         'a: 'v,
     {
@@ -3241,7 +3254,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         key: &'v ValueType,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal>
+    ) -> Result<NodeRef, SemanticCheckRefusal>
     where
         'a: 'v,
     {
@@ -3256,7 +3269,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         payload: NodeRef,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         self.insert_ref(
             location,
             NodeTag::CompositeType,
@@ -3273,7 +3286,7 @@ impl<'a> Lowering<'a> {
         collection: &CollectionType,
         element: NodeRef,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let base = self.insert_ref(
             location,
             NodeTag::CompositeType,
@@ -3319,7 +3332,7 @@ impl<'a> Lowering<'a> {
         key: NodeRef,
         value: NodeRef,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let base = self.insert_ref(
             location,
             NodeTag::CompositeType,
@@ -3364,11 +3377,12 @@ impl<'a> Lowering<'a> {
     /// Start the declared record or tuple `declaration`: its node
     /// if it is built, its placeholder if it is being built (it reached
     /// itself), or its open frame.
+    #[ix_trace_rs::string_edge]
     fn open_composite<'v>(
         &mut self,
         declaration: NodeKey,
         location: &Location,
-    ) -> Result<OpenComposite<'v>, CheckRefusal>
+    ) -> Result<OpenComposite<'v>, SemanticCheckRefusal>
     where
         'a: 'v,
     {
@@ -3459,7 +3473,7 @@ impl<'a> Lowering<'a> {
         mut composite: CompositeFrame<'v>,
         location: &Location,
         frames: &mut Vec<TypeFrame<'v>>,
-    ) -> Result<TypeStep<'v>, CheckRefusal> {
+    ) -> Result<TypeStep<'v>, SemanticCheckRefusal> {
         let at = composite.members.len();
         let shape: &'v CompositeShape = composite.shape;
         let next = match shape {
@@ -3500,7 +3514,7 @@ impl<'a> Lowering<'a> {
         members: &'v [UnionMemberDeclaration],
         location: &Location,
         frames: &mut Vec<TypeFrame<'v>>,
-    ) -> Result<TypeStep<'v>, CheckRefusal> {
+    ) -> Result<TypeStep<'v>, SemanticCheckRefusal> {
         loop {
             let Some(member) = members.get(composite.members.len()) else {
                 return Ok(TypeStep::Built(self.close_composite(composite, location)?));
@@ -3527,7 +3541,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         composite: CompositeFrame<'_>,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let CompositeFrame {
             declaration,
             name,
@@ -3578,14 +3592,25 @@ impl<'a> Lowering<'a> {
         &mut self,
         declaration: NodeKey,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         self.type_ref(&ValueType::Composite(declaration), location)
     }
 
     /// The node of the declared composite `declaration` (FR-092-AC-12): its
     /// checked type node's id.
-    pub(crate) fn composite_node(&mut self, declaration: NodeKey) -> Result<NodeKey, CheckRefusal> {
-        let location = generated_location();
+    #[implements("FR-092-AC-12", "FR-096-AC-25")]
+    pub(crate) fn composite_node(
+        &mut self,
+        declaration: NodeKey,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
+        let location = self
+            .scope
+            .types()
+            .composite(declaration.clone())
+            .filter(|_| declaration.package() == self.package_name)
+            .map_or_else(generated_location, |composite| {
+                type_declaration(composite.name())
+            });
         let node = self.composite_type_node(declaration, &location)?;
         require_admitted(node, &location)
     }
@@ -3595,11 +3620,15 @@ impl<'a> Lowering<'a> {
     /// the keys admission retained, which every enum type and enum literal
     /// already names. The declaration carries its qualified name and a
     /// `declaration` occurrence at the declared name (FR-322).
-    pub(crate) fn enum_nodes(&mut self, binding: &EnumBinding) -> Result<(), CheckRefusal> {
+    pub(crate) fn enum_nodes(&mut self, binding: &EnumBinding) -> Result<(), SemanticCheckRefusal> {
         self.enum_nodes_at(binding, type_declaration(&binding.name))
     }
 
-    fn enum_nodes_at(&mut self, binding: &EnumBinding, site: Location) -> Result<(), CheckRefusal> {
+    fn enum_nodes_at(
+        &mut self,
+        binding: &EnumBinding,
+        site: Location,
+    ) -> Result<(), SemanticCheckRefusal> {
         let declaration = binding.declaration.key();
         let name = identifiers(
             binding
@@ -3674,7 +3703,7 @@ impl<'a> Lowering<'a> {
         location: &Location,
         declaration: NodeKey,
         member: &EnumValue,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let key = crate::value::enumeration::enum_value_key_in(
             &self.package_name,
             &declaration,
@@ -3709,7 +3738,7 @@ impl<'a> Lowering<'a> {
         location: &Location,
         key: NodeKey,
         content: NodeContent,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         self.insert_nominal(location, key.clone(), content, None)?;
         Ok(key)
     }
@@ -3723,7 +3752,7 @@ impl<'a> Lowering<'a> {
         key: NodeKey,
         content: NodeContent,
         nominal: Option<NominalPayload>,
-    ) -> Result<bool, CheckRefusal> {
+    ) -> Result<bool, SemanticCheckRefusal> {
         self.charge(1, location)?;
         match self.graph.nodes.entry(key.clone()) {
             hash_map::Entry::Occupied(slot) => {
@@ -3748,7 +3777,11 @@ impl<'a> Lowering<'a> {
     }
 
     /// The law of `role`, or the FR-093 refusal.
-    fn law(&self, role: LawRole, location: &Location) -> Result<OperationLaw, CheckRefusal> {
+    fn law(
+        &self,
+        role: LawRole,
+        location: &Location,
+    ) -> Result<OperationLaw, SemanticCheckRefusal> {
         let definition = match role {
             LawRole::TextProfile => Some(DefinitionRole::TextProfile.reference()),
             LawRole::IeeeProfile => self
@@ -3781,7 +3814,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         source: LeafSource<'_>,
         location: &Location,
-    ) -> Result<Vec<OperationLeaf>, CheckRefusal> {
+    ) -> Result<Vec<OperationLeaf>, SemanticCheckRefusal> {
         let compared = match source {
             LeafSource::Compared(value_type) => Some(value_type),
             LeafSource::ResultInner(value_type) => match value_type {
@@ -3860,7 +3893,7 @@ impl<'a> Lowering<'a> {
         value_type: &ValueType,
         target: Option<EffectiveId>,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         match (value_type, target) {
             (ValueType::Population(maximum), Some(target)) => self
                 .population_type(target, *maximum, location)
@@ -3875,7 +3908,7 @@ impl<'a> Lowering<'a> {
         value_type: &ValueType,
         target: Option<EffectiveId>,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let node = self.binder_ref(value_type, target, location)?;
         require_admitted(node, location)
     }
@@ -3887,7 +3920,7 @@ impl<'a> Lowering<'a> {
         level: usize,
         semantic_type: NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let node = self.parameter_ref(name, level, semantic_type.into(), location)?;
         require_admitted(node, location)
     }
@@ -3900,7 +3933,7 @@ impl<'a> Lowering<'a> {
         level: usize,
         semantic_type: NodeRef,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let name_literal = self.text_literal(name, location)?;
         let level_literal = self.integer_literal(Integer::from(level), location)?;
         let key = self.insert_ref(
@@ -3937,7 +3970,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         group: &FunctionGroup,
         functions: &[FunctionInput<'_>],
-    ) -> Vec<CheckRefusal> {
+    ) -> Vec<SemanticCheckRefusal> {
         let mut refusals = Vec::new();
         let mut placeholders = Vec::new();
         if group.recursive {
@@ -4011,7 +4044,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         group: &FunctionGroup,
         functions: &[FunctionInput<'_>],
-    ) -> Vec<CheckRefusal> {
+    ) -> Vec<SemanticCheckRefusal> {
         let mut refusals = Vec::new();
         for (index, function) in group.members.iter().zip(functions) {
             let placeholder = self.functions.get(*index).cloned().flatten();
@@ -4031,7 +4064,7 @@ impl<'a> Lowering<'a> {
 
     /// Settle the open mixed function/protocol component after all its
     /// members have been lowered.
-    pub(crate) fn settle_mixed_cycle(&mut self, defer: bool) -> Result<(), CheckRefusal> {
+    pub(crate) fn settle_mixed_cycle(&mut self, defer: bool) -> Result<(), SemanticCheckRefusal> {
         self.functions_open = false;
         self.deferred_mixed_settlement |= defer;
         if self.deferred_mixed_settlement {
@@ -4046,7 +4079,7 @@ impl<'a> Lowering<'a> {
     /// dependency order, a single draft by its own preimage and a recursion
     /// group by the group order. Then every key recorded under a draft or a
     /// placeholder becomes the node's key.
-    fn settle(&mut self) -> Result<(), CheckRefusal> {
+    fn settle(&mut self) -> Result<(), SemanticCheckRefusal> {
         let placeholders = std::mem::take(&mut self.placeholders);
         let drafts = std::mem::take(&mut self.drafts);
         self.draft_index.clear();
@@ -4276,7 +4309,7 @@ impl<'a> Lowering<'a> {
         bodies: &[BodyTerm],
         types: &[Option<NodeRef>],
         resolved: &mut HashMap<PlaceholderId, NodeKey>,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let members: Vec<&Draft> = component.iter().map(|at| &drafts[*at]).collect();
         let Some(first) = members.first() else {
             return Ok(());
@@ -4351,7 +4384,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         index: usize,
         function: &FunctionInput<'_>,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let mut parameters = Vec::with_capacity(function.parameters.len());
         for (level, (name, value_type)) in function.parameters.iter().enumerate() {
             let target = function.population_targets.get(level).cloned().flatten();
@@ -4549,7 +4582,7 @@ impl<'a> Lowering<'a> {
         slot: Slot,
         semantic_type: impl Into<NodeRef>,
         location: &Location,
-    ) -> Result<String, CheckRefusal> {
+    ) -> Result<String, SemanticCheckRefusal> {
         let semantic_type = semantic_type.into();
         let name = binders.slot_names.get(slot).cloned().ok_or_else(|| {
             refuse(
@@ -4580,7 +4613,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         node: CheckedNode<'_>,
         binders: &Binders<'_>,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         if let NodeKind::Local(slot) = node.kind() {
             if let Some(binder) = binders.find(*slot) {
                 return Ok(binder.semantic_type.clone());
@@ -4592,7 +4625,10 @@ impl<'a> Lowering<'a> {
     /// The model package names an unparameterized floating field by its
     /// scalar type. Preserve that identity for its projection and for IEEE
     /// negation, whose checked result has the operand's type node.
-    fn lowering_type_ref(&mut self, node: CheckedNode<'_>) -> Result<NodeRef, CheckRefusal> {
+    fn lowering_type_ref(
+        &mut self,
+        node: CheckedNode<'_>,
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let node = under_pre(node);
         let source_type = self.type_ref(&node.lowered_value_type(), node.location())?;
         let Some(scalar) = float_member_scalar(node) else {
@@ -4625,7 +4661,7 @@ impl<'a> Lowering<'a> {
         node: CheckedNode<'_>,
         operand: CheckedNode<'_>,
         other: CheckedNode<'_>,
-    ) -> Result<Option<LeafTerm>, CheckRefusal> {
+    ) -> Result<Option<LeafTerm>, SemanticCheckRefusal> {
         if node.equality_producer().is_none() {
             return Ok(None);
         }
@@ -4653,7 +4689,7 @@ impl<'a> Lowering<'a> {
         operator: Operator,
         operation: Operation,
         arguments: Vec<MemberTerm>,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let lowered_type = node.lowered_value_type();
         let control_range = if matches!(node.kind(), NodeKind::If { .. }) {
             let children = node.children().into_iter().skip(1);
@@ -4727,6 +4763,7 @@ impl<'a> Lowering<'a> {
 
     /// The result type of `argument` when it directly names an application
     /// of `filament.op.numeric.narrow`.
+    #[ix_trace_rs::string_edge]
     fn narrow_application_result_type(&self, argument: &MemberTerm) -> Option<NodeKey> {
         let MemberTerm::Leaf(leaf) = argument else {
             return None;
@@ -4753,7 +4790,7 @@ impl<'a> Lowering<'a> {
         operator: Operator,
         operation: Operation,
         arguments: Vec<MemberTerm>,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let result_type = result_type.into();
         let key = self.insert_ref(
             location,
@@ -4774,7 +4811,7 @@ impl<'a> Lowering<'a> {
         form: &'static str,
         semantic_type: NodeRef,
         body: BodyTerm,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         self.value_node_at(node.location(), form, semantic_type, body)
     }
 
@@ -4785,7 +4822,7 @@ impl<'a> Lowering<'a> {
         form: &'static str,
         semantic_type: NodeRef,
         body: BodyTerm,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let key = self.insert_ref(
             location,
             NodeTag::Value,
@@ -4803,7 +4840,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         value_type: &ValueType,
         location: &Location,
-    ) -> Result<Member, CheckRefusal> {
+    ) -> Result<Member, SemanticCheckRefusal> {
         Ok(Member::TypeArgument {
             declaration: self.type_node(value_type, location)?,
             alias: None,
@@ -4813,7 +4850,10 @@ impl<'a> Lowering<'a> {
     /// The `type_argument` member of `node`'s result type, carrying the alias
     /// its source wrote for the argument (FSpec FR-322 "Named type
     /// arguments").
-    fn aliased_type_argument(&mut self, node: CheckedNode<'_>) -> Result<Member, CheckRefusal> {
+    fn aliased_type_argument(
+        &mut self,
+        node: CheckedNode<'_>,
+    ) -> Result<Member, SemanticCheckRefusal> {
         Ok(Member::TypeArgument {
             declaration: self.type_node(node.value_type(), node.location())?,
             alias: node.type_argument().cloned(),
@@ -4836,7 +4876,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         root: CheckedNode<'_>,
         binders: &mut Binders<'_>,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         if let Some(protocol) = &self.active_protocol {
             let expression_binders = binders
                 .scope
@@ -4875,7 +4915,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         root: CheckedNode<'_>,
         binders: &mut Binders<'_>,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let mut frames: Vec<LowerFrame<'_>> = Vec::new();
         let mut step = LowerStep::Descend(root);
         loop {
@@ -4903,7 +4943,7 @@ impl<'a> Lowering<'a> {
         node: CheckedNode<'n>,
         binders: &Binders<'_>,
         frames: &mut Vec<LowerFrame<'n>>,
-    ) -> Result<LowerStep<'n>, CheckRefusal> {
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         let plain = Operation::plain;
         let (keyed, operands) = match node.kind() {
             NodeKind::Literal(CheckedLiteral(value)) => {
@@ -6437,7 +6477,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         mut frame: Box<OperandsFrame<'n>>,
         frames: &mut Vec<LowerFrame<'n>>,
-    ) -> Result<LowerStep<'n>, CheckRefusal> {
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         if let Some(operand) = frame.operands.get(frame.next) {
             frame.next += 1;
             let mut operand = frame.node.at(operand);
@@ -6597,7 +6637,7 @@ impl<'a> Lowering<'a> {
         application: NodeKey,
         location: Location,
         data: &EqualityProducerData,
-    ) -> Result<super::ir::EqualityProducerIdentity, CheckRefusal> {
+    ) -> Result<super::ir::EqualityProducerIdentity, SemanticCheckRefusal> {
         let unit_ids: Vec<_> = data.units().ids().collect();
         let operand_type_nodes = data
             .operand_type_facts()
@@ -6894,7 +6934,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         mut frame: Box<RecordFrame<'n>>,
         frames: &mut Vec<LowerFrame<'n>>,
-    ) -> Result<LowerStep<'n>, CheckRefusal> {
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         let slots = frame.slots;
         while let Some(slot) = slots.get(frame.members.len()) {
             let Some(field) = frame.fields.get(frame.members.len()) else {
@@ -6940,7 +6980,7 @@ impl<'a> Lowering<'a> {
         term: LeafTerm,
         binders: &mut Binders<'_>,
         frames: &mut Vec<LowerFrame<'n>>,
-    ) -> Result<LowerStep<'n>, CheckRefusal> {
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         let plain = Operation::plain;
         match frame {
             LowerFrame::Retain(node) => {
@@ -7183,7 +7223,7 @@ impl<'a> Lowering<'a> {
         field: &str,
         term: &LeafTerm,
         location: &Location,
-    ) -> Result<(NodeKey, NodeKey, LeafTerm), CheckRefusal> {
+    ) -> Result<(NodeKey, NodeKey, LeafTerm), SemanticCheckRefusal> {
         let ValueType::Reference(owner_type) = owner else {
             return Err(fault(location, KeyFault::UnresolvedDraft));
         };
@@ -7233,7 +7273,7 @@ impl<'a> Lowering<'a> {
         &self,
         declaration: NodeKey,
         location: &Location,
-    ) -> Result<&'a [UnionMemberDeclaration], CheckRefusal> {
+    ) -> Result<&'a [UnionMemberDeclaration], SemanticCheckRefusal> {
         let scope: &'a Scope = self.scope;
         match scope.types().composite(declaration).map(|c| c.shape()) {
             Some(CompositeShape::Union(members)) => Ok(members),
@@ -7249,7 +7289,7 @@ impl<'a> Lowering<'a> {
         declaration: NodeKey,
         member: usize,
         location: &Location,
-    ) -> Result<&'a UnionMemberDeclaration, CheckRefusal> {
+    ) -> Result<&'a UnionMemberDeclaration, SemanticCheckRefusal> {
         self.union_members(declaration, location)?
             .get(member)
             .ok_or_else(|| union_fault(location, "union-member-position"))
@@ -7262,7 +7302,7 @@ impl<'a> Lowering<'a> {
         declaration: NodeKey,
         member: usize,
         location: &Location,
-    ) -> Result<&'a str, CheckRefusal> {
+    ) -> Result<&'a str, SemanticCheckRefusal> {
         Ok(self
             .union_member(declaration, member, location)?
             .identifier())
@@ -7276,7 +7316,7 @@ impl<'a> Lowering<'a> {
         term: LeafTerm,
         binders: &mut Binders<'_>,
         frames: &mut Vec<LowerFrame<'n>>,
-    ) -> Result<LowerStep<'n>, CheckRefusal> {
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         let location = frame.node.location();
         match frame.open.take() {
             None if frame.scrutinee.is_none() => frame.scrutinee = Some(term),
@@ -7312,7 +7352,7 @@ impl<'a> Lowering<'a> {
         mut frame: Box<CaseFrame<'n>>,
         binders: &mut Binders<'_>,
         frames: &mut Vec<LowerFrame<'n>>,
-    ) -> Result<LowerStep<'n>, CheckRefusal> {
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         let node = frame.node;
         let location = node.location();
         let Some(arm) = frame.arms.get(frame.lowered.len()) else {
@@ -7360,7 +7400,7 @@ impl<'a> Lowering<'a> {
         term: LeafTerm,
         binders: &mut Binders<'_>,
         frames: &mut Vec<LowerFrame<'n>>,
-    ) -> Result<LowerStep<'n>, CheckRefusal> {
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         let (source, identity) = match std::mem::replace(&mut frame.stage, FoldStage::Source) {
             FoldStage::Source => match frame.identity {
                 Some(identity) => {
@@ -7432,7 +7472,11 @@ impl<'a> Lowering<'a> {
     /// A literal's node: `value`/`literal` for a Boolean, integer, rational,
     /// quantity or absent option, the enum member's nominal node for an
     /// enum member.
-    fn literal(&mut self, node: CheckedNode<'_>, value: &Value) -> Result<LeafTerm, CheckRefusal> {
+    fn literal(
+        &mut self,
+        node: CheckedNode<'_>,
+        value: &Value,
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         self.literal_as(node, value, node.value_type(), None)
     }
 
@@ -7440,7 +7484,10 @@ impl<'a> Lowering<'a> {
     /// node typed at the one-value range `Int[v, v]`, since the reader takes
     /// each bound's extremes from its `integer_range` type node; any other
     /// bound lowers as the term it is.
-    fn seq_bound<'n>(&mut self, bound: CheckedNode<'n>) -> Result<LowerStep<'n>, CheckRefusal> {
+    fn seq_bound<'n>(
+        &mut self,
+        bound: CheckedNode<'n>,
+    ) -> Result<LowerStep<'n>, SemanticCheckRefusal> {
         if let NodeKind::Literal(CheckedLiteral(value @ Value::Integer(integer))) = bound.kind() {
             let interval =
                 filament_exact::IntegerInterval::new(integer.clone(), integer.clone())
@@ -7458,7 +7505,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         node: CheckedNode<'_>,
         identity: &[u8],
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let identity = std::str::from_utf8(identity).map_err(|_| {
             fault(
                 node.location(),
@@ -7492,7 +7539,7 @@ impl<'a> Lowering<'a> {
         value: &Value,
         declared: &ValueType,
         scalar: Option<&'static str>,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         self.literal_at(node.location(), value, declared, scalar)
     }
 
@@ -7505,7 +7552,7 @@ impl<'a> Lowering<'a> {
         value: &Value,
         declared: &ValueType,
         scalar: Option<&'static str>,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         if let Value::Enum(member) = value {
             // FR-093: the enum member's FSpec `enum_value` node, whose
             // key is its `VariantId` (ADR-013 O-14). A model variant
@@ -7547,7 +7594,7 @@ impl<'a> Lowering<'a> {
         location: &Location,
         value: &Value,
         scalar: Option<&'static str>,
-    ) -> Result<LiteralValue, CheckRefusal> {
+    ) -> Result<LiteralValue, SemanticCheckRefusal> {
         Ok(match value {
             Value::Boolean(value) => LiteralValue::Boolean(*value),
             Value::Integer(value) => LiteralValue::Integer(value.clone()),
@@ -7590,7 +7637,7 @@ impl<'a> Lowering<'a> {
         })
     }
 
-    fn unbuilt_map_literal(location: &Location) -> CheckRefusal {
+    fn unbuilt_map_literal(location: &Location) -> SemanticCheckRefusal {
         refuse(
             location,
             CheckCause::PopulationFormNotChecked { what: "map" },
@@ -7603,7 +7650,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         field: &RecordField,
         location: &Location,
-    ) -> Result<Member, CheckRefusal> {
+    ) -> Result<Member, SemanticCheckRefusal> {
         let name = Identifier::new(field.name()).map_err(|_| {
             refuse(
                 location,
@@ -7627,7 +7674,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         node: NodeRef,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let mut handle = match node {
             NodeRef::Admitted(key) => return Ok(key),
             NodeRef::Pending(handle) => handle,
@@ -7650,7 +7697,7 @@ impl<'a> Lowering<'a> {
         compared: &ValueType,
         suffix: &str,
         location: &Location,
-    ) -> Result<Operation, CheckRefusal> {
+    ) -> Result<Operation, SemanticCheckRefusal> {
         let family = match compared {
             ValueType::Boolean => "boolean",
             ValueType::Integer | ValueType::Int(_) => "integer",
@@ -7723,7 +7770,10 @@ fn text_profile(value_type: &ValueType) -> Option<TextProfile> {
 }
 
 /// The element type of a collection type.
-fn element_type(value_type: &ValueType, location: &Location) -> Result<ValueType, CheckRefusal> {
+fn element_type(
+    value_type: &ValueType,
+    location: &Location,
+) -> Result<ValueType, SemanticCheckRefusal> {
     match value_type {
         ValueType::Collection(collection) => Ok(collection.element().clone()),
         _ => Err(refuse(
@@ -7968,8 +8018,8 @@ pub(super) fn strongly_connected(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
 /// source vertex whose work is about to be performed.
 fn strongly_connected_metered(
     edges: &[Vec<usize>],
-    mut charge: impl FnMut(usize) -> Result<(), CheckRefusal>,
-) -> Result<Vec<Vec<usize>>, CheckRefusal> {
+    mut charge: impl FnMut(usize) -> Result<(), SemanticCheckRefusal>,
+) -> Result<Vec<Vec<usize>>, SemanticCheckRefusal> {
     const UNVISITED: usize = usize::MAX;
     let count = edges.len();
     let mut index = vec![UNVISITED; count];
@@ -8052,6 +8102,7 @@ fn is_map(content: &NodeContent) -> bool {
 /// hybrid and bounded-domain nodes retain their compact first-occurrence
 /// spelling; this computation-key rule does not revise their encodings. A
 /// decimal or integer range retains repeated text, so equal bounds repeat.
+#[ix_trace_rs::string_edge]
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     // The carrier is keyed by the protocol it names, not just by the

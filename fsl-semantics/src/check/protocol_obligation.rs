@@ -47,7 +47,7 @@ use super::ir::CheckedBody;
 use super::lowering::{protocol_location, ProtocolSite};
 use super::observation::Observations;
 use super::protocol_clause::{CheckedProtocol, ProtocolNodeId};
-use super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use super::state_clause::{population_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
 use super::type_form::resolve_form;
 use crate::family::CheckContext;
@@ -251,7 +251,7 @@ pub(crate) enum Obligations {
     /// Every obligation checked, with the package's running node total.
     Checked(Box<CheckedObligations>, u64),
     /// Refusals, in source order.
-    Refused(Vec<CheckRefusal>),
+    Refused(Vec<SemanticCheckRefusal>),
     /// A declared type did not resolve. The binder-type check of
     /// `protocol_clause::content` refuses it, so there is nothing to add.
     Unresolved,
@@ -452,8 +452,8 @@ pub(crate) fn check<'a>(
     checker.finish(checked)
 }
 
-fn refusal(cause: ObligationCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ObligationCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // A protocol has no expression tree for a `Location` path to walk;
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span, so this `Location` is never resolved.
@@ -469,7 +469,7 @@ struct Checker<'c, 'a> {
     input: &'c ClauseDeclarations<'a>,
     universe: Universe,
     nodes: u64,
-    refusals: Vec<(Span, CheckRefusal)>,
+    refusals: Vec<(Span, SemanticCheckRefusal)>,
     /// Some part did not check and produced no refusal of this checker.
     incomplete: bool,
     formed_units: filament_semantic_value::quantity::UnitTable,
@@ -1269,7 +1269,7 @@ impl Checker<'_, '_> {
     ) -> Option<(CheckedBody, Vec<String>)> {
         if let Some(name) = readable_source_query_binder(form, &site.bound) {
             let location = site.location.as_ref().unwrap_or(self.input.location);
-            let refusal = CheckRefusal {
+            let refusal = SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::AmbiguousName {
                     name,
@@ -1347,10 +1347,10 @@ impl Checker<'_, '_> {
         site: &Site,
         form: &ExpressionForm,
         goal: Goal<'_>,
-        refused: CheckRefusal,
+        refused: SemanticCheckRefusal,
         cx: &mut CheckContext<'_, Scope>,
     ) {
-        let CheckRefusal { location, cause } = refused;
+        let SemanticCheckRefusal { location, cause } = refused;
         let span = span_of(form, &location);
         if let (
             CheckCause::IllTyped(IllTypedCause::TypeMismatch),
@@ -1394,7 +1394,7 @@ impl Checker<'_, '_> {
             // cause, which the callers classify by kind.
             cause => self.refusals.push((
                 span,
-                CheckRefusal {
+                SemanticCheckRefusal {
                     location,
                     cause: Box::new(cause),
                 },
@@ -1466,7 +1466,7 @@ pub(super) fn type_body(
     input: &ClauseDeclarations<'_>,
     nodes: &mut u64,
     cx: &mut CheckContext<'_, Scope>,
-) -> Result<CheckedBody, CheckRefusal> {
+) -> Result<CheckedBody, SemanticCheckRefusal> {
     type_named_body(form, bound, goal, input, None, nodes, cx).map(|(body, _, _)| body)
 }
 
@@ -1489,7 +1489,7 @@ pub(super) fn type_named_body(
         Vec<String>,
         filament_semantic_value::quantity::UnitTable,
     ),
-    CheckRefusal,
+    SemanticCheckRefusal,
 > {
     let mut typer = Typer::new(
         input.scope,
@@ -1516,7 +1516,7 @@ pub(super) fn type_named_body(
         Goal::Boolean => {
             let body = typer.infer(&form.expression, Some(&ValueType::Boolean), input.location)?;
             if body.root().value_type() != &ValueType::Boolean {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: input.location.clone(),
                     cause: Box::new(CheckCause::NonBooleanRoot),
                 });
@@ -1603,8 +1603,8 @@ fn is_record(scope: &Scope, value_type: &ValueType) -> bool {
 /// The refusal for a protocol whose declared types did not resolve while
 /// `protocol_clause::content` refused none of them: a broken invariant of the
 /// check stage, never an input defect.
-pub(crate) fn unresolved_fault() -> CheckRefusal {
-    CheckRefusal {
+pub(crate) fn unresolved_fault() -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new(

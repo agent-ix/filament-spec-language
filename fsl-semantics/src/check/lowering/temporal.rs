@@ -37,7 +37,7 @@ use crate::check::node_key::{
     Binding, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm, LiteralValue, MemberTerm,
     NodeTag, Operation, OperationLaw, Operator,
 };
-use crate::check::refusal::{CheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 use crate::check::temporal_clause::condition::{family, Family, TypedCondition, TypedConditions};
 use crate::check::temporal_clause::{
     AggregateKind, AggregateWindow, BinaryTemporal, CheckedAggregate, CheckedFairnessMember,
@@ -220,7 +220,7 @@ impl Lowering<'_> {
         target: FairnessTarget,
         boolean: &NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let key = self.insert(
             location,
             NodeTag::Temporal,
@@ -251,7 +251,7 @@ impl Lowering<'_> {
     pub(crate) fn temporal_clause(
         &mut self,
         input: &TemporalClauseInput<'_>,
-    ) -> Result<LoweredTemporalClause, CheckRefusal> {
+    ) -> Result<LoweredTemporalClause, SemanticCheckRefusal> {
         let clause = input.clause;
         let at = |site| temporal_location(input.index, site);
         let claim = at(TemporalSite::Claim);
@@ -512,7 +512,7 @@ impl Lowering<'_> {
         input: &FormulaInput<'_, '_>,
         boolean: NodeKey,
         scope: &[Binder],
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         self.temporal_formula_nodes(input, boolean, scope)
             .map(|(root, _)| root)
     }
@@ -524,12 +524,12 @@ impl Lowering<'_> {
         input: &FormulaInput<'_, '_>,
         boolean: NodeKey,
         scope: &[Binder],
-    ) -> Result<(NodeKey, Vec<NodeKey>), CheckRefusal> {
+    ) -> Result<(NodeKey, Vec<NodeKey>), SemanticCheckRefusal> {
         let formula = input.formula;
         let mut keys: Vec<Option<NodeKey>> = vec![None; formula.nodes().len()];
         for (index, node) in formula.nodes().iter().enumerate().rev() {
             let location = (input.node_site)(index);
-            let operand = |id: FormulaNodeId| -> Result<MemberTerm, CheckRefusal> {
+            let operand = |id: FormulaNodeId| -> Result<MemberTerm, SemanticCheckRefusal> {
                 keys.get(id.index())
                     .cloned()
                     .flatten()
@@ -648,7 +648,7 @@ impl Lowering<'_> {
         aggregate: &FormulaAggregate<'_>,
         scope: &[Binder],
         location: &Location,
-    ) -> Result<MemberTerm, CheckRefusal> {
+    ) -> Result<MemberTerm, SemanticCheckRefusal> {
         let term = aggregate.term;
         let mut members = vec![("kind", self.text_literal(term.kind.spelling(), location)?)];
         if let AggregateKind::Quantile(level) = &term.kind {
@@ -725,7 +725,7 @@ impl Lowering<'_> {
         &mut self,
         aggregate: &FormulaAggregate<'_>,
         location: &Location,
-    ) -> Result<Option<LeafTerm>, CheckRefusal> {
+    ) -> Result<Option<LeafTerm>, SemanticCheckRefusal> {
         let root = aggregate.threshold.root;
         let NodeKind::Literal(CheckedLiteral(literal)) = root.kind() else {
             return Ok(None);
@@ -764,7 +764,7 @@ impl Lowering<'_> {
         &mut self,
         condition: &FormulaCondition<'_>,
         scope: &[Binder],
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let mut binders = Binders::new(condition.slot_names, scope);
         self.expression(condition.root, &mut binders)
     }
@@ -774,7 +774,7 @@ impl Lowering<'_> {
         &mut self,
         value: &Rational,
         location: &Location,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let rational = self.scalar("rational", location)?;
         Ok(LeafTerm::literal(
             rational,
@@ -815,7 +815,7 @@ const fn binary_identity(operator: BinaryTemporal) -> &'static str {
 }
 
 /// A broken invariant of this lowering, never a refusal of the input.
-pub(super) fn stage_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+pub(super) fn stage_fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
     fault(
         location,
         KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(

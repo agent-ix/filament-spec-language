@@ -11,10 +11,10 @@ use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use crate::check::{
-    ArithmeticOp, CaptureIndex, CheckCause, CheckRefusal, CheckedFunctionRef, CheckedGraph,
-    CheckedHybridClaim, CheckedHybridModel, CompareOp, HybridActivation, HybridCause, HybridClock,
-    HybridFormula, HybridHorizon, HybridInterval, HybridTerm, ModeIndex, PackageDeclarations,
-    ResetConstraint, TemporalProfile, TransitionIndex, VariableClass, VariableIndex,
+    ArithmeticOp, CaptureIndex, CheckCause, CheckedFunctionRef, CheckedGraph, CheckedHybridClaim,
+    CheckedHybridModel, CompareOp, HybridActivation, HybridCause, HybridClock, HybridFormula,
+    HybridHorizon, HybridInterval, HybridTerm, ModeIndex, PackageDeclarations, ResetConstraint,
+    SemanticCheckRefusal, TemporalProfile, TransitionIndex, VariableClass, VariableIndex,
 };
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 
@@ -56,7 +56,7 @@ fn use_case() -> String {
     braking(INVARIANT, FLOW, TRANSITION, STOPPED_FLOW)
 }
 
-type Refusals = Vec<(CheckRefusal, Option<String>)>;
+type Refusals = Vec<(SemanticCheckRefusal, Option<String>)>;
 
 fn assemble(declarations: &str) -> (String, PackageDeclarations) {
     let text = format!("{HEADER}{declarations}");

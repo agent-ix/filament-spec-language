@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_semantics::check::{
-    AbstractionRefusal, AdmittedImport, CheckCause, CheckRefusal, CheckedComposition,
-    CompositionName, CompositionRefusal, CompositionRule, CompositionSlot, CompositionSlotKey,
-    ItemPlacement, MalformedMember, SlotBacking, SlotRole,
+    AbstractionRefusal, AdmittedImport, CheckCause, CheckedComposition, CompositionName,
+    CompositionRefusal, CompositionRule, CompositionSlot, CompositionSlotKey, ItemPlacement,
+    MalformedMember, SemanticCheckRefusal, SlotBacking, SlotRole,
 };
 use fsl_semantics::library::LibraryName;
 use ix_trace_rs::trace;
@@ -66,7 +66,7 @@ const CASE_ONE_MEMBERS: &str = "guarantee Producer::Sends; guarantee Consumer::D
 enum Failure {
     Syntax(Vec<fsl_cst::CompleteDiagnostic>),
     Assembly(fsl_semantics::check::AssemblyRefusal),
-    Check(Vec<CheckRefusal>),
+    Check(Vec<SemanticCheckRefusal>),
 }
 
 /// A checked dependency package and the import that names it.
@@ -227,7 +227,7 @@ impl World {
         let Err(Failure::Check(refusals)) = self.compile(declaration) else {
             panic!("{declaration}: a check refusal");
         };
-        let [CheckRefusal { cause, .. }] = &refusals[..] else {
+        let [SemanticCheckRefusal { cause, .. }] = &refusals[..] else {
             panic!("{declaration}: one composition refusal: {refusals:?}");
         };
         let CheckCause::Abstraction(cause) = cause.as_ref() else {

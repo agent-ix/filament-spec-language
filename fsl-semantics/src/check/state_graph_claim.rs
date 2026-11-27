@@ -38,7 +38,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;
 
 use super::ir::{CheckedBody, CheckedNode};
-use super::refusal::{CheckCause, CheckRefusal, PredicateRole, StateGraphCause};
+use super::refusal::{CheckCause, PredicateRole, SemanticCheckRefusal, StateGraphCause};
 use super::state_clause::{check_clause, ClauseDeclarations, ClauseView, PopulationDomain};
 use super::Capability;
 use crate::family::{CheckContext, CheckOutcome, ClaimExtent, FamilyContract, Requirements};
@@ -414,14 +414,14 @@ impl PredicateRole {
 impl FamilyContract for StateGraphFamily {
     type Form = StateGraphDeclaration;
     type Checked = CheckedStateGraphClaim;
-    type Cause = CheckRefusal;
+    type Cause = SemanticCheckRefusal;
     type Declarations<'a> = ClauseDeclarations<'a>;
     type Claim = StateGraphClaim;
 
     fn check<'a>(
         form: &StateGraphDeclaration,
         cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
-    ) -> CheckOutcome<CheckedStateGraphClaim, CheckRefusal> {
+    ) -> CheckOutcome<CheckedStateGraphClaim, SemanticCheckRefusal> {
         let declarations = cx.declarations();
         check_claim(form, declarations, cx).map(Staged::new)
     }
@@ -431,12 +431,12 @@ impl FamilyContract for StateGraphFamily {
     }
 }
 
-fn refuse(cause: StateGraphCause) -> StageFailure<CheckRefusal> {
+fn refuse(cause: StateGraphCause) -> StageFailure<SemanticCheckRefusal> {
     StageFailure::Refused(refusal(cause))
 }
 
-fn refusal(cause: StateGraphCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: StateGraphCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // The cause names its own span; `region::DeclarationRegions::
         // refusal_region` reads it directly, so this `Location` is never
         // resolved.
@@ -653,7 +653,7 @@ fn check_predicate<'a>(
     declarations: &ClauseDeclarations<'a>,
     nodes_used: u64,
     cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
-) -> Result<(CheckedStatePredicate, u64), StageFailure<CheckRefusal>> {
+) -> Result<(CheckedStatePredicate, u64), StageFailure<SemanticCheckRefusal>> {
     // The syntactic refusals ran first: what reaches here is one operand.
     let [operand] = predicate.operands.as_slice() else {
         return Err(StageFailure::Fault(
@@ -727,7 +727,7 @@ fn check_claim<'a>(
     declaration: &StateGraphDeclaration,
     declarations: &ClauseDeclarations<'a>,
     cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
-) -> Result<CheckedStateGraphClaim, StageFailure<CheckRefusal>> {
+) -> Result<CheckedStateGraphClaim, StageFailure<SemanticCheckRefusal>> {
     let form = &declaration.form;
     // FR-165-AC-7: the alias precedes every predicate and constraint, so an
     // identity outside the state-bearing header layers is the claim's first
@@ -748,7 +748,7 @@ fn check_claim<'a>(
         let (checked, used) =
             check_predicate(role, predicate, declaration, declarations, nodes_used, cx)?;
         nodes_used = used;
-        Ok::<_, StageFailure<CheckRefusal>>(checked)
+        Ok::<_, StageFailure<SemanticCheckRefusal>>(checked)
     };
     let checked_form = match &form.kind {
         StateGraphClaimKind::Possible { target } => StateGraphForm::Possible {

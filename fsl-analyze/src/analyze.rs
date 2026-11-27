@@ -41,11 +41,11 @@ mod finite_hyper_item;
 mod hybrid_item;
 mod hybrid_process;
 mod hyper_route;
-mod instance_records;
+pub(crate) mod instance_records;
 mod invariant_item;
 mod items;
 mod package_hyper;
-mod protocol_item;
+pub(crate) mod protocol_item;
 mod reduction_item;
 mod refinement_item;
 pub(crate) mod request;
@@ -1309,6 +1309,19 @@ pub enum AnalyzeRefusal {
     /// runs.
     #[error("the result's node ids cannot be held: {0:?}")]
     Emission(GraphUnavailable),
+    /// FR-255 "Caller limits and item limits": the item at `position` states
+    /// in its own members a limit the caller also set, so no run depends on
+    /// which of the two bounds wins; the run ends before any item runs.
+    #[error(
+        "items[{position}] states a limit the caller also set with `--limit {}`; give it once",
+        .setting.name()
+    )]
+    EngineConflict {
+        /// The request position of the item.
+        position: usize,
+        /// The setting both the item and the caller state.
+        setting: Setting,
+    },
 }
 
 /// The deadline stated by the frontend, which owns its timer.
@@ -1516,6 +1529,17 @@ impl AnalyzeRefusal {
                     )],
                 )
             }
+            Self::EngineConflict { .. } => OutcomeDocument::new(
+                Operation::Analyze,
+                None,
+                fsl_foundation::Code::InvalidRequest.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                None,
+                fsl_foundation::Code::InvalidRequest.as_str(),
+                None,
+                self.to_string(),
+            )]),
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
@@ -3607,7 +3631,7 @@ fn settle(
             settled
         }
         EngineReport::GlobalConformance(report) => AnalyzeRecord {
-            protocol_conformance: Some(report.output),
+            protocol_conformance: report.output,
             protocol_conformance_counterexample: report.counterexample,
             ..record(terminal(report.terminal), None)
         },
@@ -3902,6 +3926,31 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+
+    /// FR-255-AC-25: a non-timed item that states an engine limit in its own
+    /// member, with the caller's bound for the same setting, is a conflict at
+    /// the item's request position; the item silent, or the caller silent, is
+    /// none.
+    #[trace("FR-255-AC-25")]
+    #[test]
+    fn an_item_limit_and_the_callers_bound_conflict_at_the_items_position() {
+        let item = |value: serde_json::Value| -> document::ItemSelection {
+            serde_json::from_value(value).expect("a well-formed item")
+        };
+        let silent = item(serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate"}}));
+        let stating = item(
+            serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}),
+        );
+        let mut bounds = EngineBounds::default();
+        assert!(bounds.set(Setting::SimulationMaxSteps, 2));
+        let items = [silent, stating];
+        assert_eq!(
+            bounds.conflict(&items),
+            Some((1, Setting::SimulationMaxSteps))
+        );
+        assert_eq!(bounds.conflict(&items[..1]), None);
+        assert_eq!(EngineBounds::default().conflict(&items), None);
+    }
 
     fn engine(id: &str, kind: Capability) -> Engine {
         Engine::new(

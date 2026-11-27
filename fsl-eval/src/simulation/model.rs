@@ -100,6 +100,24 @@ use fsl_semantics::model::observation::{
 use fsl_semantics::model::operation::OperationDeclaration;
 use fsl_semantics::model::state::{StateField, StateModel};
 use ix_trace_rs::implements;
+use quire_canonical::Limits as CanonicalLimits;
+
+use crate::model_subject::ModelInstance;
+use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
+use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
+use crate::simulation::footprint::{Footprint, Location};
+use crate::simulation::not_simulated::NotSimulated;
+use crate::simulation::order::{expand, sorted_initial, Expanded};
+use crate::simulation::protocol::WeakAccessShape;
+use crate::simulation::reduction::{
+    ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
+};
+use crate::simulation::sample::{
+    sample_request, sample_request_observed_using, sample_request_until, ObservedSample,
+    ObserverDecision, SampleObservation, SampleRequest,
+};
+use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
+use crate::value::QualifiedName;
 
 struct UnmeteredModelKeyBudget;
 
@@ -120,24 +138,52 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
         Ok(())
     }
 }
-use quire_canonical::Limits as CanonicalLimits;
 
-use crate::model_subject::ModelInstance;
-use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
-use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
-use crate::simulation::footprint::{Footprint, Location};
-use crate::simulation::not_simulated::NotSimulated;
-use crate::simulation::order::{expand, sorted_initial, Expanded};
-use crate::simulation::protocol::WeakAccessShape;
-use crate::simulation::reduction::{
-    ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
-};
-use crate::simulation::sample::{
-    sample_request, sample_request_observed_using, sample_request_until, ObservedSample,
-    ObserverDecision, SampleObservation, SampleRequest,
-};
-use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
-use crate::value::QualifiedName;
+/// The keys [`ModelSystem::selects_instance`] has selected, and what its
+/// caller charges for the work.
+trait SelectedKeys<'k> {
+    type Stop;
+    /// Called before each initial state is inspected.
+    fn inspect_state(&mut self) -> Result<(), Self::Stop>;
+    /// Record `key`; `false` when it was already recorded.
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop>;
+}
+
+impl<'k> SelectedKeys<'k> for BTreeSet<&'k str> {
+    type Stop = std::convert::Infallible;
+    fn inspect_state(&mut self) -> Result<(), Self::Stop> {
+        Ok(())
+    }
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop> {
+        Ok(self.insert(key))
+    }
+}
+
+/// The selected keys of a metered listing: each inspection and byte
+/// comparison is charged, and capacity is reserved before it grows.
+struct MeteredKeys<'k, 'b, 'm> {
+    budget: &'b crate::policy_budget::Budget<'m>,
+    keys: Vec<&'k str>,
+}
+
+impl<'k> SelectedKeys<'k> for MeteredKeys<'k, '_, '_> {
+    type Stop = crate::automaton::PolicyStateError;
+    fn inspect_state(&mut self) -> Result<(), Self::Stop> {
+        self.budget.work(1)
+    }
+    fn select(&mut self, key: &'k str) -> Result<bool, Self::Stop> {
+        for seen in &self.keys {
+            if self.budget.compare_bytes(seen.as_bytes(), key.as_bytes())?
+                == std::cmp::Ordering::Equal
+            {
+                return Ok(false);
+            }
+        }
+        self.budget.growth(&mut self.keys, 1)?;
+        self.keys.push(key);
+        Ok(true)
+    }
+}
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
 pub use cells::Cell;
@@ -188,15 +234,43 @@ pub use task_product::{
 };
 pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
-    advance_timed, replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters,
+    advance_timed, sample_timed, sample_timed_from, sample_timed_race, BehaviourLetters,
     BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal,
     PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock,
     TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep,
-    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop,
+    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd, TimedSampleStop,
     TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal, TimedSystem,
     TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
 };
 pub(crate) use walk::{Applied, Budget};
+
+/// A non-empty, canonically ordered set of admitted claim instances.
+///
+/// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
+/// an empty instance list to an exploration engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimInstances(Vec<ModelInstance>);
+
+impl ClaimInstances {
+    /// All instances in canonical order.
+    pub fn as_slice(&self) -> &[ModelInstance] {
+        &self.0
+    }
+}
+
+/// Why a claim has no non-empty admitted instance set.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum NoClaimInstances {
+    /// The model could not be simulated or its extent could not be classified.
+    #[error("the model cannot be simulated: {0}")]
+    NotSimulated(#[from] NotSimulated),
+    /// The subject has no initial state.
+    #[error("the subject has no initial state")]
+    NoInitialState,
+    /// No initial record admits a key in the overlapping populations.
+    #[error("the claim has no admitted instance")]
+    NoInstance,
+}
 
 /// `resource_exhausted`/`insufficient-next-charge`: a candidate count, or an
 /// evaluation meter, ran out (FR-120 "Post-states", "Contract clauses").
@@ -973,6 +1047,23 @@ impl ModelSystem<'_> {
         }
     }
 
+    /// Charge one unit of FR-161 path-lifting work to this model's active
+    /// evaluation meter.
+    #[implements("FR-161-AC-5")]
+    pub fn charge_concretisation_work(&self) -> Result<(), crate::simulation::ExpansionStop> {
+        use crate::simulation::{ExpansionLimit, ExpansionStop};
+        use filament_exact::{Charge, ChargePoint};
+
+        self.shared_meter
+            .lock()
+            .expect("evaluation meter lock")
+            .charge(Charge::new(ChargePoint::GraphEdge).work(filament_exact::Integer::one()))
+            .map_err(|incomplete| ExpansionStop {
+                cause: EXHAUSTED,
+                limit: Some(ExpansionLimit::EvaluationMeter(incomplete.limit_kind)),
+            })
+    }
+
     /// A fresh evaluation meter, sharing only the probability item's work
     /// allowance when this system belongs to such an item.
     pub fn fresh_meter(&self) -> filament_exact::Meter {
@@ -1273,6 +1364,24 @@ impl<'a> ModelSystem<'a> {
     /// replay reconstructs an object-parameter binding.
     pub fn populations(&self) -> &[fsl_semantics::model::state::StatePopulation] {
         &self.populations
+    }
+
+    /// The first population overlapping `over` that the initial snapshot did
+    /// not list. This is a request refusal check, performed after policy
+    /// declaration resolution and before policy instancing.
+    #[implements("FR-1012-AC-13", "FR-1013-AC-3")]
+    pub fn unlisted_population_overlapping(
+        &self,
+        over: &ValueType,
+    ) -> Option<&fsl_semantics::model::state::StatePopulation> {
+        let ValueType::Reference(parameter) = over else {
+            return None;
+        };
+        let initial = self.initial_base.first()?;
+        self.populations.iter().find(|population| {
+            self.overlaps(population, parameter.clone())
+                && !initial.state().populations.contains_key(&population.key)
+        })
     }
 
     /// The system of trace variable alias `alias` of a hyper clause (FR-173
@@ -2511,19 +2620,11 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
-        let mut seen_instance_keys = BTreeSet::new();
+        let mut seen = BTreeSet::new();
         let mut instances = Vec::new();
         for (population, key) in self.universe_members(parameter)? {
-            // Generated stages change field values only. The base states
-            // supply every initial object's type identity and population.
-            let admitted = self.initial_base.iter().any(|state| {
-                state
-                    .state()
-                    .populations
-                    .get(population)
-                    .is_some_and(|objects| objects.contains_key(key))
-            });
-            if admitted && seen_instance_keys.insert(key) {
+            let Ok(selected) = self.selects_instance(population, key, &mut seen);
+            if selected {
                 instances.push(ModelInstance {
                     population: population.clone(),
                     key: key.to_owned(),
@@ -2531,6 +2632,69 @@ impl<'a> ModelSystem<'a> {
             }
         }
         Ok(instances)
+    }
+
+    /// FR-125 "Instancing", the one admission and de-duplication rule of
+    /// [`Self::instances`] and [`Self::instances_with_meter`]. The caller
+    /// offers each universe key in canonical population and key order; the
+    /// key is an instance when some initial state holds it in `population`
+    /// and it was not already selected from an earlier one.
+    #[implements("FR-125-AC-10")]
+    fn selects_instance<'k, S: SelectedKeys<'k>>(
+        &self,
+        population: &DeclarationKey,
+        key: &'k str,
+        selected: &mut S,
+    ) -> Result<bool, S::Stop> {
+        // Generated stages change field values only. The base states
+        // supply every initial object's type identity and population.
+        for state in &self.initial_base {
+            selected.inspect_state()?;
+            if state
+                .state()
+                .populations
+                .get(population)
+                .is_some_and(|objects| objects.contains_key(key))
+            {
+                return selected.select(key);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Return the non-empty admitted instances for a claim's `over` type.
+    ///
+    /// The refusal order is FR-125-AC-13: extent/bound failures from
+    /// [`Self::instances`], then no initial state, then no admitted instance.
+    /// Conflicting identities are rejected by [`Self::new`] before a system
+    /// is available.
+    #[implements("FR-125-AC-13", "FR-125-AC-21")]
+    pub fn claim_instances(&self, over: &ValueType) -> Result<ClaimInstances, NoClaimInstances> {
+        let instances = self
+            .instances(over)
+            .map_err(NoClaimInstances::NotSimulated)?;
+        if self.initial_base.is_empty() {
+            return Err(NoClaimInstances::NoInitialState);
+        }
+        if instances.is_empty() {
+            return Err(NoClaimInstances::NoInstance);
+        }
+        Ok(ClaimInstances(instances))
+    }
+
+    /// FR-125 Instancing: the instances of a hyper clause parameter of object
+    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
+    /// system of the parameter's alias.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::instances`].
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
+    pub fn hyper_instances(
+        &self,
+        object: &EffectiveId,
+    ) -> Result<Vec<ModelInstance>, NotSimulated> {
+        self.instances(&ValueType::Reference(object.clone()))
     }
 
     /// Every key a hyper parameter of object type `object` may name in an
@@ -2666,6 +2830,7 @@ impl<'a> ModelSystem<'a> {
     /// # Errors
     /// The original instance admission, scalar accounting, cancellation or
     /// allocation/encoding refusal; no partial instance list is returned.
+    #[implements("FR-125-AC-8", "FR-125-AC-10")]
     pub fn instances_with_meter(
         &self,
         over: &ValueType,
@@ -2749,6 +2914,10 @@ impl<'a> ModelSystem<'a> {
             }
         }
         let mut instances = Vec::new();
+        let mut selected = MeteredKeys {
+            budget: &budget,
+            keys: Vec::new(),
+        };
         for (_, population) in admitting {
             budget.work(1)?;
             for key in self
@@ -2757,6 +2926,9 @@ impl<'a> ModelSystem<'a> {
                 .flatten()
             {
                 budget.work(1)?;
+                if !self.selects_instance(population, key, &mut selected)? {
+                    continue;
+                }
                 let population = DeclarationKey {
                     package: budget.text(&population.package)?,
                     node: budget.text(&population.node)?,
@@ -2906,6 +3078,7 @@ impl<'a> ModelSystem<'a> {
             .clone()
     }
 
+    #[implements("FR-155-AC-2")]
     fn compute_universe_declaring(&self, field: &DeclarationKey) -> Option<Vec<ObjectReference>> {
         let mut objects = Vec::new();
         for (type_key, fields) in &self.fields {
@@ -2913,11 +3086,12 @@ impl<'a> ModelSystem<'a> {
                 continue;
             }
             let identity = self.model.type_identity(type_key)?;
-            for instance in self
-                .instances(&ValueType::Reference(identity.clone()))
-                .ok()?
-            {
+            let over = ValueType::Reference(identity.clone());
+            for instance in self.instances(&over).ok()? {
                 objects.push(self.bound_reference(identity.clone(), &instance).ok()?);
+            }
+            for key in self.excluded_keys(&over).ok()? {
+                objects.push(self.model.object_reference(type_key, &key).ok()?);
             }
         }
         objects.sort();

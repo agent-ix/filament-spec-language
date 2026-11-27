@@ -5367,6 +5367,7 @@ impl Payoff<'_> {
     }
 }
 
+#[implements("FR-204-AC-14")]
 fn price_paths(
     graph: &CheckerGraph,
     scheduler: &BTreeMap<ProbabilityProductKey, usize>,
@@ -5546,7 +5547,7 @@ fn price_paths(
                 at = step.clone();
             }
             let end = graph.states.get(&at).ok_or(Error::Refused)?;
-            if sequence.is_empty() || !payoff.ends(&at, end.terminal) {
+            if !payoff.ends(&at, end.terminal) {
                 return Ok(None);
             }
             if !seen.insert(sequence) {
@@ -5672,6 +5673,7 @@ pub(in crate::probability_certificate) fn is_timed_witness_claim(
 /// decides which clock a value belongs to. `None` for a region key, a key
 /// that names a clock twice or not at all, or a value that is not a whole
 /// number of ticks.
+#[ix_trace_rs::string_edge]
 pub fn digital_key_clocks(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,

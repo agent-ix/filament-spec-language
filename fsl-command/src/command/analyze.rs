@@ -1234,6 +1234,7 @@ pub(super) fn settle_items<'u>(
         return Err(engine_conflict(conflict));
     }
     let run = AnalyzeRun {
+        selections: routed.items.as_deref().unwrap_or_default(),
         package,
         binding,
         provision,
@@ -1246,6 +1247,10 @@ pub(super) fn settle_items<'u>(
         settle_run(run, settle.negotiate, settle.cancel)
     })
     .map_err(|error| match error {
+        AnalyzeDocumentError::Refused(fsl_analyze::analyze::AnalyzeRefusal::EngineConflict {
+            position,
+            setting,
+        }) => engine_conflict((position, setting)),
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
         AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
         AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
@@ -1296,6 +1301,7 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
 /// before any item resolves when a compile member sits beside it, the reader
 /// refuses the bytes, a recorded domain package is not supplied, or a
 /// supplied one is not recorded.
+#[ix_trace_rs::string_edge]
 fn admit_package<'d>(
     directory: &'d Path,
     dependent_bytes: usize,

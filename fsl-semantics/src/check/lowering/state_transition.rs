@@ -20,7 +20,7 @@ use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{
     BindingValue, BodyTerm, GroupTerm, LawRole, LeafTerm, MemberTerm, NodeTag, Operation, Operator,
 };
-use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use crate::model::domain_package::{DomainPackageRecord, NativeValueType, ValueTypeRef};
 use crate::model::operation::OperationDeclaration;
 use crate::value::member::Member;
@@ -128,7 +128,7 @@ impl Lowering<'_> {
     pub(crate) fn state_transitions(
         &mut self,
         clauses: &[TransitionClause<'_>],
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         // The lock must select the protocol profile (FSpec FR-341 `laws`).
         if self.protocol_profile.is_none() {
             return Ok(());
@@ -152,7 +152,7 @@ impl Lowering<'_> {
         &mut self,
         group: &[&'c TransitionClause<'c>],
         built: &mut Built,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let Some(first) = group.first() else {
             return Ok(());
         };
@@ -228,7 +228,7 @@ impl Lowering<'_> {
         &self,
         entry: &DeclarationKey,
         location: &Location,
-    ) -> Result<bool, CheckRefusal> {
+    ) -> Result<bool, SemanticCheckRefusal> {
         let (_, model) = self.model_owner(entry, location)?;
         Ok(matches!(
             model.record(entry),
@@ -245,7 +245,7 @@ impl Lowering<'_> {
         field: &str,
         clauses: &OperationClauses<'_, '_>,
         built: &mut Built,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let OperationClauses {
             object,
             binding,
@@ -383,7 +383,7 @@ impl Lowering<'_> {
         boolean: NodeKey,
         location: &Location,
         built: &mut Built,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let keys = set.keys();
         if let [only] = keys.as_slice() {
             return only

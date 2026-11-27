@@ -19,14 +19,14 @@ use super::{CheckedHyperClause, TemporalCause};
 use crate::check::check::Scope;
 use crate::check::ir::{CheckedNode, Slot};
 use crate::check::profile::TemporalProfile;
-use crate::check::refusal::{CheckCause, CheckRefusal};
+use crate::check::refusal::{CheckCause, SemanticCheckRefusal};
 use crate::check::AdmittedModel;
 use filament_semantic_value::location::ExpressionOwner as Origin;
 
 /// The refusal of `clause` at `span`, or the first reason no package
 /// encodes it.
-fn refusal(clause: &CheckedHyperClause, span: Span) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(clause: &CheckedHyperClause, span: Span) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::Temporal(Box::new(TemporalCause::NotEmitted {
             name: clause.name().to_owned(),
@@ -41,7 +41,7 @@ pub(crate) fn unemitted(
     clause: &CheckedHyperClause,
     models: &[AdmittedModel],
     scope: &Scope,
-) -> Option<CheckRefusal> {
+) -> Option<SemanticCheckRefusal> {
     // 1. A timed clause, at the clause.
     if clause.profile() == TemporalProfile::Timed {
         return Some(refusal(clause, clause.span()));

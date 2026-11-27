@@ -863,6 +863,7 @@ fn a_call_item_fault_is_settled_by_disposition() {
     );
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding: world.binding(&["c"]),
             provision: SourceProvision::single(world.package.graph().source(), &world.unit),

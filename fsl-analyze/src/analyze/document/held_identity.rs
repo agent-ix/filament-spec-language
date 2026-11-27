@@ -148,6 +148,7 @@ pub(super) fn hold(
 
 /// The RFC 6901 pointers, in `value`, of the ids a composition item writes
 /// against a component graph, each with the package of that graph.
+#[ix_trace_rs::string_edge]
 fn component_slots(
     value: &Value,
     scope: &ComponentScope<'_>,

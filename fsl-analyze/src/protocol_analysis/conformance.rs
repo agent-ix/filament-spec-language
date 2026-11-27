@@ -16,14 +16,34 @@ use fsl_replay::{
 };
 use ix_trace_rs::implements;
 
-/// The independently settled global-conformance record and its FR-990 output.
+/// The independently settled global-conformance record and optional FR-990 output.
 ///
-/// The terminal record remains the authority for item settlement. The output
-/// carries the obligation-level findings and closure evidence alongside it.
+/// The terminal record remains the authority for item settlement. FR-125
+/// instancing refusals carry no obligation-level output.
 pub(crate) struct ConformanceReport {
     pub(crate) terminal: TerminalRecord,
-    pub(crate) output: ProtocolConformanceOutput,
+    pub(crate) output: Option<ProtocolConformanceOutput>,
     pub(crate) counterexample: Option<serde_json::Value>,
+    pub(crate) stats: Option<fsl_replay::RunStats>,
+}
+
+#[implements("FR-125-AC-13", "FR-990-AC-11")]
+fn empty_population_report(
+    index: fsl_foundation::RequestIndex,
+    cause: fsl_replay::InconclusiveCause,
+) -> crate::analyze::EngineReport {
+    use fsl_replay::TerminalRecord;
+
+    crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
+        terminal: TerminalRecord::inconclusive(
+            index,
+            fsl_foundation::BackendId::new(super::manifest::BACKEND_ID),
+            cause,
+        ),
+        output: None,
+        counterexample: None,
+        stats: None,
+    }))
 }
 
 fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -94,6 +114,7 @@ fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::R
     clippy::too_many_arguments,
     reason = "the recording assessment binds the subject, package, recording, cancellation, and replay limits"
 )]
+#[ix_trace_rs::string_edge]
 fn recording_result(
     index: fsl_foundation::RequestIndex,
     package: &super::recording_input::Input<'_>,
@@ -314,7 +335,7 @@ fn recording_result(
     };
     crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
-        output,
+        output: Some(output),
         counterexample: (assessment.global.label == "refuted" && refused_replay.is_none()).then(
             || {
                 serde_json::json!({
@@ -324,6 +345,7 @@ fn recording_result(
                 })
             },
         ),
+        stats: None,
     }))
 }
 
@@ -381,6 +403,171 @@ pub(crate) fn package_global_recording_item<'a>(
         request.population,
         request.incremental,
         request.replay_limits,
+    )
+}
+
+/// Decide package behavior conformance over each admitted object or scalar value.
+#[implements(
+    "FR-125-AC-13",
+    "FR-896-AC-7",
+    "FR-896-AC-8",
+    "FR-896-AC-9",
+    "FR-990-AC-11"
+)]
+pub(crate) fn package_global_behavior_item<'a>(
+    index: fsl_foundation::RequestIndex,
+    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: crate::analyze::SubjectBinding<'a>,
+    limits: crate::analyze::AnalyzeLimits,
+    protocol: String,
+    form: crate::analyze::TemporalItem,
+) -> crate::analyze::AnalyzeItem<'a> {
+    let temporal = form.clone();
+    crate::analyze::AnalyzeItem::new(
+        index,
+        fsl_semantics::check::Capability::GlobalConformance,
+        Some(fsl_semantics::check::DeclarationFamily::Protocol),
+        fsl_route::Mode::Bounded,
+        super::manifest::BACKEND_ID,
+        move |cancel| {
+            let Some(package_form) = input.evaluator.package_protocol(&protocol) else {
+                return internal_fault();
+            };
+            if let Some(selected) = temporal.protocol.as_ref() {
+                if selected.protocol != protocol {
+                    return wrong_protocol_subject(index, &selected.protocol);
+                }
+            }
+            let selected_protocol = temporal.protocol.as_ref();
+            let selected_memory =
+                selected_protocol.map_or(&[][..], |selected| selected.memory.as_slice());
+            let memory = match fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(
+                &package_form,
+                selected_memory,
+            ) {
+                Ok(memory) => memory,
+                Err(_) => return internal_fault(),
+            };
+            let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(
+                &input,
+                package_form,
+                memory.clone(),
+            ) {
+                Ok(program) => program,
+                Err(_) => {
+                    return crate::analyze::EngineReport::Refused(
+                        crate::analyze::Refusal::Unsupported(
+                            filament_semantic_value::catalog::CatalogCode::new(
+                                "unsupported_construct",
+                                "not-yet-implemented",
+                            ),
+                        ),
+                    );
+                }
+            };
+            let simulation = fsl_eval::simulation::model::ModelSimulationRequest {
+                input: input.clone(),
+                packages: binding.packages,
+                normalization: limits.normalization,
+                snapshots: binding.snapshots,
+                initial: binding.initial.clone(),
+                universes: binding.universes.clone(),
+                observation: limits.observation,
+                expansion: limits.expansion,
+                meter: limits.accounting,
+                emit: limits.emit,
+            };
+            let model = match fsl_eval::simulation::model::ModelSystem::new(simulation) {
+                Ok(model) => model,
+                Err(failure) => {
+                    return crate::analyze::EngineReport::Refused(crate::analyze::admission(
+                        &failure,
+                    ));
+                }
+            };
+            let metadata = match super::recording_input::Protocol::package(&input, &protocol) {
+                Some(metadata) => metadata,
+                None => return unsupported_global_protocol(),
+            };
+            let over_type = program.over_type.clone();
+            // FR-882-AC-3: a scalar `over` is observed through the one model
+            // the request selects; several selections are not yet admitted.
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && input.model_selections.len() > 1
+            {
+                return unsupported_global_protocol();
+            }
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && binding.initial.is_empty()
+            {
+                return empty_population_report(
+                    index,
+                    fsl_replay::InconclusiveCause::NoInitialState,
+                );
+            }
+            if let Some(role) = missing_package_role(&program, &binding) {
+                return missing_role_report(index, &role);
+            }
+            let instances = match claim_over_instances(index, &model, &over_type) {
+                Ok(instances) => instances,
+                Err(report) => return *report,
+            };
+            let role_bindings = package_role_bindings(&program, &binding, selected_protocol);
+            let instances =
+                if let Some(over) = selected_protocol.and_then(|selected| selected.over.as_ref()) {
+                    let selected = crate::analyze::protocol_item::over_instance(&binding, over);
+                    if !instances.contains(&selected) {
+                        return wrong_over_subject();
+                    }
+                    vec![selected]
+                } else {
+                    instances
+                };
+            let mut reports = Vec::with_capacity(instances.len());
+            let mut remaining = temporal.clone();
+            for over in instances {
+                let subject = package_subject(PackageSubjectParts {
+                    input: &input,
+                    binding: &binding,
+                    limits: &limits,
+                    protocol: &protocol,
+                    over,
+                    roles: role_bindings.clone(),
+                    memory: memory.clone(),
+                    selected: selected_protocol,
+                });
+                let replay_subject = clone_protocol_subject(&subject);
+                let certificate_subject = clone_protocol_subject(&subject);
+                let scan_subject = clone_protocol_subject(&subject);
+                let report = every_behavior_result(
+                    index,
+                    &metadata,
+                    &remaining,
+                    subject,
+                    replay_subject,
+                    certificate_subject,
+                    scan_subject,
+                    limits.replay,
+                    cancel,
+                );
+                let crate::analyze::EngineReport::GlobalConformance(report) = report else {
+                    return report;
+                };
+                consume_run_stats(&mut remaining.limits, report.stats);
+                if matches!(
+                    report.terminal.value(),
+                    fsl_replay::TerminalValue::Incomplete(_) | fsl_replay::TerminalValue::Failed
+                ) {
+                    return crate::analyze::EngineReport::GlobalConformance(report);
+                }
+                let refuted = matches!(report.terminal.value(), fsl_replay::TerminalValue::Refuted);
+                reports.push(*report);
+                if refuted {
+                    break;
+                }
+            }
+            select_global_report(reports)
+        },
     )
 }
 
@@ -443,24 +630,33 @@ pub(crate) fn missing_role_item(
         Some(fsl_semantics::check::DeclarationFamily::Protocol),
         fsl_route::Mode::Bounded,
         super::manifest::BACKEND_ID,
-        move |_| {
-            let detail = [("role".to_owned(), serde_json::json!(role))]
-                .into_iter()
-                .collect();
-            crate::analyze::EngineReport::Refused(crate::analyze::Refusal::declined_with_detail(
-                fsl_replay::ProofRefusalCause::IncompleteInput,
-                fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::MissingDeclaration),
-                filament_semantic_value::catalog::CatalogCode::new(
-                    "missing_declaration",
-                    "missing-name",
-                ),
-                detail,
-            ))
-        },
+        move |_| missing_role_report(index, &role),
     )
 }
 
+fn missing_role_report(
+    _index: fsl_foundation::RequestIndex,
+    role: &str,
+) -> crate::analyze::EngineReport {
+    let detail = [("role".to_owned(), serde_json::json!(role))]
+        .into_iter()
+        .collect();
+    crate::analyze::EngineReport::Refused(crate::analyze::Refusal::declined_with_detail(
+        fsl_replay::ProofRefusalCause::IncompleteInput,
+        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::MissingDeclaration),
+        filament_semantic_value::catalog::CatalogCode::new("missing_declaration", "missing-name"),
+        detail,
+    ))
+}
+
 /// The every-behavior arm of a global-conformance request.
+#[implements(
+    "FR-125-AC-13",
+    "FR-896-AC-7",
+    "FR-896-AC-8",
+    "FR-896-AC-9",
+    "FR-990-AC-11"
+)]
 pub(crate) fn global_behavior_item<'a>(
     index: fsl_foundation::RequestIndex,
     analysis: &crate::analyze::RunInput<'a>,
@@ -486,74 +682,336 @@ pub(crate) fn global_behavior_item<'a>(
                 limits: &limits,
                 protocol,
             };
-            let instances = match subject_builder.instances() {
-                Ok(instances) => instances,
-                Err(_) => {
-                    return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                        filament_semantic_value::catalog::CatalogCode::new(
-                            "runtime_invariant",
-                            "established-invariant-broken",
-                        ),
-                    ));
+            if let Some(selected) = form.protocol.as_ref() {
+                if selected.protocol != protocol.name {
+                    return wrong_protocol_subject(index, &selected.protocol);
                 }
-            };
-            let Some(over) = instances.into_iter().next() else {
-                return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                    filament_semantic_value::catalog::CatalogCode::new(
-                        "runtime_invariant",
-                        "established-invariant-broken",
-                    ),
-                ));
-            };
-            let subject = match subject_builder.subject(over.clone()) {
-                Ok(subject) => subject,
-                // FSpec FR-785: a symbolic capacity with no binding.
-                Err(super::finite_replay::ReplayFault::UnboundCapacity) => {
-                    return crate::analyze::EngineReport::Refused(
-                        crate::analyze::Refusal::RequiresBound,
-                    );
-                }
+            }
+            let model = match ModelSystem::new(subject_builder.simulation()) {
+                Ok(model) => model,
                 Err(_) => return internal_fault(),
             };
-            let replay_subject = match subject_builder.subject(over.clone()) {
-                Ok(subject) => subject,
-                Err(_) => return internal_fault(),
+            let Some(over_type) = protocol
+                .slots
+                .binders
+                .first()
+                .filter(|binder| binder.node.is_none())
+                .map(|binder| binder.value_type.clone())
+            else {
+                return internal_fault();
             };
-            let certificate_subject = match subject_builder.subject(over) {
-                Ok(subject) => subject,
-                Err(_) => return internal_fault(),
-            };
-            let scan_subject = match subject_builder
-                .instances()
-                .ok()
-                .and_then(|mut instances| (!instances.is_empty()).then(|| instances.remove(0)))
-                .and_then(|over| subject_builder.subject(over).ok())
+            // FR-882-AC-3: a scalar `over` is observed through the one model
+            // the request selects; several selections are not yet admitted.
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && input.model_selections.len() > 1
             {
-                Some(subject) => subject,
-                None => return internal_fault(),
+                return unsupported_global_protocol();
+            }
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && binding.initial.is_empty()
+            {
+                return empty_population_report(
+                    index,
+                    fsl_replay::InconclusiveCause::NoInitialState,
+                );
+            }
+            let instances = match claim_over_instances(index, &model, &over_type) {
+                Ok(instances) => instances,
+                Err(report) => return *report,
             };
-            every_behavior_result(
-                index,
-                protocol,
-                &form,
-                subject,
-                replay_subject,
-                certificate_subject,
-                scan_subject,
-                limits.replay,
-                cancel,
-            )
+            let selected_over = form
+                .protocol
+                .as_ref()
+                .and_then(|selected| selected.over.as_ref());
+            let instances = if let Some(over) = selected_over {
+                let selected = crate::analyze::protocol_item::over_instance(&binding, over);
+                if !instances.contains(&selected) {
+                    return wrong_over_subject();
+                }
+                vec![selected]
+            } else {
+                instances
+            };
+            let metadata = super::recording_input::Protocol::source(protocol);
+            let mut reports = Vec::with_capacity(instances.len());
+            let mut remaining = form.clone();
+            for over in instances {
+                let subject = if let Some(selected) = form.protocol.as_ref() {
+                    match crate::analyze::protocol_item::subject_of(
+                        &input,
+                        &binding,
+                        &limits,
+                        form.max_candidates,
+                        selected,
+                        &over,
+                    ) {
+                        Ok(subject) => subject,
+                        Err(crate::protocol_analysis::SubjectRefusal::UnknownProtocol(name)) => {
+                            return wrong_protocol_subject(index, &name);
+                        }
+                        Err(crate::protocol_analysis::SubjectRefusal::Memory(_)) => {
+                            return wrong_over_subject();
+                        }
+                    }
+                } else {
+                    match subject_builder.subject(over) {
+                        Ok(subject) => subject,
+                        Err(super::finite_replay::ReplayFault::UnboundCapacity) => {
+                            return crate::analyze::EngineReport::Refused(
+                                crate::analyze::Refusal::RequiresBound,
+                            );
+                        }
+                        Err(_) => return internal_fault(),
+                    }
+                };
+                let replay_subject = clone_protocol_subject(&subject);
+                let certificate_subject = clone_protocol_subject(&subject);
+                let scan_subject = clone_protocol_subject(&subject);
+                let report = match every_behavior_result(
+                    index,
+                    &metadata,
+                    &remaining,
+                    subject,
+                    replay_subject,
+                    certificate_subject,
+                    scan_subject,
+                    limits.replay,
+                    cancel,
+                ) {
+                    crate::analyze::EngineReport::GlobalConformance(report) => report,
+                    other => return other,
+                };
+                consume_run_stats(&mut remaining.limits, report.stats);
+                if matches!(
+                    report.terminal.value(),
+                    fsl_replay::TerminalValue::Incomplete(_) | fsl_replay::TerminalValue::Failed
+                ) {
+                    return crate::analyze::EngineReport::GlobalConformance(report);
+                }
+                let refuted = matches!(report.terminal.value(), fsl_replay::TerminalValue::Refuted);
+                reports.push(*report);
+                if refuted {
+                    break;
+                }
+            }
+            select_global_report(reports)
         },
     )
 }
 
+#[implements("FR-125-AC-13")]
+fn claim_over_instances(
+    index: fsl_foundation::RequestIndex,
+    model: &ModelSystem<'_>,
+    over_type: &filament_exact::ValueType,
+) -> Result<Vec<fsl_eval::model_subject::ModelInstance>, Box<crate::analyze::EngineReport>> {
+    if matches!(over_type, filament_exact::ValueType::Reference(_)) {
+        return model
+            .claim_instances(over_type)
+            .map(|instances| instances.as_slice().to_vec())
+            .map_err(|failure| match failure {
+                fsl_eval::simulation::model::NoClaimInstances::NoInstance => Box::new({
+                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance)
+                }),
+                fsl_eval::simulation::model::NoClaimInstances::NoInitialState => Box::new({
+                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInitialState)
+                }),
+                fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
+                    fsl_eval::simulation::NotSimulated::RequiresBound(_),
+                ) => Box::new(crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::RequiresBound,
+                )),
+                _ => Box::new(internal_fault()),
+            });
+    }
+    Ok(vec![fsl_eval::model_subject::ModelInstance {
+        population: filament_checked::key::DeclarationKey {
+            package: String::new(),
+            node: String::new(),
+        },
+        key: String::new(),
+    }])
+}
+
+fn unsupported_global_protocol() -> crate::analyze::EngineReport {
+    crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Unsupported(CatalogCode::new(
+        "unsupported_construct",
+        "not-yet-implemented",
+    )))
+}
+
+#[implements("FR-896-AC-4")]
+fn missing_package_role(
+    program: &fsl_eval::simulation::protocol::PackageProtocolProgram<'_>,
+    binding: &crate::analyze::SubjectBinding<'_>,
+) -> Option<String> {
+    let selected: std::collections::BTreeSet<_> = binding
+        .universes
+        .iter()
+        .map(|universe| universe.population.package.as_str())
+        .collect();
+    program
+        .roles
+        .iter()
+        .filter(|role| !role.replicated)
+        .find(|role| !selected.contains(role.model_identity.original().package()))
+        .map(|role| role.name.clone())
+}
+
+fn package_role_bindings(
+    program: &fsl_eval::simulation::protocol::PackageProtocolProgram<'_>,
+    binding: &crate::analyze::SubjectBinding<'_>,
+    selected: Option<&crate::analyze::request::ProtocolBinding>,
+) -> Vec<fsl_eval::model_subject::RoleBinding> {
+    if let Some(selected) = selected {
+        return selected.roles.clone();
+    }
+    let packages: std::collections::BTreeSet<_> = binding
+        .universes
+        .iter()
+        .map(|universe| universe.population.package.as_str())
+        .collect();
+    program
+        .roles
+        .iter()
+        .filter(|role| !role.replicated)
+        .filter_map(|role| {
+            let package = role.model_identity.original().package();
+            packages
+                .contains(package)
+                .then(|| fsl_eval::model_subject::RoleBinding {
+                    role: role.name.clone(),
+                    model: package.to_owned(),
+                })
+        })
+        .collect()
+}
+
+struct PackageSubjectParts<'a> {
+    input: &'a fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: &'a crate::analyze::SubjectBinding<'a>,
+    limits: &'a crate::analyze::AnalyzeLimits,
+    protocol: &'a str,
+    over: fsl_eval::model_subject::ModelInstance,
+    roles: Vec<fsl_eval::model_subject::RoleBinding>,
+    memory: fsl_eval::simulation::protocol::ResolvedMemory,
+    selected: Option<&'a crate::analyze::request::ProtocolBinding>,
+}
+
+fn package_subject<'a>(
+    parts: PackageSubjectParts<'a>,
+) -> fsl_eval::model_subject::ProtocolSubject<'a> {
+    let PackageSubjectParts {
+        input,
+        binding,
+        limits,
+        protocol,
+        over,
+        roles,
+        memory,
+        selected,
+    } = parts;
+    fsl_eval::model_subject::ProtocolSubject {
+        model: fsl_eval::model_subject::ModelSubject {
+            simulation: fsl_eval::simulation::model::ModelSimulationRequest {
+                input: input.clone(),
+                packages: binding.packages,
+                normalization: limits.normalization,
+                snapshots: binding.snapshots,
+                initial: binding.initial.clone(),
+                universes: binding.universes.clone(),
+                observation: limits.observation,
+                expansion: limits.expansion,
+                meter: limits.accounting,
+                emit: limits.emit,
+            },
+            proof_bounds: Vec::new(),
+        },
+        protocol: protocol.to_owned(),
+        over,
+        roles,
+        capacities: selected.map_or_else(Vec::new, |selected| selected.capacities.clone()),
+        memory,
+    }
+}
+
+fn clone_protocol_subject<'a>(
+    subject: &fsl_eval::model_subject::ProtocolSubject<'a>,
+) -> fsl_eval::model_subject::ProtocolSubject<'a> {
+    fsl_eval::model_subject::ProtocolSubject {
+        model: fsl_eval::model_subject::ModelSubject {
+            simulation: subject.model.simulation.clone(),
+            proof_bounds: subject.model.proof_bounds.clone(),
+        },
+        protocol: subject.protocol.clone(),
+        over: subject.over.clone(),
+        roles: subject.roles.clone(),
+        capacities: subject.capacities.clone(),
+        memory: subject.memory.clone(),
+    }
+}
+
+fn consume_run_stats(
+    limits: &mut fsl_replay::ModelCheckLimits,
+    stats: Option<fsl_replay::RunStats>,
+) {
+    let Some(stats) = stats else { return };
+    let used = |count: u64| usize::try_from(count).unwrap_or(usize::MAX);
+    limits.limits.max_states = limits
+        .limits
+        .max_states
+        .saturating_sub(used(stats.product_states));
+    limits.limits.max_transitions = limits
+        .limits
+        .max_transitions
+        .saturating_sub(used(stats.product_edges));
+    limits.max_automaton_states = limits
+        .max_automaton_states
+        .saturating_sub(stats.automaton_states);
+}
+
+fn select_global_report(mut reports: Vec<ConformanceReport>) -> crate::analyze::EngineReport {
+    let records = reports
+        .iter()
+        .map(|report| &report.terminal)
+        .collect::<Vec<_>>();
+    let selected = crate::analyze::instance_records::decisive(&records);
+    crate::analyze::EngineReport::GlobalConformance(Box::new(reports.remove(selected)))
+}
+
+fn wrong_protocol_subject(
+    _index: fsl_foundation::RequestIndex,
+    protocol: &str,
+) -> crate::analyze::EngineReport {
+    let detail = [("protocol".to_owned(), serde_json::json!(protocol))]
+        .into_iter()
+        .collect();
+    crate::analyze::EngineReport::Refused(crate::analyze::Refusal::declined_with_detail(
+        fsl_replay::ProofRefusalCause::InvalidInput,
+        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+        detail,
+    ))
+}
+
+fn wrong_over_subject() -> crate::analyze::EngineReport {
+    crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Declined(
+        fsl_replay::ProofRefusalCause::InvalidInput,
+        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        CatalogCode::new("invalid_runtime_input", "invalid-value"),
+    ))
+}
+
+#[implements("FR-896-AC-7", "FR-990-AC-11")]
+#[ix_trace_rs::string_edge]
 #[implements("FR-896-AC-11")]
 fn behavior_report(
     index: fsl_foundation::RequestIndex,
-    protocol: &fsl_semantics::check::CheckedProtocol,
+    protocol: &super::recording_input::Protocol<'_>,
     record: fsl_replay::ModelCheckRecord<ProtocolTransition>,
     reported_counterexample: Option<serde_json::Value>,
     max_messages: Option<u64>,
+    run_stats: fsl_replay::RunStats,
 ) -> crate::analyze::EngineReport {
     use fsl_replay::{
         ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceObligationOutput,
@@ -738,7 +1196,7 @@ fn behavior_report(
         });
     crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
-        output: ProtocolConformanceOutput {
+        output: Some(ProtocolConformanceOutput {
             obligations,
             closure: ConformanceClosureOutput {
                 state: if closed {
@@ -837,8 +1295,9 @@ fn behavior_report(
             recording: None,
             replay: refuted.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
             prefixes: None,
-        },
+        }),
         counterexample,
+        stats: Some(run_stats),
     }))
 }
 
@@ -855,36 +1314,62 @@ fn pending_finish_counterexample(
     subject: &ProtocolSubject<'_>,
     limits: fsl_replay::ModelCheckLimits,
     max_messages: Option<u64>,
+    cancel: &Cancel,
 ) -> Option<TemporalCounterexample<ProtocolTransition>> {
     let model = ModelSystem::new(subject.model.simulation.clone()).ok()?;
     let message_bound =
         max_messages.unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND);
     match SubjectMemory::of(&subject.memory, None, None) {
         SubjectMemory::Sc => {
-            let system = ProtocolSystem::new(model, subject, Sc)
+            let system = conformance_system(model, subject, Sc)
                 .ok()?
                 .with_channel_message_bound(message_bound);
-            pending_finish_in::<Sc>(&system, limits)
+            pending_finish_in::<Sc>(&system, limits, cancel)
         }
         SubjectMemory::Tso(memory) => {
-            let system = ProtocolSystem::new(model, subject, memory)
+            let system = conformance_system(model, subject, memory)
                 .ok()?
                 .with_channel_message_bound(message_bound);
-            pending_finish_in::<Tso>(&system, limits)
+            pending_finish_in::<Tso>(&system, limits, cancel)
         }
         SubjectMemory::Ra(memory) => {
             let channel_bound = memory.max_messages();
-            let system = ProtocolSystem::new(model, subject, memory)
+            let system = conformance_system(model, subject, memory)
                 .ok()?
                 .with_channel_message_bound(channel_bound);
-            pending_finish_in::<Ra>(&system, limits)
+            pending_finish_in::<Ra>(&system, limits, cancel)
         }
+    }
+}
+
+#[implements("FR-896-AC-7")]
+fn conformance_system<'a, M: fsl_eval::simulation::protocol::MemoryModel>(
+    model: ModelSystem<'a>,
+    subject: &'a ProtocolSubject<'a>,
+    memory: M,
+) -> Result<ProtocolSystem<'a, M>, ProtocolRefusal> {
+    match subject
+        .model
+        .simulation
+        .input
+        .protocol_definition(&subject.protocol)
+    {
+        Some(fsl_eval::simulation::model::ProtocolDefinition::Source(_)) => {
+            ProtocolSystem::new(model, subject, memory)
+        }
+        Some(fsl_eval::simulation::model::ProtocolDefinition::Package(_)) => {
+            ProtocolSystem::new_package(model, subject, memory)
+        }
+        None => Err(ProtocolRefusal::UnknownProtocol {
+            protocol: subject.protocol.clone(),
+        }),
     }
 }
 
 fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     system: &ProtocolSystem<'_, M>,
     limits: fsl_replay::ModelCheckLimits,
+    cancel: &Cancel,
 ) -> Option<TemporalCounterexample<ProtocolTransition>> {
     use std::collections::{BTreeSet, VecDeque};
 
@@ -915,6 +1400,9 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
         prefix,
     }) = queue.pop_front()
     {
+        if cancel.cause().is_some() {
+            return None;
+        }
         if expanded >= u64::try_from(limits.limits.max_states).unwrap_or(u64::MAX) {
             return None;
         }
@@ -970,7 +1458,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
 )]
 fn every_behavior_result(
     index: fsl_foundation::RequestIndex,
-    protocol: &fsl_semantics::check::CheckedProtocol,
+    protocol: &super::recording_input::Protocol<'_>,
     form: &crate::analyze::TemporalItem,
     subject: fsl_eval::model_subject::ProtocolSubject<'_>,
     replay_subject: fsl_eval::model_subject::ProtocolSubject<'_>,
@@ -1017,8 +1505,9 @@ fn every_behavior_result(
         Ok(outcome) => outcome,
         Err(_) => return internal_fault(),
     };
+    let run_stats = outcome.stats();
     let pending_delivery =
-        pending_finish_counterexample(&scan_subject, form.limits, form.max_messages);
+        pending_finish_counterexample(&scan_subject, form.limits, form.max_messages, cancel);
     let outcome = match pending_delivery {
         Some(counterexample) => fsl_replay::ModelCheckOutcome::Violated {
             counterexample: Box::new(counterexample),
@@ -1093,7 +1582,14 @@ fn every_behavior_result(
         };
         fsl_replay::protocol_temporal_wire(counterexample, &subject, None).ok()
     });
-    behavior_report(index, protocol, record, counterexample, form.max_messages)
+    behavior_report(
+        index,
+        protocol,
+        record,
+        counterexample,
+        form.max_messages,
+        run_stats,
+    )
 }
 
 /// A global-conformance counterexample that can be replayed from a checked subject.
@@ -1190,6 +1686,7 @@ impl ConformanceReplayRefusal {
 ///
 /// [`ConformanceReplayRefusal`] when the counterexample is malformed or the
 /// subject cannot build its protocol system.
+#[ix_trace_rs::string_edge]
 pub fn replay_counterexample(
     subject: &ProtocolSubject<'_>,
     counterexample: &ConformanceCounterexample,
@@ -1214,7 +1711,7 @@ pub fn replay_counterexample(
                                 None,
                             )
                         })?;
-                    let system = ProtocolSystem::new(model, subject, Sc)
+                    let system = conformance_system(model, subject, Sc)
                         .map_err(protocol_refusal)?
                         .with_max_live_instances(live_instance_bound(None));
                     if replay_pending_finish(&system, counterexample) {
@@ -1231,7 +1728,7 @@ pub fn replay_counterexample(
                                 None,
                             )
                         })?;
-                    let system = ProtocolSystem::new(model, subject, memory)
+                    let system = conformance_system(model, subject, memory)
                         .map_err(protocol_refusal)?
                         .with_max_live_instances(live_instance_bound(None));
                     if replay_pending_finish(&system, counterexample) {
@@ -1248,7 +1745,7 @@ pub fn replay_counterexample(
                                 None,
                             )
                         })?;
-                    let system = ProtocolSystem::new(model, subject, memory)
+                    let system = conformance_system(model, subject, memory)
                         .map_err(protocol_refusal)?
                         .with_max_live_instances(live_instance_bound(None));
                     if replay_pending_finish(&system, counterexample) {

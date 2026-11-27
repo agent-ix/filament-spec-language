@@ -12,6 +12,7 @@ use crate::Outcome;
 const USAGE: &str = "usage: cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]";
 
 /// Inspect all workspace Cargo manifests, or one manifest supplied by a test.
+#[ix_trace_rs::string_edge]
 pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
     let manifests = match arguments {
         [] => manifests_under(workspace_root)?,
@@ -62,6 +63,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn manifests_under(root: &Path) -> Result<Vec<PathBuf>> {
     let mut pending = vec![root.to_path_buf()];
     let mut manifests = Vec::new();
@@ -141,6 +143,7 @@ fn inspect_manifest(
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn inspect_dependencies(
     dependencies: &toml::map::Map<String, toml::Value>,
     section: &str,

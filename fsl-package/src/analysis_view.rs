@@ -173,6 +173,7 @@ pub trait AnalysisView: sealed::Sealed {
     /// The package-native execution structure of the one protocol
     /// declaration whose qualified name is `name`, or `None` when the
     /// package has no unique declaration by that name.
+    #[ix_trace_rs::string_edge]
     fn protocol_execution_named(
         &self,
         name: &str,
@@ -281,6 +282,7 @@ pub trait AnalysisView: sealed::Sealed {
     /// declaration, nor a `pre` or `post` state clause (which no request
     /// names, FR-625). A package whose writer names every claim (FSpec FR-322
     /// "Claim names") has none (FR-850 claim lookup).
+    #[ix_trace_rs::string_edge]
     fn unnamed_claims(&self) -> Vec<&CheckedNodeId> {
         use filament_contract_model::{CheckedNodePathSegment, CheckedOccurrenceRole};
         let named: Vec<&CheckedNodeId> = self

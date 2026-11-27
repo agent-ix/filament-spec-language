@@ -39,7 +39,7 @@ use super::checked_dispatch::{
 use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::ModelClause;
 use super::refusal::{DispatchLinkCause, DispatchSubtypeFailure};
-use super::{CheckCause, CheckRefusal, PackageDeclarations};
+use super::{CheckCause, PackageDeclarations, SemanticCheckRefusal};
 use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::{DispatchLinkOutcome, GeneralizationClosure, LinkCheckOutcome};
 use crate::model::domain_package::DomainPackageRecord;
@@ -66,7 +66,7 @@ struct CalledFamily {
 struct PendingFamily {
     member: String,
     receivers: BTreeSet<EffectiveId>,
-    refusals: Vec<CheckRefusal>,
+    refusals: Vec<SemanticCheckRefusal>,
 }
 
 /// The families that did not link, held until the unit is checked: a family
@@ -83,7 +83,7 @@ impl PendingLinks {
     /// its first call, and the reported families come in charge order
     /// (ascending alias, then root key), not call order. Every other refusal
     /// is kept as it is, and a failed family no call needed is dropped.
-    pub fn report(&self, refusals: Vec<CheckRefusal>) -> Vec<CheckRefusal> {
+    pub fn report(&self, refusals: Vec<SemanticCheckRefusal>) -> Vec<SemanticCheckRefusal> {
         // Each reached family, by its place in the charge order, with the
         // location of its first call.
         let mut reached: BTreeMap<usize, Location> = BTreeMap::new();
@@ -124,7 +124,7 @@ impl PendingLinks {
 
 /// The member and receiver type of a call the check found no dispatch
 /// operation for.
-fn unresolved_call(refusal: &CheckRefusal) -> Option<(&str, EffectiveId)> {
+fn unresolved_call(refusal: &SemanticCheckRefusal) -> Option<(&str, EffectiveId)> {
     match refusal.cause.as_ref() {
         CheckCause::StateModel(model) => match (&model.cause, model.receiver.clone()) {
             (CheckCause::MissingName(name), Some(receiver)) => Some((name, receiver)),
@@ -153,7 +153,7 @@ impl PackageDeclarations {
     pub fn link_dispatch(
         &mut self,
         limits: ModelNormalizationLimits,
-    ) -> Result<PendingLinks, Vec<CheckRefusal>> {
+    ) -> Result<PendingLinks, Vec<SemanticCheckRefusal>> {
         let called = self.called_members();
         let mut meter = NormalizationMeter::new(limits);
         let mut pending = PendingLinks::default();
@@ -231,7 +231,7 @@ impl PackageDeclarations {
     /// (FR-576-AC-10). One function per operation key, whichever aliases
     /// select its document. A body that cannot be built refuses as a broken
     /// invariant (FR-302), never silently.
-    fn build_uncalled_bodies(&mut self) -> Vec<CheckRefusal> {
+    fn build_uncalled_bodies(&mut self) -> Vec<SemanticCheckRefusal> {
         let mut built: BTreeSet<DeclarationKey> = self
             .model_clauses
             .values()
@@ -300,7 +300,7 @@ impl PackageDeclarations {
         for (key, function, signature) in functions {
             let index = self.functions.len();
             let Some(signature) = signature else {
-                refusals.push(CheckRefusal::ill_typed(
+                refusals.push(SemanticCheckRefusal::ill_typed(
                     &Location::root(Origin::Body {
                         function: function.name.clone(),
                         index,
@@ -663,6 +663,7 @@ impl PackageDeclarations {
     /// body, and for an authored precondition, which `synthesized_spans`
     /// already places at its `pre` declaration.
     #[implements("FR-569-AC-6")]
+    #[ix_trace_rs::string_edge]
     fn clause_declaration_span(&self, clause: &ModelClause) -> Option<Span> {
         let path = clause.source_declaration.as_ref()?;
         match clause.kind {
@@ -685,7 +686,7 @@ impl PackageDeclarations {
     /// FR-302-AC-8: a body function from `first` on whose `operation-body`
     /// declares a different number of parameters than its operation refuses
     /// `ill_typed`/`type-mismatch`, located at the body.
-    fn body_arity_refusals(&self, first: usize) -> Vec<CheckRefusal> {
+    fn body_arity_refusals(&self, first: usize) -> Vec<SemanticCheckRefusal> {
         let mut refusals = Vec::new();
         for (index, function) in self.functions.iter().enumerate().skip(first) {
             let Some(clause) = self
@@ -699,7 +700,7 @@ impl PackageDeclarations {
                 continue;
             };
             if body.parameters.len() != body.operation.declaration.parameters().len() {
-                refusals.push(CheckRefusal::ill_typed(
+                refusals.push(SemanticCheckRefusal::ill_typed(
                     &Location::root(Origin::Body {
                         function: function.name.clone(),
                         index,
@@ -712,8 +713,8 @@ impl PackageDeclarations {
     }
 }
 
-fn dispatch_link(cause: DispatchLinkCause) -> CheckRefusal {
-    CheckRefusal {
+fn dispatch_link(cause: DispatchLinkCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::DispatchLink(Box::new(cause))),
     }

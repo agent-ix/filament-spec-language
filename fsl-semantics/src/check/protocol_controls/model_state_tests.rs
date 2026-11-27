@@ -13,7 +13,7 @@ use ix_trace_rs::trace;
 
 use super::CheckedOrdering;
 use crate::check::refusal::ProtocolAnchorCause;
-use crate::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 
 mod fixture {
     use crate as semantics;
@@ -36,14 +36,14 @@ fn with_channel(carries: &str, ordering: &str) -> String {
     )
 }
 
-fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     check_with_limits(text, CheckingLimits::default())
 }
 
 fn check_with_limits(
     text: &str,
     limits: CheckingLimits,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let assembled = || {
         let parsed = fsl_cst::parse(
             SourceIdentity::new("a", "u"),
@@ -76,7 +76,7 @@ fn check_with_limits(
         Ok(graph) => return Ok(graph),
         Err(refusals) => refusals,
     };
-    let checked: Vec<CheckRefusal> = refusals
+    let checked: Vec<SemanticCheckRefusal> = refusals
         .into_iter()
         .filter(|refusal| {
             !matches!(
@@ -416,7 +416,7 @@ fn nested_repeat_feasibility_is_independent_and_budgeted() {
     )));
 }
 
-fn assert_resource_work_limit(refusals: &[CheckRefusal], bound: u64) {
+fn assert_resource_work_limit(refusals: &[SemanticCheckRefusal], bound: u64) {
     let [refusal] = refusals else {
         panic!("one resource refusal, got {refusals:?}");
     };
@@ -428,7 +428,7 @@ fn assert_resource_work_limit(refusals: &[CheckRefusal], bound: u64) {
     assert_eq!(limit.actual, u128::from(bound) + 1);
 }
 
-fn assert_limit_region(text: &str, refusals: &[CheckRefusal], expected: &str) {
+fn assert_limit_region(text: &str, refusals: &[SemanticCheckRefusal], expected: &str) {
     let [refusal] = refusals else {
         panic!("one limit refusal, got {refusals:?}");
     };

@@ -855,6 +855,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         scope.poll()?;
         Ok(result)
     }
+    #[ix_trace_rs::string_edge]
     fn value_with_children(
         &self,
         value: &Value,
@@ -1575,6 +1576,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn integer_text(text: &str) -> bool {
     let digits = text.strip_prefix('-').unwrap_or(text);
     !digits.is_empty()

@@ -36,7 +36,7 @@ use crate::check::node_key::{
     AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm,
     MemberTerm, NodeRef, NodeTag, Operation, OperationLaw, Operator, Owner, TupleMember, TupleTerm,
 };
-use crate::check::refusal::CheckRefusal;
+use crate::check::refusal::SemanticCheckRefusal;
 use crate::value::member::FairnessTarget;
 
 /// One checked hyper clause over `behaviours`, as lowering reads it.
@@ -110,7 +110,7 @@ impl Lowering<'_> {
     pub(crate) fn finite_hyper_clause(
         &mut self,
         input: &FiniteHyperClauseInput<'_>,
-    ) -> Result<LoweredFiniteHyperClause, CheckRefusal> {
+    ) -> Result<LoweredFiniteHyperClause, SemanticCheckRefusal> {
         let clause = input.clause;
         let claim = hyper_location(input.index, Site::Claim);
         let boolean = self.type_node(&ValueType::Boolean, &claim)?;
@@ -204,7 +204,7 @@ impl Lowering<'_> {
     pub(crate) fn step_relation(
         &mut self,
         input: &StepRelationInput<'_>,
-    ) -> Result<LoweredStepRelation, CheckRefusal> {
+    ) -> Result<LoweredStepRelation, SemanticCheckRefusal> {
         let relation = input.relation;
         if input.anchors.len() != relation.executions().len() {
             return Err(stage_fault(
@@ -419,7 +419,7 @@ impl Lowering<'_> {
                     LeafTerm::reference(model.clone()),
                 )))
             })
-            .collect::<Result<Vec<_>, CheckRefusal>>()?;
+            .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?;
         let declaration = Identifier::new(relation.name().to_owned())
             .map_err(|_| stage_fault(&claim, "step-relation-name-is-identifier"))?;
         let body = BodyTerm::aggregate(vec![
@@ -455,7 +455,7 @@ impl Lowering<'_> {
     pub(crate) fn hyper_clause(
         &mut self,
         input: &HyperClauseInput<'_>,
-    ) -> Result<LoweredHyperClause, CheckRefusal> {
+    ) -> Result<LoweredHyperClause, SemanticCheckRefusal> {
         let clause = input.clause;
         let at = |site| hyper_location(input.index, site);
         let claim = at(Site::Claim);
@@ -611,7 +611,7 @@ impl Lowering<'_> {
         clause: &CheckedHyperClause,
         roots: &[NodeKey],
         claim: &Location,
-    ) -> Result<GroupTerm, CheckRefusal> {
+    ) -> Result<GroupTerm, SemanticCheckRefusal> {
         if roots.len() != clause.aliases().len() {
             return Err(stage_fault(claim, "alias-selects-a-model-root"));
         }
@@ -634,7 +634,7 @@ impl Lowering<'_> {
         input: &HyperClauseInput<'_>,
         boolean: &NodeKey,
         claim: &Location,
-    ) -> Result<TupleTerm, CheckRefusal> {
+    ) -> Result<TupleTerm, SemanticCheckRefusal> {
         let clause = input.clause;
         let mut members = Vec::new();
         for (position, quantifier) in clause.quantifiers().iter().enumerate() {
@@ -673,7 +673,10 @@ impl Lowering<'_> {
 
     /// `match`: one term per conjunct in source order, each its lowered
     /// condition over its step-label slot nodes.
-    fn conjuncts(&mut self, input: &HyperClauseInput<'_>) -> Result<GroupTerm, CheckRefusal> {
+    fn conjuncts(
+        &mut self,
+        input: &HyperClauseInput<'_>,
+    ) -> Result<GroupTerm, SemanticCheckRefusal> {
         let clause = input.clause;
         let mut members = Vec::new();
         for (part, index) in clause.conjuncts() {
@@ -732,7 +735,7 @@ pub(crate) fn finish_step_relation(
     abstraction: Option<&CheckedAbstractionRelation>,
     abstraction_node: Option<NodeKey>,
     package_name: &str,
-) -> Result<(super::SemanticNode, Vec<NodeKey>), CheckRefusal> {
+) -> Result<(super::SemanticNode, Vec<NodeKey>), SemanticCheckRefusal> {
     let code_roots = lowered.code_roots.clone();
     lowered.bound_implementations = relation
         .executions()

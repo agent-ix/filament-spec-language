@@ -22,7 +22,7 @@ use std::marker::PhantomData;
 use std::ops::ControlFlow;
 
 use super::check::SourceScope;
-use super::refusal::{CheckCause, CheckRefusal};
+use super::refusal::{CheckCause, SemanticCheckRefusal};
 use filament_exact::{
     CardinalityBound, CarriedQuantityType, CollectionKind, CollectionType, DecimalType,
     EffectiveId, FloatType, IeeeWidth, IllTypedCause, Integer, IntegerInterval, MapType,
@@ -31,6 +31,7 @@ use filament_exact::{
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{BuiltinType, NameForm, TypeForm, TypeFormHead};
 use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 /// What a qualified type name resolves against.
 pub(crate) trait TypeNames {
@@ -210,7 +211,7 @@ pub struct TypeFormError {
 
 impl TypeFormError {
     /// This error as a check refusal at `location`.
-    fn into_refusal(self, location: &Location) -> CheckRefusal {
+    fn into_refusal(self, location: &Location) -> SemanticCheckRefusal {
         let cause = match self.fault {
             TypeFormFault::MissingName(name) => CheckCause::MissingName(name),
             TypeFormFault::MissingQualifiedName(name) => CheckCause::MissingQualifiedName(name),
@@ -230,7 +231,10 @@ impl TypeFormError {
                 span: self.span,
             },
             TypeFormFault::UnitArithmetic(_) => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
+                return SemanticCheckRefusal::ill_typed(
+                    location,
+                    IllTypedCause::OperatorIneligible,
+                );
             }
             TypeFormFault::UnitIdentity(cause) => CheckCause::Identity(cause),
             TypeFormFault::Malformed
@@ -239,10 +243,10 @@ impl TypeFormError {
             | TypeFormFault::MalformedDecimal
             | TypeFormFault::EmptyTextBounds
             | TypeFormFault::EmptyCardinality => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch);
+                return SemanticCheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch);
             }
         };
-        CheckRefusal {
+        SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(cause),
         }
@@ -305,7 +309,7 @@ pub(crate) fn resolve_named_type(
     names: &impl TypeNames,
     name: &str,
     location: &Location,
-) -> Result<ValueType, CheckRefusal> {
+) -> Result<ValueType, SemanticCheckRefusal> {
     let span = Span { start: 0, end: 0 };
     let name = NameForm::new(name, span);
     let form = TypeForm::new(TypeFormHead::Name(name.clone()), span);
@@ -682,14 +686,14 @@ pub(crate) fn population_target(
     names: &impl TypeNames,
     form: &TypeForm,
     location: &Location,
-) -> Result<Option<EffectiveId>, CheckRefusal> {
+) -> Result<Option<EffectiveId>, SemanticCheckRefusal> {
     if !matches!(form.head, TypeFormHead::Population) {
         return Ok(None);
     }
     let argument = only_argument(form).map_err(|error| error.into_refusal(location))?;
     match &resolve_type_form(names, argument, location)? {
         ValueType::Reference(target) => Ok(Some(target.clone())),
-        _ => Err(CheckRefusal::ill_typed(
+        _ => Err(SemanticCheckRefusal::ill_typed(
             location,
             IllTypedCause::TypeMismatch,
         )),
@@ -809,6 +813,7 @@ impl<'f, N: TypeNames> filament_walk::Walk for Resolver<'_, 'f, N> {
 
 impl<N: TypeNames> Resolver<'_, '_, N> {
     /// The type `step` names, its argument's type taken from `resolved`.
+    #[implements("FR-1040-AC-11")]
     fn build(&mut self, step: Step<'_>) -> Result<ValueType, TypeFormError> {
         match step {
             Step::Leaf(resolved) => Ok(resolved),
@@ -859,6 +864,7 @@ impl<N: TypeNames> Resolver<'_, '_, N> {
                         | ValueType::String
                         | ValueType::Uuid
                         | ValueType::Timestamp
+                        | ValueType::ClockReference
                         | ValueType::Enum(_)
                 );
                 if !scalar_key {
@@ -881,7 +887,7 @@ pub(crate) fn resolve_type_form(
     names: &impl TypeNames,
     form: &TypeForm,
     location: &Location,
-) -> Result<ValueType, CheckRefusal> {
+) -> Result<ValueType, SemanticCheckRefusal> {
     resolve_form(names, form).map_err(|error| error.into_refusal(location))
 }
 
@@ -1022,16 +1028,33 @@ mod tests {
         );
     }
 
+    /// Native clock-place references are scalar Map keys under FR-1040-AC-11.
+    #[ix_trace_rs::trace("TC-3084", "FR-1040-AC-11")]
+    #[test]
+    fn source_map_type_accepts_clock_reference_keys() {
+        let clock_reference = TypeForm::builtin(BuiltinType::Reference, SPAN)
+            .with_arguments(vec![builtin(BuiltinType::Clock, &[])]);
+        let map = TypeForm::builtin(BuiltinType::Map, SPAN)
+            .with_arguments(vec![clock_reference, builtin(BuiltinType::Boolean, &[])])
+            .with_bounds(vec!["0".to_owned(), "2".to_owned()]);
+
+        let resolved = resolve(&map).expect("Reference<Clock> is a scalar map key");
+        let ValueType::Map(resolved) = &resolved else {
+            panic!("map type, not {resolved:?}");
+        };
+        assert_eq!(resolved.key(), &ValueType::ClockReference);
+    }
+
     fn builtin(builtin: BuiltinType, bounds: &[&str]) -> TypeForm {
         TypeForm::builtin(builtin, SPAN)
             .with_bounds(bounds.iter().map(|bound| (*bound).to_owned()).collect())
     }
 
-    fn resolve_in(scope: &Scope, form: &TypeForm) -> Result<ValueType, CheckRefusal> {
+    fn resolve_in(scope: &Scope, form: &TypeForm) -> Result<ValueType, SemanticCheckRefusal> {
         resolve_type_form(&scope.in_source(None), form, &root_location())
     }
 
-    fn resolve(form: &TypeForm) -> Result<ValueType, CheckRefusal> {
+    fn resolve(form: &TypeForm) -> Result<ValueType, SemanticCheckRefusal> {
         resolve_in(&empty_scope(), form)
     }
 

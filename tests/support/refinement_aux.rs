@@ -25,7 +25,9 @@ use fsl_eval::simulation::model::{
 };
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, CheckedRefinement, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckedGraph, CheckedRefinement, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
@@ -56,7 +58,7 @@ pub const UNLIMITED: ScalarLimits = ScalarLimits {
 #[derive(Debug)]
 pub struct Refused {
     /// The refusal.
-    pub refusal: CheckRefusal,
+    pub refusal: SemanticCheckRefusal,
     /// The text of the unit at its region.
     pub at: String,
 }

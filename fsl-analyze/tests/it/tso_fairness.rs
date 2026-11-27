@@ -862,7 +862,7 @@ fn replay_refuses_an_ra_lasso_that_never_loads_the_mo_last_message() {
 }
 
 /// The S3 refusal of the `Spin` unit whose clause carries `fairness`.
-fn refusal_of(fairness: &str) -> fsl_semantics::check::CheckRefusal {
+fn refusal_of(fairness: &str) -> fsl_semantics::check::SemanticCheckRefusal {
     let claim = format!(
         "temporal Settles using t0 over (k: M::Core) clock \"model-steps\" \
          on origin {{ {fairness} eventually holds(k.r1 = 1) }}\n"

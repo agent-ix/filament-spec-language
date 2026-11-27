@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 use crate::prob_world::{self, World};
 use crate::provider_schema_support::{assert_valid, provider_definition};
 use filament_exact::Cancel;
-use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::analyze::{
+    analyze_items, exact_probabilistic_item, exact_work_checkpoints, reset_exact_work_checkpoints,
+    Engines,
+};
 use fsl_analyze::exact_probabilistic::{
     build_product, decide_reachability, ExactProbLimits, ExtRational, ProbBuild, UnboundedObjective,
 };
@@ -1209,8 +1212,10 @@ fn exact_every_scheduler_from_source() {
     assert!(text.contains("24") && text.contains("25"), "{text}");
 }
 
+#[trace("TC-2066", "FR-197-AC-1")]
 #[test]
 fn exact_fair_scheduler_from_source() {
+    reset_exact_work_checkpoints();
     let checked_source = crate::prob_world::World::new(&crate::prob_world::link(FAIR_DELIVER));
     let claim = checked_source
         .package
@@ -1240,13 +1245,20 @@ fn exact_fair_scheduler_from_source() {
         json!([{"claim": "DeliverFair", "probabilistic": {"evidence": "exact"}}]),
     );
     let item = &document["items"][0];
-    assert_eq!(label(item), "proved", "{item}");
+    let checkpoints = exact_work_checkpoints();
+    assert_eq!(
+        label(item),
+        "proved",
+        "{item}; work phases: {checkpoints:?}"
+    );
     assert_eq!(item["certificate"]["accepted"], true, "{item}");
     assert_eq!(item["certificate"]["kind"], "exact", "{item}");
     assert!(item["certificate"]["document"].is_object(), "{item}");
+    let certificate = item["certificate"]["document"].to_string();
     assert!(
-        item.to_string().contains("24") && item.to_string().contains("25"),
-        "{item}"
+        certificate.contains("\"numerator\":\"24\"")
+            && certificate.contains("\"denominator\":\"25\""),
+        "{certificate}"
     );
 }
 

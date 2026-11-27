@@ -18,7 +18,7 @@ use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{
     BindingValue, BodyTerm, GroupTerm, LeafTerm, LiteralValue, MemberTerm, NodeTag,
 };
-use crate::check::refusal::CheckRefusal;
+use crate::check::refusal::SemanticCheckRefusal;
 use crate::check::state_graph_claim::{
     state_graph_location, CheckedStateGraphClaim, CheckedStatePredicate, Site, StateGraphForm,
 };
@@ -46,7 +46,7 @@ impl Lowering<'_> {
     pub(crate) fn state_graph_claim(
         &mut self,
         input: &StateGraphClaimInput<'_>,
-    ) -> Result<LoweredStateGraphClaim, CheckRefusal> {
+    ) -> Result<LoweredStateGraphClaim, SemanticCheckRefusal> {
         let claim = input.claim;
         let at = |site| state_graph_location(input.index, site);
         let claim_at = at(Site::Claim);
@@ -120,7 +120,7 @@ impl Lowering<'_> {
         index: usize,
         boolean: NodeKey,
         scope: &[Binder],
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let at = state_graph_location(index, site);
         match predicate.written() {
             Some(written) => {

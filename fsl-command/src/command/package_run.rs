@@ -141,6 +141,7 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
 
 /// The request-stage refusal of a package the strict reader refused, with
 /// the reader's pointer under `/request/package` (FR-1039).
+#[ix_trace_rs::string_edge]
 fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     if let Some(failure) = refusal.host_allocation_failure {
         return RunCause::AnalyzePackage {
@@ -335,6 +336,7 @@ pub(super) fn prepare(
 /// trace, a lasso or a model-arm behaviour). Any other selection refuses here,
 /// before a file is opened. A run builds states over the package's model
 /// world, so a `{file}` selection refuses it.
+#[ix_trace_rs::string_edge]
 fn prepare_clause(
     directory: &Path,
     request: &wire::Request,
@@ -925,6 +927,7 @@ enum Selected {
 /// is not the v2 contract is refused before the strict reader runs as
 /// `unknown_wire`/`unsupported-wire` at `/request/package/contract_version`
 /// (FR-1039-AC-3, never `invalid_package`).
+#[ix_trace_rs::string_edge]
 fn require_contract_version(bytes: &[u8]) -> Result<()> {
     #[derive(serde::Deserialize)]
     struct Contract {
@@ -1027,6 +1030,7 @@ pub(super) fn execute_with_settle(
     execute_inner(prepared, Some(settle))
 }
 
+#[ix_trace_rs::string_edge]
 fn execute_inner(
     prepared: PreparedPackageRun,
     settle: Option<&super::settle::Settle<'_>>,

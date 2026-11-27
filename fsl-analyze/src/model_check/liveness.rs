@@ -2404,9 +2404,16 @@ impl<'r, S: LiveSubject> Run<'r, S> {
     }
 
     /// Decide the bindings in canonical order and settle the run.
-    #[implements("FR-126-AC-14", "FR-126-AC-15", "FR-156-AC-1", "FR-160-AC-6")]
+    #[implements(
+        "FR-126-AC-14",
+        "FR-126-AC-15",
+        "FR-156-AC-1",
+        "FR-160-AC-6",
+        "FR-161-AC-5"
+    )]
     fn decide(&self, mut totals: Totals) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         let mut explored = Vec::with_capacity(self.bindings.len());
+        let mut reduced_refutation: Option<Box<TemporalCounterexample<Tr<S>>>> = None;
         let mut cut = false;
         let mut ignored_fairness_lasso = false;
         for binding in self.bindings {
@@ -2472,11 +2479,21 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     .any(|state| state.findings.contains(&Finding::HorizonCut));
             match self.second_phase(&run)? {
                 Second::Lasso(counterexample) => {
-                    let stats = totals.stats();
-                    return Ok(ModelCheckOutcome::Violated {
-                        counterexample,
-                        stats,
-                    });
+                    if run.binding.applied.is_none() {
+                        return Ok(ModelCheckOutcome::Violated {
+                            counterexample,
+                            stats: totals.stats(),
+                        });
+                    }
+                    if reduced_refutation.is_none() {
+                        reduced_refutation = Some(counterexample);
+                    }
+                    // Each reduced binding has its own product. Keep the
+                    // first lasso, then charge its concrete steps before the
+                    // next binding uses the shared transition budget.
+                    self.charge_lifted(&mut totals);
+                    explored.push(run);
+                    continue;
                 }
                 Second::IgnoringConstraints => ignored_fairness_lasso = true,
                 Second::Cancelled(source) => {
@@ -2500,14 +2517,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                             Finding::HorizonCut
                                 | Finding::BoundLimited
                                 | Finding::MessagesBoundLimited
-                                | Finding::ConstraintBoundary
                                 | Finding::InstanceBoundLimited
                         )
                     })
                 })
                 && self.dead_limited.borrow().is_empty()
                 && self.dead_message_limited.borrow().is_empty()
-                && self.dead_constrained.borrow().is_empty()
                 && totals.instance_limited.is_empty()
                 && !ignored_fairness_lasso;
             explored.push(run);
@@ -2580,6 +2595,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     bound,
                     states: widen(totals.instance_limited.len()),
                 },
+                stats: totals.stats(),
+            });
+        }
+        if let Some(counterexample) = reduced_refutation {
+            return Ok(ModelCheckOutcome::Violated {
+                counterexample,
                 stats: totals.stats(),
             });
         }

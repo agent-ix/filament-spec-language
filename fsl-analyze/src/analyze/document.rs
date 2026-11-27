@@ -325,6 +325,7 @@ impl SubjectSelection {
     /// An explicit subject's references were checked with
     /// [`Self::check_universes`]; the default subject leaves an incomplete
     /// population out (FR-620).
+    #[ix_trace_rs::string_edge]
     pub fn binding<'a>(
         &self,
         packages: &'a fsl_semantics::model::intake::PackageInput,
@@ -580,6 +581,7 @@ pub struct RequestCount {
 }
 
 impl RequestCount {
+    #[ix_trace_rs::string_edge]
     fn read<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
         let raw = Box::<serde_json::value::RawValue>::deserialize(decoder)?;
         let token = raw.get();
@@ -1158,6 +1160,7 @@ impl ExactLimitsSelection {
 /// budgets, each absent member at its published default. `long_run` selects
 /// the default method of a long-run fraction, `regenerative` with
 /// `min_cycles` 100 (FR-190).
+#[ix_trace_rs::string_edge]
 fn probabilistic_item(
     value: &Value,
     default_evidence: EvidenceKind,
@@ -1831,7 +1834,13 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
-#[implements("FR-940-AC-10", "FR-173-AC-3")]
+#[implements(
+    "FR-940-AC-10",
+    "FR-173-AC-3",
+    "FR-896-AC-8",
+    "FR-896-AC-9",
+    "FR-896-AC-10"
+)]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -1992,6 +2001,7 @@ fn resolve_one(
         kind,
         Capability::LocalProjection | Capability::Realizability
     );
+    let protocol_global_kind = kind == Capability::GlobalConformance;
     let record = own.iter().find(|record| record.kind() == kind);
     if selection.probabilistic.is_some() && kind != Capability::ProbabilisticSatisfaction {
         return invalid_value(index, name, "probabilistic");
@@ -2178,7 +2188,11 @@ fn resolve_one(
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if protocol_deadlock || protocol_temporal_deadlock || protocol_analysis_kind {
+    let protocol = if protocol_deadlock
+        || protocol_temporal_deadlock
+        || protocol_analysis_kind
+        || protocol_global_kind
+    {
         let owner = package.graph().protocols().iter().find(|protocol| {
             package
                 .graph()
@@ -2193,6 +2207,8 @@ fn resolve_one(
                     None => return invalid_value(index, name, "capacities"),
                 }
             }
+            // FR-896-AC-10: the deadlock-freedom item declines without a subject.protocol.
+            (Some(_), None) if protocol_global_kind && !protocol_deadlock => None,
             (Some(_), _) if protocol_analysis_kind => {
                 return invalid_member(index, name, "temporal.subject.protocol");
             }
@@ -3885,6 +3901,10 @@ pub struct AnalyzeRun<'a> {
     pub limits: AnalyzeLimits,
     /// Which proofs settle `proved`.
     pub certification: fsl_replay::CertificationPolicy,
+    /// The items as the caller stated them, in request order: the run
+    /// refuses an item that states a limit the caller also set (FR-255
+    /// "Caller limits and item limits"). Empty states no item members.
+    pub selections: &'a [ItemSelection],
 }
 
 /// Why no FR-621 document could be written.
@@ -4017,7 +4037,17 @@ pub fn settle_run_with_smt_proofs(
         engines,
         limits,
         certification,
+        selections,
     } = run;
+    if let Some((position, setting)) = limits.engines.conflict(selections).or_else(|| {
+        limits
+            .engines
+            .timed_conflict(package, &binding, selections.len(), &items)
+    }) {
+        return Err(AnalyzeDocumentError::Refused(
+            super::AnalyzeRefusal::EngineConflict { position, setting },
+        ));
+    }
     let source_input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let Negotiation {
         components,
@@ -4835,6 +4865,7 @@ fn spell_states(value: &mut Value) {
 /// through [`held_identity::hold`]. An item over a dependency of the request
 /// (a composition's component-guarantee premise) names that dependency in
 /// its `package` member and indexes the dependency's graph.
+#[ix_trace_rs::string_edge]
 fn hold_item(
     item: &mut Value,
     graphs: &super::DocumentGraphs,
@@ -4879,8 +4910,9 @@ struct Echo {
     claim_name: String,
     /// The admitted FSpec FR-331 request item.
     request: Value,
-    /// FSpec FR-412's certificate identity of the item's obligation;
-    /// `None` when no one domain package owns the claim.
+    /// The item's obligation identity (FSpec FR-412); `None` when no one
+    /// domain package owns the claim. Statistical results publish it beside
+    /// the verdict so FR-191 can reproduce identity across run settings.
     identity: Option<Value>,
     /// The `{node, occurrence}` of the item's claim, which FSpec FR-410's
     /// rejection `where` names as its `locus`.
@@ -5015,6 +5047,7 @@ fn counterpart_member(document: Value) -> Value {
 }
 
 /// The FR-741 `kind` a certificate `document` is reported under.
+#[ix_trace_rs::string_edge]
 fn certificate_kind(document: &Value) -> &'static str {
     let bound = document
         .get("kind")
@@ -5064,6 +5097,7 @@ fn name_rejection_locus(verdict: &mut Value, locus: &Value) {
 }
 
 /// One FR-621 item from the FR-286 item `written`.
+#[implements("FR-191-AC-3", "FR-191-AC-4")]
 fn item_document(written: Value, members: ItemMembers) -> Value {
     let ItemMembers {
         claim_name,
@@ -5094,6 +5128,11 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
     let task_search_identity = identity.clone();
+    if record.get("result").and_then(Value::as_str) == Some("measured") {
+        if let Some(identity) = task_search_identity.clone() {
+            item.insert("identity".to_owned(), identity);
+        }
+    }
     if let Some(certificate) = certificate {
         item.insert("certificate".to_owned(), certificate);
     } else if let (Some(recorded), Some(identity)) = (

@@ -825,6 +825,7 @@ fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
     let run = |limits: fsl_analyze::analyze::AnalyzeLimits| {
         settle_run(
             AnalyzeRun {
+                selections: &[],
                 package: &world.package,
                 binding: world.binding(&["c"]),
                 provision: world.provision.clone(),

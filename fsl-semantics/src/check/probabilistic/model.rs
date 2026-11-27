@@ -31,7 +31,7 @@ use fsl_foundation::Span;
 use super::super::check::{bind_parameters, Scope, Signatures, Typer};
 use super::super::facts::Definedness;
 use super::super::ir::{CheckedBody, CheckedNode, DispatchTable};
-use super::super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use super::super::state_clause::ClauseOperation;
 use super::super::temporal_clause::{ModelTimeSource, TimeSourceKind};
 use super::super::time_units::TimeUnits;
@@ -1054,7 +1054,7 @@ fn weight(
     location: Location,
     zero_is_valid: bool,
     owner: impl FnOnce() -> WeightOwner,
-) -> Result<Rational, CheckRefusal> {
+) -> Result<Rational, SemanticCheckRefusal> {
     let span = value.span;
     let rational = exact::value(value, ceiling)
         .map_err(|fault| super::exact_refusal(fault, ceiling, span, location))?;
@@ -1085,8 +1085,8 @@ pub(super) fn literal(node: CheckedNode<'_>) -> Option<CheckedLiteral> {
 }
 
 /// A broken invariant of this check, never a refusal of the input.
-fn fault(location: Location, invariant: &'static str) -> CheckRefusal {
-    CheckRefusal {
+fn fault(location: Location, invariant: &'static str) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location,
         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new("S3", invariant),
@@ -1098,7 +1098,7 @@ fn fault(location: Location, invariant: &'static str) -> CheckRefusal {
 pub(crate) struct Checked {
     pub(crate) model: CheckedProbabilisticModel,
     pub(crate) formed_units: UnitTable,
-    pub(crate) refusals: Vec<CheckRefusal>,
+    pub(crate) refusals: Vec<SemanticCheckRefusal>,
 }
 
 /// Checks the `random`, `reward` and `workload` declarations of
@@ -1160,7 +1160,7 @@ pub(super) struct Pass<'i, 'a> {
     delays: Vec<DeclarationKey>,
     /// Compound units formed by reward typing, retained until lowering.
     formed_units: UnitTable,
-    pub(super) refusals: Vec<CheckRefusal>,
+    pub(super) refusals: Vec<SemanticCheckRefusal>,
 }
 
 impl Pass<'_, '_> {
@@ -1211,7 +1211,7 @@ impl Pass<'_, '_> {
         }
         self.distributions
             .push((operation.clone(), parameter.to_owned()));
-        let mut refusals: Vec<CheckRefusal> = Vec::new();
+        let mut refusals: Vec<SemanticCheckRefusal> = Vec::new();
         let mut support: Vec<(CheckedLiteral, Rational)> = Vec::with_capacity(form.support.len());
         let mut seen: Vec<CheckedLiteral> = Vec::with_capacity(form.support.len());
         for (pair_index, pair) in form.support.iter().enumerate() {
@@ -1294,7 +1294,7 @@ impl Pass<'_, '_> {
         &self,
         index: usize,
         support: Vec<(CheckedLiteral, Rational)>,
-    ) -> Result<Vec<SupportValue>, CheckRefusal> {
+    ) -> Result<Vec<SupportValue>, SemanticCheckRefusal> {
         let location = site_location(index, Site::Declaration);
         let ceiling = self.input.limits.rational_bits();
         let mut total = Rational::from_integer(filament_exact::Integer::zero());
@@ -1409,7 +1409,7 @@ impl Pass<'_, '_> {
         location: &Location,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<(CheckedBody, usize, Vec<String>), CheckRefusal> {
+    ) -> Result<(CheckedBody, usize, Vec<String>), SemanticCheckRefusal> {
         let mut typer = self.input.typer(nodes, cx);
         bind_parameters(&mut typer, parameters, location)?;
         let body = typer.infer(&form.expression.expression, None, location)?;
@@ -1476,8 +1476,8 @@ impl Pass<'_, '_> {
         index: usize,
         form: &DelayForm,
         source: &ModelTimeSource,
-        malformed: &dyn Fn(DelayFault, Span) -> CheckRefusal,
-    ) -> Result<DelayDistribution, CheckRefusal> {
+        malformed: &dyn Fn(DelayFault, Span) -> SemanticCheckRefusal,
+    ) -> Result<DelayDistribution, SemanticCheckRefusal> {
         let ceiling = self.input.limits.rational_bits();
         let location = site_location(index, Site::Declaration);
         let exact = |value: &fsl_forms::ExactValueForm| {
@@ -1490,11 +1490,11 @@ impl Pass<'_, '_> {
             .ok()
             .flatten()
             .ok_or_else(|| fault(location.clone(), "delay-time-source-unit-is-a-time-unit"))?;
-        let quantity = |written: &QuantityForm| -> Result<Rational, CheckRefusal> {
+        let quantity = |written: &QuantityForm| -> Result<Rational, SemanticCheckRefusal> {
             let magnitude = exact(&written.magnitude)?;
             units
                 .convert(&magnitude, &written.unit.name, &target)
-                .map_err(|cause| CheckRefusal {
+                .map_err(|cause| SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::Temporal(Box::new(
                         super::super::TemporalCause::TimeQuantity {
@@ -1580,7 +1580,7 @@ impl Pass<'_, '_> {
         let weighable = only
             .as_ref()
             .map(|only| self.input.model_operations(model, Some(only)));
-        let mut refusals: Vec<CheckRefusal> = Vec::new();
+        let mut refusals: Vec<SemanticCheckRefusal> = Vec::new();
         let mut weighted: Vec<DeclarationKey> = Vec::new();
         let mut weights: Vec<(ProbabilisticOperation, Rational)> = Vec::new();
         for (position, written) in form.weights.iter().enumerate() {
@@ -1677,7 +1677,7 @@ impl Pass<'_, '_> {
                     && parameter.as_str() == read.parameter.as_str()
             });
             if random {
-                self.refusals.push(CheckRefusal {
+                self.refusals.push(SemanticCheckRefusal {
                     location: read.location.clone(),
                     cause: Box::new(CheckCause::Probabilistic(Box::new(
                         ProbabilisticCause::RandomReadInPrecondition {

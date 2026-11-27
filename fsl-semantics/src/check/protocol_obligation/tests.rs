@@ -22,7 +22,7 @@ use super::{
 };
 use crate::check::refusal::{ObservationReason, SlotKind};
 use crate::check::{
-    CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations, ProtocolAnchorCause,
+    CheckCause, CheckedGraph, PackageDeclarations, ProtocolAnchorCause, SemanticCheckRefusal,
 };
 
 mod recorded;
@@ -132,7 +132,7 @@ fn assemble_with(
 
 /// Every refusal of the whole pipeline over `declarations`; none when it
 /// checks.
-fn refusals(declarations: &str) -> (String, Vec<CheckRefusal>) {
+fn refusals(declarations: &str) -> (String, Vec<SemanticCheckRefusal>) {
     let (text, assembled) = assemble(declarations);
     match assembled.check(
         CheckMode::Linked,
@@ -160,7 +160,7 @@ fn checked(declarations: &str) -> CheckedGraph {
 /// must be a not-yet-implemented one or `content`'s unresolved binder type:
 /// a limit, a fault or any other cause would otherwise let a "checks"
 /// assertion pass because the stage never ran.
-fn obligation_causes(refusals: &[CheckRefusal]) -> Vec<ObligationCause> {
+fn obligation_causes(refusals: &[SemanticCheckRefusal]) -> Vec<ObligationCause> {
     refusals
         .iter()
         .filter_map(|refusal| match refusal.cause.as_ref() {
@@ -380,7 +380,7 @@ fn the_activation_is_checked_and_recorded() {
     assert_eq!(at(&text, &cause), "opened.count");
 
     let (text, found) = refusals(&plain("on each (opened: M::Absent)", ""));
-    let [CheckRefusal { cause, .. }] = &found[..] else {
+    let [SemanticCheckRefusal { cause, .. }] = &found[..] else {
         panic!("one binder-type refusal, got {found:?}");
     };
     let CheckCause::ProtocolAnchor(cause) = cause.as_ref() else {
@@ -1281,7 +1281,7 @@ fn a_protocol_capture_read_needs_no_listing() {
              }}"
         )
     };
-    let located = |source: &str| -> Vec<(CheckRefusal, String)> {
+    let located = |source: &str| -> Vec<(SemanticCheckRefusal, String)> {
         let (text, assembled) = assemble(source);
         let regions = assembled.regions();
         let found = match assembled.check(

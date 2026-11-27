@@ -37,6 +37,7 @@ fn issue(reason: impl Into<String>) -> ReductionIssue {
 /// declaration, `"declared"` over a unit that annotates no population
 /// `symmetric`, a population or key the subject does not hold, or a
 /// `constraint` that names no constraint clause.
+#[ix_trace_rs::string_edge]
 pub(super) fn admit(
     selection: &Value,
     system: &ModelSystem<'_>,

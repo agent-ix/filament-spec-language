@@ -27,7 +27,7 @@ use super::{
 };
 use crate::check::probabilistic::{exact_value, ExactFault};
 use crate::check::profile::TemporalProfile;
-use crate::check::refusal::{CheckRefusal, CheckingLimitKind};
+use crate::check::refusal::{CheckingLimitKind, SemanticCheckRefusal};
 use crate::check::time_units::TimeUnits;
 use crate::check::Scope;
 
@@ -67,7 +67,7 @@ pub(in crate::check) struct ClaimsChecked {
     /// The claims that checked clean, in source order.
     pub(in crate::check) claims: Vec<CheckedHybridClaim>,
     /// Every refusal, in source order.
-    pub(in crate::check) refusals: Vec<CheckRefusal>,
+    pub(in crate::check) refusals: Vec<SemanticCheckRefusal>,
 }
 
 /// Check each claim. A claim over a model that did not check clean is

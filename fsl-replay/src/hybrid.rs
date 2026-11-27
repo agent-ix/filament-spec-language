@@ -622,6 +622,7 @@ enum Witnessed {
     WorkLimit(String),
 }
 
+#[ix_trace_rs::string_edge]
 fn run_witness(
     graph: &CheckedGraph,
     claim: &CheckedHybridClaim,

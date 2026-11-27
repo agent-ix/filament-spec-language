@@ -984,6 +984,7 @@ fn protocol_analysis_work<'a>(
 }
 
 /// Build either route's native protocol-analysis item from its admitted package.
+#[ix_trace_rs::string_edge]
 pub(super) fn protocol_analysis_item<'a>(
     v2: Box<filament_contract_model::CheckedPackageV2>,
     model_input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
@@ -1113,6 +1114,7 @@ pub(super) fn protocol_analysis_item<'a>(
 
 #[implements("FSpec-FR-348-AC-3")]
 #[implements("FSpec-FR-290-AC-14")]
+#[ix_trace_rs::string_edge]
 fn work<'a>(
     analysis: &'a super::RunInput<'a>,
     binding: &'a super::SubjectBinding<'a>,
@@ -1779,6 +1781,7 @@ fn work<'a>(
 /// `finite_bound_available` (FSpec FR-290-AC-14, FSL FR-940). Only this
 /// checker's refusal reads the extent bit; any other engine's `RequiresBound`
 /// keeps its own disposition.
+#[ix_trace_rs::string_edge]
 pub(super) fn contract_checker_bound<'a>(
     mut built: super::AnalyzeItem<'a>,
     item: &ClaimItem,

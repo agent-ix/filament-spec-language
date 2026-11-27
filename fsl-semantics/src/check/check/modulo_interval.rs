@@ -14,7 +14,7 @@ pub(crate) fn result_type(
     right: &ValueType,
     left_range: Option<&(Integer, Integer)>,
     right_range: Option<&(Integer, Integer)>,
-    mut charge: impl FnMut() -> Result<(), crate::check::CheckRefusal>,
+    mut charge: impl FnMut() -> Result<(), crate::check::SemanticCheckRefusal>,
 ) -> Result<ValueType, ModuloRangeError> {
     let left_bounds = bounded(left, left_range);
     let right_bounds = bounded(right, right_range);
@@ -78,7 +78,7 @@ pub(crate) fn result_type(
 /// Failure while finding a mathematically valid interval.
 pub(crate) enum ModuloRangeError {
     /// The checker work ceiling denied a closed form or quotient run.
-    Refused(crate::check::CheckRefusal),
+    Refused(crate::check::SemanticCheckRefusal),
     /// An impossible arithmetic or interval invariant failed.
     Invariant(ModuloRangeInvariant),
 }
@@ -139,7 +139,7 @@ pub(super) fn exact_interval<F>(
     charge: &mut F,
 ) -> Result<(Integer, Integer), ModuloRangeError>
 where
-    F: FnMut() -> Result<(), crate::check::CheckRefusal> + ?Sized,
+    F: FnMut() -> Result<(), crate::check::SemanticCheckRefusal> + ?Sized,
 {
     let width = upper.sub(lower).add(&Integer::one());
     if &width >= divisor_upper {

@@ -729,6 +729,7 @@ fn read_snapshot_subject(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_record(value: &Value, path: &str) -> ReadResult<RecordParts> {
     let record = object(value, path)?;
     const FIELDS: &[&str] = &[
@@ -947,6 +948,7 @@ fn read_subject(value: &Value, path: &str) -> ReadResult<SubjectParts> {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn read_anchor(value: &Value, path: &str) -> ReadResult<Anchor> {
     let object = object(value, path)?;
     let kind = text(member(object, "kind", path)?, &format!("{path}/kind"))?;
@@ -987,6 +989,7 @@ fn read_anchor(value: &Value, path: &str) -> ReadResult<Anchor> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn read_scope_kind(value: &Value, path: &str) -> ReadResult<ScopeKind> {
     let object = object(value, path)?;
     let kind = text(member(object, "kind", path)?, &format!("{path}/kind"))?;
@@ -1013,6 +1016,7 @@ fn read_scope_kind(value: &Value, path: &str) -> ReadResult<ScopeKind> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn read_range(value: &Value, path: &str) -> ReadResult<ClockRange> {
     let object = object(value, path)?;
     let family = text(
@@ -1151,6 +1155,7 @@ fn digest(value: &Value, path: &str, prefix: bool) -> ReadResult<Digest> {
         .map(Digest::new)
         .ok_or_else(|| error(path, "expected lowercase SHA-256 digest"))
 }
+#[ix_trace_rs::string_edge]
 fn parse_digest(value: &str, prefix: bool) -> Option<[u8; 32]> {
     let value = if prefix {
         value.strip_prefix("sha256:")?
@@ -1220,6 +1225,7 @@ fn limit(value: &Value, path: &str) -> ReadResult<usize> {
     let value = unsigned_decimal(value, path)?;
     Ok(usize::try_from(value).unwrap_or(usize::MAX))
 }
+#[ix_trace_rs::string_edge]
 fn valid_decimal(value: &str, signed: bool) -> bool {
     let digits = if signed {
         value.strip_prefix('-').unwrap_or(value)

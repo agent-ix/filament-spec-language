@@ -19,7 +19,7 @@ use filament_semantic_value::location::{
 
 use super::{mismatch, node, Typer};
 use crate::check::ir::Node;
-use crate::check::refusal::{CheckCause, CheckRefusal};
+use crate::check::refusal::{CheckCause, SemanticCheckRefusal};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use fsl_forms::{ExprNode, ExprRef};
 
@@ -64,7 +64,7 @@ impl Typer<'_> {
         arguments: &[fsl_forms::ExprId],
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         self.single_candidate(name, location)?;
         let [argument] = arguments else {
             return Err(mismatch(location));
@@ -77,7 +77,7 @@ impl Typer<'_> {
                     return Err(mismatch(&argument_location));
                 };
                 let text = literal.text();
-                let uuid = Uuid::from_canonical_text(text).map_err(|_| CheckRefusal {
+                let uuid = Uuid::from_canonical_text(text).map_err(|_| SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::MalformedUuidLiteral {
                         argument: text.to_owned(),
@@ -102,7 +102,7 @@ impl Typer<'_> {
                 // A count outside `i128` is refused as the positive literal
                 // the argument writes, as FR-091's integer section states.
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, magnitude) {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location: magnitude_location,
                         cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
@@ -134,7 +134,7 @@ impl Typer<'_> {
                     .map_or_else(|| text.to_owned(), |form| form.apply(text).collect());
                 let retained_length = profile.length(&retained);
                 if !(text_type.min()..=text_type.max()).contains(&retained_length) {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::TextLiteralOutsideBounds {
                             argument: text.to_owned(),
@@ -208,9 +208,9 @@ impl Typer<'_> {
         &self,
         name: &str,
         location: &Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         if let Some(index) = self.signatures().position(name) {
-            return Err(CheckRefusal {
+            return Err(SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::AmbiguousName {
                     name: name.to_owned(),
