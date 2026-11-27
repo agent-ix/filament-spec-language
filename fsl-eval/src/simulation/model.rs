@@ -193,7 +193,7 @@ pub use timed::{
     TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
     TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
     TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, replay_timed_sample,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, advance_timed, replay_timed_sample,
     sample_timed, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
