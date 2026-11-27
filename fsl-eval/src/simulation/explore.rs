@@ -310,16 +310,12 @@ impl Outcome {
     }
 }
 
-/// The O-16 category of an expansion stop's cause. `resource_exhausted` is
-/// an exhausted execution budget, incomplete (ADR-014 B-2); every other code
-/// takes its exit category (`exit_category_of`: an unsupported code is 21), and a code the catalog does not define is
-/// an internal failure: the system stopped for a reason the engine cannot
-/// classify. The only site that reads a stop cause's code spelling.
-#[ix_trace_rs::string_edge]
+/// The O-16 category of an expansion stop's cause: its exit category
+/// (`exit_category_of`: an unsupported code is 21, and `resource_exhausted`,
+/// an exhausted execution budget, is incomplete, ADR-014 B-2), and a code the
+/// catalog does not define is an internal failure: the system stopped for a
+/// reason the engine cannot classify.
 fn stop_category(cause: &CatalogCode) -> Category {
-    if cause.code() == "resource_exhausted" {
-        return Category::Incomplete;
-    }
     exit_category_of(cause).unwrap_or(Category::InternalFailure)
 }
 

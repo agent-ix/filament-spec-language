@@ -53,6 +53,7 @@ mod package_loop_invariant;
 mod package_model_relation;
 mod package_recommendation_bridge;
 mod package_refusal_route;
+mod resource_exhausted_exit;
 mod package_simulation;
 mod package_step_relation_parity;
 mod plan;
