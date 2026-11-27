@@ -856,11 +856,15 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
     // exploration but cannot pay for any lifted transition.
     let m = full_transition_budget;
     let one_short = with_budgets(&world, m - 1, u64::MAX).expect("typed stop");
-    assert!(matches!(one_short, ModelCheckOutcome::Stopped {
-        cause: IncompleteCause::ResourceExhausted,
-        limit: Some(ReachedLimit { limit: ModelCheckLimit::MaxTransitions, value }),
-        ..
-    } if value == u64::try_from(m - 1).expect("small")));
+    assert!(
+        matches!(&one_short, ModelCheckOutcome::Stopped {
+            cause: IncompleteCause::ResourceExhausted,
+            limit: Some(ReachedLimit { limit: ModelCheckLimit::MaxTransitions, value }),
+            ..
+        } if *value == u64::try_from(m - 1).expect("small")),
+        "expected the transition budget to stop at {}, got {one_short:?}",
+        m - 1
+    );
     let two_short = with_budgets(&world, m - 2, u64::MAX).expect("typed stop");
     assert!(matches!(
         two_short,
