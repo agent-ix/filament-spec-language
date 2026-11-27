@@ -1845,7 +1845,6 @@ fn refuted_and_replayed_with(
     source: String,
     variant: Variant,
     refinement_name: &str,
-    protocol_name: &str,
     expected_position: Option<u64>,
     internal: &[&str],
     limits: &fsl_replay::ModelCheckLimits,

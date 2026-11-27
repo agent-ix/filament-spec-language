@@ -890,6 +890,11 @@ per-replay state on the system, not per call.
 one table decides which model counters are cumulative and which high-water
 (FR-255-AC-46); the step ceilings `ancestor_steps` and `family_steps` are
 cumulative by that table.
+The item-level retained-allowance test (`an_item_retained_allowance_bounds_the_check_and_the_counterexample_replay`)
+proves that the replay's closure is charged to the allowance the caller hands it and stops at its bound. It
+does not show that the check and the replay spend one allowance: the check of its fixture is not asserted to
+retain bytes. No analyze item builds a protocol-abstract refinement yet, so the item route is exercised at the
+API (`check_refinement` plus `replay_refinement_trace_retained`), not through `analyze`.
 The `limit-literals` scan compares counts per file and kind. A swap within a
 file, one site bounded while another is added under the same kind, keeps the
 count and passes; the gate does not fingerprint sites. That is a documented
