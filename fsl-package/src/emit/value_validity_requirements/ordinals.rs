@@ -373,6 +373,7 @@ pub(in crate::emit) fn renumber(
 /// Write the new numbering into the occurrences of the nodes at the positions
 /// `changed` names and rebuild their source-map entries. Synthetic slots clone
 /// the regions of the syntax-owner occurrence they repeat.
+#[implements("FSpec-FR-322-AC-490")]
 fn apply(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -428,10 +429,12 @@ fn apply(
                 Slot::Source { old, ordinal } => (old, ordinal),
                 Slot::Synthetic { from, ordinal } => (from, ordinal),
             };
-            let mut entry = entries
+            let Some(mut entry) = entries
                 .and_then(|entries| entries.get(&source_ordinal))
                 .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            else {
+                continue;
+            };
             entry.ordinal = new_ordinal;
             moved.push(entry);
         }
