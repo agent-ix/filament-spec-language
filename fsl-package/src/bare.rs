@@ -1834,6 +1834,12 @@ impl ReadIdentityRows {
         &self.source_object_operations
     }
 
+    /// The exact member identities, presence and checked value types aligned
+    /// with [`Self::source_objects`] and each object's members.
+    pub(crate) fn source_object_member_facts(&self) -> &[Vec<crate::SourceObjectMemberFacts>] {
+        &self.source_object_member_facts
+    }
+
     /// Original source-operation rows, with final anchor references.
     pub fn source_operations(&self) -> &[SelectedSourceOperationRow] {
         &self.source_operations
