@@ -10,7 +10,7 @@ use fsl_replay::{
     StateEnvironment,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 const ROOT: &str = "test/refinement-root";

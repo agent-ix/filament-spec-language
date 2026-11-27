@@ -10,21 +10,21 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
-    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
+    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
+    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
+use fsl_replay::CertificationPolicy;
 use fsl_semantics::model::observation::DocumentProvision;
 use ix_trace_rs::implements;
 
 use super::limits::CommandLimits;
 use super::settle::Settle;
 use super::{
-    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire,
+    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -315,6 +315,8 @@ pub struct AnalyzeInput {
     pub limits: AnalyzeLimits,
     /// The run's deadline in milliseconds.
     pub deadline_ms: Option<u64>,
+    /// Which proofs settle `proved` (FR-1052).
+    pub certification: CertificationPolicy,
     /// The optional request-supplied integer-division law.
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 }
@@ -371,6 +373,7 @@ struct PackageSelection {
     memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
     items: Option<Vec<ItemSelection>>,
     deadline_ms: Option<u64>,
+    certification: CertificationPolicy,
 }
 
 /// FR-531 "Denial is its own typed refusal": a denied identity join names the
@@ -447,6 +450,7 @@ fn run_package(
         memory,
         items,
         deadline_ms,
+        certification,
     } = selection;
     let AdmittedHandoff {
         package: admitted,
@@ -503,6 +507,7 @@ fn run_package(
         engines: &engines,
         limits,
         budget,
+        certification,
     };
     let mut settled = with_deadline(cancel, deadline_ms, || {
         settle_package_run(run, negotiate, cancel).map_err(Box::new)
@@ -662,9 +667,9 @@ mod package_intake_tests {
     use super::*;
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
     use fsl_eval::simulation::model::PendingPackageForm;
-    use fsl_foundation::Span;
     use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::setting::Setting;
+    use fsl_foundation::Span;
     use fsl_semantics::check::{
         AssemblyCause, AssemblyError, AssemblyRefusal, PackageClauseRefusal,
     };
@@ -863,6 +868,7 @@ fn read<'d>(
         cause => cause,
     })?;
     validate_items(request.items.as_deref())?;
+    let certification = read_certification(request.require_certified.take())?;
     if let Some(package) = &request.package {
         let (admitted, mut intake) =
             admit_package(directory, dependent_bytes, &request, package, caller)?;
@@ -874,6 +880,7 @@ fn read<'d>(
             memory,
             items: request.items,
             deadline_ms: request.deadline_ms,
+            certification,
         })));
     }
     let integer_division = request_integer_division(request.integer_division.take())?;
@@ -925,10 +932,24 @@ fn read<'d>(
             items: request.items,
             limits,
             deadline_ms: request.deadline_ms,
+            certification,
             integer_division,
         }),
         intake,
     ))
+}
+
+/// FR-620 "Reading": `require_certified` selects the certification policy.
+#[implements("FR-1052-AC-7")]
+pub(super) fn read_certification(member: Option<serde_json::Value>) -> Result<CertificationPolicy> {
+    match member {
+        None | Some(serde_json::Value::Bool(false)) => Ok(CertificationPolicy::AdmitAny),
+        Some(serde_json::Value::Bool(true)) => Ok(CertificationPolicy::RequireCertified),
+        Some(_) => Err(invalid(
+            "require_certified",
+            "require_certified must be a boolean",
+        )),
+    }
 }
 
 /// Read the `native-analyze/1` request at `path`, compile its program,
@@ -1093,6 +1114,7 @@ fn run_input(
         items,
         limits,
         deadline_ms,
+        certification,
         integer_division,
     } = input;
     let routed = RoutedItems {
@@ -1102,6 +1124,7 @@ fn run_input(
         items,
         limits,
         deadline_ms,
+        certification,
     };
     let sources = std::slice::from_ref(&source);
     check_sources(
@@ -1153,6 +1176,8 @@ pub(super) struct RoutedItems {
     pub limits: AnalyzeLimits,
     /// The run's deadline in milliseconds.
     pub deadline_ms: Option<u64>,
+    /// Which proofs settle `proved` (FR-1052).
+    pub certification: CertificationPolicy,
 }
 
 /// The FR-620 settlement of `routed` over the compiled `package`: each item
@@ -1166,6 +1191,7 @@ pub(super) struct RoutedItems {
 ///
 /// A whole-request refusal (FR-624) of the subject binding or source
 /// provision, or an internal fault.
+#[implements("FR-480-AC-2")]
 pub(super) fn settle_items<'u>(
     package: &fsl_package::CheckedPackage,
     packages: &fsl_semantics::model::intake::PackageInput,
@@ -1190,7 +1216,19 @@ pub(super) fn settle_items<'u>(
             .map_err(|_| RunCause::AnalyzeFault)?;
     }
     check_memory(package, &routed.memory)?;
-    let binding = routed.subject.binding(packages, &routed.documents);
+    let binding = routed
+        .subject
+        .binding_with_source_packages(
+            packages,
+            &routed.documents,
+            package.graph().source_packages(),
+        )
+        .map_err(|ambiguity| RunCause::AnalyzePackage {
+            code: fsl_foundation::diagnostic::Code::AmbiguousDeclaration,
+            cause: Some("ambiguous-name".to_owned()),
+            pointer: None,
+            message: ambiguity.to_string(),
+        })?;
     let resolved = resolve_items(
         package,
         &routed.subject,
@@ -1209,17 +1247,23 @@ pub(super) fn settle_items<'u>(
         return Err(engine_conflict(conflict));
     }
     let run = AnalyzeRun {
+        selections: routed.items.as_deref().unwrap_or_default(),
         package,
         binding,
         provision,
         items: resolved,
         engines: settle.engines,
         limits: routed.limits,
+        certification: routed.certification,
     };
     let mut settled = with_deadline(settle.cancel, routed.deadline_ms, || {
         settle_run(run, settle.negotiate, settle.cancel)
     })
     .map_err(|error| match error {
+        AnalyzeDocumentError::Refused(fsl_analyze::analyze::AnalyzeRefusal::EngineConflict {
+            position,
+            setting,
+        }) => engine_conflict((position, setting)),
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
         AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
         AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
@@ -1270,6 +1314,7 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
 /// before any item resolves when a compile member sits beside it, the reader
 /// refuses the bytes, a recorded domain package is not supplied, or a
 /// supplied one is not recorded.
+#[ix_trace_rs::string_edge]
 fn admit_package<'d>(
     directory: &'d Path,
     dependent_bytes: usize,
@@ -1807,7 +1852,9 @@ pub(super) fn read_documents(
             authority: identity.authority.clone(),
             identity: identity.identity.clone(),
         };
-        if format.as_deref() == Some("filament.protocol-recording/1") {
+        if format.as_deref()
+            == Some(fsl_foundation::wire_format::WireFormat::ProtocolRecording.as_str())
+        {
             recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
         }
         if documents.insert(reference, bytes).is_some() {

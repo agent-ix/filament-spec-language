@@ -167,7 +167,9 @@ fn parameter_object_type(graph: &Graph<'_>, position: usize) -> Option<(String, 
                 Some(target)
             }
             CheckedTerm::Application { arguments, .. }
-            | CheckedTerm::Aggregate { members: arguments, .. } => arguments
+            | CheckedTerm::Aggregate {
+                members: arguments, ..
+            } => arguments
                 .iter()
                 .find_map(|argument| object_reference(package, argument)),
             CheckedTerm::Binding { value, .. } => object_reference(package, value),
@@ -387,6 +389,7 @@ impl<'a> Graph<'a> {
 
     /// The flow-equation nodes (each mode's `rates`) of the hybrid modes in
     /// `closure`, once each, in node order.
+    #[ix_trace_rs::string_edge]
     fn flows(&self, closure: &BTreeSet<usize>) -> Result<BTreeSet<usize>> {
         let mut flows = BTreeSet::new();
         for &position in closure {
@@ -481,6 +484,7 @@ impl<'a> Graph<'a> {
 /// # Errors
 ///
 /// A mapper failure when the package does not read as the mapper expects.
+#[ix_trace_rs::string_edge]
 pub(super) fn run(
     package: &CheckedPackageV2,
     identity: &str,
@@ -637,6 +641,7 @@ pub(super) fn run(
 
 /// Ensure a protocol-required temporal subject has the static role bindings
 /// that the analyzer would require before the exporter classifies it.
+#[ix_trace_rs::string_edge]
 fn validate_protocol_bindings(
     graph: &Graph<'_>,
     clauses: &[ClauseFact],

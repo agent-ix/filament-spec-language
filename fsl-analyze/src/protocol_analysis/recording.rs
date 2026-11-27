@@ -18,7 +18,7 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
-const FORMAT: &str = "filament.protocol-recording/1";
+const FORMAT: &str = fsl_foundation::wire_format::WireFormat::ProtocolRecording.as_str();
 
 /// A verdict for one protocol obligation in a recorded execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -710,6 +710,7 @@ fn join_tables_of(
         .map_err(|refusal| PrefixRefusal { prefix: 0, refusal })
 }
 
+#[ix_trace_rs::string_edge]
 fn assess_with_input(
     package: &CheckedPackage<'_>,
     selected_protocol: Option<&str>,
@@ -1127,6 +1128,7 @@ fn has_fanout_scope(protocol: &CheckedProtocol) -> bool {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn validate_closure_premises(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -1749,6 +1751,7 @@ fn validate_identities(document: &RecordingDocument) -> Result<(), RecordingRefu
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 #[implements("FR-895-AC-42")]
 fn assess_obligations(
     package: &CheckedPackage,
@@ -3009,6 +3012,7 @@ fn assess_obligations(
     obligations
 }
 
+#[ix_trace_rs::string_edge]
 fn add_fanout_control_obligations(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -3604,6 +3608,7 @@ fn branch_completion(
 
 /// Whether a recorded action has the branch decision required by its checked
 /// control ancestry before it occurs.
+#[ix_trace_rs::string_edge]
 #[implements("FR-895-AC-42")]
 fn observation_enabled(
     protocol: &CheckedProtocol,
@@ -3747,6 +3752,7 @@ fn observation_enabled(
 /// not ordered before the step is `Some(false)` at once, as is one the step
 /// itself causally precedes: order between two observations present is fixed
 /// when both are, so nothing can repair either.
+#[ix_trace_rs::string_edge]
 #[implements("FR-895-AC-42")]
 fn earlier_steps_precede(
     protocol: &CheckedProtocol,
@@ -3937,6 +3943,7 @@ fn choice_observations(
 /// How many iterations of the part of a `repeat` body at `node` begin
 /// causally before the observation at `position`: the most occurrences of
 /// any step, or of any `choice`, that precede it.
+#[ix_trace_rs::string_edge]
 fn iteration_count(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -4011,6 +4018,7 @@ fn last_iteration(
 /// branch under `join all`, otherwise the branches whose steps were all
 /// observed. A `repeat` supplies [`last_iteration`] and, when it ran, its
 /// `exhausted` path. An `await` supplies none.
+#[ix_trace_rs::string_edge]
 fn collect_predecessors(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -4360,6 +4368,7 @@ fn repeat_control_verdict(
 /// is not determined (`None`) when no such step lies at or before the path,
 /// when any of them was not observed at or before the observation, or when
 /// they disagree.
+#[ix_trace_rs::string_edge]
 fn repeat_iteration(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -4413,6 +4422,7 @@ fn repeat_iteration(
 /// runs in counts only when it runs in the same iteration of that `repeat`
 /// as the step does, and is not matched when either iteration is not
 /// determined ([`repeat_iteration`]): a missed violation, never a false one.
+#[ix_trace_rs::string_edge]
 fn after_cancel(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -4579,6 +4589,7 @@ fn predicate_join_tables(
     Ok(tables)
 }
 
+#[ix_trace_rs::string_edge]
 fn control_repeat_limit(
     protocol: &CheckedProtocol,
     target: &fsl_semantics::check::CheckedControl,
@@ -4603,6 +4614,7 @@ fn control_repeat_limit(
         .fold(1, u64::saturating_mul)
 }
 
+#[ix_trace_rs::string_edge]
 fn control_path_enabled(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -4659,6 +4671,7 @@ fn control_path_enabled(
     Some(true)
 }
 
+#[ix_trace_rs::string_edge]
 fn observation_owned_by(protocol: &CheckedProtocol, observation: &Observation) -> bool {
     let node_ids = protocol_node_ids(protocol);
     let Some(node) = node_ids.get(&observation.node).copied() else {

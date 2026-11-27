@@ -2,13 +2,13 @@
 //! Shared-control finite-horizon induction and independently accepted proofs.
 use super::*;
 use crate::exact_probabilistic::{
-    Dyadic, FhObjective, QualifiedFhError, backward_induction, decide_measure_exact,
+    backward_induction, decide_measure_exact, Dyadic, FhObjective, QualifiedFhError,
 };
 use fsl_replay::{
-    MeasurePayoffKind, conditional_measure_probability_certificate,
-    measure_probability_objective, measure_probability_product_key,
+    conditional_measure_probability_certificate, measure_probability_objective,
+    measure_probability_product_key,
     partial_lower_measure_probability_certificate_document_with_work_scope,
-    write_measure_probability_certificate,
+    write_measure_probability_certificate, MeasurePayoffKind,
 };
 use ix_trace_rs::implements;
 
@@ -130,14 +130,15 @@ pub(super) fn run(
     {
         let empty = ExactProbabilityCertificate { values: Vec::new() };
         let checked = (|| {
-            let document = fsl_replay::vacuous_measure_probability_certificate_document_with_work_scope(
-                &system,
-                claims,
-                &item,
-                document_limits,
-                cancel,
-                Some(&work),
-            )?;
+            let document =
+                fsl_replay::vacuous_measure_probability_certificate_document_with_work_scope(
+                    &system,
+                    claims,
+                    &item,
+                    document_limits,
+                    cancel,
+                    Some(&work),
+                )?;
             let bytes = write_measure_probability_certificate(&document, document_limits, cancel)?;
             fsl_replay::check_probability_certificate_document_as_with_work_scope(
                 &system,
@@ -365,7 +366,11 @@ pub(super) fn run(
         if lower_product.is_some() {
             return not_yet();
         }
+        let Some(bound) = claim_side_bound(&claim.form) else {
+            return not_yet();
+        };
         return finish_measure_interval(
+            &bound,
             &system,
             claims,
             &item,
@@ -386,14 +391,7 @@ pub(super) fn run(
     if lower_product.is_some() {
         // A partial product shows only a `lower`: the claim side of `>= θ`
         // and of a `<= c` quantile.
-        let lower_side = match &claim.form {
-            ProbForm::Probability { bound, .. } | ProbForm::MeanOfFraction { bound, .. } => {
-                matches!(bound, Bound::AtLeast(_))
-            }
-            ProbForm::Quantile { threshold, .. } => matches!(threshold, Bound::AtMost(_)),
-            _ => false,
-        };
-        if !lower_side {
+        if !matches!(claim_side_bound(&claim.form), Some(Bound::AtLeast(_))) {
             return max_states_limit(&limits, subject);
         }
         let checked = (|| {
@@ -595,8 +593,26 @@ pub(super) fn run(
     };
     checked_report(checked, certificate, binding, extremum, subject)
 }
+/// FR-1042 "Pairing, side and results": the direction in which the documents
+/// of `form`'s base meet the claim. A quantile compares its shifted payoff the
+/// other way round, `lower` for `<= c`.
+fn claim_side_bound(form: &ProbForm) -> Option<Bound> {
+    match form {
+        ProbForm::Probability { bound, .. } | ProbForm::MeanOfFraction { bound, .. } => {
+            Some(bound.clone())
+        }
+        ProbForm::Quantile { threshold, .. } => Some(match threshold {
+            Bound::AtMost(value) => Bound::AtLeast(value.clone()),
+            Bound::AtLeast(value) => Bound::AtMost(value.clone()),
+        }),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-1042-AC-31")]
 fn finish_measure_interval(
+    bound: &Bound,
     system: &ModelSystem<'_>,
     claims: &[fsl_semantics::check::CheckedProbabilisticClaim],
     item: &fsl_package::ObligationIdentity,
@@ -641,8 +657,7 @@ fn finish_measure_interval(
         Err(error) => return document_failure(error, subject),
     };
     let check = |certificate: &ExactProbabilityCertificate,
-                 side: fsl_replay::SubsystemBoundKind,
-                 role: fsl_replay::CertificateRole| {
+                 side: fsl_replay::SubsystemBoundKind| {
         let document = fsl_replay::measure_probability_certificate_document_with_work_scope(
             system,
             claims,
@@ -664,23 +679,15 @@ fn finish_measure_interval(
             claims,
             item,
             &bytes,
-            role,
+            interval_role(side, bound),
             interval_limits,
             cancel,
             work,
         )
     };
     let checked = (
-        check(
-            &lower_certificate,
-            fsl_replay::SubsystemBoundKind::Lower,
-            fsl_replay::CertificateRole::Claim,
-        ),
-        check(
-            &upper_certificate,
-            fsl_replay::SubsystemBoundKind::Upper,
-            fsl_replay::CertificateRole::Counterpart,
-        ),
+        check(&lower_certificate, fsl_replay::SubsystemBoundKind::Lower),
+        check(&upper_certificate, fsl_replay::SubsystemBoundKind::Upper),
     );
     let (lower_check, upper_check) = match checked {
         (Ok(lower), Ok(upper)) => (lower, upper),
@@ -688,8 +695,12 @@ fn finish_measure_interval(
             return document_failure(error, subject);
         }
     };
+    let claim_check = match bound {
+        Bound::AtLeast(_) => &lower_check,
+        Bound::AtMost(_) => &upper_check,
+    };
     if matches!(
-        &lower_check,
+        claim_check,
         fsl_replay::ExactProbabilityCertificateCheck::Rejected(rejection)
             if rejection.rule == ProbabilityCertificateRule::ThresholdMissed
     ) {
@@ -701,42 +712,24 @@ fn finish_measure_interval(
             subject,
         );
     }
-    let (
-        fsl_replay::ExactProbabilityCertificateCheck::Accepted(accepted),
-        fsl_replay::ExactProbabilityCertificateCheck::Accepted(_),
-    ) = (&lower_check, &upper_check)
-    else {
-        let check = match lower_check {
-            fsl_replay::ExactProbabilityCertificateCheck::Rejected(_) => lower_check,
-            _ => upper_check,
-        };
-        return checked_report(
-            Ok(check),
-            lower_certificate,
-            binding.cloned(),
-            None,
-            subject,
-        );
-    };
-    let evidence = Box::new(ExactProbabilityEvidence {
-        certificate: lower_certificate,
-        value: accepted.value().clone(),
-        side: accepted.side(),
-    });
-    let binding = binding.map(|bound| bound.reference.clone());
     let extremum = match optimization {
         ProbabilityObjective::Maximum => Some(Extremum::Max),
         ProbabilityObjective::Minimum => Some(Extremum::Min),
         _ => None,
     };
-    EngineReport::Exact(Box::new(ExactReport::ProvedBounds {
-        claim: lower_check,
-        counterpart: Box::new(upper_check),
-        method: fsl_replay::BoundsMethod::BackwardInduction { precision_bits },
-        extremum,
-        binding,
-        evidence,
-    }))
+    finish_interval(
+        IntervalSettlement {
+            bound,
+            limits: exact_limits,
+            lower: Ok((lower_certificate, lower_check)),
+            upper: Ok((upper_certificate, upper_check)),
+            binding,
+            extremum,
+            method: fsl_replay::BoundsMethod::BackwardInduction { precision_bits },
+        },
+        subject,
+    )
+    .unwrap_or_else(|rejected| *rejected)
 }
 
 struct RefutationContext<'a> {
@@ -771,7 +764,7 @@ fn refute(
         work,
     } = context;
     use crate::exact_probabilistic::{
-        WitnessError, WitnessScope, WitnessWork, produce_quantile_witness, produce_witness,
+        produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let kind = if matches!(claim.form, ProbForm::Quantile { .. }) {

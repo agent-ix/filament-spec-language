@@ -31,6 +31,7 @@ use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, Su
 use fsl_replay::SymmetryRefusal;
 use fsl_replay::{
     settle_exact_prob_build_issue, ExactProbBuildIssue, IncompleteCause, ModelCheckLimit,
+    StatisticalRequestRefusal, UnavailabilityCause,
 };
 use fsl_replay::{ClaimPredicate, TerminalValue, UndefinedLocus};
 use fsl_route::reductions::SymmetryDeclaration;
@@ -1033,13 +1034,25 @@ fn sampled_two_test_provenance_keeps_bindings_and_method() {
         panic!("SPRT completion expected");
     };
     assert_eq!(sprt.basis.method, StatisticalMethod::Sprt);
-    assert_eq!(
-        okamoto.provenance.tests, sprt.provenance.tests,
-        "the logical tests and trace assignment do not depend on method"
-    );
-    // Obligation identity is not returned by SampledRequest or
-    // StatisticalOutcome, so the method/identity clause has no comparison
-    // surface at this API boundary.
+    assert_eq!(okamoto.provenance.tests.len(), sprt.provenance.tests.len());
+    for (okamoto_test, sprt_test) in okamoto.provenance.tests.iter().zip(&sprt.provenance.tests) {
+        assert_eq!(okamoto_test.index, sprt_test.index);
+        assert_eq!(okamoto_test.initial, sprt_test.initial);
+        assert_eq!(okamoto_test.binding, sprt_test.binding);
+        assert_eq!(
+            (okamoto_test.traces.first, okamoto_test.traces.step),
+            (sprt_test.traces.first, sprt_test.traces.step),
+            "sample indices retain their test interleave"
+        );
+        assert_eq!(
+            okamoto_test.traces.count,
+            okamoto.tests[okamoto_test.index as usize].draws
+        );
+        assert_eq!(
+            sprt_test.traces.count,
+            sprt.tests[sprt_test.index as usize].draws
+        );
+    }
 }
 
 /// FR-191-AC-4: the source route records both bindings and their interleaved
@@ -1058,35 +1071,37 @@ fn source_two_test_p95_provenance_keeps_identity_across_methods() {
     assert_eq!(okamoto["verdict"]["basis"]["method"]["type"], "okamoto");
     assert_eq!(sprt["verdict"]["basis"]["method"]["type"], "sprt");
 
-    let tests = okamoto["verdict"]["provenance"]["tests"]
-        .as_array()
-        .expect("the source verdict records test provenance");
-    assert_eq!(tests.len(), 2, "{okamoto}");
-    for (index, key) in ["a", "b"].into_iter().enumerate() {
-        let test = &tests[index];
-        assert_eq!(
-            test["index"],
-            u64::try_from(index).expect("two tests"),
-            "{test}"
-        );
-        assert_eq!(test["initial_state"], 0, "{test}");
-        assert_eq!(test["binding"]["reference"]["key"], key, "{test}");
-        assert_eq!(test["first_trace_index"], index.to_string(), "{test}");
-        let first = test["first_trace_index"]
-            .as_str()
-            .expect("the decimal trace start")
-            .parse::<u64>()
-            .expect("a trace index");
-        let last = test["last_trace_index"]
-            .as_str()
-            .expect("the decimal trace end")
-            .parse::<u64>()
-            .expect("a trace index");
-        let draws = okamoto["verdict"]["tests"][index]["draws"]
-            .as_u64()
-            .expect("the test's draw count");
-        assert!(draws > 0, "{test}");
-        assert_eq!(last - first, 2 * (draws - 1), "{test}");
+    for result in [&okamoto, &sprt] {
+        let tests = result["verdict"]["provenance"]["tests"]
+            .as_array()
+            .expect("the source verdict records test provenance");
+        assert_eq!(tests.len(), 2, "{result}");
+        for (index, key) in ["a", "b"].into_iter().enumerate() {
+            let test = &tests[index];
+            assert_eq!(
+                test["index"],
+                u64::try_from(index).expect("two tests"),
+                "{test}"
+            );
+            assert_eq!(test["initial_state"], 0, "{test}");
+            assert_eq!(test["binding"]["identity"], key, "{test}");
+            assert_eq!(test["first_trace_index"], index.to_string(), "{test}");
+            let first = test["first_trace_index"]
+                .as_str()
+                .expect("the decimal trace start")
+                .parse::<u64>()
+                .expect("a trace index");
+            let last = test["last_trace_index"]
+                .as_str()
+                .expect("the decimal trace end")
+                .parse::<u64>()
+                .expect("a trace index");
+            let draws = result["verdict"]["tests"][index]["draws"]
+                .as_u64()
+                .expect("the test's draw count");
+            assert!(draws > 0, "{test}");
+            assert_eq!(last - first, 2 * (draws - 1), "{test}");
+        }
     }
 }
 
@@ -1250,7 +1265,7 @@ fn service() -> World {
 /// test for each live server key, returning the emitted P95 item.
 fn source_p95_item(name: &str, keys: &[&str], method: &str, seed: u64) -> serde_json::Value {
     let model = prob_world::service(&p95("P95", 5));
-    let (unit, package) = model.unit_and_document();
+    let (unit, package) = model.unit_and_receiver_scoped_document();
     let snapshot = json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": name},
@@ -2373,15 +2388,14 @@ fn exact_only_claims_are_refused_before_any_sample() {
         let TerminalValue::Unsupported(cause) = record.value else {
             panic!("an exact-only gate refusal settles unsupported: {record:?}");
         };
-        assert_eq!(
-            cause.as_str(),
-            match claim {
-                "Every" => "every-scheduler",
-                "Bare" => "missing-confidence",
-                "Expected" => "exact-only-form",
-                _ => unreachable!("listed claim"),
-            }
-        );
+        let refusal = match claim {
+            "Every" => StatisticalRequestRefusal::EveryScheduler,
+            "Bare" => StatisticalRequestRefusal::MissingConfidence,
+            "Expected" => StatisticalRequestRefusal::ExactOnlyForm,
+            _ => unreachable!("listed claim"),
+        };
+        assert_eq!(cause, UnavailabilityCause::StatisticalRequest(refusal));
+        assert_eq!(cause.as_str(), "unsupported-requested-capability");
     }
 }
 
@@ -3328,8 +3342,13 @@ fn exact_outcome(world: &crate::timed_world::World, name: &str) -> String {
         },
     );
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the linked engines are admitted");
-    let record =
-        fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = fsl_analyze::analyze::analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal))
         .expect("the outcome serializes");
@@ -3743,31 +3762,39 @@ fn a_window_aggregate_event_does_not_check() {
     });
     let refusal = checked.err().expect("the unit does not check");
     let refusal = refusal.downcast_ref::<String>().expect("a message");
-    assert!(refusal.contains("CheckRefusal"), "{refusal}");
+    assert!(refusal.contains("SemanticCheckRefusal"), "{refusal}");
     assert!(refusal.contains("aggregate-term-typed"), "{refusal}");
 }
 
-/// Five distinct interval bounds inside the idle tail are decided and six are
-/// not. No position holds `phase = 0` after 0 ms, so the decided event is
-/// false: the bounds inside `(2, 8)` are 3, 4, 5, 6 and 7; `[3 ms, 9 ms]`
-/// moves the window's end to 9 and puts 8 inside too.
+/// FSpec FR-420 idle-tail semantics decide every completion here: after send
+/// at 2 ms, phase is 1, so each eventuality for phase = 0 is false through the
+/// 9 ms horizon. The disjoint intervals plus a separate [3 ms, 9 ms] interval
+/// need 14 pieces, above the timed reader supports at most 12; that case is
+/// filed After-alpha. Shared endpoints keep these six bound occurrences at
+/// eight pieces.
+#[trace("FSpec-FR-420-AC-14")]
 #[test]
-fn six_interval_bounds_inside_a_dense_idle_tail_stop_incomplete() {
-    let five = "eventually[3 ms, 4 ms] holds(c.phase = 0) \
-                or eventually[5 ms, 6 ms] holds(c.phase = 0) \
-                or eventually[7 ms, 8 ms] holds(c.phase = 0)";
-    assert_eq!(
-        measured(&window_world(
-            2,
-            None,
-            "",
-            &format!("probability >= 0.5 [{five}]")
-        )),
-        (Some(ratio(0, 1)), Decision::Rejected)
+fn six_interval_bounds_inside_a_dense_idle_tail_settle_rejected() {
+    let six_bounds = concat!(
+        "eventually[3 ms, 4 ms] holds(c.phase = 0) or ",
+        "eventually[3 ms, 6 ms] holds(c.phase = 0) or ",
+        "eventually[3 ms, 8 ms] holds(c.phase = 0)"
     );
-    stops_undecided(&format!(
-        "probability >= 0.5 [{five} or eventually[3 ms, 9 ms] holds(c.phase = 0)]"
-    ));
+    let widest_six_bounds = concat!(
+        "eventually[3 ms, 4 ms] holds(c.phase = 0) or ",
+        "eventually[3 ms, 6 ms] holds(c.phase = 0) or ",
+        "eventually[3 ms, 9 ms] holds(c.phase = 0)"
+    );
+    for claim in [
+        format!("probability >= 0.5 [{six_bounds}]"),
+        format!("probability >= 0.5 [{widest_six_bounds}]"),
+    ] {
+        assert_eq!(
+            measured(&window_world(2, None, "", &claim)),
+            (Some(ratio(0, 1)), Decision::Rejected),
+            "{claim}"
+        );
+    }
 }
 
 /// A falling fraction: `phase = 0` holds at 0 ms and not in the idle state, so

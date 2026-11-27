@@ -49,6 +49,8 @@ pub struct PlanInputs<'a> {
     pub max_trace_length: Option<u64>,
     /// The request's unbounded-value generation size.
     pub max_value_bits: Option<u64>,
+    /// Which of a step's proofs settle `proved` (FSL FR-1052).
+    pub certification: fsl_replay::CertificationPolicy,
 }
 
 /// A whole-plan preflight refusal; no step has executed.
@@ -344,6 +346,7 @@ pub struct PlanConsumers {
 /// [`PlanRefusal::Initial`] when a supplied `initial` is admitted by no
 /// consuming step's model; a stage fault when a step names a claim the
 /// package does not hold.
+#[ix_trace_rs::string_edge]
 pub fn plan_consumers(
     package: &CheckedPackage,
     plan: &VerificationPlan,
@@ -488,6 +491,7 @@ fn status(record: &TerminalRecord) -> PlanStatus {
 /// FR-824), and a clause over a state model runs from the step's admitted
 /// `initial` binding. The FR-190 record is the step's result.
 #[implements("FR-752-AC-13", "FR-753-AC-7")]
+#[ix_trace_rs::string_edge]
 fn model_based_test(
     package: &CheckedPackage,
     node: &VerificationPlanNode,
@@ -642,6 +646,7 @@ struct Execution<'a> {
 }
 
 impl Execution<'_> {
+    #[ix_trace_rs::string_edge]
     fn run_step(
         &self,
         node: &VerificationPlanNode,
@@ -808,6 +813,7 @@ impl Execution<'_> {
                 disposition,
                 diagnostic,
             }],
+            certification: inputs.certification,
         };
         let outcome = match analyze(package, &request, engines, limits, cancel) {
             Ok(staged) => staged.into_value(),
@@ -1114,6 +1120,7 @@ fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static s
         }
         crate::analyze::AnalyzeRefusal::HostAllocationFailed(_) => "host-allocation-failed",
         crate::analyze::AnalyzeRefusal::Emission(_) => "resource-exhausted",
+        crate::analyze::AnalyzeRefusal::EngineConflict { .. } => "invalid-value",
     }
 }
 

@@ -13,6 +13,7 @@ fn fault(invariant: &'static str) -> Box<RunRefusal> {
     ))
 }
 
+#[ix_trace_rs::string_edge]
 pub(super) fn atom_name(
     package: &fsl_package::CheckedPackage,
     sources: &[Source],

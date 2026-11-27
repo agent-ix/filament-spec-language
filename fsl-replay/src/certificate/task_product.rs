@@ -12,8 +12,8 @@ pub use key::{
     TaskProductKeyRefusal, TaskSchedulerControl,
 };
 pub(crate) use wire::{
-    action_name, array, child, count, integer, member, object, rational, rational_wire, refuse,
-    shared_defect, source_transition, source_transition_wire, ACTIONS,
+    action_name, array, child, count, integer, member, object, rational, refuse, shared_defect,
+    source_transition, source_transition_wire, ACTIONS,
 };
 pub use wire::{
     same_source_transition, TaskProductReferenceError, TaskProductShapeReason,
@@ -279,6 +279,7 @@ impl TaskProductCertificate {
     /// Whether the task rows exactly reproduce the selected S3-checked task
     /// set. This is only the checked-input part of FR-418; a reader must also
     /// recompute task-product successors, clocks and closure evidence.
+    #[ix_trace_rs::string_edge]
     pub fn matches_checked_task_set(&self, task_set: &fsl_semantics::check::TaskSet) -> bool {
         self.abstraction == Self::ABSTRACTION
             && TaskQueueBound::from_checked_task_set(task_set)

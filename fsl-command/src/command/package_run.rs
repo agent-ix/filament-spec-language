@@ -12,7 +12,9 @@
 
 use std::path::Path;
 
-use super::{FileCounts, Result, RunCause, RunResult, output, wire};
+use fsl_replay::CertificationPolicy;
+
+use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
@@ -32,6 +34,8 @@ pub struct PreparedPackageRun {
     packages: fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     work: Work,
+    /// FR-1052: which of a call's item proofs settle `proved`.
+    certification: CertificationPolicy,
     /// The limits its requirement items settle under.
     item_limits: fsl_analyze::analyze::AnalyzeLimits,
     /// The request's `package` selection, echoed by the result.
@@ -137,6 +141,7 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
 
 /// The request-stage refusal of a package the strict reader refused, with
 /// the reader's pointer under `/request/package` (FR-1039).
+#[ix_trace_rs::string_edge]
 fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     if let Some(failure) = refusal.host_allocation_failure {
         return RunCause::AnalyzePackage {
@@ -317,6 +322,7 @@ pub(super) fn prepare(
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Call(Box::new(spine_call), requirements),
+        certification: super::analyze::read_certification(request.require_certified.clone())?,
         item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
         models: admitted.models,
@@ -330,6 +336,7 @@ pub(super) fn prepare(
 /// trace, a lasso or a model-arm behaviour). Any other selection refuses here,
 /// before a file is opened. A run builds states over the package's model
 /// world, so a `{file}` selection refuses it.
+#[ix_trace_rs::string_edge]
 fn prepare_clause(
     directory: &Path,
     request: &wire::Request,
@@ -339,8 +346,8 @@ fn prepare_clause(
     overrides: &super::RequestOverrides<'_>,
 ) -> Result<PreparedPackageRun> {
     use fsl_replay::spine::{
-        ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation, TraceInput,
-        read_clause_selection,
+        read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation,
+        TraceInput,
     };
 
     if request.call.is_some() || request.tl_lowering.is_some() {
@@ -489,6 +496,8 @@ fn prepare_clause(
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Clause(Box::new(work)),
+        // A clause or lowering run settles no proof.
+        certification: CertificationPolicy::AdmitAny,
         item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
         models: admitted.models,
@@ -659,6 +668,8 @@ fn prepare_lowering(
             observation_limits: overrides.observation_limits().unwrap_or_default(),
         })),
         item_limits: super::overrides::item_limits(overrides),
+        // A clause or lowering run settles no proof.
+        certification: CertificationPolicy::AdmitAny,
         selection: admitted.selection,
         models: admitted.models,
         sources: admitted.sources,
@@ -916,6 +927,7 @@ enum Selected {
 /// is not the v2 contract is refused before the strict reader runs as
 /// `unknown_wire`/`unsupported-wire` at `/request/package/contract_version`
 /// (FR-1039-AC-3, never `invalid_package`).
+#[ix_trace_rs::string_edge]
 fn require_contract_version(bytes: &[u8]) -> Result<()> {
     #[derive(serde::Deserialize)]
     struct Contract {
@@ -1018,6 +1030,7 @@ pub(super) fn execute_with_settle(
     execute_inner(prepared, Some(settle))
 }
 
+#[ix_trace_rs::string_edge]
 fn execute_inner(
     prepared: PreparedPackageRun,
     settle: Option<&super::settle::Settle<'_>>,
@@ -1032,6 +1045,7 @@ fn execute_inner(
         packages,
         model_limits,
         work,
+        certification,
         item_limits,
         selection,
         models,
@@ -1267,6 +1281,7 @@ fn execute_inner(
             function: &call.function,
             requirements,
             settle,
+            certification,
             limits: item_limits,
             budget,
         })?)
@@ -1292,6 +1307,7 @@ struct ValueCall<'a> {
     function: &'a str,
     requirements: &'a super::requirements::Requirements,
     settle: &'a super::settle::Settle<'a>,
+    certification: CertificationPolicy,
     limits: fsl_analyze::analyze::AnalyzeLimits,
     budget: filament_contract_model::NativeJoinBudget,
 }
@@ -1306,6 +1322,7 @@ fn settle_value_call(
         function,
         requirements,
         settle,
+        certification,
         limits,
         budget,
     }: ValueCall<'_>,
@@ -1400,6 +1417,7 @@ fn settle_value_call(
             engines: settle.engines,
             limits,
             budget,
+            certification,
         },
         function,
         &items,

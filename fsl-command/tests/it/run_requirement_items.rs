@@ -891,9 +891,15 @@ fn package_call_union_parameter_requirement_items_match_the_source() {
         .unwrap_or_else(|error| panic!("source call with argument {argument} settles the union parameter's requirement: {error}"));
         let source_arguments = source_request["request"]["call"]["arguments"].clone();
         let mut package_request = source_request;
-        package_request["request"].as_object_mut().unwrap().remove("program");
+        package_request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("program");
         package_request["request"]["package"] = json!({"directory":"handoff"});
-        assert_eq!(package_request["request"]["call"]["arguments"], source_arguments);
+        assert_eq!(
+            package_request["request"]["call"]["arguments"],
+            source_arguments
+        );
         std::fs::write(&path, package_request.to_string()).unwrap();
         std::fs::remove_file(directory.path().join("unit.native")).unwrap();
         let package_seen = Arc::new(Mutex::new(Seen::default()));
@@ -1082,6 +1088,55 @@ enum Scenario {
     Cancelled,
     /// The provider's manifest publishes the option `depth`.
     PublishesDepth,
+}
+
+/// FR-1052 (TC-3240): under `require_certified` a call's provider-proved
+/// items, trusted by default, settle `inconclusive`.
+#[trace("TC-3240", "FR-1052-AC-10")]
+#[test]
+fn require_certified_withholds_a_call_s_trusted_items() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let default = run_with_providers(
+        &path,
+        Scenario::Limits {
+            deadline_ms: 250,
+            max_frame_bytes: 1_048_576,
+        },
+    )
+    .expect("the run-side provider entry");
+    let defaults = entries(&default.document);
+    assert!(!defaults.is_empty(), "{}", default.document);
+    for item in defaults {
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+        assert_eq!(item["record"]["certification"], "trusted", "{item}");
+    }
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]["require_certified"] = json!(true);
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let run = run_with_providers(
+        &path,
+        Scenario::Limits {
+            deadline_ms: 250,
+            max_frame_bytes: 1_048_576,
+        },
+    )
+    .expect("the run-side provider entry");
+    let items = entries(&run.document);
+    assert!(!items.is_empty(), "{}", run.document);
+    for item in items {
+        assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+        assert_eq!(
+            item["record"]["cause"]["kind"], "proof-not-certified",
+            "{item}"
+        );
+        assert!(item["record"].get("certification").is_none(), "{item}");
+    }
 }
 
 /// FR-961-AC-1, FR-961-AC-3, FR-963-AC-2, FR-964-AC-1, FR-964-AC-2: the run

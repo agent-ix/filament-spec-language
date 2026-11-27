@@ -163,6 +163,7 @@ impl World {
                 binding: self.binding(),
                 provision: self.provision.clone(),
                 items: vec![item.clone()],
+                certification: Default::default(),
             },
             engines,
             limits,
@@ -180,6 +181,7 @@ impl World {
             engines,
             limits,
             &Cancel::new(),
+            Default::default(),
         )
         .records
         .remove(0);

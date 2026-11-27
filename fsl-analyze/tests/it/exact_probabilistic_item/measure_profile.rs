@@ -826,12 +826,14 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
     );
     let run = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding,
             provision: world.provision.clone(),
             items,
             engines: &engines,
             limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),
@@ -1487,7 +1489,13 @@ fn settle_mean_document(
             ));
         },
     );
-    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0)
+    analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 #[trace("FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28", "FR-202-AC-29")]
@@ -2355,7 +2363,13 @@ fn a_slack_mean_bound_emits_the_checked_policy_and_refuses_the_old_optimizer_pol
             ));
         },
     );
-    let result = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+    let result = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert_eq!(
         result.terminal().unwrap().value(),
         &TerminalValue::Refuted,
@@ -2940,6 +2954,7 @@ fn measure_and_vacuity_limits_settle_incomplete_without_certification() {
             &engines,
             vec![exact_probabilistic_item(RequestIndex::new(0), request)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         let terminal = record
@@ -2979,6 +2994,7 @@ fn vacuity_cancellation_at_the_checker_boundary_retains_its_typed_cause() {
                 world.request("Q", ModelCheckLimits::default()),
             )],
             cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     };

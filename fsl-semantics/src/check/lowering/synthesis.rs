@@ -12,7 +12,7 @@ use super::super::node_key::{
 use super::super::synthesis::CheckedSynthesis;
 use super::Binder;
 use super::{Binders, Lowering};
-use crate::check::refusal::CheckRefusal;
+use crate::check::refusal::SemanticCheckRefusal;
 
 impl<'a> Lowering<'a> {
     /// Lower one typed value or plan synthesis into the checked package graph.
@@ -20,7 +20,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         index: usize,
         checked: &'a CheckedSynthesis,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let scope = self.scope;
         if let Some(plan) = checked.plan() {
             self.scope = plan.scope();
@@ -34,7 +34,7 @@ impl<'a> Lowering<'a> {
         &mut self,
         index: usize,
         checked: &'a CheckedSynthesis,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let form = &checked.form;
         let claim_at = synthesis_location(index, &form.name.name);
         let grammar = match &checked.grammar {

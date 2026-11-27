@@ -53,8 +53,13 @@ use filament_contract_model as ir;
 use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
+use fsl_foundation::wire_format::WireFormat;
 use fsl_foundation::{Code, Diagnostic, Source};
+
+/// The label of a model unit accepted by `fsl run`.
+const MODEL_UNIT_FORMAT: &str = WireFormat::ModelUnit.as_str();
 use fsl_replay::spine::SpineLimits;
+use fsl_replay::CertificationPolicy;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
 use ix_trace_rs::implements;
 use settle::Settle;
@@ -79,6 +84,7 @@ fn request_integer_division(
 /// `"imported-function"`, `library` (a library identity) and `function` (a
 /// function identifier). Anything else, and a program that is an FR-480 array
 /// of units, refuses `invalid-request` naming `call_site`.
+#[ix_trace_rs::string_edge]
 fn request_call_site(
     value: Option<&serde_json::Value>,
     program_sources: usize,
@@ -639,6 +645,8 @@ struct FunctionRunData {
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
+    /// FR-1052: which of those items' proofs settle `proved`.
+    certification: CertificationPolicy,
     /// The limits its requirement items settle under.
     item_limits: fsl_analyze::analyze::AnalyzeLimits,
 }
@@ -663,6 +671,10 @@ pub struct FunctionRunInput {
 impl PreparedFunctionRun {
     pub(in crate::command) fn requirements(&self) -> Option<&requirements::Requirements> {
         self.data.requirements.as_ref()
+    }
+
+    pub(in crate::command) fn certification(&self) -> CertificationPolicy {
+        self.data.certification
     }
 
     /// Transfer the prepared typed values without executing a stage.
@@ -1262,6 +1274,7 @@ pub struct SpineFailure {
 }
 
 impl From<ir::Diagnostic> for RunCause {
+    #[ix_trace_rs::string_edge]
     fn from(value: ir::Diagnostic) -> Self {
         let message = if value.path.ends_with(".formal_revision") {
             value.message.clone()
@@ -1406,12 +1419,6 @@ impl RunCause {
                 _ => self.code().category(),
             },
             Self::SpineRun(refusal) => refusal.category(),
-            // FR-663/TC-1746: an unbounded plan parameter is a check-time
-            // admission refusal. Other unsupported projections retain their
-            // existing catalog category.
-            Self::Spine(failure) if failure.refusal.unbounded_parameter_origin().is_some() => {
-                filament_semantic_value::catalog::Category::Refusal
-            }
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
             Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
@@ -1472,6 +1479,7 @@ impl RunError {
             .with_empty_analyze_members()
     }
 
+    #[ix_trace_rs::string_edge]
     fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
         use fsl_replay::{OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
@@ -1977,6 +1985,7 @@ impl Intake<'_> {
 /// FR-664: refuse a current-snapshot `parameters` member before reading the
 /// program or model sources. The selected snapshot is cached for the normal
 /// clause reader so it is still consumed once.
+#[ix_trace_rs::string_edge]
 fn reject_current_parameters_before_sources(
     intake: &mut Intake<'_>,
     clause: Option<&wire::ClauseRun>,
@@ -2299,6 +2308,7 @@ fn run_extracted_clause_bytes(
 /// command harness. The binary driver owns argv parsing at its process
 /// boundary; this entry accepts the exact JSON adapter shape used by FSL's
 /// tests and returns the same inventory document.
+#[ix_trace_rs::string_edge]
 fn version_argv(bytes: &[u8], overrides: &RequestOverrides<'_>) -> Result<Option<RunResult>> {
     let value: serde_json::Value = match serde_json::from_slice(bytes) {
         Ok(value) => value,
@@ -2395,6 +2405,7 @@ struct ExtensionSetFile {
 
 /// FR-562: route the in-process `check --extensions` command surface to the
 /// source-only check API used by FSL's integration harness.
+#[ix_trace_rs::string_edge]
 fn check_argv(
     directory: &Path,
     bytes: &[u8],
@@ -3518,7 +3529,7 @@ fn write_compile_handoff(
 fn is_model_input_format(model: &wire::Model) -> bool {
     matches!(
         model.format.as_str(),
-        DOMAIN_PACKAGE_PROFILE | "native-model-unit/1"
+        DOMAIN_PACKAGE_PROFILE | MODEL_UNIT_FORMAT
     )
 }
 
@@ -3677,6 +3688,7 @@ fn package_input_from_formal_sources(
     Ok(packages)
 }
 
+#[ix_trace_rs::string_edge]
 fn package_input_from_selected_models(
     models: &[wire::Model],
     sources: &[FormalSource],
@@ -3687,7 +3699,7 @@ fn package_input_from_selected_models(
         .map(|(model, source)| {
             let bytes = source.source().text().as_bytes();
             match model.format.as_str() {
-                "native-model-unit/1" => {
+                MODEL_UNIT_FORMAT => {
                     if !fsl_semantics::model::intake::is_model_unit_source(bytes) {
                         return Err(model_unit_format_refusal(
                             source.source(),
@@ -4592,6 +4604,9 @@ fn prepare_run_bytes_with_sources(
     }
     // FR-1031: the first refusal in table order is the selection conflict.
     refuse_transfer_selection_conflict(&request)?;
+    // FR-1052: a `require_certified` that is not a boolean refuses before any
+    // selected file is opened.
+    analyze::read_certification(request.require_certified.clone())?;
     // FR-1045: reject malformed correlation selection before any selected
     // program, package, model or snapshot file is opened.
     relationships::validate_request(request.call.as_ref())?;
@@ -5001,6 +5016,7 @@ fn initial_subject(
 
 /// Prepare FR-100's function or clause selection without executing a stage.
 /// `source` is the program source, already read by bounded intake.
+#[ix_trace_rs::string_edge]
 fn read_integer_division(
     value: Option<&serde_json::Value>,
     member: &str,
@@ -5225,6 +5241,7 @@ fn prepare_complete_run(
             call: spine_call,
             integer_division,
             requirements,
+            certification: analyze::read_certification(request.require_certified.clone())?,
             item_limits: overrides::item_limits(overrides),
         }),
     }))
@@ -5459,6 +5476,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                     &prepared.packages,
                     prepared.item_limits,
                     settle,
+                    prepared.certification,
                 )
             },
         )

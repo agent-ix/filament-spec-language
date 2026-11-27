@@ -882,6 +882,7 @@ impl World {
                 limits: ModelCheckLimits::default(),
                 meter: UNLIMITED,
                 reductions,
+                retained: None,
                 max_depth: self.max_depth,
             },
             &Cancel::new(),
@@ -921,6 +922,28 @@ impl World {
         )
     }
 
+    /// The run of the clause storing its product states on `retained`.
+    pub(crate) fn run_retaining(
+        &self,
+        retained: &fsl_foundation::budget::Budget,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let seams = self.seams();
+        check_hyper(
+            HyperCheckRequest {
+                clause: &self.clause,
+                subjects: vec![self.subject()],
+                letters: &seams,
+                matcher: &seams,
+                limits: ModelCheckLimits::default(),
+                max_depth: self.max_depth,
+                meter: UNLIMITED,
+                reductions: Reductions::default(),
+                retained: Some(retained),
+            },
+            &Cancel::new(),
+        )
+    }
+
     /// The run of the clause reading its atoms through `letters` and its
     /// `match` through `matcher`.
     pub(crate) fn run_through(
@@ -940,6 +963,7 @@ impl World {
                 max_depth: self.max_depth,
                 meter: UNLIMITED,
                 reductions: Reductions::default(),
+                retained: None,
             },
             cancel,
         )

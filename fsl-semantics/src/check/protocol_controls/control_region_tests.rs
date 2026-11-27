@@ -17,14 +17,14 @@ use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use crate::check::{
-    CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, PackageDeclarations,
+    CheckCause, CheckedGraph, CheckingLimitKind, PackageDeclarations, SemanticCheckRefusal,
 };
 
 mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model};
+use fixture::{obligation_model, HEADER};
 
 /// A unit cannot be empty, so every package opens with the protocol `Base`
 /// of no checks; then one protocol per `(name, check count)`, each running
@@ -44,7 +44,7 @@ fn package(protocols: &[(&str, usize)]) -> String {
     text
 }
 
-fn check(text: &str, limits: CheckingLimits) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(text: &str, limits: CheckingLimits) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",

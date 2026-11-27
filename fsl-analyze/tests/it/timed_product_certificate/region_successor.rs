@@ -4,11 +4,11 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::analyze::AnalyzeRecord;
-use fsl_analyze::exact_probabilistic::{ProbBuild, build_product};
+use fsl_analyze::exact_probabilistic::{build_product, ProbBuild};
 use fsl_replay::{ProofBasis, TerminalValue};
 use ix_trace_rs::trace;
 
-use super::{PROFILES, settle};
+use super::{settle, PROFILES};
 use crate::timed_world::{self, World};
 
 fn outcome(record: &AnalyzeRecord) -> String {

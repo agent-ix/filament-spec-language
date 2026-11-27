@@ -367,6 +367,7 @@ fn obligations(object: &Map<String, Value>) -> Result<Vec<String>> {
     Ok(result)
 }
 
+#[ix_trace_rs::string_edge]
 fn output_file(record: &Map<String, Value>) -> Result<String> {
     if let Some(unknown) = record.keys().find(|key| key.as_str() != "file") {
         return Err(refuse(

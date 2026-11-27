@@ -1562,3 +1562,90 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
         other => panic!("expected TraceAlphabet, got {other:?}"),
     }
 }
+
+/// FR-237-AC-13: the package route refuses a model-alphabet payload for a task
+/// item with `TraceAlphabet`, as the source route does, whether the subject is
+/// read with its clocks or without them.
+#[trace("TC-704", "FR-237-AC-13")]
+#[test]
+fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet_on_both_routes() {
+    let world = world_with_task(2, 1);
+    let claim = &world.package.graph().task_sets().claims()[0];
+    let node = claim.node_id().expect("the claim has a node").clone();
+    let occurrence = claim.occurrence().expect("the claim has an occurrence");
+    let payload = TemporalCounterexample::<ModelTransition> {
+        initial_state: 0,
+        prefix: Vec::new(),
+        over_binding: None,
+        fairness: Vec::new(),
+        kind: CounterexampleKind::Formula,
+        lasso: None,
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+        closure_stutters: Vec::new(),
+    };
+    let envelope = crate::model_settle_support::envelope_at(payload, node, occurrence);
+    let (identities, equality) = crate::state_graph::replay_route_rules::handoff(&world);
+    let request = world.request();
+    let letters = crate::counter::Letters { atom: |_| None };
+    for timed in [false, true] {
+        let subject = fsl_replay::ModelTraceSubject {
+            timed: timed.then(|| fsl_replay::TimedReplay {
+                model: "M".to_owned(),
+                exploration: fsl_eval::simulation::Limits::default(),
+                max_clocks: fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
+                digital: false,
+            }),
+            initial: request.initial.clone(),
+            universes: request.universes.clone(),
+            expansion: request.expansion,
+            stutter_closure: false,
+        };
+        let wire = || {
+            crate::model_settle_support::request(
+                &world.package,
+                &[],
+                &world.document,
+                world.snapshots.iter(),
+                &world.unit,
+            )
+        };
+        let source = fsl_replay::replay_model_trace(
+            wire(),
+            &subject,
+            &envelope,
+            &letters,
+            fsl_replay::ReplayLimits::default(),
+        );
+        let mut package_wire = wire();
+        package_wire.byte_provision.clear();
+        let package = fsl_replay::replay_model_trace_from_package(
+            package_wire,
+            fsl_replay::HandoffSupply {
+                dependencies: &[],
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &subject,
+            &envelope,
+            &letters,
+            fsl_replay::ReplayLimits::default(),
+        );
+        for (route, refused) in [("source", source), ("package", package)] {
+            let Err(fsl_replay::ReplayRefusal::ModelTrace(refusal)) = refused else {
+                panic!("{route}, timed {timed}: expected TraceAlphabet, got {refused:?}");
+            };
+            assert!(
+                matches!(
+                    *refusal,
+                    fsl_replay::ModelTraceRefusal::TraceAlphabet {
+                        required: "task",
+                        supplied: "model"
+                    }
+                ),
+                "{route}, timed {timed}: {refusal:?}"
+            );
+        }
+    }
+}

@@ -3,9 +3,9 @@
 use super::super::document::measure::ordered;
 use super::super::document::measure::{measure_probability_product_key, replay_control};
 use super::*;
-use ix_trace_rs::implements;
 use filament_exact::OrderingOperator as Order;
 use fsl_eval::probabilistic::{Accumulator, MeasureError, MonitorState};
+use ix_trace_rs::implements;
 
 fn limits_of(system: &ModelSystem<'_>, limits: &ExactProbLimits) -> ProbabilityDocumentLimits {
     ProbabilityDocumentLimits::for_exact(limits, system.meter_limits())

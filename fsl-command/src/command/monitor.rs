@@ -24,6 +24,7 @@ use fsl_replay::spine::{
     read_trace_binding, write_clause_run_result, write_ledger, OverObject, ProgressLowerBoundary,
     TimestampedMissingValuation, TimestampedOrderKey,
 };
+use ix_trace_rs::implements;
 use serde_json::{json, Value};
 
 use super::limits::{CommandLimits, MonitorPreparationLimits};
@@ -35,11 +36,11 @@ use super::{
 };
 
 /// The format of one event.
-pub const EVENT_FORMAT: &str = "filament.monitor-event/1";
+pub const EVENT_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorEvent.as_str();
 /// The format of the summary.
-pub const SUMMARY_FORMAT: &str = "filament.monitor-summary/1";
+pub const SUMMARY_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorSummary.as_str();
 /// The format of the batch result.
-pub const RUN_FORMAT: &str = "filament.monitor-run/1";
+pub const RUN_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorRun.as_str();
 /// FR-644's published draft 2020-12 schema for `filament.monitor-event/1`.
 pub const MONITOR_EVENT_SCHEMA_1: &str =
     include_str!("../../schemas/filament-monitor-event-1.schema.json");
@@ -544,7 +545,9 @@ fn read_record(
 /// FR-644 "Provider-routed items": the request's `items` with the
 /// `subject`, `documents` and `deadline_ms` beside them, each read as FR-620
 /// reads it in a `native-analyze/1` request; `None` for a request without
-/// `items`, which carries none of the three.
+/// `items`, which carries none of the three; `require_certified` is read the
+/// same way (FR-1052).
+#[implements("FR-1052-AC-14")]
 fn read_routed(
     intake: &mut super::Intake<'_>,
     request: &mut wire::MonitorRequest,
@@ -561,6 +564,7 @@ fn read_routed(
             ("subject", request.subject.is_some()),
             ("documents", !request.documents.is_empty()),
             ("deadline_ms", request.deadline_ms.is_some()),
+            ("require_certified", request.require_certified.is_some()),
         ];
         return match beside.iter().find(|(_, present)| *present) {
             Some((member, _)) => Err(invalid(member, "is read only beside items")),
@@ -577,7 +581,9 @@ fn read_routed(
     super::analyze::validate_items(Some(&items))?;
     let documents = super::analyze::read_documents(intake, &request.documents, Some(&items))?;
     let subject = super::analyze::read_subject(request.subject.take(), &documents)?;
+    let certification = super::analyze::read_certification(request.require_certified.take())?;
     Ok(Some(super::analyze::RoutedItems {
+        certification,
         documents,
         subject,
         memory: Vec::new(),

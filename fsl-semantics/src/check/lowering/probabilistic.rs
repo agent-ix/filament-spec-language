@@ -10,15 +10,15 @@
 //! every claim as before; claims written identically are indistinguishable,
 //! so which of them takes which rank is unobservable. The node's body is written by S4 from the nodes the claim reads.
 
-use std::collections::{BTreeMap, hash_map};
+use std::collections::{hash_map, BTreeMap};
 
 use filament_exact::{NodeKey, PathSegment, Rational, ValueType};
 use fsl_forms::DeclaredClauseKind;
 
-use super::temporal::{FormulaCondition, FormulaInput, stage_fault};
+use super::temporal::{stage_fault, FormulaCondition, FormulaInput};
 use super::{
-    Binder, Binders, FUNCTION_BODY, FunctionInput, Lowering, ModelClause, NodeContent, NodeRef,
-    SemanticNode, literal_operand_text,
+    literal_operand_text, Binder, Binders, FunctionInput, Lowering, ModelClause, NodeContent,
+    NodeRef, SemanticNode, FUNCTION_BODY,
 };
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{
@@ -29,7 +29,7 @@ use crate::check::probabilistic::{
     CheckedTemporalFormula, ClaimActivation, Event, FractionMeasure, ProbForm, ReachTarget, Reward,
     Statement, Weighting,
 };
-use crate::check::refusal::CheckRefusal;
+use crate::check::refusal::SemanticCheckRefusal;
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 /// What lowering wrote for one reward: the node of the object type that
@@ -54,7 +54,7 @@ impl Lowering<'_> {
     pub(crate) fn probabilistic_declarations(
         &mut self,
         model: &CheckedProbabilisticModel,
-    ) -> Result<Vec<Option<LoweredReward>>, CheckRefusal> {
+    ) -> Result<Vec<Option<LoweredReward>>, SemanticCheckRefusal> {
         for random in model.random_parameters() {
             let at = random.declaration_location();
             self.charge(1, &at)?;
@@ -107,7 +107,7 @@ impl Lowering<'_> {
         &mut self,
         declaration: &filament_checked::key::DeclarationKey,
         at: &crate::check::Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let key = self.model_node(declaration, at)?;
         self.record_generated(key, at);
         Ok(())
@@ -129,7 +129,7 @@ impl Lowering<'_> {
         &mut self,
         model: &CheckedProbabilisticModel,
         rewards: &[Option<LoweredReward>],
-    ) -> Result<Vec<(NodeKey, Option<NodeKey>, Statement)>, CheckRefusal> {
+    ) -> Result<Vec<(NodeKey, Option<NodeKey>, Statement)>, SemanticCheckRefusal> {
         let claims = model.claims();
         let reward_keys: Vec<Option<NodeKey>> = model
             .rewards()
@@ -211,7 +211,7 @@ impl Lowering<'_> {
         claim: &CheckedProbabilisticClaim,
         operands: &[PathSegment],
         ordinal: u64,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let at = claim.declaration_location();
         self.charge(1, &at)?;
         let mut path = Vec::with_capacity(operands.len() + 1);
@@ -259,7 +259,10 @@ impl Lowering<'_> {
     /// clause function and rank by (operation key, reward name) (FR-640
     /// "Reward identity"). A reward on a source-declared operation is a
     /// `SourceOwner` declaration `[type, operation, "reward", name]`.
-    fn reward_function(&mut self, reward: &Reward) -> Result<Option<LoweredReward>, CheckRefusal> {
+    fn reward_function(
+        &mut self,
+        reward: &Reward,
+    ) -> Result<Option<LoweredReward>, SemanticCheckRefusal> {
         let at = reward.declaration_location();
         self.charge(1, &at)?;
         let operation = reward.operation();
@@ -323,6 +326,7 @@ impl Lowering<'_> {
     /// that expression's content, or a literal body's text. The expression
     /// was lowered once, under the lowering's own charge, so this reads one
     /// binding and walks nothing.
+    #[ix_trace_rs::string_edge]
     fn function_body_operand(&self, function: &NodeKey) -> Option<PathSegment> {
         let BodyTerm::Aggregate(aggregate) = self.graph.nodes.get(function)?.body() else {
             return None;
@@ -368,7 +372,11 @@ enum Threshold {
 impl Lowering<'_> {
     /// The builtin scalar type node `form`, located at the claim, which the
     /// claim's body reads but its S3 node does not yet reference.
-    fn claim_scalar(&mut self, form: &'static str, at: &Location) -> Result<NodeKey, CheckRefusal> {
+    fn claim_scalar(
+        &mut self,
+        form: &'static str,
+        at: &Location,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let key = self.scalar(form, at)?;
         self.record_generated(key.clone(), at);
         Ok(key)
@@ -379,7 +387,7 @@ impl Lowering<'_> {
     fn claim_scope(
         &mut self,
         claim: &CheckedProbabilisticClaim,
-    ) -> Result<(Option<NodeKey>, Vec<Binder>), CheckRefusal> {
+    ) -> Result<(Option<NodeKey>, Vec<Binder>), SemanticCheckRefusal> {
         let mut scope = Vec::new();
         let over = match &claim.over {
             None => None,
@@ -401,6 +409,7 @@ impl Lowering<'_> {
 
     /// The unit node a quantity bound of the reward whose function is
     /// `function` is in, or `None` for an integer reward.
+    #[ix_trace_rs::string_edge]
     fn reward_unit(&self, function: &NodeKey) -> Option<NodeKey> {
         let nodes = &self.graph.nodes;
         let value_type = nodes
@@ -441,7 +450,7 @@ impl Lowering<'_> {
         over: Option<&NodeKey>,
         mut scope: Vec<Binder>,
         reward_unit: Option<&NodeKey>,
-    ) -> Result<Statement, CheckRefusal> {
+    ) -> Result<Statement, SemanticCheckRefusal> {
         let at = claim.declaration_location();
         let boolean = self.type_node(&ValueType::Boolean, &at)?;
         let trigger = match &claim.activation {
@@ -529,7 +538,7 @@ impl Lowering<'_> {
     }
 
     /// The `value`/`literal` node of the Boolean constant `true`.
-    fn true_literal(&mut self, cx: &StatementCx<'_>) -> Result<Statement, CheckRefusal> {
+    fn true_literal(&mut self, cx: &StatementCx<'_>) -> Result<Statement, SemanticCheckRefusal> {
         let key = self.insert(
             cx.at,
             NodeTag::Value,
@@ -548,7 +557,7 @@ impl Lowering<'_> {
         &mut self,
         term: LeafTerm,
         cx: &StatementCx<'_>,
-    ) -> Result<Statement, CheckRefusal> {
+    ) -> Result<Statement, SemanticCheckRefusal> {
         if let Some(target) = term.reference_target() {
             return target
                 .admitted()
@@ -573,7 +582,7 @@ impl Lowering<'_> {
         &mut self,
         predicate: &CheckedPredicate,
         cx: &StatementCx<'_>,
-    ) -> Result<Statement, CheckRefusal> {
+    ) -> Result<Statement, SemanticCheckRefusal> {
         let mut binders = Binders::new(predicate.slot_names(), cx.scope);
         let body = predicate
             .body()
@@ -587,7 +596,7 @@ impl Lowering<'_> {
         bound: &Bound,
         threshold: &Threshold,
         cx: &StatementCx<'_>,
-    ) -> Result<Statement, CheckRefusal> {
+    ) -> Result<Statement, SemanticCheckRefusal> {
         let (direction, value) = match bound {
             Bound::AtLeast(value) => ("at_least", value),
             Bound::AtMost(value) => ("at_most", value),
@@ -615,7 +624,7 @@ impl Lowering<'_> {
         ticks: u64,
         timed: Option<&Rational>,
         cx: &StatementCx<'_>,
-    ) -> Result<Statement, CheckRefusal> {
+    ) -> Result<Statement, SemanticCheckRefusal> {
         match (timed, cx.claim.time_unit.clone()) {
             (Some(timed), Some(unit)) => Ok(Statement::quantity(unit, timed)),
             // FSpec FR-640 rule 7.3: a window over a timed subject is a time
@@ -645,7 +654,7 @@ impl Lowering<'_> {
         &mut self,
         fraction: &FractionMeasure,
         cx: &StatementCx<'_>,
-    ) -> Result<Statement, CheckRefusal> {
+    ) -> Result<Statement, SemanticCheckRefusal> {
         let predicate = self.predicate_statement(&fraction.predicate, cx)?;
         let window = self.window_statement(fraction.window, fraction.timed_window.as_ref(), cx)?;
         Ok(Statement::Aggregate(vec![
@@ -664,7 +673,7 @@ impl Lowering<'_> {
         &mut self,
         measure: &BoundedMeasure,
         cx: &StatementCx<'_>,
-    ) -> Result<(Statement, Threshold), CheckRefusal> {
+    ) -> Result<(Statement, Threshold), SemanticCheckRefusal> {
         let time = || {
             cx.claim
                 .time_unit
@@ -730,7 +739,7 @@ impl Lowering<'_> {
         Ok((statement, threshold))
     }
 
-    fn form_statement(&mut self, cx: &StatementCx<'_>) -> Result<Statement, CheckRefusal> {
+    fn form_statement(&mut self, cx: &StatementCx<'_>) -> Result<Statement, SemanticCheckRefusal> {
         let kind = |name: &str| ("kind", Statement::Text(name.to_owned()));
         let reward = || {
             cx.reward_unit.map_or(Threshold::Rational, |unit| {
@@ -854,7 +863,7 @@ impl Lowering<'_> {
         &mut self,
         formula: &CheckedTemporalFormula,
         cx: &StatementCx<'_>,
-    ) -> Result<(NodeKey, Vec<NodeKey>), CheckRefusal> {
+    ) -> Result<(NodeKey, Vec<NodeKey>), SemanticCheckRefusal> {
         let conditions: BTreeMap<usize, FormulaCondition<'_>> = formula
             .conditions()
             .iter()
@@ -870,7 +879,7 @@ impl Lowering<'_> {
                     },
                 ))
             })
-            .collect::<Result<_, CheckRefusal>>()?;
+            .collect::<Result<_, SemanticCheckRefusal>>()?;
         let aggregates = BTreeMap::new();
         let at = cx.at.clone();
         self.temporal_formula_nodes(

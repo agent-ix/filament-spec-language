@@ -124,26 +124,22 @@ fn replay_requests_with_the_same_trace_identity_keep_their_own_files() {
     let first_item = analyze(&first_path).item(0);
     assert_eq!(label(&first_item), "declined", "{first_item}");
     assert_eq!(
-        first_item["record"]["diagnostic"]["detail"]["position"],
-        2,
+        first_item["record"]["diagnostic"]["detail"]["position"], 2,
         "{first_item}"
     );
     assert_eq!(
-        first_item["record"]["diagnostic"]["detail"]["path"],
-        "/prefix/2/post_state",
+        first_item["record"]["diagnostic"]["detail"]["path"], "/prefix/2/post_state",
         "{first_item}"
     );
 
     let second_item = analyze(&second_path).item(0);
     assert_eq!(label(&second_item), "declined", "{second_item}");
     assert_eq!(
-        second_item["record"]["diagnostic"]["detail"]["position"],
-        1,
+        second_item["record"]["diagnostic"]["detail"]["position"], 1,
         "{second_item}"
     );
     assert_eq!(
-        second_item["record"]["diagnostic"]["detail"]["path"],
-        "/prefix/1/send_record",
+        second_item["record"]["diagnostic"]["detail"]["path"], "/prefix/1/send_record",
         "{second_item}"
     );
 }
@@ -653,6 +649,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
         fsl_analyze::analyze::document::SubjectSelection::default_over(&documents.snapshots);
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &package,
             binding: SubjectBinding {
                 packages: &documents.packages,
@@ -673,6 +670,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
             }))],
             engines: &engines,
             limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),

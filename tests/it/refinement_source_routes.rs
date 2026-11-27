@@ -184,12 +184,7 @@ mod remaining;
 /// FR-940-AC-45: the CounterIdentity package route retains the complete
 /// certified source result after source representations have been removed.
 #[test]
-#[trace(
-    "TC-1590",
-    "TC-2958",
-    "FR-630-AC-11",
-    "FR-940-AC-45"
-)]
+#[trace("TC-1590", "TC-2958", "FR-630-AC-11", "FR-940-AC-45")]
 fn identity_refinement_package_matches_source_without_source() {
     refinement_package_matches_source_without_source("refinement");
 }
@@ -197,12 +192,7 @@ fn identity_refinement_package_matches_source_without_source() {
 /// FR-940-AC-46..48: unrelated temporal item kinds retain their exact source
 /// outcomes on the package route after source representations are removed.
 #[test]
-#[trace(
-    "TC-2958",
-    "FR-940-AC-46",
-    "FR-940-AC-47",
-    "FR-940-AC-48"
-)]
+#[trace("TC-2958", "FR-940-AC-46", "FR-940-AC-47", "FR-940-AC-48")]
 fn unrelated_temporal_kinds_do_not_run_package_refinement() {
     for item_kind in ["deadlock-freedom", "time-lock-freedom", "race-freedom"] {
         refinement_package_matches_source_without_source(item_kind);
@@ -254,8 +244,7 @@ fn refinement_package_matches_source_without_source(item_kind: &str) {
             "the fixture selects EN-1's actual refinement checker: {source_value}"
         );
         assert_eq!(
-            source_value["items"][0]["claim_name"],
-            "CounterIdentity",
+            source_value["items"][0]["claim_name"], "CounterIdentity",
             "FR-940-AC-45 selects the refinement declaration: {source_value}"
         );
     } else {

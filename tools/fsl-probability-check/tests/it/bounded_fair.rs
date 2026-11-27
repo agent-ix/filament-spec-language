@@ -6,7 +6,7 @@ use super::bounded::{
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
@@ -248,13 +248,11 @@ fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
             run(&request).1["value"],
             json!({"numerator":expected,"denominator":"1"})
         );
-        assert!(
-            document(&request)["ranking"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|r| r["rank"] == 0)
-        );
+        assert!(document(&request)["ranking"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["rank"] == 0));
     }
     let ordinary = proof(&source("", ">=", "0.95", 2, "m.delivered"), SNAPSHOT);
     let zero_source = source("fair weak Msg::send_a", "<=", "0.5", 0, "m.delivered");

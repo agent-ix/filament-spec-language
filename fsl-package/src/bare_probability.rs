@@ -14,7 +14,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{Bound, PackageProbabilityClaimForm, ProbScheduler, TemporalProfile};
 
 use crate::bare_slot::BareSelectionFailure;
-use crate::bare_term::{BareClauseRefusal, fault, walk_failure};
+use crate::bare_term::{fault, walk_failure, BareClauseRefusal};
 use crate::protocol_selection::SlotSelectionFailure;
 use crate::protocol_view::{group_member, text};
 use crate::reader_protocol_projection::{BareWalker, UnsupportedView};
@@ -230,6 +230,7 @@ impl BarePackage<'_> {
         })
     }
 
+    #[ix_trace_rs::string_edge]
     fn probability_declaration_index(
         &self,
         claim: &OccurrenceKey,

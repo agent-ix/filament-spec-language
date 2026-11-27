@@ -82,16 +82,10 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn both(name: &str, items: &Value) -> (Value, i32, Value, i32) {
     let ws = Workspace::new(name);
     let members = json!({"models": [], "items": items});
-    let path = request_over(
-        &ws,
-        SOURCE,
-        &crate::counter::document(false),
-        &[],
-        members,
-    );
+    let path = request_over(&ws, SOURCE, &crate::counter::document(false), &[], members);
     let source = analyze(&path);
-    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("the request"))
-        .expect("request JSON");
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("request JSON");
     let (selected, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("remove the source");
     let document = json!({"format": "native-analyze/1", "request": selected});
@@ -141,7 +135,10 @@ fn a_package_edf_overload_refutes_as_the_source_does() {
 fn a_package_fixed_priority_response_that_meets_its_bound_equals_the_source() {
     let item = assert_parity("package-sched-fp-meets", "AResponse5");
     assert_eq!(label(&item), "proved", "{item}");
-    assert_eq!(item["record"]["basis"]["analysis"], "fixed-priority", "{item}");
+    assert_eq!(
+        item["record"]["basis"]["analysis"], "fixed-priority",
+        "{item}"
+    );
 }
 
 /// FR-633-AC-2: a response of 5 against a bound of 4 refutes with the task,
@@ -155,7 +152,10 @@ fn a_package_fixed_priority_response_miss_refutes_as_the_source_does() {
     assert_eq!(miss["task"], "a", "{miss}");
     assert_eq!(miss["response"]["numerator"], "5", "{miss}");
     assert_eq!(miss["bound"]["numerator"], "4", "{miss}");
-    assert!(miss["job"].is_string() && miss["iterates"].is_array(), "{miss}");
+    assert!(
+        miss["job"].is_string() && miss["iterates"].is_array(),
+        "{miss}"
+    );
 }
 
 /// FR-633-AC-1: a fixed-priority schedulable claim and an AMC claim settle
@@ -184,7 +184,11 @@ fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
     assert_eq!(package_exit, source_exit);
     let item = &package["items"][0];
     assert_eq!(label(item), "unsupported", "{item}");
-    assert_eq!(item["request"]["candidates"]["backends"], json!([]), "{item}");
+    assert_eq!(
+        item["request"]["candidates"]["backends"],
+        json!([]),
+        "{item}"
+    );
 }
 
 /// FR-246-AC-5, FR-075-AC-23: the package's admitted release relation
@@ -215,8 +219,8 @@ fn package_release_backing_admits_task_product_candidates() {
         &[],
         json!({"items": [{"claim": "PairFp"}, {"claim": "PairAResponse"}]}),
     );
-    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request"))
-        .expect("request JSON");
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("request JSON");
     let (mut selected, bytes) = package_selection(&ws, &request["request"]);
     let package: Value = serde_json::from_slice(&bytes).expect("checked package JSON");
     let rows = package["schedulability_claims"]
@@ -276,10 +280,10 @@ fn package_release_backing_admits_task_product_candidates() {
     let mut budget = filament_contract_model::NativeJoinBudget::new(1 << 40, 1 << 24);
     let identity_bytes = std::fs::read(ws.path("handoff/identities.json")).expect("identity rows");
     let identity_rows = fsl_package::ReadIdentityRows::read(&identity_bytes, &checked, &mut budget)
-    .expect("the package identity rows are admitted");
+        .expect("the package identity rows are admitted");
     let equality_bytes = std::fs::read(ws.path("handoff/equality.json")).expect("equality rows");
     let equality_rows = fsl_package::ReadEqualityRows::read(&equality_bytes, &checked)
-    .expect("the package equality rows are admitted");
+        .expect("the package equality rows are admitted");
     let bare = fsl_package::BarePackage::new(&checked)
         .with_canonical_bytes(&bytes)
         .with_supply(
@@ -366,6 +370,7 @@ fn package_release_backing_admits_task_product_candidates() {
                 fsl_analyze::analyze::DeadlineSupply::Unbounded,
             ),
             budget,
+            certification: Default::default(),
         },
         &capture,
         &filament_exact::Cancel::new(),
@@ -400,8 +405,8 @@ fn malformed_package_rows_refuse_a_schedulability_item_typed() {
     let ws = Workspace::new("package-sched-malformed");
     let members = json!({"models": [], "items": [{"claim": "FullEdf"}]});
     let path = request_over(&ws, SOURCE, &crate::counter::document(false), &[], members);
-    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("the request"))
-        .expect("request JSON");
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("request JSON");
     let (selected, package) = package_selection(&ws, &request["request"]);
     let good: Value = serde_json::from_slice(&package).expect("package JSON");
     let mut no_rows = good.clone();
@@ -451,13 +456,18 @@ fn a_package_task_set_declared_out_of_name_order_equals_the_source() {
         {"claim": "PlainEdf"}]});
     let path = request_over(&ws, source, &crate::counter::document(false), &[], members);
     let sourced = analyze(&path);
-    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("the request"))
-        .expect("request JSON");
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("request JSON");
     let (selected, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("remove the source");
     let document = json!({"format": "native-analyze/1", "request": selected});
     let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
-    assert_eq!(package.document(), sourced.document(), "{}", package.document());
+    assert_eq!(
+        package.document(),
+        sourced.document(),
+        "{}",
+        package.document()
+    );
     assert_eq!(package.exit, sourced.exit);
 }
 
@@ -502,10 +512,7 @@ fn caller_schedule_max_demand_points_bounds_both_routes() {
     );
     let mut runs = vec![(
         "source",
-        crate::analyze_cli_support::analyze_under(
-            &path,
-            &[(Setting::ScheduleMaxDemandPoints, 3)],
-        ),
+        crate::analyze_cli_support::analyze_under(&path, &[(Setting::ScheduleMaxDemandPoints, 3)]),
     )];
     std::fs::remove_file(ws.path("program.fsl")).expect("remove the source");
     runs.push((
@@ -522,11 +529,21 @@ fn caller_schedule_max_demand_points_bounds_both_routes() {
         let cause = &item["record"]["cause"];
         assert_eq!(cause["limit"], "max_demand_points", "{route}: {item}");
         assert_eq!(cause["value"], 3, "{route}: {item}");
-        assert_eq!(cause["setting"], "schedule.max_demand_points", "{route}: {item}");
+        assert_eq!(
+            cause["setting"], "schedule.max_demand_points",
+            "{route}: {item}"
+        );
     }
-    for operand in ["schedule.max_demand_points=0", "schedule.max_demand_points=1.5"] {
+    for operand in [
+        "schedule.max_demand_points=0",
+        "schedule.max_demand_points=1.5",
+    ] {
         let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
-        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
+        assert_eq!(
+            refusal.cause,
+            fsl_foundation::UsageCause::NotAnInteger,
+            "{operand}"
+        );
     }
     let mut replay = fsl_command::command::CommandLimits::replay();
     assert!(replay

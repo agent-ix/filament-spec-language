@@ -15,8 +15,8 @@ use filament_contract_model::{
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{
-    AtomSlot, BinaryTemporal, PackageFormulaNode, PackageHyperForm, PackageHyperParameter,
-    HyperForm, PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
+    AtomSlot, BinaryTemporal, HyperForm, PackageFormulaNode, PackageHyperForm,
+    PackageHyperParameter, PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
 };
 use ix_trace_rs::implements;
 
@@ -141,6 +141,7 @@ fn field(bytes: &[u8], at: &mut usize) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[ix_trace_rs::string_edge]
 fn slot(name: &str) -> Option<(String, String)> {
     let bytes = name.strip_prefix("slot_s")?.as_bytes();
     let mut at = 0;
@@ -156,7 +157,7 @@ fn slot(name: &str) -> Option<(String, String)> {
 impl BarePackage<'_> {
     /// Read the temporal profile of a selected hyper clause without building
     /// its package evaluation form.
-    #[implements("FR-173-AC-3")]
+    #[implements("FR-173-AC-3", "FR-940-AC-16")]
     pub fn hyper_clause_profile(
         &self,
         claim: &OccurrenceKey,
@@ -211,11 +212,10 @@ impl BarePackage<'_> {
             }
             quantifiers.push((kind, members.len() > 3));
         }
-        let aligned = group_member(&node.body, "align_skip")
+        let aligned = !group_member(&node.body, "align_skip")
             .and_then(members)
             .ok_or_else(|| malformed(claim))?
-            .len()
-            > 0;
+            .is_empty();
         let preliminary = HyperForm::classify_package_facts(&quantifiers, aligned, true);
         if preliminary.unsupported_reason().is_some() {
             return Ok(preliminary.unsupported_reason());
@@ -346,15 +346,17 @@ impl BarePackage<'_> {
             if !subject_roots.contains_key(alias) {
                 return Err(malformed(claim));
             }
-            if group_member(entry, "quantifier").and_then(text) != Some("forall") {
-                return Err(pending(&node.node_id, "hyper-quantifier-form"));
-            }
+            let kind = match group_member(entry, "quantifier").and_then(text) {
+                Some("forall") => fsl_semantics::check::QuantifierKind::Forall,
+                Some("exists") => fsl_semantics::check::QuantifierKind::Exists,
+                _ => return Err(pending(&node.node_id, "hyper-quantifier-form")),
+            };
             if members(entry).ok_or_else(|| malformed(claim))?.len() != 3 {
                 return Err(pending(&node.node_id, "hyper-fairness"));
             }
             quantifiers.push(PackageHyperQuantifier {
                 variable: variable.to_owned(),
-                kind: fsl_semantics::check::QuantifierKind::Forall,
+                kind,
                 alias: alias.to_owned(),
                 fairness: Vec::new(),
             });
@@ -524,8 +526,12 @@ impl BarePackage<'_> {
             let alias = match used_aliases.first() {
                 Some(used) => (*used).to_owned(),
                 None => {
-                    let Some(filament_contract_model::CheckedNodeOwner::ModelRoot { identity }) =
-                        nodes.get(model_node).and_then(|node| node.owner.as_ref())
+                    // A parameter's model node is the declared type (owned by the
+                    // model), or the model root itself: both name the package.
+                    let Some(
+                        filament_contract_model::CheckedNodeOwner::ModelRoot { identity }
+                        | filament_contract_model::CheckedNodeOwner::Model { identity, .. },
+                    ) = nodes.get(model_node).and_then(|node| node.owner.as_ref())
                     else {
                         return Err(malformed(claim));
                     };

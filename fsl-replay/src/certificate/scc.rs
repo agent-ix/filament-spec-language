@@ -215,6 +215,10 @@ impl<K: Clone + Ord> ProductGraph<K> {
         Ok(self.graph.add_acceptance_set(members)?)
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
+
     fn state(&self, vertex: Vertex) -> Option<&K> {
         self.states.get(vertex.index())
     }
@@ -248,8 +252,9 @@ impl CertificateState for ProductStateRef {
     }
 }
 
-/// The product graph holds no state. A closure the checker reached always
-/// holds its initial states, so this is a fault of the caller.
+/// The product graph holds no state, so [`check_partition`] has none to name
+/// in a rejection. A caller whose product can be empty decides that case
+/// before it calls.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("the product graph holds no state")]
 pub(crate) struct EmptyProduct;

@@ -26,10 +26,12 @@ use crate::shared_wire::{StateLocus, WireDefectKind};
 use filament_contract_model::Std001Code;
 use filament_exact::CancelCause;
 use fsl_foundation::{BackendId, Code, RequestIndex};
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use super::json::MAX_COUNT;
 use super::key::ClaimKind;
+use crate::not_digitisable::NotDigitisable;
 use crate::proof_result::{
     child, name_order, read_plugin_basis, read_plugin_certification,
     read_plugin_inconclusive_cause, Certification, DeclineCode, IncompleteCause, InconclusiveCause,
@@ -78,6 +80,9 @@ pub struct ResultEntry {
     /// An `unsupported`, `declined` or `failed` entry's FR-272 diagnostic,
     /// kept as written.
     pub diagnostic: Option<Value>,
+    /// The FSpec FR-272 `not_digitisable` member of that diagnostic's
+    /// detail: why the digital-clock route declined (FSL FR-243).
+    pub not_digitisable: Option<NotDigitisable>,
     /// The limit an `incomplete` entry's `limit-reached` cause names.
     pub limit_reached: Option<LimitFacts>,
     /// FR-331's replayable bounded task-search frontier, present only on an
@@ -619,6 +624,7 @@ struct Rest {
 struct Diagnostic {
     code: String,
     wire: Value,
+    not_digitisable: Option<NotDigitisable>,
 }
 
 /// A cause as the planner holds it.
@@ -1279,16 +1285,19 @@ fn read_task_zone(value: &Value, pointer: &str) -> Result<(), Defect> {
                 .as_object()
                 .ok_or_else(|| Defect::wrong_kind(base.clone()))?;
             check_task_members(object, &["bound", "strict"], &base)?;
-            let bound = object
-                .get("bound")
-                .ok_or_else(|| Defect::missing(format!("{base}/bound")))?;
-            read_text(bound, &format!("{base}/bound"))?;
-            let strict = object
-                .get("strict")
-                .ok_or_else(|| Defect::missing(format!("{base}/strict")))?;
-            if !strict.is_boolean() {
-                return Err(Defect::wrong_kind(format!("{base}/strict")));
-            }
+            // The shared DBM entry reader (FSpec FR-418): the `bound` is a
+            // canonical integer string and `strict` a boolean.
+            crate::shared_wire::DbmBound::read(cell).map_err(|defect| {
+                let pointer = format!("{base}{}", defect.pointer);
+                match defect.kind {
+                    WireDefectKind::Missing => Defect::missing(pointer),
+                    WireDefectKind::UnknownMember => Defect::unknown(pointer),
+                    WireDefectKind::WrongKind => Defect::wrong_kind(pointer),
+                    WireDefectKind::Invalid | WireDefectKind::UnknownVariant => {
+                        Defect::invalid(pointer)
+                    }
+                }
+            })?;
         }
     }
     Ok(())
@@ -1355,17 +1364,32 @@ fn read_diagnostic(value: &Value, pointer: &str) -> Result<Diagnostic, Defect> {
         member_of(members, "code", pointer)?,
         &child(pointer, "code"),
     )?;
-    read_text(
+    let cause = read_text(
         member_of(members, "cause", pointer)?,
         &child(pointer, "cause"),
     )?;
     let detail_pointer = child(pointer, "detail");
-    if !member_of(members, "detail", pointer)?.is_object() {
+    let Value::Object(detail) = member_of(members, "detail", pointer)? else {
         return Err(Defect::wrong_kind(detail_pointer));
-    }
+    };
+    // The one typed detail member: FSpec FR-272's `not_digitisable`.
+    let not_digitisable = match detail.get(NotDigitisable::MEMBER) {
+        None => None,
+        Some(written) => {
+            let pointer = child(&detail_pointer, NotDigitisable::MEMBER);
+            if code != NotDigitisable::CATALOG.code() || cause != NotDigitisable::CATALOG.cause() {
+                return Err(Defect::unknown(pointer));
+            }
+            // The type refuses a byte range whose end precedes its start.
+            let read =
+                NotDigitisable::deserialize(written).map_err(|_| Defect::invalid(pointer))?;
+            Some(read)
+        }
+    };
     Ok(Diagnostic {
         code,
         wire: value.clone(),
+        not_digitisable,
     })
 }
 
@@ -1391,6 +1415,10 @@ fn assemble(
     let index = RequestIndex::new(
         usize::try_from(request_index).map_err(|_| Defect::invalid("/request_index".to_owned()))?,
     );
+    let not_digitisable = rest
+        .diagnostic
+        .as_ref()
+        .and_then(|diagnostic| diagnostic.not_digitisable);
     let diagnostic_wire = rest
         .diagnostic
         .as_ref()
@@ -1491,6 +1519,7 @@ fn assemble(
         record,
         certification,
         diagnostic: diagnostic_wire,
+        not_digitisable,
         limit_reached,
         task_search: rest.task_search,
     })

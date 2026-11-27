@@ -40,6 +40,7 @@ impl MeasurePayoffKind {
             Self::Fraction => "fraction",
         }
     }
+    #[ix_trace_rs::string_edge]
     fn read(text: &str) -> Result<Self, ProbabilityDocumentError> {
         match text {
             "event" => Ok(Self::Event),
@@ -1470,6 +1471,7 @@ fn decode_state(
     Ok(ProbabilityProductKey::from_canonical_bytes(bytes))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_wire(
     wire: WireDocument,
     limits: ProbabilityDocumentLimits,
@@ -2538,7 +2540,7 @@ pub(super) fn check(
             }
             poll(cancel)?;
             return Ok(ExactProbabilityCertificateCheck::AcceptedVacuous(
-                ProbabilityVacuityAcceptance {
+                ProbabilityValueFreeAcceptance {
                     document: bytes.to_vec().into_boxed_slice(),
                     side: if plan.strict {
                         ProbabilityBoundSide::AtLeast

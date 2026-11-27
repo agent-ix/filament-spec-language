@@ -17,7 +17,7 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -355,7 +355,7 @@ fn broken() -> ReachRefusal {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::time::Duration;
 
     use ix_trace_rs::trace;

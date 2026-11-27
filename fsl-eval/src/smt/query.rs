@@ -28,17 +28,17 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::clause_observation::Observation;
 
-use crate::automaton::{BoundedKind, bounded_shape, closure_shape, invariant_atom};
+use crate::automaton::{bounded_shape, closure_shape, invariant_atom, BoundedKind};
 use crate::model_subject::ModelSubject;
 use crate::simulation::model::{ModelSystem, SymbolicSubject};
-use crate::smt::SmtEncodingLimits;
 use crate::smt::expression::{Reader, Sym, Views};
 use crate::smt::layout::{StateCopy, StateLayout, StateRef};
 use crate::smt::monitor::MonitorTable;
 use crate::smt::relation::{
-    Application, CopyFacts, StepRelation, applications, check_domains, count_applications,
+    applications, check_domains, count_applications, Application, CopyFacts, StepRelation,
 };
 use crate::smt::script::{Script, Sort, Term};
+use crate::smt::SmtEncodingLimits;
 use crate::smt::{Measure, Refusal, SmtEncodingRefusal, SmtQueryKind};
 
 // A known false object settles the conjunction even if another object's
@@ -60,7 +60,7 @@ fn terminal_conjunction(readings: impl IntoIterator<Item = (Term, Term)>) -> (Te
 
 #[cfg(test)]
 mod terminal_tests {
-    use super::{Term, terminal_conjunction};
+    use super::{terminal_conjunction, Term};
     use ix_trace_rs::trace;
 
     #[trace("TC-519", "FR-124-AC-8", "FR-124-AC-10")]

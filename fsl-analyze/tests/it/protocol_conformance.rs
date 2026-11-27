@@ -8,7 +8,9 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Workspace};
+use crate::analyze_cli_support::{
+    analyze, label, litmus_request, order_protocol, request_over, Run, Workspace,
+};
 
 /// The order protocol with a second channel `Tell` from `Seller` to `Buyer`,
 /// on which `Seller` sends `Told` only after `Ship`.
@@ -48,7 +50,7 @@ fn conformance(name: &str, unit: &str, members: Value, documents: &[(&str, Value
 
 /// A closed-or-not recording of the order fixture: `Placed`, `Got`, `Ship`
 /// and `finish`, with the closure record `closure`.
-fn order_recording(closure: Value) -> Value {
+pub(crate) fn order_recording(closure: Value) -> Value {
     json!({
         "format": "filament.protocol-recording/1",
         "identity": {"authority": "test", "identity": "recording"},
@@ -72,7 +74,7 @@ fn order_recording(closure: Value) -> Value {
 }
 
 /// The required premises of instance `w-1` of the order fixture.
-fn order_premises() -> Value {
+pub(crate) fn order_premises() -> Value {
     json!([
         {"kind": "execution", "node": "Flow::Done"},
         {"kind": "branch", "node": "Flow::Main::Decide::no"},
@@ -80,7 +82,7 @@ fn order_premises() -> Value {
     ])
 }
 
-fn recording_member() -> Value {
+pub(crate) fn recording_member() -> Value {
     json!({"recording": {"authority": "test", "identity": "recording"}})
 }
 
@@ -133,6 +135,69 @@ fn matching_implementations_conform_globally() {
         .filter_map(|p| p["role"].as_str())
         .collect();
     assert_eq!(roles, ["Buyer", "Seller"]);
+}
+
+/// FR-125-AC-13 and FR-990: global conformance over a bounded subject with no
+/// admitted key is inconclusive with `no-instance`; an admitted-key source
+/// control still runs the engine to completion.
+#[trace("TC-2800", "FR-125-AC-13", "FR-896-AC-1", "FR-990-AC-11")]
+#[test]
+fn global_conformance_classifies_empty_over_as_no_instance() {
+    let ws = Workspace::new("gc-no-instance");
+    let mut snapshots: Vec<Vec<u8>> = crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .collect();
+    let mut snapshot: Value =
+        serde_json::from_slice(snapshots.first().expect("one initial snapshot"))
+            .expect("snapshot JSON");
+    let populations = snapshot["populations"]
+        .as_array_mut()
+        .expect("snapshot populations");
+    populations[2]["objects"] = json!([]);
+    snapshots[0] = serde_json::to_vec(&snapshot).expect("snapshot JSON");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&order_protocol(true)),
+        &crate::litmus::resulting_document(),
+        &snapshots,
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+    );
+    let item = analyze(&request).item(0);
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "no-instance", "{item}");
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "counterexample",
+    ] {
+        assert!(item[member].is_null(), "NoInstance omits {member}: {item}");
+    }
+
+    let admitted = conformance(
+        "gc-no-instance-control",
+        &order_protocol(true),
+        json!({}),
+        &[],
+    );
+    assert_eq!(label(&admitted), "proved", "{admitted}");
+
+    let every_key = order_protocol(true)
+        .replace("over (k: M::Core)", "over (k: M::Cell)")
+        .replace(
+            "finish Done as (zz: Boolean) { true };",
+            "finish Done as (zz: Boolean) { k.id = 0 };",
+        );
+    let later_instance = conformance("gc-every-key", &every_key, json!({}), &[]);
+    assert_eq!(
+        label(&later_instance),
+        "refuted",
+        "the first canonical key x satisfies the finish predicate, but y does not: {later_instance}"
+    );
+    assert_eq!(later_instance["counterexample"]["kind"], "deadlock");
+    assert_eq!(later_instance["replay"]["reproduced"], true);
 }
 
 /// QSL-2209 AC-2; FR-896-AC-3, FR-991-AC-4: over a recording, a send on
@@ -230,24 +295,29 @@ fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
     assert_eq!(item["global"]["complete"], false);
 }
 
-/// QSL-2209 AC-4; FR-896-AC-4: a role whose model the package does not
-/// select is refused naming the role, and nothing is settled.
-#[trace("TC-2532", "FR-896-AC-4")]
-#[test]
-fn a_missing_role_implementation_refuses() {
-    let ws = Workspace::new("gc-missing");
-    let protocol = order_protocol(true).replace(
+/// The AC-4 request: `Courier` is implemented on `N::Core`, a model no
+/// population of the subject covers, and `subject` is the request's subject.
+fn missing_role_run(name: &str, protocol: &str, subject: Option<Value>) -> Run {
+    let protocol = protocol.replace(
         "role Seller on M::Cell;",
         "role Seller on M::Cell;\nrole Courier on N::Core;",
     );
-    let request_path = litmus_request(
-        &ws,
-        &protocol,
-        json!({"items": [
+    two_model_run(name, &protocol, subject)
+}
+
+/// `protocol` over a request that selects two models, `M` and a second `N`.
+fn two_model_run(name: &str, protocol: &str, subject: Option<Value>) -> Run {
+    let ws = Workspace::new(name);
+    let extra = match subject {
+        Some(subject) => json!({"items": [
+            {"claim": "Flow", "kind": "global-conformance"}
+        ], "subject": subject}),
+        None => json!({"items": [
             {"claim": "Flow", "kind": "global-conformance"}
         ]}),
-    );
-    let source = crate::litmus::unit_text(&protocol).replace(
+    };
+    let request_path = litmus_request(&ws, protocol, extra);
+    let source = crate::litmus::unit_text(protocol).replace(
         "model M = \"test/litmus\";",
         "model M = \"test/litmus\";\nmodel N = \"test/second\";",
     );
@@ -268,7 +338,23 @@ fn a_missing_role_implementation_refuses() {
                 "identity": "second-model", "document": "Second", "formal_revision": 1}
         }));
     ws.write("analyze.json", request.to_string().as_bytes());
-    let run = analyze(&request_path);
+    analyze(&request_path)
+}
+
+/// FR-882-AC-3: a scalar `over` is observed through one model selection, so a
+/// request selecting two models is refused `unsupported` (exit 21), not
+/// failed with an internal fault.
+#[trace("TC-2532", "FR-882-AC-3")]
+#[test]
+fn a_scalar_over_with_two_model_selections_is_unsupported() {
+    let protocol = order_protocol(true).replace("over (k: M::Core)", "over (n: Boolean)");
+    let run = two_model_run("gc-scalar-two-models", &protocol, None);
+    let item = run.item(0);
+    assert_eq!(item["record"]["result"], "unsupported", "{item}");
+    assert_eq!(run.exit, 21, "{}", run.document());
+}
+
+fn assert_role_declined(run: &Run, role: &str) {
     let item = run.item(0);
     let diagnostic = &item["record"]["diagnostic"];
     assert_eq!(
@@ -278,11 +364,41 @@ fn a_missing_role_implementation_refuses() {
         run.document()
     );
     assert_eq!(diagnostic["cause"], "missing-name");
-    assert!(diagnostic.to_string().contains("Courier"), "{item}");
+    assert!(diagnostic.to_string().contains(role), "{item}");
     assert_eq!(item["record"]["result"], "declined", "{item}");
     assert!(item["obligations"].is_null(), "{item}");
     assert!(item["closure"].is_null(), "{item}");
     assert!(item["global"].is_null(), "{item}");
+}
+
+/// QSL-2209 AC-4; FR-896-AC-4: a role whose model the package does not
+/// select is refused naming the role, and nothing is settled.
+#[trace("TC-2532", "FR-896-AC-4")]
+#[test]
+fn a_missing_role_implementation_refuses() {
+    assert_role_declined(
+        &missing_role_run("gc-missing", &order_protocol(true), None),
+        "Courier",
+    );
+}
+
+/// FR-896-AC-4: with an explicit empty `universes` list no role has a model
+/// the subject reads, so the first role (`Buyer`) is declined `missing-name`
+/// instead of the run settling a verdict.
+#[trace("TC-2532", "FR-896-AC-4")]
+#[test]
+fn a_missing_role_is_declined_with_empty_universes() {
+    assert_role_declined(
+        &missing_role_run(
+            "gc-missing-empty-universes",
+            &order_protocol(true),
+            Some(json!({
+                "initial_states": [{"authority": "test", "identity": "s0"}],
+                "universes": []
+            })),
+        ),
+        "Buyer",
+    );
 }
 
 /// FR-990-AC-3: over a recording the closure record is the recording's, and
@@ -419,6 +535,234 @@ fn conformance_replay_is_published_with_coded_refusals() {
     }
 }
 
+fn keyed_core_snapshots(q_r1: &str) -> Vec<Vec<u8>> {
+    crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .map(|bytes| {
+            let mut snapshot: Value = serde_json::from_slice(&bytes).expect("snapshot JSON");
+            for population in snapshot["populations"]
+                .as_array_mut()
+                .expect("snapshot populations")
+            {
+                if population["population"].to_string().contains("cores") {
+                    let core = |key: &str, r1: &str| {
+                        json!({"key": key, "type": "ix://test/litmus/Core", "fields": {
+                            "r1": {"integer": r1}, "r2": {"integer": "0"},
+                            "r3": {"integer": "0"}, "r4": {"integer": "0"}}})
+                    };
+                    population["objects"] = json!([core("p", "0"), core("q", q_r1)]);
+                }
+            }
+            serde_json::to_vec(&snapshot).expect("snapshot JSON")
+        })
+        .collect()
+}
+
+fn bound_protocol_subject(key: &str) -> Value {
+    let model = json!({"type": "model-binding", "selection": "test/litmus"});
+    json!({"protocol": {"protocol": "Flow",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": key}},
+        "roles": {"Buyer": model, "Seller": model}}})
+}
+
+/// FR-896-AC-7/8: no binding checks every admitted key; a subject binding
+/// checks exactly its selected object, with the expected result computed
+/// from p.r1 = 0 and q.r1 = 1 in the supplied initial state.
+#[trace("TC-2800", "FR-896-AC-7", "FR-896-AC-8")]
+#[test]
+fn global_conformance_checks_every_key_and_honors_bound_over() {
+    // FR-896-AC-7: the constraint of `send Placed`, the first control of `Main`,
+    // is `{ k.r1 = 0 }`.
+    let protocol = order_protocol(true).replace(
+        "send Placed via Order as (placed: Ack) { true }",
+        "send Placed via Order as (placed: Ack) { k.r1 = 0 }",
+    );
+    let snapshots = keyed_core_snapshots("1");
+    let items = json!([{"claim": "Flow", "kind": "global-conformance"}]);
+    let ws = Workspace::new("gc-every-key-ac8");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&protocol),
+        &crate::litmus::resulting_document(),
+        &snapshots,
+        json!({"items": items.clone()}),
+    );
+    let every_key = analyze(&request).item(0);
+    assert_eq!(
+        label(&every_key),
+        "refuted",
+        "q does not satisfy Ready: {every_key}"
+    );
+    assert_eq!(every_key["counterexample"]["kind"], "deadlock");
+    // FR-896-AC-7: the counterexample's subject names q, it replays, the
+    // closure stays open and the `send Placed` constraint blocks the wait.
+    assert_eq!(
+        every_key["counterexample"]["subject"]["over"]["identity"], "q",
+        "{every_key}"
+    );
+    assert_eq!(every_key["replay"]["reproduced"], true, "{every_key}");
+    assert_eq!(every_key["closure"]["state"], "open", "{every_key}");
+    let blocked = &every_key["counterexample"]["blocked"][0];
+    assert_eq!(blocked["cause"]["type"], "constraint", "{every_key}");
+    assert_eq!(blocked["rest"]["node"], "Main/Placed", "{every_key}");
+
+    // FR-896-AC-7: with q.r1 = 0 every key satisfies the constraint, so the
+    // item settles proved with the closure closed.
+    let ws = Workspace::new("gc-every-key-proved");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&protocol),
+        &crate::litmus::resulting_document(),
+        &keyed_core_snapshots("0"),
+        json!({"items": items.clone()}),
+    );
+    let proved = analyze(&request).item(0);
+    assert_eq!(label(&proved), "proved", "{proved}");
+    assert_eq!(proved["closure"]["state"], "closed", "{proved}");
+
+    for (key, expected) in [("p", "proved"), ("q", "refuted")] {
+        let ws = Workspace::new(&format!("gc-bound-{key}"));
+        let request = request_over(
+            &ws,
+            &crate::litmus::unit_text(&protocol),
+            &crate::litmus::resulting_document(),
+            &snapshots,
+            json!({"subject": bound_protocol_subject(key), "items": items.clone()}),
+        );
+        let item = analyze(&request).item(0);
+        assert_eq!(label(&item), expected, "subject binds {key}: {item}");
+    }
+}
+
+/// FR-896-AC-9: over AC-7's fixture with a second protocol `Other`, a request
+/// whose `subject.protocol` binds `Other` holds two `global-conformance` items
+/// claiming `Flow`: the first inherits that subject and settles declined
+/// `invalid_runtime_input`/`invalid-value` naming `temporal.subject.protocol`
+/// with no analysis members; the second, whose `temporal.subject` binds `Flow`
+/// to `p`, settles proved.
+#[trace("TC-2532", "FR-896-AC-9")]
+#[test]
+fn global_conformance_declines_a_binding_to_another_protocol() {
+    let flow = order_protocol(true).replace(
+        "send Placed via Order as (placed: Ack) { true }",
+        "send Placed via Order as (placed: Ack) { k.r1 = 0 }",
+    );
+    let (_, other) = flow.split_once("protocol Flow").expect("Flow declaration");
+    let unit = format!("{flow}\nprotocol Other{other}");
+    let mut subject = bound_protocol_subject("p");
+    subject["protocol"]["protocol"] = json!("Other");
+    let ws = Workspace::new("gc-other-protocol");
+    let request = request_over(
+        &ws,
+        &crate::litmus::unit_text(&unit),
+        &crate::litmus::resulting_document(),
+        &keyed_core_snapshots("1"),
+        json!({"subject": subject, "items": [
+            {"claim": "Flow", "kind": "global-conformance"},
+            {"claim": "Flow", "kind": "global-conformance",
+                "temporal": {"subject": bound_protocol_subject("p")}}
+        ]}),
+    );
+    let run = analyze(&request);
+    assert_other_protocol_declined(&run.item(0));
+    assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
+}
+
+/// The AC-9 decline: `invalid-value` naming `temporal.subject.protocol`.
+pub(crate) fn assert_other_protocol_declined(item: &Value) {
+    assert_eq!(item["record"]["result"], "declined", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.subject.protocol",
+        "{item}"
+    );
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "counterexample",
+    ] {
+        assert!(
+            item[member].is_null(),
+            "declined item omits {member}: {item}"
+        );
+    }
+}
+
+/// FR-896-AC-10: protocol deadlock analysis requires an explicit protocol
+/// subject, both as the plain deadlock-freedom item and as the
+/// `global-conformance` kind carrying that item kind.
+#[trace("TC-2532", "FR-896-AC-10")]
+#[test]
+fn protocol_deadlock_item_declines_without_subject_protocol() {
+    for (name, item) in deadlock_items() {
+        let ws = Workspace::new(name);
+        let request = request_over(
+            &ws,
+            &crate::litmus::unit_text(&order_protocol(true)),
+            &crate::litmus::resulting_document(),
+            &[],
+            json!({"items": [item]}),
+        );
+        assert_deadlock_declined(name, &analyze(&request).item(0));
+    }
+}
+
+/// The two request forms of FR-896-AC-10's protocol deadlock item.
+pub(crate) fn deadlock_items() -> [(&'static str, Value); 2] {
+    [
+        (
+            "plain",
+            json!({"claim": "Flow", "kind": "temporal-satisfaction",
+                "temporal": {"item_kind": "deadlock-freedom"}}),
+        ),
+        (
+            "global",
+            json!({"claim": "Flow", "kind": "global-conformance",
+                "temporal": {"item_kind": "deadlock-freedom"}}),
+        ),
+    ]
+}
+
+/// FR-896-AC-10: declined `invalid-value` naming `temporal.subject.protocol`.
+pub(crate) fn assert_deadlock_declined(name: &str, item: &Value) {
+    assert_eq!(item["record"]["result"], "declined", "{name}: {item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{name}: {item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{name}: {item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.subject.protocol",
+        "{name}: {item}"
+    );
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "counterexample",
+    ] {
+        assert!(
+            item[member].is_null(),
+            "{name}: declined item omits {member}: {item}"
+        );
+    }
+}
+
 /// FR-992-AC-1 to AC-3: a compiled handoff publishes source bytes by label,
 /// and analyze admits that provision but refuses one without its unit.
 #[trace("TC-2804", "FR-992-AC-1", "FR-992-AC-2", "FR-992-AC-3")]
@@ -495,6 +839,7 @@ fn a_compiled_handoff_publishes_its_source_provision() {
         binding: binding.clone(),
         items: Vec::new(),
         provision: handoff.sources().clone(),
+        certification: Default::default(),
     };
     assert!(
         analyze(handoff.checked(), &complete, &engines, &limits, &cancel).is_ok(),
@@ -512,6 +857,7 @@ fn a_compiled_handoff_publishes_its_source_provision() {
         binding,
         items: Vec::new(),
         provision: without_unit,
+        certification: Default::default(),
     };
     let refusal = analyze(handoff.checked(), &incomplete, &engines, &limits, &cancel)
         .expect_err("analyze refuses a provision without the unit source")
@@ -570,4 +916,38 @@ fn closure_premises_carry_their_componentwise_identity() {
         );
         assert!(item["obligations"].is_null(), "{name}: {item}");
     }
+}
+
+/// FR-896-AC-11: the behaviour route runs the closure check alone, so a
+/// requirement it never evaluates stays `pending`, not `satisfied`. The
+/// order fixture's `Order` channel is `exactly-once-premise`, so under the
+/// default policy the protocol, which closes, settles `proved`,
+/// `uncertified`; the requirement is not a reason to refuse the proof.
+#[trace("TC-2532", "FR-896-AC-11")]
+#[test]
+fn a_requirement_no_check_evaluates_stays_pending_beside_an_uncertified_proof() {
+    let unit = format!(
+        "temporal Never using t0 over (k: M::Core) clock \"model-steps\" on origin \
+         {{ always holds(false) }}\n{}",
+        order_protocol(true).replacen(
+            "run sequence Main {",
+            "requires temporal Never;\nrun sequence Main {",
+            1,
+        )
+    );
+    let ws = Workspace::new("gc-requirement");
+    let item = analyze(&litmus_request(
+        &ws,
+        &unit,
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+    ))
+    .item(0);
+    let requirement = obligations(&item)
+        .into_iter()
+        .find(|entry| entry["obligation"]["kind"] == "requirement")
+        .unwrap_or_else(|| panic!("a requirement obligation: {item}"));
+    assert_eq!(requirement["verdict"], "pending", "{item}");
+    assert_eq!(item["record"]["certification"], "uncertified", "{item}");
+    assert_eq!(item["global"]["label"], "proved", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
 }

@@ -20,17 +20,17 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{
-    BuiltinType, ClauseKind, ExprNode, ExpressionForm, ExtensionClauseForm, ExtensionForm,
-    TypeFormHead, parse_type_text,
+    parse_type_text, BuiltinType, ClauseKind, ExprNode, ExpressionForm, ExtensionClauseForm,
+    ExtensionForm, TypeFormHead,
 };
-use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
+use fsl_foundation::Span;
 use ix_trace_rs::string_edge;
 
 use super::check::{Scope, Signatures, Typer};
 use super::ir::CheckedBody;
-use super::refusal::{CheckCause, CheckRefusal};
+use super::refusal::{CheckCause, SemanticCheckRefusal};
 use super::type_form::resolve_type_form;
 use crate::family::CheckContext;
 use crate::library::extension::{HeldExtensions, Production};
@@ -221,7 +221,7 @@ type Declared = std::collections::BTreeMap<String, (usize, String, Span)>;
 /// (`None` where the form was refused), and the refusals in builder order.
 pub(crate) struct Checked {
     pub(crate) forms: Vec<Option<CheckedExtensionForm>>,
-    pub(crate) refusals: Vec<CheckRefusal>,
+    pub(crate) refusals: Vec<SemanticCheckRefusal>,
 }
 
 /// Check each of `forms`, charging `nodes`. The declared names of every form
@@ -356,8 +356,8 @@ fn production<'h>(
     })
 }
 
-fn refusal(index: usize, cause: ExtensionCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(index: usize, cause: ExtensionCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: extension_location(index),
         cause: Box::new(CheckCause::Extension(Box::new(cause))),
     }
@@ -381,7 +381,7 @@ struct Builder<'a, 'c, 'x> {
     cx: &'c mut CheckContext<'x, Scope>,
     nodes: &'c mut u64,
     checked: Vec<CheckedClause>,
-    refusals: Vec<CheckRefusal>,
+    refusals: Vec<SemanticCheckRefusal>,
 }
 
 impl Builder<'_, '_, '_> {
@@ -466,7 +466,7 @@ impl Builder<'_, '_, '_> {
         at: usize,
         written: usize,
         clause: &ExtensionClauseForm,
-    ) -> Result<CheckedClause, CheckRefusal> {
+    ) -> Result<CheckedClause, SemanticCheckRefusal> {
         let production_clause = self
             .production
             .clauses
@@ -519,7 +519,7 @@ impl Builder<'_, '_, '_> {
         // obligation; a literal's range is known, so a literal outside the
         // declared range is a type mismatch here.
         let checked = checked.and_then(|body| match literal_outside(&body, &expected) {
-            Some(actual) => Err(CheckRefusal::ill_typed(
+            Some(actual) => Err(SemanticCheckRefusal::ill_typed(
                 &location,
                 filament_exact::IllTypedCause::TypeMismatch,
             ))
@@ -539,7 +539,7 @@ impl Builder<'_, '_, '_> {
                     })),
                 })
             }
-            Err(CheckRefusal { cause, .. })
+            Err(SemanticCheckRefusal { cause, .. })
                 if matches!(
                     cause.as_ref(),
                     CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
@@ -681,7 +681,7 @@ impl Builder<'_, '_, '_> {
         node_kind: &str,
         location: &Location,
         span: Span,
-    ) -> Result<CheckedClause, CheckRefusal> {
+    ) -> Result<CheckedClause, SemanticCheckRefusal> {
         let name = match clause.value.expression.root().node() {
             ExprNode::Name(name) if !name.is_qualified() => name,
             _ => {
@@ -698,7 +698,7 @@ impl Builder<'_, '_, '_> {
             }
         };
         match self.declared.get(&name.name) {
-            None => Err(CheckRefusal {
+            None => Err(SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::MissingName(name.name.clone())),
             }),
@@ -720,7 +720,7 @@ impl Builder<'_, '_, '_> {
 
     /// The refusal for a production clause position the schema lacks, which
     /// the held definition's validation rules out.
-    fn order_fault(&self, clause: &ExtensionClauseForm) -> CheckRefusal {
+    fn order_fault(&self, clause: &ExtensionClauseForm) -> SemanticCheckRefusal {
         refusal(
             self.index,
             ExtensionCause::ClauseOrder {
@@ -828,7 +828,7 @@ fn check_form(
     declared: &Declared,
     cx: &mut CheckContext<'_, Scope>,
     nodes: &mut u64,
-) -> Result<CheckedExtensionForm, Vec<CheckRefusal>> {
+) -> Result<CheckedExtensionForm, Vec<SemanticCheckRefusal>> {
     let Some((definition, production)) = production(input.held, &form.keyword.name) else {
         return Err(vec![refusal(
             index,

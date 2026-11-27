@@ -28,11 +28,11 @@ use fsl_forms::{
     BinaryOperator, BinderQuery, ExprId, ExprNode, Expression, ExpressionForm, ExpressionSpans,
     NameForm, TypeFormHead,
 };
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::RawSourceRef;
+use fsl_foundation::Span;
 
 use super::{
-    ClockConstraint, ClockId, ClockOp, Clocks, DataLiteral, Dnf, Located, PartBudget, timed,
+    timed, ClockConstraint, ClockId, ClockOp, Clocks, DataLiteral, Dnf, Located, PartBudget,
 };
 use crate::check::assemble::{ClockReadingDeclaration, ClockSlot};
 use crate::check::lowering::AdmittedModel;

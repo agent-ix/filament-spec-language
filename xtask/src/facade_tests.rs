@@ -74,6 +74,7 @@ fn module_file(module: &ItemMod, source_file: &Path) -> Option<PathBuf> {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn collect_items(
     items: &[Item],
     source_file: &Path,
@@ -143,6 +144,7 @@ fn collect_items(
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 fn fact_id(name: &str) -> Option<String> {
     let parts: Vec<_> = name.split('_').collect();
     if parts.len() < 4

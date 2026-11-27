@@ -33,10 +33,9 @@ use fsl_forms::{
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, Span};
 
-use super::CheckedGraph;
-use super::TemporalClauseNode;
 use super::abstraction::{
-    AbstractionKey, CheckedAbstractionRelation, CheckedBinding, OperationKey, RustPath, name_parts,
+    name_parts, AbstractionKey, AbstractionNodeRefusal, CheckedAbstractionRelation, CheckedBinding,
+    OperationKey, RustPath,
 };
 use super::capability::{Capability, DeclarationFamily};
 use super::lowering::SemanticNode;
@@ -46,6 +45,8 @@ use super::node_key::{
 use super::profile::TemporalProfile;
 use super::rust_syntax::path_defect;
 use super::temporal_clause::{CheckedFormula, FormulaNode};
+use super::CheckedGraph;
+use super::TemporalClauseNode;
 
 /// What a refused name was written for.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -163,7 +164,7 @@ pub enum GuaranteeRefusal {
         /// The span of the name `A`.
         span: Span,
         /// Why.
-        reason: String,
+        reason: Box<AbstractionNodeRefusal>,
     },
     /// A check invariant is broken.
     Internal(InternalFault),
@@ -1221,10 +1222,15 @@ impl CheckedGraph {
             .ok_or_else(|| internal("guarantee-relation-is-checked"))?;
         let relation_node = self
             .abstraction_nodes(relation)
-            .map_err(|reason| GuaranteeRefusal::RelationNode {
-                span: form.relation.span,
-                reason: reason.to_string(),
-            })?
+            .map_err(
+                |reason| match super::abstraction::classify_node_refusal(reason) {
+                    Err(fault) => GuaranteeRefusal::Internal(fault),
+                    Ok(reason) => GuaranteeRefusal::RelationNode {
+                        span: form.relation.span,
+                        reason: Box::new(reason),
+                    },
+                },
+            )?
             .relation()
             .key();
         let key = self

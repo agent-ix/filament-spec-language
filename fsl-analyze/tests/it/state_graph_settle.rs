@@ -194,6 +194,7 @@ fn the_state_graph_pipeline_runs_and_settles_each_instance() {
         max_depth: None,
         limits: no_samples(),
         seed: None,
+        retained: None,
     };
     let settled = check_and_settle_state_graph(request, &Cancel::new(), |_| {
         Ok(GraphReplayResult {
@@ -233,6 +234,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
         max_depth: None,
         limits: no_samples(),
         seed: None,
+        retained: None,
     };
     let baseline = run(request());
     assert_eq!(baseline.items[0].len(), 2, "two actual native instances");
@@ -1389,6 +1391,43 @@ fn a_boundary_open_cause_settles_constraint_reached_after_an_undecided_one() {
     assert_eq!(replays, 0);
 }
 
+/// FR-255-AC-44: a one-byte retention allowance stops a state-graph run
+/// before it stores the first successor its expansion returns.
+#[trace("FR-255-AC-44")]
+#[test]
+fn a_one_byte_retention_allowance_stops_a_state_graph_before_its_first_successor() {
+    use fsl_foundation::Setting;
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let run_with = |bound: Option<u64>| {
+        let mut engines = fsl_analyze::analyze::EngineBounds::default();
+        if let Some(bound) = bound {
+            assert!(engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let retained = engines.item_budget(UNLIMITED, &Cancel::new());
+        let mut request = world.request(AB, vec![world.item("ReachesTwo")], no_samples());
+        request.retained = Some(&retained);
+        (run(request), retained)
+    };
+    let (stopped, retained) = run_with(Some(1));
+    assert_eq!(retained.consumed(Setting::AnalysisRetainedBytes), 0);
+    assert_eq!(
+        stopped.graph.end,
+        RunEnd::Stopped {
+            cause: IncompleteCause::ResourceExhausted,
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::AnalysisRetainedBytes,
+                value: 1,
+            }),
+        }
+    );
+    assert_eq!(stopped.graph.nodes.len(), 1, "only the one initial state");
+    assert!(stopped.graph.edges.is_empty());
+    let (again, _) = run_with(Some(1));
+    assert_eq!(stopped.graph.end, again.graph.end);
+    let (published, _) = run_with(None);
+    assert_eq!(published.graph.end, RunEnd::Completed);
+}
+
 /// FR-169-AC-1, AC-5: a `Witnessed` outcome whose replay settles
 /// `inconclusive` settles `inconclusive`, `ReplayParity`, never `proved`; a
 /// `Trapped` outcome whose replay a limit stops settles `incomplete`,
@@ -2028,6 +2067,7 @@ fn a_confirmed_refutation_decides_over_a_disagreeing_replay_in_either_order() {
             &Engines::fsl().expect("the linked engines admit"),
             vec![item],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .into_iter()
         .next()

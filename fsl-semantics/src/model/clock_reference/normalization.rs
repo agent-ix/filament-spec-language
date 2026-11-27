@@ -484,6 +484,7 @@ impl SourceDeclarations {
 
     /// Recover the same original inline member chain from either route's
     /// checked steps and resolution rows, without a second provenance join.
+    #[ix_trace_rs::string_edge]
     pub fn clock_origin_rows(
         &self,
         steps: &[crate::check::PlaceStep],
@@ -664,6 +665,7 @@ impl SourceDeclarations {
 
     /// Resolve a retained member spelling through its authenticated declaring
     /// type. In particular, W/c is never matched against an unrelated W.
+    #[ix_trace_rs::string_edge]
     pub fn member(&self, declaring: &str, member: &str) -> Result<String, InternalFault> {
         let normalized = self.text(member);
         if normalized.starts_with("ix://") || normalized.contains("[slot]") {
@@ -732,7 +734,7 @@ fn fault(invariant: &'static str) -> InternalFault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check::{PackageDeclarations, test_support::ZeroRewardEvaluator};
+    use crate::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
     use crate::model::intake::SelectedModels;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use ix_trace_rs::trace;
@@ -786,7 +788,7 @@ mod tests {
             .expect("nested record clock retains two original fields");
         let names: Vec<_> = nested
             .1
-            .0
+             .0
             .iter()
             .map(|member| match member {
                 OriginalClockMemberOrigin::Source { qualified_name, .. } => qualified_name
