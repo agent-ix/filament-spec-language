@@ -89,6 +89,16 @@ pub enum RefinementFailure {
         /// The row.
         row: MappingRowRef,
     },
+    /// A contract conjunction of the concrete or the abstract model has no
+    /// value at a reachable state (ADR-018 UE-6, ADR-020 RE-5): the
+    /// refinement is refuted, not undecided.
+    UndefinedContract {
+        /// The position of the state whose conjunction has no value, or of
+        /// the step's post-state when the abstract guard is the one.
+        position: u64,
+        /// The `pre` or `post` clause's name.
+        clause: String,
+    },
     /// RS-7: an `F_A` constraint is enabled at every mapped state of a lasso
     /// whose loop has only `stutter` steps, the concrete terminal stutter
     /// included, and no step of it takes the constraint.
@@ -169,6 +179,7 @@ impl RefinementFailure {
             | Self::AbstractClockGuard { position, .. }
             | Self::AbstractTimeInvariant { position, .. }
             | Self::Undefined { position, .. }
+            | Self::UndefinedContract { position, .. }
             | Self::RefusalNotPermitted { position, .. }
             | Self::TerminalSuccessMismatch { position, .. } => Some(*position),
             Self::Divergence { .. } | Self::AbstractUnfair { .. } | Self::HiddenUnfair { .. } => {

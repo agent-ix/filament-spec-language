@@ -1822,6 +1822,30 @@ fn decide_step(
                         Err(_) => return fault("successor-encodes"),
                     }
                 }
+                // A contract conjunction with no value refutes (ADR-018 UE-6,
+                // ADR-020 RE-5): a precondition for every candidate, a
+                // postcondition for one whose visible part is the mapped one.
+                let relevant_undefined = expansion.findings.iter().find_map(|finding| {
+                    let contract = finding.undefined_contract()?;
+                    match finding {
+                        ModelFinding::ContractUndetermined { candidate, .. }
+                            if candidate.as_ref().is_none_or(|key| mapped_keys.contains(key)) =>
+                        {
+                            Some(contract)
+                        }
+                        _ => None,
+                    }
+                });
+                if let Some(contract) = relevant_undefined {
+                    let Ok((pre_key, _)) = abstract_system.state_key_of(candidate) else {
+                        return fault("candidate-state-encodes");
+                    };
+                    return StepVerdict::Undefined(Box::new(UndefinedEvaluation::of_contract(
+                        step.position,
+                        fsl_eval::simulation::StateKey::from_canonical_bytes(pre_key),
+                        contract,
+                    )));
+                }
                 // An undecided precondition enables its successors in doubt;
                 // an undecided postcondition matters only for a candidate
                 // whose visible part is the mapped one.
@@ -2682,7 +2706,31 @@ fn judge_operation(
                         }
                         accepted.push(found.transition);
                     }
-                    Judgement::Undecided(_) => undecided = true,
+                    Judgement::Undecided(conjuncts) => {
+                        // A conjunct with no value refutes (ADR-018 UE-6,
+                        // ADR-020 RE-5); a refused one stays undecided.
+                        if let Some((clause, cause)) =
+                            conjuncts.iter().find_map(|(clause, outcome)| {
+                                Some((clause.clone(), outcome.undefined_cause()?))
+                            })
+                        {
+                            let Ok((pre_key, _)) = abstract_system.state_key_of(before) else {
+                                return fault("candidate-state-encodes");
+                            };
+                            return StepVerdict::Undefined(Box::new(
+                                UndefinedEvaluation::of_contract(
+                                    step.position,
+                                    fsl_eval::simulation::StateKey::from_canonical_bytes(pre_key),
+                                    fsl_eval::simulation::model::UndefinedContract {
+                                        clause,
+                                        guard_of: None,
+                                        cause,
+                                    },
+                                ),
+                            ));
+                        }
+                        undecided = true;
+                    }
                     Judgement::Rejected(rejection) => {
                         rejected.push((key, order, found.transition, rejection));
                     }

@@ -1265,6 +1265,11 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
             "position": position.to_string(),
             "row": mapping_row(row)?,
         }),
+        RefinementFailure::UndefinedContract { position, clause } => json!({
+            "kind": "UndefinedContract",
+            "position": position.to_string(),
+            "clause": clause,
+        }),
     })
 }
 
