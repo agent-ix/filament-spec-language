@@ -54,6 +54,8 @@ use fsl_semantics::model::observation::AdmissionFailure;
 
 use super::check::{fault, BOUND_POSITIONS};
 use super::ModelCheckRefusal;
+use crate::analyze::EngineBounds;
+use fsl_foundation::budget::Budget;
 
 /// One state-graph item of a request: a checked claim. Its instances are
 /// derived from the subject's universes (FR-125 Instancing): one per key of
@@ -109,6 +111,9 @@ pub struct StateGraphRequest<'a> {
     pub limits: ModelCheckLimits,
     /// Phase 0's seed; `None` runs under [`DEFAULT_WITNESS_SEED`].
     pub seed: Option<u64>,
+    /// The item's `analysis.retained_bytes` allowance (FR-255 "Retained
+    /// bytes"); `None` runs on the published default.
+    pub retained: Option<&'a Budget>,
 }
 
 /// A node handle of an [`ExploredStateGraph`], in discovery order.
@@ -701,6 +706,9 @@ pub fn check_state_graph(
     } else {
         None
     };
+    let retained = request.retained.cloned().unwrap_or_else(|| {
+        EngineBounds::default().item_budget(budgets.meter, cancel)
+    });
     let explored = explore::Exploration {
         system: &system,
         limits: &request.limits,
@@ -713,6 +721,7 @@ pub fn check_state_graph(
         por: por.as_ref(),
         declared_symmetry: &declared_symmetry,
         symmetry: &symmetry_group,
+        retained: &retained,
     }
     .run(initial)?;
     let items = views

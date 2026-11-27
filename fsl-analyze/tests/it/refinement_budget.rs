@@ -43,6 +43,7 @@ fn run(world: &RingWorld, work: u64) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -354,8 +355,13 @@ fn a_replay_over_the_budget_settles_incomplete_not_parity() {
         final_delay: None,
         closure_stutters: Vec::new(),
     };
-    let settlement =
-        replay_refinement_trace(world.refinement(), &systems, &payload).expect("the trace replays");
+    let settlement = replay_refinement_trace(
+        world.refinement(),
+        &systems,
+        &payload,
+        &fsl_replay::ModelCheckLimits::default(),
+    )
+    .expect("the trace replays");
     let RefinementTraceSettlement::Stopped(limit) = settlement else {
         panic!("the replay stops: {settlement:?}");
     };
@@ -374,7 +380,14 @@ fn a_replay_over_the_budget_settles_incomplete_not_parity() {
         &ModelCheckLimits::default(),
         &certified(&world, b),
         &Cancel::new(),
-        |payload| replay_refinement_trace(world.refinement(), &systems, payload),
+        |payload| {
+            replay_refinement_trace(
+                world.refinement(),
+                &systems,
+                payload,
+                &fsl_replay::ModelCheckLimits::default(),
+            )
+        },
     );
     assert_eq!(
         record.value,
@@ -419,6 +432,7 @@ fn refinement_refuses_at_max_states_before_keying_the_later_initial_states() {
                 abstract_protocol_binding: None,
                 max_depth: Some(0),
                 limits,
+                retained: None,
             },
             &Cancel::new(),
         )
