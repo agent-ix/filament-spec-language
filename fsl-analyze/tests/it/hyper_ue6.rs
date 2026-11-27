@@ -564,3 +564,115 @@ fn a_closed_body_atom_is_read_before_the_contract() {
     );
     assert_eq!(undefined.position, 0);
 }
+
+/// `V` is the secure vault, defined everywhere; `N` is the leaky vault whose
+/// guard `NGuard` has no value at `(h, l) = (0, 1)`, which `step(1)` reaches
+/// from `(0, 0)`: two different subject models, only `N` undefined.
+const N_GUARDED: Vault = Vault::Custom(
+    "post Step using v on V::Vault::step { self.l = i }\n\
+     pre NGuard using v on N::Vault::step { quotient(1 - self.l + self.h) >= 0 }\n\
+     post NStep using v on N::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
+);
+
+fn two_subjects(quantifiers: &str) -> World {
+    let declaration = format!(
+        "hyper Saves using ep over behaviours (v: V::Vault, w: N::Vault) \
+         {quantifiers} {{ eventually [0, 3] holds(v.h @ a = w.h @ b) }}"
+    );
+    World::with_second_model_kernel_function(N_GUARDED, &[(0, 0)], &declaration, QUOTIENT)
+}
+
+/// FR-173-AC-7 over two different subjects, `forall` `forall`: the guard of
+/// `N` has no value at the state `b` reaches after one step, `a` over `V` is
+/// at its initial state, so the tuple holds a trace of no step for `a` and a
+/// trace of one step for `b`; the clause refutes at position 1 with `NGuard`
+/// as the locus, naming `b` alone, and the refutation replays.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn a_closed_two_subject_tuple_holds_unequal_traces_and_refutes() {
+    let world = two_subjects("forall trace a of V forall trace b of N");
+    let (outcome, label) = settled_two(&world);
+    let HyperOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected a counterexample, got {outcome:?}");
+    };
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!("expected undefined, got {:?}", counterexample.kind);
+    };
+    assert_eq!(undefined.locus, HyperLocus::Contract("NGuard".to_owned()));
+    assert_eq!(undefined.position, 1);
+    let variables: Vec<&str> = undefined
+        .variables
+        .iter()
+        .map(|(variable, _)| variable.as_str())
+        .collect();
+    assert_eq!(variables, ["b"]);
+    let lengths: Vec<usize> = counterexample
+        .traces
+        .iter()
+        .map(|trace| trace.steps.len())
+        .collect();
+    assert_eq!(lengths, [0, 1], "a is at its initial state, b took step(1)");
+    assert_eq!(label, "Refuted");
+}
+
+/// FR-183 "Undefined evaluation": an existential member's undefined contract
+/// conjunction is no undefined evaluation, FR-177 settles it
+/// `Undecided(UndecidedSuccessor)`. Only `N`, the existential component's
+/// subject, has the guard with no value, so `forall` `exists` is not refuted.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn an_existential_members_undefined_guard_stays_undecided() {
+    let world = two_subjects("forall trace a of V exists trace b of N");
+    let outcome = world
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("not refused");
+    assert!(
+        matches!(
+            outcome,
+            HyperOutcome::Undecided {
+                cause: fsl_replay::UndecidedCause::UndecidedSuccessor,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+}
+
+/// FR-183 reads, at one joint position, the body's atoms before the contract
+/// conjunctions (ADR-018 UE-4): `always` reads position 1, where the atom
+/// `quotient(1 - v.l @ a)` has no value at `l = 1`, the state whose guard has
+/// no value too; the atom is the locus, at position 1.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn a_closed_atom_at_a_position_is_read_before_that_positions_contract() {
+    let undefined = refuted_undefined(
+        GUARDED,
+        &[(0, 0)],
+        &universal("ep", "", "always [0, 3] holds(quotient(1 - v.l @ a) >= 0)"),
+    );
+    assert!(
+        matches!(undefined.locus, HyperLocus::Atom(_)),
+        "{:?}",
+        undefined.locus
+    );
+    assert_eq!(undefined.position, 1);
+}
+
+/// [`settled`] without a product-closure certificate, for a world of two
+/// subject models.
+fn settled_two(world: &World) -> (HyperOutcome, String) {
+    let outcome = world
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("not refused");
+    let record = fsl_replay::settle_hyper_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &[],
+        None,
+        &Cancel::new(),
+        |counterexample| world.replay(counterexample),
+    )
+    .expect("settled");
+    let label = format!("{:?}", record.label);
+    (outcome, label)
+}

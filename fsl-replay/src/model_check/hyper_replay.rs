@@ -334,7 +334,9 @@ pub fn replay_model_relation_input(
 /// is not a step (`HyperShape`); an `initial` outside its subject, a step
 /// that is not enabled, a post-state key no successor has, a loop that does
 /// not close and a stutter step at a state that is not terminal, as FR-128
-/// does; an `Undefined` counterexample of an `align skip` clause,
+/// does; an `Undefined` counterexample of an `align skip` clause under the
+/// infinite-trace profile (an event-position one is read over its projection,
+/// of any step counts, by `closed_undefined`),
 /// `HyperProjected`; a `Projected` counterexample with a mark that does not
 /// agree with the `align skip` list, unequal visible counts or a step that is a
 /// stutter (`HyperShape`); a joint step at which `μ_U` is false

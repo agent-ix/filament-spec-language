@@ -701,19 +701,29 @@ pub enum ClosedRead {
 
 /// Read `executions`, one per trace variable in quantifier order, for the
 /// first expression with no value (ADR-018 UE-4, UE-6; ADR-023 HV-8), in the
-/// one order the producer and the replay share: a `match` conjunct or an atom
-/// of the body at the joint positions the evaluator reads, then the contract
-/// conjunctions of the states the closed form expands, by joint position and
-/// then component. `systems` holds each component's subject. The executions
-/// may differ in length: a component that has ended reads false (FR-043) and
-/// is expanded no further.
+/// one order the producer and the replay share and FR-183 states: at each
+/// joint position in increasing order, the `match` over the step entering it,
+/// then the atoms of the body at it, then the contract conjunctions of the
+/// states it holds, by component. Only a universal component's contract
+/// conjunction is read: an existential member's undefined contract
+/// conjunction is no undefined evaluation, FR-177 settles it
+/// `Undecided(UndecidedSuccessor)`. `systems` holds each component's subject.
+/// The executions may differ in length: a component that has ended reads
+/// false (FR-043) and is expanded no further.
 pub fn read_closed_undefined(
     inputs: &ClosedInputs<'_>,
     systems: &[&ModelSystem<'_>],
     executions: &[&ClosedExecution],
 ) -> ClosedRead {
     match judge_closed_tuple(inputs, executions) {
-        ClosedVerdict::Undefined(found) => return ClosedRead::Undefined(found),
+        // A contract at a position before the `match` or atom with no value
+        // is read first (UE-4).
+        ClosedVerdict::Undefined(found) => {
+            return match read_contracts(inputs, systems, executions, Some(found.position)) {
+                ClosedRead::Clear | ClosedRead::Unread => ClosedRead::Undefined(found),
+                earlier => earlier,
+            };
+        }
         ClosedVerdict::UniversalUnmatched | ClosedVerdict::ExistentialUnmatched => {
             return ClosedRead::Unmatched;
         }
@@ -722,6 +732,18 @@ pub fn read_closed_undefined(
         | ClosedVerdict::Fault(_)) => return ClosedRead::Stopped(stopped),
         ClosedVerdict::Holds | ClosedVerdict::Violated { .. } => {}
     }
+    read_contracts(inputs, systems, executions, None)
+}
+
+/// The first universal component's contract conjunction with no value, by
+/// joint position and then component, at the positions before `before` when
+/// given; [`ClosedRead::Clear`] when there is none.
+fn read_contracts(
+    inputs: &ClosedInputs<'_>,
+    systems: &[&ModelSystem<'_>],
+    executions: &[&ClosedExecution],
+    before: Option<u64>,
+) -> ClosedRead {
     let clause = inputs.clause;
     // FR-183 states no replay of a contract conjunction read on a projected
     // tuple, so an `align skip` clause leaves its contracts unread here, for
@@ -734,16 +756,18 @@ pub fn read_closed_undefined(
     let Some(depth) = horizon(clause.body()) else {
         return ClosedRead::Stopped(closed_fault("a-body-has-a-horizon"));
     };
+    let limit = before.map_or(depth, |before| before.min(depth));
     let longest = executions
         .iter()
+        .take(clause.universals())
         .map(|execution| execution.states.len())
         .max()
         .unwrap_or(0);
     for joint in 0..longest {
-        if u64::try_from(joint).map_or(true, |joint| joint >= depth) {
+        if u64::try_from(joint).map_or(true, |joint| joint >= limit) {
             break;
         }
-        for (component, execution) in executions.iter().enumerate() {
+        for (component, execution) in executions.iter().enumerate().take(clause.universals()) {
             let Some(state) = execution.states.get(joint) else {
                 continue;
             };

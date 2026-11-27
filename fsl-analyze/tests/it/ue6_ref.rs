@@ -7,12 +7,14 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_replay::{CounterexampleKind, ModelCheckLimits, RefinementFailure, SafetyOutcome};
-
-const POSITION_PEEK: u64 = 4;
-const POSITION_ABSTRACT: u64 = 4;
 use ix_trace_rs::trace;
 
 use crate::refinement_fixture::{cas_refines_counter, Variant, World, UNLIMITED};
+
+/// The position both refuted fixtures report: position 4 of the counter pair's
+/// refinement run, where each guard first has no value.
+const POSITION_PEEK: u64 = 4;
+const POSITION_ABSTRACT: u64 = 4;
 
 const Q: &str = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
 

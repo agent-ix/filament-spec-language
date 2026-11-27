@@ -601,6 +601,28 @@ impl World {
         )
     }
 
+    /// [`Self::with_second_model`] with an additional function declaration
+    /// checked under `CheckMode::Kernel`; clauses and contracts remain Linked.
+    pub(crate) fn with_second_model_kernel_function(
+        vault: Vault,
+        starts: &[(i64, i64)],
+        declaration: &str,
+        function: &str,
+    ) -> Self {
+        let snapshots: Vec<_> = starts.iter().map(|start| vec![(KEY, *start)]).collect();
+        Self::assemble_with_mode(
+            vault,
+            false,
+            snapshots.clone(),
+            Some(snapshots),
+            Vec::new(),
+            vec![KEY.to_owned()],
+            declaration,
+            function,
+            CheckMode::Kernel,
+        )
+    }
+
     /// [`Self::with_second_model`] from one initial state that holds the
     /// vaults `first` in the first model and `second` in the second model,
     /// `(key, (h, l))`, each of which is also its model's universe.

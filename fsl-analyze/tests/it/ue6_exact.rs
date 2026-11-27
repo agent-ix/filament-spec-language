@@ -193,10 +193,10 @@ fn settles_undecided_successor(claim: &str) {
     );
 }
 
-/// FR-196-AC-20, refused clause, under a workload: the claim is decided at
+/// FR-196-AC-21, refused clause, under a workload: the claim is decided at
 /// the start, the refused guard at `v = 1` is read, and the item settles
 /// `UndecidedSuccessor`, not refuted.
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_refused_guard_workload_reach_at_start() {
     settles_undecided_successor(
@@ -205,9 +205,9 @@ fn ue6_exact_refused_guard_workload_reach_at_start() {
     );
 }
 
-/// FR-196-AC-20, refused clause, under a workload, claim decided at the
+/// FR-196-AC-21, refused clause, under a workload, claim decided at the
 /// refused state itself.
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_refused_guard_workload_reach_at_the_state() {
     settles_undecided_successor(
@@ -216,10 +216,10 @@ fn ue6_exact_refused_guard_workload_reach_at_the_state() {
     );
 }
 
-/// FR-196-AC-20, refused clause, under every scheduler: the claim is decided
+/// FR-196-AC-21, refused clause, under every scheduler: the claim is decided
 /// at the start, the sweep reads only undefined conjunctions, so the refused
 /// guard leaves the item Proved.
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_refused_guard_every_scheduler_stays_proved() {
     let record = record(

@@ -212,7 +212,15 @@ pub fn check_match_witness(
   (FR-178). `false` SHALL settle `reproduced-with-evaluated-witness`; any
   other value SHALL settle `inconclusive`, `Verdicts`.
 
-- An `Undefined` counterexample of an `align skip` clause holds its skipped
+- An `Undefined` counterexample of an `align skip` clause under the
+  event-position profile (FR-173 "Event-position form") holds one closed
+  finite execution per variable with every step marked, and its position
+  counts visible steps. The executor SHALL read each execution over its
+  projection, by the producer's own reading, for its `match` conjuncts and
+  body atoms, and SHALL NOT read a contract conjunction of it: the producer
+  settles such a clause `Undecided(UndecidedSuccessor)` (FR-173).
+- An `Undefined` counterexample of an `align skip` clause under the
+  infinite-trace profile holds its skipped
   steps, unmarked, so its paths differ in total length, and its position
   counts visible steps. The executor SHALL refuse it with
   `unsupported_construct`/`not-yet-implemented` and SHALL NOT read it in
@@ -283,7 +291,7 @@ pub fn check_match_witness(
 | FR-183-AC-4 | A hand-built `Lockstep` envelope over the leaky vault with `a` and `b` both from `(0, 0)` taking `step(0)`, loop entry 1, on which `l` stays equal, settles `inconclusive`, `Verdicts`; a hand-built `WitnessExhausted{position: 1}` envelope for `Opaque` over the secure vault, with `a`'s lasso `(0, 0) -step(0)-> (0, 0)`, recomputes a non-empty `X_1` and settles `inconclusive`, `Verdicts`; §8.2's leaky counterexample replayed with `max_witness_set` 0 returns the replay result stopped with `max_witness_set` and value 0. Replaying one envelope twice gives equal results. | Test (TC-608) |
 | FR-183-AC-5 | FR-179-AC-4's `Undefined` counterexample, with one path per execution variable, replays to `reproduced-with-evaluated-witness` with its `UndefinedEvaluation` as the value; the same payload with its cause changed to `precondition-false` settles `inconclusive`, `Verdicts`. | Test (TC-610) |
 | FR-183-AC-6 | FR-177-AC-5's `Undefined` counterexample, whose `match` body calls the Kernel-checked function `q` and whose traces include the existential variable's path to the state where `μ_E` has no value, replays to `reproduced-with-evaluated-witness`, the replay recording `check_mode: kernel` on `q`'s function node (FR-098-AC-34); with the existential trace removed the reader refuses it as `invalid_runtime_input`/`invalid-value` before replay. | Test (TC-602) |
-| FR-183-AC-7 | FR-178-AC-9's `Undefined` counterexample, whose paths each hold a skipped `mix` and a visible `step(0)`, is refused with `unsupported_construct`/`not-yet-implemented` and settles no result; it is not replayed as a lockstep counterexample. | Test (TC-608) |
+| FR-183-AC-7 | Under the infinite-trace profile, FR-178-AC-9's `Undefined` counterexample, whose paths each hold a skipped `mix` and a visible `step(0)`, is refused with `unsupported_construct`/`not-yet-implemented` and settles no result; it is not replayed as a lockstep counterexample. | Test (TC-608) |
 | FR-183-AC-8 | Over ADR-023 §8's secure vault and `NonInterference` at instance `v`, the matched witness, with `a` and `b` each from initial `(0, 0)` taking `step(0)` twice and `loop_entry` 0, is `Accepted` without evaluating the body. The unmatched witness, with `a` the same and `b` from `(0, 0)` taking `step(1)` then `step(0)` and `loop_entry` 0, re-executes, since each loop closes, and is `Refused` with `invalid_runtime_input`/`invalid-value` at joint step 1, where `μ_U` is false. A witness whose `instance` binds `v` to a key outside the `vaults` universe is `Refused` with `invalid_runtime_input`/`invalid-value` before any trace is re-executed. Checking either witness twice gives equal results. | Test (TC-608) |
 | FR-183-AC-9 | `μ_U` before the letter. Over ADR-023 §8's leaky vault, `NonInterference` with FR-176-AC-4's added `match` conjunct and the body `always holds(q(1 + v.l @ a - v.l @ b) = 0)`, where `q` is the Kernel-checked function `function q using v(x: Integer): Integer pure { 1 mod x }` (FR-495-AC-3, FR-952), a hand-built `Undefined` envelope with `a` from `(0, 0)` and `b` from `(1, 0)`, one joint step `(step(0), step(0))` and `trace_position` 1, at which the conjunct and the letter both have no value, replays to `reproduced-with-evaluated-witness` when its locus is the `match` conjunct with cause `division-by-zero`; the same envelope with its locus changed to the body atom settles `inconclusive`, `Verdicts`. | Test (TC-608) |
 | FR-183-AC-10 | The letter before a contract conjunction. Over the leaky vault with the added `pre G using v on V::Vault::step { q(1 - self.l) = 0 }` and the AC-9 body, under the §8.1 `match`, the hand-built `Undefined` envelope of AC-9's paths, at whose position 1 the letter and `b`'s `G` both have no value, replays to `reproduced-with-evaluated-witness` when its locus is the body atom; with its locus changed to `G` with `b`'s `step` transition it settles `inconclusive`, `Verdicts`. | Test (TC-608) |
