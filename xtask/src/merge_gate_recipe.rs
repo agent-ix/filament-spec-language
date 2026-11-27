@@ -46,6 +46,11 @@ const BUILD_INPUT_PATHS: &[&str] = &[
     ".cargo",
     "rust-toolchain.toml",
 ];
+const REPOSITORY_STATIC_CHECKS: &[&str] = &[
+    "cargo fmt --all -- --check",
+    "cargo run --locked -p xtask -- string-edge",
+    "cargo run --locked -p xtask -- canonical-types",
+];
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TestTarget {
@@ -1557,7 +1562,7 @@ fn run_with_runner(
     run_with_verified_main(workspace_root, operands, runner, recipe, verification)
 }
 
-#[implements("NFR-142-AC-6")]
+#[implements("NFR-142-AC-6", "NFR-142-AC-8")]
 fn run_with_verified_main(
     workspace_root: &Path,
     operands: &[OsString],
@@ -1621,6 +1626,10 @@ fn run_with_verified_main(
     }
     for selector in &recipe.selectors {
         output.push_str(&format!("{}\n", selector.display()));
+    }
+    for check in REPOSITORY_STATIC_CHECKS {
+        output.push_str(check);
+        output.push('\n');
     }
     for note in &recipe.notes {
         output.push_str(&format!("NOTE: {note}\n"));
@@ -4475,7 +4484,7 @@ mod tests {
     }
 
     #[test]
-    fn non_crate_changes_emit_only_final_workspace_check() {
+    fn non_crate_changes_emit_static_checks_and_final_workspace_check() {
         let runner = FakeRunner::new();
         let output = run_with_runner(workspace_root(), &[OsString::from("README.md")], &runner)
             .expect("recipe");
@@ -4484,8 +4493,33 @@ mod tests {
                 .lines()
                 .filter(|line| line.starts_with("cargo "))
                 .collect::<Vec<_>>(),
-            ["cargo check --locked --workspace --all-targets"]
+            [
+                "cargo fmt --all -- --check",
+                "cargo run --locked -p xtask -- string-edge",
+                "cargo run --locked -p xtask -- canonical-types",
+                "cargo check --locked --workspace --all-targets"
+            ]
         );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-8")]
+    fn recipe_includes_repository_static_gate_commands() {
+        let runner = FakeRunner::new();
+        let output = run_with_runner(workspace_root(), &[OsString::from("README.md")], &runner)
+            .expect("ordinary PR recipe");
+        for check in REPOSITORY_STATIC_CHECKS {
+            assert!(output.lines().any(|line| line == *check), "{check}");
+        }
+
+        let spec_only = run_with_runner(
+            workspace_root(),
+            &[OsString::from("spec/new-requirement.md")],
+            &FakeRunner::new(),
+        )
+        .expect("spec-only recipe");
+        assert!(spec_only.contains("NO CARGO: spec-only change."));
+        assert!(!spec_only.lines().any(|line| line.starts_with("cargo ")));
     }
 
     #[test]
