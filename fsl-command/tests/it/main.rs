@@ -40,5 +40,6 @@ mod run_requirement_items;
 mod run_text_witness;
 mod selection_text;
 mod short_circuit_integer_division;
+mod size_route_matrix;
 mod temporal_owner_cohort;
 mod wire_schema;
