@@ -345,7 +345,7 @@ impl Shared<'_, '_, '_> {
     #[implements("FR-254-AC-5")]
     #[implements("FR-254-AC-7")]
     #[implements("FR-254-AC-8")]
-    #[implements("FR-420-AC-19")]
+    #[implements("FSpec-FR-420-AC-19")]
     pub(super) fn timed_fraction(
         &self,
         test: &TestSubject,

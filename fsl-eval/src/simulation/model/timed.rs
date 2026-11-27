@@ -60,7 +60,8 @@ mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
-    advance_timed, sample_timed, sample_timed_from, sample_timed_race, TimedAdvance, TimedRace,
+    advance_timed, sample_timed, sample_timed_from, sample_timed_race, step_rewards, TimedAdvance,
+    TimedRace,
     TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
     TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice,
 };

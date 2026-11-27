@@ -496,7 +496,7 @@ impl TimedSample {
 /// Every reward of the model for the step `transition` takes from `state`
 /// (FR-187): empty for a model that declares none.
 #[implements("FR-254-AC-5")]
-fn step_rewards(
+pub fn step_rewards(
     system: &TimedSystem<'_, '_>,
     state: &TimedState,
     transition: &ModelTransition,
