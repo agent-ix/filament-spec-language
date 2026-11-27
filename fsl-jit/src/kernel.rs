@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-561, FR-562: the kernel operation behind each shim.
 
+use filament_checked::node::Visit;
 use filament_exact::{
     evaluate_boolean, evaluate_decimal, evaluate_integer_arithmetic, evaluate_rational_arithmetic,
     form, order_numbers, retain_boolean, retain_composite, ArithmeticOperator, BooleanConnective,
     Charge, ChargePoint, Decimal, DecimalOperation, FieldValue, Integer, IntegerArithmetic, Meter,
     OrderedOperands, Rational, RationalArithmetic, Refusal, Undefined, Value, ValueType,
 };
-use filament_checked::node::Visit;
 use filament_semantic_value::declaration::{operand_value, TypeEnvironment};
-use filament_semantic_value::quantity::UnitScope;
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
+use filament_semantic_value::quantity::UnitScope;
 use filament_semantic_value::stop::{outcome_into_stop, Stop};
 
 use crate::translate::{divide, Op, OpKind};
 use filament_checked::node::{Arithmetic, OrderedKind};
-use fsl_eval::value::composite::{construct_record, construct_tuple};
 use fsl_eval::value::collections::{Absorbed, Flow, Iteration, Shape as IterationShape, Spec};
+use fsl_eval::value::composite::{construct_record, construct_tuple};
 use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
@@ -75,8 +75,7 @@ fn decimal(values: &[Value], handle: i64) -> Result<Decimal, Halt> {
 
 fn store_integer(values: &mut Vec<Value>, value: Integer) -> Result<i64, Halt> {
     let _ = values;
-    crate::translate::integer_to_i64(&value)
-        .ok_or(Halt::Fault("jit-integer-result-fits-register"))
+    crate::translate::integer_to_i64(&value).ok_or(Halt::Fault("jit-integer-result-fits-register"))
 }
 
 fn store_value(values: &mut Vec<Value>, value: Value) -> Result<i64, Halt> {
@@ -202,7 +201,10 @@ pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Resul
             call_arguments.push(Vec::new());
             Ok(i64::try_from(index).unwrap_or(i64::MAX))
         }
-        OpKind::FrameArgument { boolean, integer: is_integer } => {
+        OpKind::FrameArgument {
+            boolean,
+            integer: is_integer,
+        } => {
             let index = usize::try_from(a).map_err(|_| Halt::Fault("jit-call-frame-index"))?;
             let argument = if *boolean {
                 Value::Boolean(b != 0)
@@ -254,7 +256,10 @@ pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Resul
             call_arguments[index].clear();
             Ok(0)
         }
-        OpKind::PopulationObjects { population, value_type } => {
+        OpKind::PopulationObjects {
+            population,
+            value_type,
+        } => {
             let environment =
                 environment.ok_or(Halt::Fault("jit-population-environment-is-present"))?;
             let members = environment
@@ -264,7 +269,10 @@ pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Resul
             let ValueType::Collection(result_type) = value_type else {
                 return Err(Halt::Fault("jit-population-objects-result-is-collection"));
             };
-            store_value(values, outcome_into_stop(form(result_type, elements, meter))?)
+            store_value(
+                values,
+                outcome_into_stop(form(result_type, elements, meter))?,
+            )
         }
         OpKind::NamedAllInstances {
             population,
@@ -286,7 +294,9 @@ pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Resul
                 .iter()
                 .any(|member| types.conforms(target.clone(), member.clone()))
             {
-                return Err(Halt::Fault("jit-all-instances-target-has-declared-coverage"));
+                return Err(Halt::Fault(
+                    "jit-all-instances-target-has-declared-coverage",
+                ));
             }
             let listed = environment
                 .population_members(&population.node)
@@ -307,7 +317,10 @@ pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Resul
                         .size(filament_exact::LimitKind::ValueOccurrences, count),
                 )
                 .map_err(Stop::Incomplete)?;
-            store_value(values, outcome_into_stop(form(result_type, selected, meter))?)
+            store_value(
+                values,
+                outcome_into_stop(form(result_type, selected, meter))?,
+            )
         }
         OpKind::BuildStart => {
             let index = i64::try_from(builders.len())
@@ -567,7 +580,10 @@ pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Resul
                 }
             }
         }
-        OpKind::IterationAccumulator { boolean, integer: is_integer } => {
+        OpKind::IterationAccumulator {
+            boolean,
+            integer: is_integer,
+        } => {
             let index = iteration_index(iterations, a)?;
             let accumulator = iterations[index]
                 .as_ref()
@@ -610,12 +626,9 @@ pub(crate) fn run(op: &Op, a: i64, b: i64, state: &mut KernelState<'_>) -> Resul
                 .ok_or(Halt::Fault("jit-iteration-handle-is-live"))?;
             let absorbed = state.absorb(&spec, result, |total, summand| {
                 if matches!(shape, IterationShape::Query(Visit::Sum)) {
-                    let Some(sum) = fsl_eval::value::collections::sum_exact(
-                        value_type,
-                        total,
-                        summand,
-                        meter,
-                    ) else {
+                    let Some(sum) =
+                        fsl_eval::value::collections::sum_exact(value_type, total, summand, meter)
+                    else {
                         return Err(Halt::Fault("jit-query-sum-type-is-exact"));
                     };
                     match sum {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FSpec TC-2054's `test/refunds` fixture for optional operation parameters.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub(crate) const PACKAGE: &str = "test/refunds";
 

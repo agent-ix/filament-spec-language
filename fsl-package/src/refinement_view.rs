@@ -222,6 +222,7 @@ impl crate::BarePackage<'_> {
         self.project_refinement_row_with_parameter(term, Some(receiver), region, world, true)
     }
 
+    #[ix_trace_rs::string_edge]
     fn project_refinement_row_with_parameter(
         &self,
         term: &CheckedTerm,

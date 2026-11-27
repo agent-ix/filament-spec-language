@@ -981,6 +981,7 @@ fn protocol_analysis_work<'a>(
 }
 
 /// Build either route's native protocol-analysis item from its admitted package.
+#[ix_trace_rs::string_edge]
 pub(super) fn protocol_analysis_item<'a>(
     v2: Box<filament_contract_model::CheckedPackageV2>,
     model_input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
@@ -1110,6 +1111,7 @@ pub(super) fn protocol_analysis_item<'a>(
 
 #[implements("FSpec-FR-348-AC-3")]
 #[implements("FSpec-FR-290-AC-14")]
+#[ix_trace_rs::string_edge]
 fn work<'a>(
     analysis: &'a super::RunInput<'a>,
     binding: &'a super::SubjectBinding<'a>,
@@ -1776,6 +1778,7 @@ fn work<'a>(
 /// `finite_bound_available` (FSpec FR-290-AC-14, FSL FR-940). Only this
 /// checker's refusal reads the extent bit; any other engine's `RequiresBound`
 /// keeps its own disposition.
+#[ix_trace_rs::string_edge]
 pub(super) fn contract_checker_bound<'a>(
     mut built: super::AnalyzeItem<'a>,
     item: &ClaimItem,
@@ -1836,7 +1839,7 @@ mod tests {
     #[trace("FR-741-AC-6", "FR-255-AC-23")]
     #[test]
     fn both_probability_requests_use_the_finite_local_candidate_default() {
-        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
@@ -1968,7 +1971,7 @@ mod tests {
     #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
     #[test]
     fn request_work_forwards_operation_contract_finite_bound_availability() {
-        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"

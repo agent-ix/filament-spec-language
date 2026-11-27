@@ -11,7 +11,7 @@
 use filament_checked::key::DeclarationKey;
 use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 /// Why a `reductions` member is refused (FR-623 "Refusals").
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -37,6 +37,7 @@ fn issue(reason: impl Into<String>) -> ReductionIssue {
 /// declaration, `"declared"` over a unit that annotates no population
 /// `symmetric`, a population or key the subject does not hold, or a
 /// `constraint` that names no constraint clause.
+#[ix_trace_rs::string_edge]
 pub(super) fn admit(
     selection: &Value,
     system: &ModelSystem<'_>,

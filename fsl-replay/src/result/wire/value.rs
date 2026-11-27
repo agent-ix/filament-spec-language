@@ -1455,6 +1455,7 @@ pub(super) fn validate_element_shape(node: NodeRef<'_>) -> Result<(), CauseCodec
 
 /// Validate the closed kernel Boolean value form used as a comparison
 /// record's deciding element.
+#[ix_trace_rs::string_edge]
 pub(super) fn validate_boolean_element_shape(node: NodeRef<'_>) -> Result<(), CauseCodecError> {
     let fields = Fields::of(node, &["kind", "value"])?;
     if string_of(fields.require("kind")?)? != "boolean"

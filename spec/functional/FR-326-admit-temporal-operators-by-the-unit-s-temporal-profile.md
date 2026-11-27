@@ -71,7 +71,7 @@ for negotiation whether the claim is bounded.
   `bound`, FR-097), identified by the checked node id of its operator.
 - The clause's `Requirements`: kind `temporal-satisfaction` and a
   `ClaimExtent` (FR-097).
-- A `CheckRefusal` with a span and no checked clause, on refusal.
+- A `SemanticCheckRefusal` with a span and no checked clause, on refusal.
 
 ## Behavior
 

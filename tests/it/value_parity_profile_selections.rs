@@ -9,10 +9,10 @@ use std::collections::BTreeMap;
 use filament_exact::{Integer, ScalarLimits, Value};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
-    CanonicalAssignment, DependencyInput, EnvelopeSource, Identifier, NoPayload, ProfileSelection,
-    QualifiedName, ReplayLimits, ReplayRequest, ReplayRequestWire, RequestTargetWire,
-    ScalarOutcome, StateEnvironment, TracePosition, ValueClaim, ValueParityResult, WitnessEnvelope,
-    WitnessValue, call_site, replay_value_parity,
+    call_site, replay_value_parity, CanonicalAssignment, DependencyInput, EnvelopeSource,
+    Identifier, NoPayload, ProfileSelection, QualifiedName, ReplayLimits, ReplayRequest,
+    ReplayRequestWire, RequestTargetWire, ScalarOutcome, StateEnvironment, TracePosition,
+    ValueClaim, ValueParityResult, WitnessEnvelope, WitnessValue,
 };
 use fsl_replay::{ReplayTargetMembers, WitnessPacket};
 use ix_trace_rs::trace;

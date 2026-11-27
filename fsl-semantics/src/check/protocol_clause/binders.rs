@@ -11,7 +11,9 @@ use ix_trace_rs::implements;
 
 use super::refusal;
 use crate::check::check::SourceScope;
-use crate::check::refusal::{AliasKind, CheckRefusal, ProtocolAnchorCause, ShadowedDeclaration};
+use crate::check::refusal::{
+    AliasKind, ProtocolAnchorCause, SemanticCheckRefusal, ShadowedDeclaration,
+};
 use crate::check::{Scope, Signatures};
 
 /// FR-113 "Refusals" binder no-shadowing rule: every binder that shadows a
@@ -34,7 +36,7 @@ pub(super) fn shadow_refusals(
     native_names: &BTreeSet<String>,
     scope: &Scope,
     signatures: &Signatures,
-) -> Vec<(Span, CheckRefusal)> {
+) -> Vec<(Span, SemanticCheckRefusal)> {
     let mut refusals = Vec::new();
     let mut seen: BTreeMap<String, Vec<(Vec<ScopeSegment>, Span)>> = BTreeMap::new();
     for binder in &protocol.binders {

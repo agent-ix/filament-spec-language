@@ -22,7 +22,7 @@ use fsl_semantics::model::domain_package::OperationEffect;
 use fsl_semantics::model::observation::{
     AdmissionUsage, AdmittedObservations, Observation, SelfKind,
 };
-use fsl_semantics::model::population::{FrameDecision, FrameObject, FrameStop, decide_frame};
+use fsl_semantics::model::population::{decide_frame, FrameDecision, FrameObject, FrameStop};
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
@@ -30,14 +30,14 @@ pub(super) mod judge;
 #[cfg(test)]
 mod narrowing_tests;
 
-use super::contracts::{Conjunction, conjunction, operation_conjunction};
+use super::contracts::{conjunction, operation_conjunction, Conjunction};
 use super::domain::{Domain, Odometer};
-use super::encode::{self, Typing, value_enc, values_equal};
+use super::encode::{self, value_enc, values_equal, Typing};
 use super::footprints::ReadCheck;
-use super::walk::{Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk, stop};
+use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
 use super::{
-    Application, BROKEN, ClauseInfo, ClauseOutcome, EXHAUSTED, FieldChange, ModelFinding,
-    ModelSystem, StepEffect, WrittenSlots, handler_anchor, identity_limits, state_document,
+    handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
+    FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -330,6 +330,7 @@ fn apply_argument(
                 if walk.candidate_visitor.is_some() {
                     walk.visit(super::NativeCandidateEvent::Undetermined {
                         transition: &transition,
+                        clause: &clause,
                         outcome: &evaluation,
                     })?;
                     continue;
@@ -2289,6 +2290,7 @@ impl Run<'_, '_, '_> {
                         if self.walk.candidate_visitor.is_some() {
                             self.walk.visit(super::NativeCandidateEvent::Undetermined {
                                 transition: self.transition,
+                                clause: &clause,
                                 outcome: &evaluation,
                             })?;
                             continue;

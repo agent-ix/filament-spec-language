@@ -109,19 +109,22 @@ fn qualify_scoped_passing_capability_keeps_all_gate_parts() {
         .as_array_mut()
         .unwrap()
         .push(refusal_rollup);
-    value["vectors"].as_array_mut().unwrap().push(serde_json::json!({
-        "id": "V1-SRC-003-ill-typed-refusal",
-        "capability_id": "V1-SRC-003",
-        "class": "refusal",
-        "subject": {"consumer_type": "language", "operation": "compile"},
-        "applicability": {"consumer_types": ["language"]},
-        "input": {"files": [{"kind": "source", "path": "inputs/refusal.native"}]},
-        "expected": {
-            "disposition": "refusal",
-            "code": "ill_typed",
-            "cause": "type-mismatch"
-        }
-    }));
+    value["vectors"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id": "V1-SRC-003-ill-typed-refusal",
+            "capability_id": "V1-SRC-003",
+            "class": "refusal",
+            "subject": {"consumer_type": "language", "operation": "compile"},
+            "applicability": {"consumer_types": ["language"]},
+            "input": {"files": [{"kind": "source", "path": "inputs/refusal.native"}]},
+            "expected": {
+                "disposition": "refusal",
+                "code": "ill_typed",
+                "cause": "type-mismatch"
+            }
+        }));
     write_canonical(&corpus_file, &value);
 
     let passing = run(&["qualify", "--corpus", corpus.to_str().unwrap()]);
@@ -134,7 +137,10 @@ fn qualify_scoped_passing_capability_keeps_all_gate_parts() {
     assert_eq!(control.status.code(), Some(1), "{}", utf8(&control.stderr));
     let control_report: Value = serde_json::from_slice(&control.stdout).expect("JSON report");
     assert_eq!(control_report["verdict"], "not-qualified");
-    assert_eq!(control_report["scope"], serde_json::json!(["V1-SRC-003", "V1-TOOL-004"]));
+    assert_eq!(
+        control_report["scope"],
+        serde_json::json!(["V1-SRC-003", "V1-TOOL-004"])
+    );
     assert_eq!(control_report["capabilities"][0]["outcome"], "failed");
 
     let output = run(&[

@@ -19,6 +19,7 @@ use super::identity::{
 /// # Errors
 /// A fault if checked rows no longer correspond to their typed path, a
 /// required declaration scope is absent, or a map reaches positional encoding.
+#[ix_trace_rs::string_edge]
 pub fn normalize<E: From<InternalFault>>(
     scope: DeclarationScope,
     steps: &[PlaceStep],

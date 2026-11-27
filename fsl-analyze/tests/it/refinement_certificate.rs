@@ -70,6 +70,7 @@ fn run(world: &World) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -765,6 +766,7 @@ fn run_to(world: &World, max_depth: Option<usize>) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

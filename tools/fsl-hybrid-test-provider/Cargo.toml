@@ -13,6 +13,7 @@ description = "A scripted process hybrid provider speaking filament.plugin-wire/
 [dependencies]
 quire-canonical = { workspace = true }
 serde_json = "1.0.151"
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [dev-dependencies]
 filament-exact = { workspace = true }
@@ -22,7 +23,6 @@ fsl-foundation = { path = "../../fsl-foundation" }
 fsl-replay = { path = "../../fsl-replay" }
 fsl-route = { path = "../../fsl-route" }
 fsl-semantics = { path = "../../fsl-semantics" }
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 quire-canonical = { workspace = true }
 serde_json = "1.0.151"
 

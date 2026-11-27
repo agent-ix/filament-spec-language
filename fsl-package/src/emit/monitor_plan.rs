@@ -19,13 +19,13 @@ use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use filament_exact::Rational;
 
-use crate::wire_form::{WireForm, WireTag, has_form, has_tag};
+use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 
 use super::{
-    CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedSemanticGraphV2,
-    CheckedSourceMapEntry, Emission, EmitRefusal, EmittedPackage, ForeignNodes, GRAPH_V2,
-    OmittedNode, StructuralIds, own_evidence, read_index_segments, write_index_segments,
+    own_evidence, read_index_segments, write_index_segments, CheckedNodeId, CheckedOccurrence,
+    CheckedOccurrenceRole, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedSemanticGraphV2, CheckedSourceMapEntry, Emission, EmitRefusal,
+    EmittedPackage, ForeignNodes, OmittedNode, StructuralIds, GRAPH_V2,
 };
 
 /// What the writer needs of one plan.
@@ -1368,11 +1368,7 @@ pub(super) fn finish(
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
     let (requirement_rows, path_condition_frames, renumbered) =
-        super::value_validity_requirements::carry_rows(
-            base,
-            &mut nodes,
-            &mut source_map,
-        )?;
+        super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -1540,8 +1536,8 @@ fn binding_reference<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t Checke
 mod tests {
     use super::*;
     use filament_contract_model::{
-        CheckedBodyLocationOrigin, CheckedDeclaration, CheckedPackageDispatchResult,
-        CheckedPackageRefusalCause, CheckedPackageRefusalCode, read_checked_package,
+        read_checked_package, CheckedBodyLocationOrigin, CheckedDeclaration,
+        CheckedPackageDispatchResult, CheckedPackageRefusalCause, CheckedPackageRefusalCode,
     };
 
     /// The production final writer rekeys body origins with all four entries,
@@ -2033,23 +2029,19 @@ mod tests {
              function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n",
         );
         let records = rekeyed.assert_rows_follow_the_rekey(records_of_entries(&rekeyed));
-        assert!(
-            records
-                .iter()
-                .any(|record| record.path_condition_frame.is_some())
-        );
+        assert!(records
+            .iter()
+            .any(|record| record.path_condition_frame.is_some()));
         assert!(records.iter().any(|record| record.conversion.is_some()));
         assert!(records.iter().all(|record| !record.extent_roots.is_empty()));
-        assert!(
-            rekeyed
-                .final_package
-                .requirement_items()
-                .iter()
-                .any(|row| matches!(
-                    row.extent,
-                    filament_contract_model::RequirementExtent::Unbounded(_)
-                ))
-        );
+        assert!(rekeyed
+            .final_package
+            .requirement_items()
+            .iter()
+            .any(|row| matches!(
+                row.extent,
+                filament_contract_model::RequirementExtent::Unbounded(_)
+            )));
     }
 
     /// The claims of `owner`'s records, in the package's row order.

@@ -72,6 +72,15 @@ pub(crate) fn trace_document(identity: &str, steps: &[Value]) -> Value {
 /// The analyze outcome of one `finite-replay` item over the order protocol
 /// and the trace document `trace`.
 fn replay_item(identity: &str, trace: &Value) -> crate::analyze_cli_support::Run {
+    let (ws, path) = prepare_replay_item(identity, trace);
+    let run = analyze(&path);
+    drop(ws);
+    run
+}
+
+/// Write [`replay_item`]'s request and trace; returns the workspace and the
+/// request path so a test can prepare multiple requests before analyzing them.
+fn prepare_replay_item(identity: &str, trace: &Value) -> (Workspace, std::path::PathBuf) {
     let ws = Workspace::new(&format!("protocol-trace-{identity}"));
     let path = litmus_request(
         &ws,
@@ -87,7 +96,52 @@ fn replay_item(identity: &str, trace: &Value) -> crate::analyze_cli_support::Run
         .expect("documents")
         .push(json!({"file": "trace.json"}));
     ws.write("analyze.json", document.to_string().as_bytes());
-    analyze(&path)
+    (ws, path)
+}
+
+/// Reusing a trace identity for separate requests must keep each request's
+/// input files isolated until its analyze call reads them.
+#[trace("TC-2621", "FR-941-AC-2")]
+#[test]
+fn replay_requests_with_the_same_trace_identity_keep_their_own_files() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let mut missing_post_state = steps.clone();
+    missing_post_state[2]
+        .as_object_mut()
+        .expect("a step")
+        .remove("post_state");
+    let mut missing_send_record = vec![steps[1].clone(), steps[0].clone()];
+    missing_send_record[1]
+        .as_object_mut()
+        .expect("a step")
+        .remove("send_record");
+
+    let first_trace = trace_document("shared", &missing_post_state);
+    let second_trace = trace_document("shared", &missing_send_record);
+    let (_first_workspace, first_path) = prepare_replay_item("shared", &first_trace);
+    let (_second_workspace, second_path) = prepare_replay_item("shared", &second_trace);
+
+    let first_item = analyze(&first_path).item(0);
+    assert_eq!(label(&first_item), "declined", "{first_item}");
+    assert_eq!(
+        first_item["record"]["diagnostic"]["detail"]["position"], 2,
+        "{first_item}"
+    );
+    assert_eq!(
+        first_item["record"]["diagnostic"]["detail"]["path"], "/prefix/2/post_state",
+        "{first_item}"
+    );
+
+    let second_item = analyze(&second_path).item(0);
+    assert_eq!(label(&second_item), "declined", "{second_item}");
+    assert_eq!(
+        second_item["record"]["diagnostic"]["detail"]["position"], 1,
+        "{second_item}"
+    );
+    assert_eq!(
+        second_item["record"]["diagnostic"]["detail"]["path"], "/prefix/1/send_record",
+        "{second_item}"
+    );
 }
 
 /// FR-636-AC-3: a supplied trace of `Placed`, `Got` and `Ship` settles
@@ -595,6 +649,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
         fsl_analyze::analyze::document::SubjectSelection::default_over(&documents.snapshots);
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &package,
             binding: SubjectBinding {
                 packages: &documents.packages,

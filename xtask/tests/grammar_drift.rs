@@ -824,11 +824,8 @@ fn drift_and_stale_entries_are_reported_by_name() {
         PARSER_ONLY,
     );
     assert!(found.iter().any(|line| line.contains("delivery-interval")));
-    assert!(
-        found.contains(
-            &"stale correspondence entry `DeliveryInterval`: not in the parser".to_owned()
-        )
-    );
+    assert!(found
+        .contains(&"stale correspondence entry `DeliveryInterval`: not in the parser".to_owned()));
 }
 
 /// FR-600-AC-3: the shared grammar is read from the pinned standard crate,

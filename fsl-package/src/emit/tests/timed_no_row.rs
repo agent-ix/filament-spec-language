@@ -51,7 +51,7 @@ fn unit(profile: &str, source: &str) -> String {
 
 fn checked(
     unit: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let document = document();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)

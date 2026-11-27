@@ -303,6 +303,190 @@ fn hp4_negotiation_has_no_route_target_and_keeps_its_universal_sibling() {
     assert_eq!(supported["certificate"]["accepted"], true);
 }
 
+fn package_hyper_disposition_case(
+    workspace_name: &str,
+    unsupported_clause: &str,
+) -> crate::analyze_cli_support::Run {
+    use crate::analyze_cli_support::{package_selection, HANDOFF};
+
+    let declaration = format!(
+        "{unsupported_clause}\nhyper Universal using inf over behaviours (v: V::Vault) \
+         forall trace a of V {{ always holds(v.h @ a = v.h @ a) }}"
+    );
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, &declaration);
+    let ws = Workspace::new(workspace_name);
+    let source_path = request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Other"}, {"claim": "Universal"}]}),
+    );
+    let source_document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request exists"))
+            .expect("source request is JSON");
+    let (members, _) = package_selection(&ws, &source_document["request"]);
+    ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("remove the fixture's retained sources");
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    analyze(&package_path)
+}
+
+fn assert_package_hyper_hp4_has_no_target_and_keeps_universal(
+    run: &crate::analyze_cli_support::Run,
+) {
+    let document = run.document();
+    let unsupported = run.item(0);
+    assert_eq!(label(&unsupported), "unsupported", "{document}");
+    assert_eq!(
+        unsupported["record"]["diagnostic"]["cause"], "unsupported-requested-capability",
+        "{document}"
+    );
+    assert!(unsupported["request"].is_null(), "{document}");
+    assert!(unsupported["counterexample"].is_null(), "{document}");
+    let universal = run.item(1);
+    assert_eq!(label(&universal), "proved", "{document}");
+    assert_eq!(
+        universal["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+}
+
+/// FR-173-AC-5 / FR-281-AC-3: package negotiation shares the source
+/// classifier's existential-before-universal HP-4 disposition.
+#[trace("FR-173-AC-5", "FR-281-AC-3")]
+#[test]
+fn package_hp4_existential_before_universal_has_no_route() {
+    let run = package_hyper_disposition_case(
+        "hyper-wire-package-hp4-order",
+        "hyper Other using inf over behaviours (v: V::Vault) \
+         exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }",
+    );
+    assert_package_hyper_hp4_has_no_target_and_keeps_universal(&run);
+}
+
+/// FR-173-AC-5 / FR-281-AC-3: an existential form outside the safety
+/// fragment receives the same package-route disposition as source checking.
+#[trace("FR-173-AC-5", "FR-281-AC-3")]
+#[test]
+fn package_hp4_existential_outside_safety_has_no_route() {
+    let run = package_hyper_disposition_case(
+        "hyper-wire-package-hp4-safety",
+        "hyper Other using inf over behaviours (v: V::Vault) \
+         forall trace a of V exists trace b of V { always eventually holds(v.l @ a = v.l @ b) }",
+    );
+    assert_package_hyper_hp4_has_no_target_and_keeps_universal(&run);
+}
+
+/// FR-173-AC-5 / FR-281-AC-3: a projection outside safety receives the same
+/// package-route disposition as source checking.
+#[trace("FR-173-AC-5", "FR-281-AC-3")]
+#[test]
+fn package_hp4_projection_outside_safety_has_no_route() {
+    let run = package_hyper_disposition_case(
+        "hyper-wire-package-hp4-projection",
+        "hyper Other using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V align skip { V::Vault::step } \
+         { always eventually holds(v.l @ a = v.l @ b) }",
+    );
+    assert_package_hyper_hp4_has_no_target_and_keeps_universal(&run);
+}
+
+/// FR-173-AC-3 / FR-173-AC-5 / FR-182-AC-1: package negotiation settles a
+/// fixed-sample clause with no decided form as V-8; an event-position
+/// Universal clause reaches EN-1, while HP-4 keeps its own disposition.
+#[trace("FR-173-AC-3", "FR-173-AC-5", "FR-182-AC-1")]
+#[test]
+fn no_form_and_hp4_hyper_items_settle_v8_and_keep_the_universal_sibling() {
+    use crate::analyze_cli_support::{package_selection, HANDOFF};
+
+    let declaration = r#"hyper Other using inf over behaviours (v: V::Vault)
+        exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }
+hyper Universal using inf over behaviours (v: V::Vault)
+        forall trace a of V { always holds(v.h @ a = v.h @ a) }
+hyper EventPosition using ep over behaviours (v: V::Vault)
+        forall trace a of V { true }
+hyper FixedSample using fs over behaviours (v: V::Vault)
+        forall trace a of V { always [0, 1] holds(v.h @ a = v.h @ a) }"#;
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
+    let unit = unit.replace(
+        "profile inf = \"filament.temporal.infinite-trace/v1\";",
+        "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile fs = \"filament.temporal.fixed-sample.false-extension/v1\";",
+    );
+    let ws = Workspace::new("hyper-wire-fixed-sample-no-form");
+    let source_path = request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [
+            {"claim": "Other"},
+            {"claim": "Universal"},
+            {"claim": "EventPosition", "temporal": {"max_depth": 1}},
+            {"claim": "FixedSample"}
+        ]}),
+    );
+    let source_document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request exists"))
+            .expect("source request is JSON");
+    let (members, _) = package_selection(&ws, &source_document["request"]);
+    ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("remove the fixture's retained sources");
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let run = analyze(&package_path);
+    let document = run.document();
+    assert_eq!(run.exit, 21, "{document}");
+    assert_eq!(
+        document["items"].as_array().map(Vec::len),
+        Some(5),
+        "{document}"
+    );
+    let hp4 = run.item(0);
+    assert_eq!(label(&hp4), "unsupported", "{document}");
+    assert_eq!(
+        hp4["record"]["diagnostic"]["cause"], "unsupported-requested-capability",
+        "{document}"
+    );
+    assert!(hp4["request"].is_null(), "{document}");
+    assert!(hp4["certificate"].is_null(), "{document}");
+    assert!(hp4["counterexample"].is_null(), "{document}");
+    let universal = run.item(1);
+    assert_eq!(label(&universal), "proved", "{document}");
+    assert_eq!(
+        universal["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+    let event_position = run.item(2);
+    assert_eq!(label(&event_position), "proved", "{document}");
+    assert_eq!(
+        event_position["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+    let fixed_sample = run.item(3);
+    assert_eq!(label(&fixed_sample), "unsupported", "{document}");
+    assert_eq!(
+        fixed_sample["record"]["diagnostic"]["cause"], "unsupported-requested-capability",
+        "{document}"
+    );
+    assert!(fixed_sample["request"].is_null(), "{document}");
+    assert!(fixed_sample["certificate"].is_null(), "{document}");
+    assert!(fixed_sample["counterexample"].is_null(), "{document}");
+}
+
 /// FR-179 through `native-analyze/1`: a step relation over reachable
 /// transitions is checked by enumerating the tuples of its executions. Over
 /// the vault's `reset`, `h` is unchanged, so two resets from equal `h` agree

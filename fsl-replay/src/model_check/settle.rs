@@ -577,24 +577,23 @@ fn load_buffering_warnings(
         ProtocolDefinition::Package(form) => {
             let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
                 .map_err(|_| None)?;
-            let ValueType::Reference(object_type) = &package.over_type else {
-                return Err(None);
-            };
-            let reference = model
-                .written_reference(object_type.clone(), &subject.over)
-                .map_err(|_| None)?;
             let capacities = fsl_eval::simulation::protocol::Capacities::admit_input(
                 input,
                 &subject.protocol,
                 &subject.capacities,
             )
             .map_err(|_| None)?;
-            package_load_buffering_shapes(
-                &model,
-                &package,
-                &Value::Reference(reference),
-                &capacities,
-            )
+            // FR-882-AC-3: a scalar `over` ranges over its bounded domain, so
+            // the engine enumerates it; a reference `over` is the subject's own.
+            let over = match &package.over_type {
+                ValueType::Reference(object_type) => Some(Value::Reference(
+                    model
+                        .written_reference(object_type.clone(), &subject.over)
+                        .map_err(|_| None)?,
+                )),
+                _ => None,
+            };
+            package_load_buffering_shapes(&model, &package, over.as_ref(), &capacities)
         }
     }
     .map_err(|refusal| match refusal {
