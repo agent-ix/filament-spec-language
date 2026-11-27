@@ -3108,6 +3108,19 @@ fn build_test_binaries(
             OsString::from("-p"),
             OsString::from(package),
         ];
+        let targets = package_selectors
+            .iter()
+            .map(|selector| selector.target.clone())
+            .collect::<BTreeSet<_>>();
+        for target in targets {
+            match target {
+                TestTarget::Library => arguments.push(OsString::from("--lib")),
+                TestTarget::Integration(name) => {
+                    arguments.push(OsString::from("--test"));
+                    arguments.push(OsString::from(name));
+                }
+            }
+        }
         if package == "fsl-semantics"
             && package_selectors
                 .iter()
@@ -4351,6 +4364,69 @@ mod tests {
                 .count(),
             6,
             "each of three selectors is listed once normally and once as ignored"
+        );
+        for package in ["fsl-analyze", "fsl-command"] {
+            let build = calls
+                .iter()
+                .find(|(_, arguments)| {
+                    arguments.first().is_some_and(|argument| argument == "test")
+                        && arguments.iter().any(|argument| argument == "--no-run")
+                        && arguments.windows(2).any(|pair| {
+                            pair[0] == "-p" && pair[1] == package
+                        })
+                })
+                .expect("package build invocation");
+            assert_eq!(
+                build.1.iter().filter(|argument| *argument == "--test").count(),
+                1,
+                "only the selected integration target is built for {package}"
+            );
+            assert!(!build.1.iter().any(|argument| argument == "--lib"));
+        }
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-8")]
+    fn local_module_without_tests_keeps_its_preflight_note() {
+        let runner = FakeRunner {
+            no_tests: true,
+            ..FakeRunner::new()
+        };
+        let recipe = Recipe {
+            selectors: BTreeSet::from([TestSelector {
+                package: "fsl-analyze".to_owned(),
+                target: TestTarget::Library,
+                filter: Some("missing_local_module::".to_owned()),
+                exact: false,
+                skip: Vec::new(),
+                timed: false,
+                threads: None,
+                no_match_is_note: true,
+            }]),
+            notes: BTreeSet::new(),
+        };
+        let output = run_with_verified_main(
+            workspace_root(),
+            &[OsString::from("--preflight"), OsString::from("fixture.rs")],
+            &runner,
+            recipe,
+            MainCheck {
+                head: "fixture-head".to_owned(),
+                main: "fixture-main".to_owned(),
+                merge_base: "fixture-base".to_owned(),
+                overlaps: BTreeSet::new(),
+            },
+        )
+        .expect("local filter is reported as a note");
+        assert_eq!(
+            output,
+            concat!(
+                "# PR head fixture-head; origin/main fixture-main; merge-base fixture-base\n",
+                "OVERLAP: none\n",
+                "VERDICT: ACCEPT (recipe paths do not overlap main changes)\n",
+                "NOTE: no named tests match the local module filter Some(\"missing_local_module::\") in fsl-analyze\n",
+                "cargo check --locked --workspace --all-targets\n",
+            )
         );
     }
 
