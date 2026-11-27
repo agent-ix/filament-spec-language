@@ -12,7 +12,7 @@ use super::progress::{
 };
 
 /// The ledger document's `format` member.
-pub const LEDGER_FORMAT: &str = "filament.progress-ledger/1";
+pub const LEDGER_FORMAT: &str = fsl_foundation::wire_format::WireFormat::ProgressLedger.as_str();
 
 /// A ledger document that cannot be read.
 #[derive(Debug, thiserror::Error)]

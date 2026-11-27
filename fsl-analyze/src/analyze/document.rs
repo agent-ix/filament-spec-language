@@ -42,7 +42,7 @@ use fsl_eval::simulation::model::PopulationUniverse;
 pub mod effect_decision;
 
 /// The request document format FR-620 reads.
-pub const REQUEST_FORMAT: &str = "native-analyze/1";
+pub const REQUEST_FORMAT: &str = fsl_foundation::wire_format::WireFormat::AnalyzeRequest.as_str();
 
 fn present_json_value<'de, D: serde::Deserializer<'de>>(
     decoder: D,

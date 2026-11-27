@@ -985,11 +985,18 @@ fn an_initial_position_violation_is_refuted_on_both_timed_routes() {
             {"claim": "InitialPhase", "options": {"method": "digital-clocks"}}
         ]}),
     ));
-    let items = run.document()["items"].as_array().cloned().unwrap_or_default();
+    let items = run.document()["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(items.len(), 2, "analysis result: {:#?}", run.document());
 
     let outcomes = items.iter().map(label).collect::<Vec<_>>();
-    assert_eq!(outcomes, ["refuted", "refuted"], "route records: {items:#?}");
+    assert_eq!(
+        outcomes,
+        ["refuted", "refuted"],
+        "route records: {items:#?}"
+    );
     assert_eq!(items[0]["record"]["backend"], "en-6", "{items:#?}");
     assert_eq!(items[1]["record"]["backend"], "en-1", "{items:#?}");
     assert_eq!(run.exit, 10, "route records: {items:#?}");

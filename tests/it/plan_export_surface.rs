@@ -272,7 +272,7 @@ fn finite_parameter_refusals(model: &Value, label: &str) -> Vec<(Value, Value, O
         } else {
             fsl_command::command::compile_outcome(&path).map(|_| ()).unwrap_err()
         };
-        assert_eq!(failure.category().exit_code(),20,"{failure}");
+        assert_eq!(failure.category().exit_code(),21,"{failure}");
         let native = failure.value().unwrap();
         assert_eq!(native["stage"],"check","{native}");
         assert_eq!(native["code"],"unsupported_projection","{native}");

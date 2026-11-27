@@ -20,7 +20,7 @@ use fsl_semantics::check::{
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::{
     check_state_graph_certificate, CertificateItem, CertifiedItem, StateGraphCertificateDecision,
-    ZoneCertificateRequest,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use crate::execute::{recompile_with_temporal_selections, request_limits, ReplayRefusal};
 use crate::model_check::counterexample::ModelStep;
@@ -83,6 +83,7 @@ pub fn replay_model_graph_with_cancel(
 
 /// [`replay_model_graph_with_temporal_selections`] with the caller's
 /// cancellation handle.
+#[implements("FR-170-AC-5", "FR-170-AC-7")]
 pub fn replay_model_graph_with_cancel_and_temporal_selections(
     wire: ReplayRequestWire,
     subject: &ModelTraceSubject,
@@ -234,7 +235,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
                     member: "timed_subject",
                 })?;
             let over = graph_over(&system, claim, envelope.family_payload())?;
-            let (_, decision) = check_state_graph_certificate(
+            let (verdict, decision) = check_state_graph_certificate(
                 ZoneCertificateRequest {
                     simulation,
                     model: &reading.model,
@@ -258,9 +259,15 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             .map_err(|_| ReplayRefusal::ModelGraphMismatch {
                 member: "zone_certificate",
             })?;
-            match decision {
-                Some(StateGraphCertificateDecision::Holds) => Some(true),
-                Some(StateGraphCertificateDecision::Violated) => Some(false),
+            match (verdict, decision) {
+                (_, Some(StateGraphCertificateDecision::Holds)) => Some(true),
+                (_, Some(StateGraphCertificateDecision::Violated)) => Some(false),
+                (ZoneCertificateVerdict::Rejected(rejection), None)
+                    if rejection.rule == crate::CertificateRule::PredicateUndefined
+                        && matches!(envelope.family_payload(), GraphEvidence::Undefined { .. }) =>
+                {
+                    None
+                }
                 _ => {
                     return Err(ReplayRefusal::ModelGraphMismatch {
                         member: "zone_certificate",
@@ -271,15 +278,19 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             (claim, subject.timed.as_ref(), timed.as_ref())
         {
             if timed_replay.digital {
-                Some(digital_state_graph_truth(
-                    &system,
-                    timed,
-                    claim,
-                    envelope.family_payload(),
-                    u64::try_from(model_limits.limits.max_states).unwrap_or(u64::MAX),
-                    u64::try_from(model_limits.limits.max_transitions).unwrap_or(u64::MAX),
-                    cancel,
-                )?)
+                if matches!(envelope.family_payload(), GraphEvidence::Undefined { .. }) {
+                    None
+                } else {
+                    Some(digital_state_graph_truth(
+                        &system,
+                        timed,
+                        claim,
+                        envelope.family_payload(),
+                        u64::try_from(model_limits.limits.max_states).unwrap_or(u64::MAX),
+                        u64::try_from(model_limits.limits.max_transitions).unwrap_or(u64::MAX),
+                        cancel,
+                    )?)
+                }
             } else {
                 None
             }

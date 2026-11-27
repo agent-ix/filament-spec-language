@@ -93,7 +93,13 @@ pub(crate) fn replayed(
         world.abstract_initials(),
     )
     .expect("the subjects open");
-    replay_refinement_trace(world.refinement(), &systems, payload, &fsl_replay::ModelCheckLimits::default()).expect("the trace replays")
+    replay_refinement_trace(
+        world.refinement(),
+        &systems,
+        payload,
+        &fsl_replay::ModelCheckLimits::default(),
+    )
+    .expect("the trace replays")
 }
 
 /// Replay reproduces exactly the failure `payload` records.

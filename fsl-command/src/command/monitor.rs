@@ -36,11 +36,11 @@ use super::{
 };
 
 /// The format of one event.
-pub const EVENT_FORMAT: &str = "filament.monitor-event/1";
+pub const EVENT_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorEvent.as_str();
 /// The format of the summary.
-pub const SUMMARY_FORMAT: &str = "filament.monitor-summary/1";
+pub const SUMMARY_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorSummary.as_str();
 /// The format of the batch result.
-pub const RUN_FORMAT: &str = "filament.monitor-run/1";
+pub const RUN_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorRun.as_str();
 /// FR-644's published draft 2020-12 schema for `filament.monitor-event/1`.
 pub const MONITOR_EVENT_SCHEMA_1: &str =
     include_str!("../../schemas/filament-monitor-event-1.schema.json");

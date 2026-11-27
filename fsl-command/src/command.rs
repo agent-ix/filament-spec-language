@@ -53,7 +53,11 @@ use filament_contract_model as ir;
 use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
+use fsl_foundation::wire_format::WireFormat;
 use fsl_foundation::{Code, Diagnostic, Source};
+
+/// The label of a model unit accepted by `fsl run`.
+const MODEL_UNIT_FORMAT: &str = WireFormat::ModelUnit.as_str();
 use fsl_replay::spine::SpineLimits;
 use fsl_replay::CertificationPolicy;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
@@ -1415,12 +1419,6 @@ impl RunCause {
                 _ => self.code().category(),
             },
             Self::SpineRun(refusal) => refusal.category(),
-            // FR-663/TC-1746: an unbounded plan parameter is a check-time
-            // admission refusal. Other unsupported projections retain their
-            // existing catalog category.
-            Self::Spine(failure) if failure.refusal.unbounded_parameter_origin().is_some() => {
-                filament_semantic_value::catalog::Category::Refusal
-            }
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
             Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
@@ -3531,7 +3529,7 @@ fn write_compile_handoff(
 fn is_model_input_format(model: &wire::Model) -> bool {
     matches!(
         model.format.as_str(),
-        DOMAIN_PACKAGE_PROFILE | "native-model-unit/1"
+        DOMAIN_PACKAGE_PROFILE | MODEL_UNIT_FORMAT
     )
 }
 
@@ -3701,7 +3699,7 @@ fn package_input_from_selected_models(
         .map(|(model, source)| {
             let bytes = source.source().text().as_bytes();
             match model.format.as_str() {
-                "native-model-unit/1" => {
+                MODEL_UNIT_FORMAT => {
                     if !fsl_semantics::model::intake::is_model_unit_source(bytes) {
                         return Err(model_unit_format_refusal(
                             source.source(),

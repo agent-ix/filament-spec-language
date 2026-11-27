@@ -706,9 +706,10 @@ pub fn check_state_graph(
     } else {
         None
     };
-    let retained = request.retained.cloned().unwrap_or_else(|| {
-        EngineBounds::default().item_budget(budgets.meter, cancel)
-    });
+    let retained = request
+        .retained
+        .cloned()
+        .unwrap_or_else(|| EngineBounds::default().item_budget(budgets.meter, cancel));
     let explored = explore::Exploration {
         system: &system,
         limits: &request.limits,
