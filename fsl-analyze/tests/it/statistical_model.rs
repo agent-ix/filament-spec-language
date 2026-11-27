@@ -1032,13 +1032,30 @@ fn sampled_two_test_provenance_keeps_bindings_and_method() {
         panic!("SPRT completion expected");
     };
     assert_eq!(sprt.basis.method, StatisticalMethod::Sprt);
-    assert_eq!(
-        okamoto.provenance.tests, sprt.provenance.tests,
-        "the logical tests and trace assignment do not depend on method"
-    );
-    // Obligation identity is not returned by SampledRequest or
-    // StatisticalOutcome, so the method/identity clause has no comparison
-    // surface at this API boundary.
+    assert_eq!(okamoto.provenance.tests.len(), sprt.provenance.tests.len());
+    for (okamoto_test, sprt_test) in okamoto
+        .provenance
+        .tests
+        .iter()
+        .zip(&sprt.provenance.tests)
+    {
+        assert_eq!(okamoto_test.index, sprt_test.index);
+        assert_eq!(okamoto_test.initial, sprt_test.initial);
+        assert_eq!(okamoto_test.binding, sprt_test.binding);
+        assert_eq!(
+            (okamoto_test.traces.first, okamoto_test.traces.step),
+            (sprt_test.traces.first, sprt_test.traces.step),
+            "sample indices retain their test interleave"
+        );
+        assert_eq!(
+            okamoto_test.traces.count,
+            okamoto.tests[okamoto_test.index as usize].draws
+        );
+        assert_eq!(
+            sprt_test.traces.count,
+            sprt.tests[sprt_test.index as usize].draws
+        );
+    }
 }
 
 /// FR-191-AC-4: the source route records both bindings and their interleaved
@@ -1057,35 +1074,37 @@ fn source_two_test_p95_provenance_keeps_identity_across_methods() {
     assert_eq!(okamoto["verdict"]["basis"]["method"]["type"], "okamoto");
     assert_eq!(sprt["verdict"]["basis"]["method"]["type"], "sprt");
 
-    let tests = okamoto["verdict"]["provenance"]["tests"]
-        .as_array()
-        .expect("the source verdict records test provenance");
-    assert_eq!(tests.len(), 2, "{okamoto}");
-    for (index, key) in ["a", "b"].into_iter().enumerate() {
-        let test = &tests[index];
-        assert_eq!(
-            test["index"],
-            u64::try_from(index).expect("two tests"),
-            "{test}"
-        );
-        assert_eq!(test["initial_state"], 0, "{test}");
-        assert_eq!(test["binding"]["reference"]["key"], key, "{test}");
-        assert_eq!(test["first_trace_index"], index.to_string(), "{test}");
-        let first = test["first_trace_index"]
-            .as_str()
-            .expect("the decimal trace start")
-            .parse::<u64>()
-            .expect("a trace index");
-        let last = test["last_trace_index"]
-            .as_str()
-            .expect("the decimal trace end")
-            .parse::<u64>()
-            .expect("a trace index");
-        let draws = okamoto["verdict"]["tests"][index]["draws"]
-            .as_u64()
-            .expect("the test's draw count");
-        assert!(draws > 0, "{test}");
-        assert_eq!(last - first, 2 * (draws - 1), "{test}");
+    for result in [&okamoto, &sprt] {
+        let tests = result["verdict"]["provenance"]["tests"]
+            .as_array()
+            .expect("the source verdict records test provenance");
+        assert_eq!(tests.len(), 2, "{result}");
+        for (index, key) in ["a", "b"].into_iter().enumerate() {
+            let test = &tests[index];
+            assert_eq!(
+                test["index"],
+                u64::try_from(index).expect("two tests"),
+                "{test}"
+            );
+            assert_eq!(test["initial_state"], 0, "{test}");
+            assert_eq!(test["binding"]["reference"]["key"], key, "{test}");
+            assert_eq!(test["first_trace_index"], index.to_string(), "{test}");
+            let first = test["first_trace_index"]
+                .as_str()
+                .expect("the decimal trace start")
+                .parse::<u64>()
+                .expect("a trace index");
+            let last = test["last_trace_index"]
+                .as_str()
+                .expect("the decimal trace end")
+                .parse::<u64>()
+                .expect("a trace index");
+            let draws = result["verdict"]["tests"][index]["draws"]
+                .as_u64()
+                .expect("the test's draw count");
+            assert!(draws > 0, "{test}");
+            assert_eq!(last - first, 2 * (draws - 1), "{test}");
+        }
     }
 }
 
