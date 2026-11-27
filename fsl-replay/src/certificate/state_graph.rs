@@ -145,7 +145,7 @@ fn bound_over(
                 .claim_instances(&ValueType::Reference(parameter.object.clone()))
                 .map_err(|refusal| match refusal {
                     NoClaimInstances::NotSimulated(refusal) => {
-                        ClosureRefusal::NotSimulated(Box::new(refusal))
+                        ClosureRefusal::from_not_simulated(refusal)
                     }
                     NoClaimInstances::NoInitialState => ClosureRefusal::NoInitialState,
                     NoClaimInstances::NoInstance => ClosureRefusal::NoInstance,

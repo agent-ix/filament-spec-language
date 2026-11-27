@@ -356,7 +356,10 @@ fn a_package_selection_of_an_object_parameter_hp5_clause_settles() {
         assert_eq!(run.exit, 0, "{text}");
         assert!(!text.contains("unsupported_construct"), "{text}");
         assert!(!text.contains("not-yet-implemented"), "{text}");
-        assert!(!text.contains("\"instance\""), "{text}");
+        // The proved record and its item carry no `instance` member; the
+        // witness evidence names its own instance.
+        assert!(run.item(0).get("instance").is_none(), "{text}");
+        assert!(run.item(0)["record"].get("instance").is_none(), "{text}");
     }
 }
 
