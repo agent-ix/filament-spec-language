@@ -193,6 +193,13 @@ fn digital_refusal(refusal: &DigitalRefusal) -> Refusal {
         }
         DigitalRefusal::NotDigitisable(declined) => not_digitisable(*declined),
         DigitalRefusal::UnsupportedForm => Refusal::Unsupported(NOT_YET),
+        // FR-125: the one NoClaimInstances mapping of the claim routes.
+        DigitalRefusal::Instances(error) => match super::items::instance_stop(
+            fsl_eval::simulation::model::NoClaimInstances::NotSimulated(error.clone()),
+        ) {
+            super::items::InstanceStop::Refused(refusal) => refusal,
+            super::items::InstanceStop::Inconclusive(_) => Refusal::Failed(BROKEN),
+        },
         DigitalRefusal::Atom(_) | DigitalRefusal::Fault(_) => Refusal::Failed(BROKEN),
     }
 }

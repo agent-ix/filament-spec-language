@@ -36,8 +36,8 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    GuardedStep, ModelSimState, PlaceConstraint, TerminalClass, TimedStop, TimedSystem,
-    UndecidedReading,
+    GuardedStep, ModelSimState, NoClaimInstances, PlaceConstraint, TerminalClass, TimedStop,
+    TimedSystem, UndecidedReading,
 };
 use fsl_eval::simulation::{
     NotSimulated, Permutation, RequiresBound, SymmetryGroup, TransitionSystem,
@@ -247,6 +247,9 @@ pub enum ZoneStop {
 pub enum ZoneUndecided {
     /// The subject has no initial state.
     NoInitialState,
+    /// The subject has an initial state and the claim has no admitted
+    /// instance (FR-125).
+    NoInstance,
     /// An expansion or a timed member's reading had no value.
     UndecidedSuccessor(TimedStop),
     /// No initial symbolic state has a time-divergent behaviour (ADR-026
@@ -825,10 +828,18 @@ pub fn check_timed_model<S: Clone>(
     // run over every instance.
     let plans = match request.item {
         ZoneCheckItem::Clause { clause, .. } => {
-            let instances = system.instances(&clause.over().1).map_err(not_simulated)?;
-            // With no instance there is no orbit to reduce: the item runs
-            // unreduced, so its proof is certified.
-            symmetric &= !instances.is_empty();
+            // FR-125: the claim's instances are `claim_instances`'; with no
+            // initial state or no instance the item is undecided, never proved.
+            let instances = match system.claim_instances(&clause.over().1) {
+                Ok(instances) => instances.as_slice().to_vec(),
+                Err(NoClaimInstances::NotSimulated(error)) => return Err(not_simulated(error)),
+                Err(NoClaimInstances::NoInitialState) => {
+                    return Ok(zone_undecided(ZoneUndecided::NoInitialState))
+                }
+                Err(NoClaimInstances::NoInstance) => {
+                    return Ok(zone_undecided(ZoneUndecided::NoInstance))
+                }
+            };
             if symmetric {
                 instance_groups(Some(&instances), &group)
                     .into_iter()
@@ -976,6 +987,16 @@ struct Plan {
     instances: Vec<ModelInstance>,
     group: SymmetryGroup,
     orbit: Vec<String>,
+}
+
+/// The outcome of an item no instance of which the run reads, with no state
+/// explored.
+fn zone_undecided<S>(cause: ZoneUndecided) -> ZoneCheckOutcome<S> {
+    ZoneCheckOutcome::Undecided {
+        cause,
+        non_zeno: None,
+        stats: ZoneStats::default(),
+    }
 }
 
 /// The outcome the pre-check settles, with no state explored.

@@ -53,7 +53,7 @@ use fsl_eval::automaton::{
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    ClockValuation, GuardedStep, ModelSimState, TimedState, TimedStop, TimedSystem,
+    ClockValuation, GuardedStep, ModelSimState, NoClaimInstances, TimedState, TimedStop, TimedSystem,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::source::Span;
@@ -131,6 +131,9 @@ pub enum DigitalRefusal {
     UnsupportedForm,
     /// A `holds` atom stopped with no reading.
     Atom(String),
+    /// The claim's instances could not be listed (FR-125): a population
+    /// with no universe, an unclassifiable extent or a conflicting identity.
+    Instances(fsl_eval::simulation::NotSimulated),
     /// A broken invariant of the route.
     Fault(&'static str),
 }
@@ -1079,9 +1082,26 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     #[implements("FR-232-AC-3", "FR-243-AC-8")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
-        let instances = system
-            .instances(&self.request.clause.over().1)
-            .map_err(|_| DigitalRefusal::Fault("instances"))?;
+        // FR-125: the claim's instances are `claim_instances`', with no
+        // initial state or no instance an undecided item, never a proof.
+        let instances = match system.claim_instances(&self.request.clause.over().1) {
+            Ok(instances) => instances.as_slice().to_vec(),
+            Err(NoClaimInstances::NotSimulated(error)) => {
+                return Err(DigitalRefusal::Instances(error).into())
+            }
+            Err(NoClaimInstances::NoInitialState) => {
+                return Ok(ModelCheckOutcome::Undecided {
+                    cause: fsl_replay::UndecidedCause::NoInitialState,
+                    stats: self.stats,
+                })
+            }
+            Err(NoClaimInstances::NoInstance) => {
+                return Ok(ModelCheckOutcome::Undecided {
+                    cause: fsl_replay::UndecidedCause::NoInstance,
+                    stats: self.stats,
+                })
+            }
+        };
         for instance in &instances {
             if let Some(counterexample) = self.initial_bad_prefix(instance)? {
                 return Ok(self.violated(counterexample));

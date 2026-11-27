@@ -1588,7 +1588,6 @@ fn zone_names_the_causes_before_instancing() {
 
 #[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
 #[test]
-#[ignore = "QSL-3484: en-6 proves a claim over no instance (FR-125-AC-7)"]
 fn zone_reports_no_instance() {
     check_route(Route::Zone, TIMED_NO_INSTANCE);
 }
@@ -1602,7 +1601,6 @@ fn digital_ranges_over_the_admitted_keys() {
 
 #[trace("TC-520", "FR-125-AC-13", "FSpec-FR-361-AC-16")]
 #[test]
-#[ignore = "QSL-3484: en-1 digital clocks proves a claim over no instance when no state is initial (FR-125-AC-13)"]
 fn digital_names_no_initial_state() {
     check_route(
         Route::Digital,
@@ -1618,7 +1616,6 @@ fn digital_names_a_missing_universe() {
 
 #[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
 #[test]
-#[ignore = "QSL-3484: en-1 digital clocks proves a claim over no instance (FR-125-AC-7)"]
 fn digital_reports_no_instance() {
     check_route(Route::Digital, TIMED_NO_INSTANCE);
 }

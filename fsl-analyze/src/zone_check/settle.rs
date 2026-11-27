@@ -282,6 +282,7 @@ fn undecided_cause(cause: &ZoneUndecided) -> InconclusiveCause {
     match cause {
         // FR-127's V-6 rows, which FR-235 extends.
         ZoneUndecided::NoInitialState => InconclusiveCause::NoInitialState,
+        ZoneUndecided::NoInstance => InconclusiveCause::NoInstance,
         ZoneUndecided::UndecidedSuccessor(_) => InconclusiveCause::UndecidedSuccessor,
         // FR-235's V-6 rows.
         ZoneUndecided::NoAdmittedBehaviour => InconclusiveCause::NoAdmittedBehaviour,
