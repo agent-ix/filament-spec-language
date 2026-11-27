@@ -11,11 +11,11 @@
 //! (FR-383 assumption A1) and get no row. Nothing here derives a location
 //! from a source region, a node order or an operand position.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use filament_checked::node::{NodeKind, Visit};
 use filament_contract_model::{
-    CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
+    term_ordinals, CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
     CheckedProtocolLocationOrigin, CheckedProtocolSemanticLocation,
 };
 use filament_exact::NodeKey;
@@ -26,6 +26,7 @@ use fsl_semantics::check::{
     BodyTerm, CheckedActivation, CheckedBody, CheckedGraph, CheckedLifetime, CheckedNode,
     CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag, Operator,
 };
+use ix_trace_rs::implements;
 
 use super::{checked_occurrence, EmitRefusal};
 
@@ -246,31 +247,34 @@ fn refusal(application: &NodeKey) -> EmitRefusal {
 /// Number each group's rows from zero across its origins, the origins in
 /// origin order and one origin's rows in visit order, then order every row
 /// by (application, occurrence, `term_ordinal`).
+#[implements("FSpec-FR-322-AC-291")]
 pub(super) fn ordered<L, R>(
-    pending: Vec<PendingRow<L>>,
+    mut pending: Vec<PendingRow<L>>,
     build: impl Fn(CheckedNodeId, CheckedOccurrence, u64, L) -> R,
 ) -> Vec<R> {
-    let mut groups: BTreeMap<(CheckedNodeId, CheckedOccurrence), Vec<PendingRow<L>>> =
-        BTreeMap::new();
-    for row in pending {
-        groups
-            .entry((row.application.clone(), row.occurrence.clone()))
-            .or_default()
-            .push(row);
-    }
-    let mut rows = Vec::new();
-    for (_, mut group) in groups {
-        group.sort_by(|left, right| {
-            left.origin_name
-                .as_bytes()
-                .cmp(right.origin_name.as_bytes())
-                .then(left.visit.cmp(&right.visit))
-        });
-        rows.extend(group.into_iter().zip(0_u64..).map(|(row, term_ordinal)| {
+    pending.sort_by(|left, right| {
+        (&left.application, &left.occurrence)
+            .cmp(&(&right.application, &right.occurrence))
+            .then(
+                left.origin_name
+                    .as_bytes()
+                    .cmp(right.origin_name.as_bytes()),
+            )
+            .then(left.visit.cmp(&right.visit))
+    });
+    // FR-322-AC-291: the IR's one ordinal function numbers the sorted rows.
+    let ordinals = term_ordinals(
+        pending
+            .iter()
+            .map(|row| (&row.application, &row.occurrence)),
+    );
+    pending
+        .into_iter()
+        .zip(ordinals)
+        .map(|(row, term_ordinal)| {
             build(row.application, row.occurrence, term_ordinal, row.location)
-        }));
-    }
-    rows
+        })
+        .collect()
 }
 
 /// Every slot expression of `protocol` (FR-383's site-name registry). A

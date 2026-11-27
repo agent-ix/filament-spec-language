@@ -9,13 +9,16 @@ use filament_exact::{Cancel, CancelCause, Integer, Rational, Value};
 use filament_semantic_value::catalog::UndefinedReason;
 use fsl_analyze::exact_probabilistic::{
     backward_induction, build_product, decide_bounded_event, decide_fair_long_run_mdp,
-    decide_fair_reachability, maximal_fair_end_components, Accumulator, Amount, ExactProbLimits,
-    ExtRational, FhObjective, FhResult, FormulaState, MeasurePhase, MonitorState, MonitorVerdict,
+    decide_fair_reachability, decide_fair_reachability_threshold, free_delays_choice,
+    maximal_fair_end_components, Accumulator, Amount, ExactProbLimits, ExtRational, FhObjective,
+    FhResult, FormulaState, FreeDelayRow, MeasurePhase, MonitorState, MonitorVerdict,
     PredicateRole, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction,
-    ProductKind, ProductRefusal, ProductRequest, ProductStop, UnboundedObjective, UndefinedRead,
+    ProductKind, ProductRefusal, ProductRequest, ProductStop, UnboundedObjective, UnboundedOutcome,
+    UndefinedRead,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::Limits;
+use fsl_eval::simulation::model::ScheduledIdentity;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{ModelCheckLimit, ModelCheckLimits};
@@ -54,6 +57,93 @@ fn built(world: &World, claim: &str) -> ProbProduct {
         Ok(ProbBuild::Built(product)) => product,
         other => panic!("{claim}: expected a product, got {other:?}"),
     }
+}
+
+fn fair_free_delays_fixture() -> (
+    ProbProduct,
+    Vec<bool>,
+    ProbStateId,
+    ScheduledIdentity,
+    ScheduledIdentity,
+    ScheduledIdentity,
+    ProbStateId,
+    ProbStateId,
+) {
+    const CLAIM: &str = "probabilistic WeakFair using inf on M over (w: M::W) \
+         under every scheduler fair weak W::go on origin \
+         { probability >= rational(1,2) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_free_delays(CLAIM));
+    let product = built(&world, "WeakFair");
+    let start = start(&product);
+    let identity = |operation: &str| {
+        product
+            .outgoing(start)
+            .iter()
+            .filter_map(|edge| edge.action.as_ref())
+            .find(|identity| identity.operation.contains(operation))
+            .unwrap_or_else(|| panic!("the product has {operation}: {:?}", product.outgoing(start)))
+            .clone()
+    };
+    let draw = identity("draw");
+    let go = identity("go");
+    let wait = identity("wait");
+    let target = product
+        .labels
+        .iter()
+        .map(|labels| labels[0])
+        .collect::<Vec<_>>();
+    let goal = product
+        .outgoing(start)
+        .iter()
+        .find(|edge| edge.action.as_ref() == Some(&go) && target[edge.to.index()])
+        .expect("go reaches the target")
+        .to;
+    let failure = product
+        .outgoing(start)
+        .iter()
+        .find(|edge| edge.action.as_ref() == Some(&go) && !target[edge.to.index()])
+        .expect("go also reaches its non-target outcome")
+        .to;
+    (product, target, start, draw, go, wait, goal, failure)
+}
+
+fn free_delay_edge(
+    from: ProbStateId,
+    to: ProbStateId,
+    draw: &ScheduledIdentity,
+    draw_delay: u64,
+    action: &ScheduledIdentity,
+    action_delay: u64,
+    probability: Rational,
+) -> ProbEdge {
+    ProbEdge {
+        from,
+        choice: ProductAction::FreeDelays(vec![FreeDelayRow {
+            given: vec![(draw.clone(), draw_delay)],
+            free: vec![(action.clone(), action_delay)],
+        }]),
+        action: Some(action.clone()),
+        draw: None,
+        to,
+        probability,
+        elapsed: ratio(0, 1),
+        rewards: Vec::new(),
+    }
+}
+
+fn replace_outgoing(product: &mut ProbProduct, state: ProbStateId, edges: Vec<ProbEdge>) {
+    let first = product
+        .edges
+        .iter()
+        .position(|edge| edge.from == state)
+        .expect("the state has outgoing edges");
+    let end = product
+        .edges
+        .iter()
+        .rposition(|edge| edge.from == state)
+        .map(|index| index + 1)
+        .expect("the state has outgoing edges");
+    product.edges.splice(first..end, edges);
 }
 
 /// FR-254-AC-3 (TC-709): an exact request for the strict-guard timed RPC is
@@ -1984,6 +2074,171 @@ fn fair_coin_has_no_nonterminal_fair_end_component() {
         }
     }
     assert!(operations[flip_index].operation.contains("flip"));
+}
+
+/// FR-200-AC-11 (TC-635): row dispatch is transparent to weak fairness, and
+/// exact fair components and policies project onto their parent FreeDelays state.
+#[trace("TC-635", "FR-200-AC-11")]
+#[test]
+fn fair_freedelays_weak_minimum_and_component_projection() {
+    let (mut product, target, state, draw, go, wait, goal, _) = fair_free_delays_fixture();
+    replace_outgoing(
+        &mut product,
+        state,
+        vec![
+            free_delay_edge(state, goal, &draw, 1, &go, 1, ratio(1, 1)),
+            free_delay_edge(state, state, &draw, 1, &wait, 1, ratio(1, 1)),
+        ],
+    );
+
+    let result = decide_fair_reachability(
+        &product,
+        None,
+        &target,
+        UnboundedObjective::Min,
+        &ExactProbLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("one-row weak-fair exact reachability");
+    assert_eq!(result.values.len(), product.states.len());
+    assert_eq!(
+        result.values[state.index()],
+        ExtRational::Finite(ratio(1, 1)),
+        "weak fairness to go must not be reset at the evaluator's row dispatch"
+    );
+    assert!(result.components.iter().all(|component| {
+        component.states.iter().all(|state| state.index() < product.states.len())
+            && component.actions.iter().all(|(state, _)| state.index() < product.states.len())
+    }));
+    let row_choices = match result.policy[product.states.len()]
+        .as_ref()
+        .expect("one policy entry for the row")
+    {
+        fsl_analyze::exact_probabilistic::SchedulerChoice::Deterministic(
+            fsl_analyze::exact_probabilistic::ActionChoice(index),
+        ) => vec![(*index, ratio(1, 1))],
+        fsl_analyze::exact_probabilistic::SchedulerChoice::Randomized(choices) => choices
+            .iter()
+            .map(|(fsl_analyze::exact_probabilistic::ActionChoice(index), probability)| {
+                (*index, probability.clone())
+            })
+            .collect(),
+    };
+    assert_eq!(
+        row_choices
+            .iter()
+            .fold(ratio(0, 1), |sum, (_, probability)| sum.add(probability)),
+        ratio(1, 1)
+    );
+    let mut go_probability = ratio(0, 1);
+    let mut wait_probability = ratio(0, 1);
+    for (index, probability) in row_choices {
+        let mut policy_indices = vec![None; product.states.len() + 1];
+        policy_indices[product.states.len()] = Some(index);
+        let Some(ProductAction::FreeDelays(rows)) =
+            free_delays_choice(&product, state, &policy_indices)
+        else {
+            panic!("the row policy selects a FreeDelays row choice");
+        };
+        let [row] = rows.as_slice() else {
+            panic!("a row choice maps to one FreeDelays row: {rows:?}");
+        };
+        assert_eq!(row.given, vec![(draw.clone(), 1)]);
+        match row.free.as_slice() {
+            [(identity, 1)] if identity == &go => go_probability = go_probability.add(&probability),
+            [(identity, 1)] if identity == &wait => wait_probability = wait_probability.add(&probability),
+            other => panic!("the row policy maps to go or wait: {other:?}"),
+        }
+    }
+    assert!(go_probability > ratio(0, 1));
+    assert_eq!(go_probability.add(&wait_probability), ratio(1, 1));
+
+    let mut without_fairness = product.clone();
+    without_fairness.fairness.clear();
+    let result = decide_fair_reachability(
+        &without_fairness,
+        None,
+        &target,
+        UnboundedObjective::Min,
+        &ExactProbLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("unrestricted exact reachability");
+    assert_eq!(result.values.len(), without_fairness.states.len());
+    assert_eq!(result.values[state.index()], ExtRational::Finite(ratio(0, 1)));
+    let stay_component = result
+        .components
+        .iter()
+        .find(|component| component.states.contains(&state))
+        .expect("the stay loop is a fair end component without constraints");
+    assert_eq!(stay_component.states, vec![state]);
+    assert_eq!(stay_component.actions, vec![(state, wait)]);
+}
+
+/// FR-200-AC-11 (TC-635): two given rows retain their separate probabilities
+/// through fair interval solving and the row-indexed policy.
+#[trace("TC-635", "FR-200-AC-11")]
+#[test]
+fn fair_freedelays_multirow_interval_projects_bounds_and_policy() {
+    let (mut product, target, state, draw, go, _, goal, failure) = fair_free_delays_fixture();
+    replace_outgoing(
+        &mut product,
+        state,
+        vec![
+            free_delay_edge(state, goal, &draw, 1, &go, 1, ratio(1, 8)),
+            free_delay_edge(state, failure, &draw, 1, &go, 1, ratio(3, 8)),
+            free_delay_edge(state, goal, &draw, 3, &go, 1, ratio(1, 8)),
+            free_delay_edge(state, failure, &draw, 3, &go, 1, ratio(3, 8)),
+        ],
+    );
+
+    let UnboundedOutcome::Bounds { lower, upper, policy, .. } =
+        decide_fair_reachability_threshold(
+            &product,
+            &target,
+            &ratio(1, 5),
+            &ExactProbLimits {
+                precision_bits: 4,
+                max_precision_bits: 16,
+                max_rational_bits: 1,
+                ..ExactProbLimits::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("valid two-row fair interval product")
+    else {
+        panic!("the fair interval route returns bounds for the multi-row product");
+    };
+
+    assert_eq!(lower.len(), product.states.len());
+    assert_eq!(upper.len(), product.states.len());
+    for index in 0..product.states.len() {
+        let expected = if index == state.index() {
+            ratio(1, 4)
+        } else if target[index] {
+            ratio(1, 1)
+        } else {
+            ratio(0, 1)
+        };
+        assert!(lower[index].rational() <= expected, "lower[{index}]={:?}", lower[index]);
+        assert!(upper[index].rational() >= expected, "upper[{index}]={:?}", upper[index]);
+    }
+    assert!(lower[state.index()].rational() >= ratio(1, 5));
+    assert_eq!(policy.len(), product.states.len() + 2);
+    assert!(policy[product.states.len()..].iter().all(Option::is_some));
+    assert_eq!(
+        free_delays_choice(&product, state, &policy),
+        Some(ProductAction::FreeDelays(vec![
+            FreeDelayRow {
+                given: vec![(draw.clone(), 1)],
+                free: vec![(go.clone(), 1)],
+            },
+            FreeDelayRow {
+                given: vec![(draw, 3)],
+                free: vec![(go, 1)],
+            },
+        ]))
+    );
 }
 
 /// FSpec FR-411-AC-10 and FR-412-AC-7: EN-5 emits a fair-MDP certificate

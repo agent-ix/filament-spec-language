@@ -1812,7 +1812,9 @@ pub(super) fn read_documents(
             authority: identity.authority.clone(),
             identity: identity.identity.clone(),
         };
-        if format.as_deref() == Some("filament.protocol-recording/1") {
+        if format.as_deref()
+            == Some(fsl_foundation::wire_format::WireFormat::ProtocolRecording.as_str())
+        {
             recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
         }
         if documents.insert(reference, bytes).is_some() {
