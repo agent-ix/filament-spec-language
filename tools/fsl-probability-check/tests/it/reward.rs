@@ -331,7 +331,6 @@ fn subset_reward_lower_and_full_upper_are_accepted_by_the_separate_checker() {
         "objective": {"profile": "filament.probability-objective/value-bounds/v1", "base": base["objective"]},
         "kind": "lower",
         "values": values.iter().filter(|row| row["state"] != omitted).cloned().collect::<Vec<_>>(),
-        "ranking": base["ranking"],
     });
     for row in lower["values"].as_array_mut().unwrap() {
         if row["state"] == initial {
@@ -341,6 +340,8 @@ fn subset_reward_lower_and_full_upper_are_accepted_by_the_separate_checker() {
             row["value"] = json!({"numerator":"0","denominator":"1"});
         }
     }
+    let mut ranked_lower = lower.clone();
+    ranked_lower["ranking"] = base["ranking"].clone();
     let mut upper = json!({
         "identity": base["identity"],
         "objective": {"profile": "filament.probability-objective/value-bounds/v1", "base": base["objective"]},
@@ -374,6 +375,65 @@ fn subset_reward_lower_and_full_upper_are_accepted_by_the_separate_checker() {
             assert_eq!(run(&changed).1["rule"], "inequality-fails");
         }
     }
+    let mut request = base_request.clone();
+    request["certificate"] = json!(serde_json::to_string(&ranked_lower).unwrap());
+    request["claim_side"] = json!(true);
+    let (code, output) = run(&request);
+    assert_eq!(
+        code, 1,
+        "a supplied expected-reward lower ranking must be malformed: {output}"
+    );
+    assert_eq!(output["rule"], "malformed", "{output}");
+    assert_eq!(output["at"]["member"], "ranking", "{output}");
+}
+
+/// Expected-reward lower bounds need no progress ranking, while a supplied
+/// ranking is outside FR-1042's exact member contract.
+#[trace("TC-3212", "FR-1042-AC-19")]
+#[test]
+fn whole_expected_reward_lower_omits_and_rejects_ranking() {
+    let source = claim(
+        &retry_value_two(),
+        "Steady",
+        ">=",
+        "rational(1,2)",
+        "m.delivered",
+    );
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = CHECKER_FIXTURE_WORK;
+    let (requests, settlement) =
+        requests_with_accounting(&source, SNAPSHOT, limits, DOMAIN, accounting, false);
+    let [lower, _upper] = requests.as_slice() else {
+        panic!("the reward interval has two documents: {settlement:?}");
+    };
+    assert_eq!(document(lower)["kind"], "lower");
+    assert!(document(lower).get("ranking").is_none());
+    let (unranked_code, unranked_output) = run(lower);
+    assert_eq!(
+        unranked_code, 0,
+        "a whole expected-reward lower needs no ranking: {unranked_output}"
+    );
+
+    let (base_request, base_settlement) =
+        request_with(&source, SNAPSHOT, ExactProbLimits::default(), DOMAIN);
+    let base_request = base_request
+        .unwrap_or_else(|| panic!("the exact reward base has a document: {base_settlement:?}"));
+    let ranked = mutate(lower, |doc| {
+        doc["ranking"] = document(&base_request)["ranking"].clone();
+    });
+    let (code, output) = run(&ranked);
+    assert_eq!(
+        code, 1,
+        "a supplied expected-reward ranking must be malformed: {output}"
+    );
+    assert_eq!(output["rule"], "malformed", "{output}");
+    assert_eq!(output["at"]["member"], "ranking", "{output}");
 }
 
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
