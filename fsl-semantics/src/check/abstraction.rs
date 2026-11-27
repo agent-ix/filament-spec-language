@@ -18,7 +18,8 @@
 //! (`fsl_forms::AbstractionDeclarationForm`) carries each spelling as
 //! written.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
+use ix_trace_rs::implements;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
@@ -430,9 +431,22 @@ pub enum AbstractionRefusal {
     /// A `compose` declaration refused (FSpec FR-491), a `Relation` family
     /// declaration beside the relation.
     Composition(Box<super::composition::CompositionRefusal>),
+    /// The relation checks but has no nodes, which a step relation reading it
+    /// needs.
+    RelationNodes(Box<AbstractionNodeRefusal>),
 }
 
 impl AbstractionRefusal {
+    /// A relation with no nodes: the one mapping of `reason`, for `check` and
+    /// for a binding.
+    #[implements("FR-306-AC-6")]
+    pub(super) fn of_nodes(reason: AbstractionNodeRefusal) -> Self {
+        match classify_node_refusal(reason) {
+            Err(fault) => Self::Internal(fault),
+            Ok(reason) => Self::RelationNodes(Box::new(reason)),
+        }
+    }
+
     /// The catalog code.
     pub fn code(&self) -> Code {
         match self {
@@ -441,7 +455,8 @@ impl AbstractionRefusal {
             }
             Self::ConflictingBinding { .. }
             | Self::ConflictingField { .. }
-            | Self::MalformedDeclaration { .. } => Code::InvalidModelBinding,
+            | Self::MalformedDeclaration { .. }
+            | Self::RelationNodes(_) => Code::InvalidModelBinding,
             Self::Internal(_) => Code::RuntimeInvariant,
             Self::Guarantee(refusal) => refusal.code(),
             Self::Composition(refusal) => refusal.code(),
@@ -455,7 +470,7 @@ impl AbstractionRefusal {
             Self::ConflictingBinding { .. } | Self::ConflictingField { .. } => {
                 "conflicting-binding"
             }
-            Self::MalformedDeclaration { .. } => "malformed-declaration",
+            Self::MalformedDeclaration { .. } | Self::RelationNodes(_) => "malformed-declaration",
             Self::Internal(_) => "established-invariant-broken",
             Self::Guarantee(refusal) => refusal.cause(),
             Self::Composition(refusal) => refusal.cause(),
@@ -1137,7 +1152,7 @@ impl AbstractionNodes {
 }
 
 /// Why a checked relation has no nodes.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]
 pub enum AbstractionNodeRefusal {
     /// The key names no `model`/`object_type` node of an admitted domain
     /// package: the declaration is not an object type, or its node is a
@@ -1169,6 +1184,16 @@ pub enum AbstractionNodeRefusal {
     /// A binding's kind disagrees with its key's: a broken check invariant.
     #[error("a check invariant is broken: {0:?}")]
     Internal(Box<InternalFault>),
+}
+
+/// Separates a broken check invariant from an authored, typed refusal.
+pub(super) fn classify_node_refusal(
+    reason: AbstractionNodeRefusal,
+) -> Result<AbstractionNodeRefusal, InternalFault> {
+    match reason {
+        AbstractionNodeRefusal::Internal(fault) => Err(*fault),
+        reason => Ok(reason),
+    }
 }
 
 /// `path` as FSpec FR-451's `RustPath`: its `::`-separated segments.
