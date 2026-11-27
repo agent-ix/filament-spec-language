@@ -1809,9 +1809,9 @@ fn a_time_locked_sample_is_read_over_the_positions_it_has() {
     }
 }
 
-/// FSpec FR-420-AC-19 (FR-421-AC-14): a fraction over a run that ends in a
-/// time-lock counts 0, weighted by delay or not, so the sample is not
-/// unsupported and the exact route's value is the sampled one.
+/// FSpec FR-420-AC-19: a fraction over a run that ends in a time-lock counts
+/// 0, weighted by delay or not, so the sample is not unsupported. This runs
+/// the sampled route only; the exact route (FR-421-AC-14) is not asserted here.
 #[trace("TC-709", "FR-254-AC-4", "FSpec-FR-420-AC-7", "FSpec-FR-420-AC-19")]
 #[test]
 fn a_fraction_over_a_time_locked_sample_counts_zero() {

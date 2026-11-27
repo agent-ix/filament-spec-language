@@ -27,9 +27,9 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_eval::automaton::{translate_body, AutomatonError, Monitor, PropertyAutomaton, StateId};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    advance_timed, step_rewards, ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading,
-    TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState, TimedStop,
-    TimedSystem, TransitionId,
+    advance_timed, step_rewards, ModelSimState, ModelSimulationRequest, ModelSystem,
+    PredicateReading, TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState,
+    TimedStop, TimedSystem, TransitionId,
 };
 use fsl_eval::simulation::{
     ExpansionStop, NotSimulated, Permutation, ProbabilisticSampler, SampleStop, SampledPosition,
