@@ -15,7 +15,7 @@ executable and explicitly select the PR checkout. Pass changed paths relative
 to the selected workspace root:
 
 ```text
-target/debug/xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
+cargo xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
 ```
 
 The same explicit workspace selection is required when calling from elsewhere:

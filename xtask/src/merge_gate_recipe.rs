@@ -1248,7 +1248,7 @@ impl TestSelector {
         arguments
     }
 
-    #[implements("NFR-142-AC-8")]
+    #[implements("NFR-142-AC-9")]
     fn list_arguments(&self, ignored: bool) -> Vec<OsString> {
         let mut arguments = Vec::new();
         if let Some(filter) = &self.filter {
@@ -1583,7 +1583,7 @@ fn run_with_runner(
 }
 
 #[implements("NFR-142-AC-6")]
-#[implements("NFR-142-AC-8")]
+#[implements("NFR-142-AC-9")]
 fn run_with_verified_main(
     workspace_root: &Path,
     operands: &[OsString],
@@ -3084,7 +3084,7 @@ fn collect_test_names(items: &[syn::Item], modules: &mut Vec<String>, names: &mu
     }
 }
 
-#[implements("NFR-142-AC-8")]
+#[implements("NFR-142-AC-9")]
 fn build_test_binaries(
     workspace_root: &Path,
     selectors: &[TestSelector],
@@ -3207,7 +3207,7 @@ fn build_test_binaries(
     Ok(binaries)
 }
 
-#[implements("NFR-142-AC-8")]
+#[implements("NFR-142-AC-9")]
 fn preflight(
     workspace_root: &Path,
     selector: &TestSelector,
@@ -4297,7 +4297,7 @@ mod tests {
     }
 
     #[test]
-    #[trace("NFR-142-AC-8")]
+    #[trace("NFR-142-AC-9")]
     fn preflight_output_is_stable_and_builds_once_per_package() {
         let runner = FakeRunner::new();
         let selector = |package: &str, filter: &str| TestSelector {
@@ -4386,7 +4386,7 @@ mod tests {
     }
 
     #[test]
-    #[trace("NFR-142-AC-8")]
+    #[trace("NFR-142-AC-9")]
     fn local_module_without_tests_keeps_its_preflight_note() {
         let runner = FakeRunner {
             no_tests: true,
@@ -5186,6 +5186,21 @@ mod tests {
                 .to_string()
                 .contains("fsl-analyze/src/analyze/request.rs"),
             "{error}"
+        );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-9")]
+    fn repository_declares_xtask_cargo_alias() {
+        let config: toml::Value =
+            toml::from_str(include_str!("../../.cargo/config.toml")).expect("valid Cargo config");
+        assert!(
+            config
+                .get("alias")
+                .and_then(|aliases| aliases.get("xtask"))
+                .and_then(toml::Value::as_str)
+                == Some("run --locked -p xtask --"),
+            "a fresh checkout must expose `cargo xtask`"
         );
     }
 }
