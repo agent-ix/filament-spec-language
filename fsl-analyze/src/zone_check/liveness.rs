@@ -1236,7 +1236,7 @@ impl Run<'_, '_, '_> {
                 (initial, stages)
             }
         };
-        let badness = Badness::Undefined(live.instance.clone(), cause, locus);
+        let badness = Badness::Undefined(Some(live.instance.clone()), cause, locus);
         self.finite_counterexample(
             (initial, stages, 0),
             state.clone(),
