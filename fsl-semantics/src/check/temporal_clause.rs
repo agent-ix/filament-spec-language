@@ -635,6 +635,26 @@ impl TemporalClaim {
     }
 }
 
+/// The source positions of a clause's written parts that a package keeps none
+/// of: the span of each formula node, in arena order, and of the first `fair`
+/// constraint. The digital-clock route names the part it declines with them
+/// (FR-243). They say where the form was written and are no part of it, so
+/// two clauses that differ only here are equal: a clause rebuilt from a
+/// package equals its source form.
+#[derive(Clone, Default)]
+struct SourceParts {
+    formula_spans: Vec<Span>,
+    first_fairness_span: Option<Span>,
+}
+
+impl PartialEq for SourceParts {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for SourceParts {}
+
 /// A temporal clause checked by [`TemporalTraceFamily::check`] (FR-326
 /// "Outputs").
 #[derive(Clone, Eq, PartialEq)]
@@ -652,6 +672,7 @@ pub struct CheckedTemporalClause {
     horizon: Option<u64>,
     claim: TemporalClaim,
     formula: CheckedFormula,
+    source_parts: SourceParts,
     activation: Activation,
     /// An `on each` activation's trigger binder: its name and resolved type,
     /// which is the `over` parameter's type (FR-337).
@@ -701,6 +722,8 @@ impl DebugWith for CheckedTemporalClause {
             horizon,
             claim,
             formula,
+            // Not part of the form: see [`SourceParts`].
+            source_parts: _,
             activation,
             trigger,
             captures,
@@ -974,6 +997,18 @@ impl CheckedTemporalClause {
     /// `when` guard or the clause declares a capture (FR-337).
     pub fn reads_at_activation(&self) -> bool {
         matches!(self.activation, Activation::Each { guarded: true }) || !self.captures.is_empty()
+    }
+
+    /// The source span of the formula node `id`, `None` for a clause rebuilt
+    /// from a package.
+    pub fn formula_span(&self, id: FormulaNodeId) -> Option<Span> {
+        self.source_parts.formula_spans.get(id.index()).copied()
+    }
+
+    /// The source span of the first `fair` constraint the clause writes,
+    /// `None` when it writes none or was rebuilt from a package.
+    pub fn first_fairness_span(&self) -> Option<Span> {
+        self.source_parts.first_fairness_span
     }
 
     /// The clause's fairness set, each constraint once, in source order of
@@ -1832,6 +1867,15 @@ fn check_clause(
             model_subject,
         },
         formula,
+        source_parts: SourceParts {
+            formula_spans: form
+                .formula
+                .nodes()
+                .iter()
+                .map(TemporalNodeForm::span)
+                .collect(),
+            first_fairness_span: form.fairness.first().map(|constraint| constraint.span),
+        },
         activation,
         trigger,
         captures,
@@ -3192,6 +3236,7 @@ impl CheckedTemporalClause {
                 model_subject,
             },
             formula,
+            source_parts: SourceParts::default(),
             activation: form.activation,
             trigger: form.trigger,
             captures: form.captures,
