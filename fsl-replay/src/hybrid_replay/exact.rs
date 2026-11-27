@@ -1464,9 +1464,9 @@ pub(super) fn replay(
     // Every mode the trace visits has a polynomial flow: the last state of a
     // trace without `end` is still dwelled in (FSpec FR-193 "Exact replay").
     let mut flows = BTreeMap::new();
-    for k in 0..=n {
+    for (mode, _) in &points.states[..=n] {
         meter.charge()?;
-        let mode = points.states[k].0;
+        let mode = *mode;
         if flows.contains_key(&mode) {
             continue;
         }
