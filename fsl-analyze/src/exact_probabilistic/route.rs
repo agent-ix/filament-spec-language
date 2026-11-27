@@ -56,15 +56,11 @@ pub(crate) fn timed_route(
     Some(match en5_admission(conditions) {
         Admission::Digital | Admission::Region(RegionCause::Strict) => TimedRoute::Product,
         Admission::Region(cause) => TimedRoute::RegionNotBuilt(cause),
-        Admission::DigitalIfNoTimeLock | Admission::StrictIfNoTimeLock => {
-            match time_lock(timed, limits, cancel) {
-                TimeLockFact::None => TimedRoute::Product,
-                TimeLockFact::ReachableOrUnknown => {
-                    TimedRoute::RegionNotBuilt(RegionCause::TimeLock)
-                }
-                TimeLockFact::Stopped(stop) => TimedRoute::Stopped(stop),
-            }
-        }
+        Admission::DigitalIfNoTimeLock => match time_lock(timed, limits, cancel) {
+            TimeLockFact::None => TimedRoute::Product,
+            TimeLockFact::ReachableOrUnknown => TimedRoute::RegionNotBuilt(RegionCause::TimeLock),
+            TimeLockFact::Stopped(stop) => TimedRoute::Stopped(stop),
+        },
     })
 }
 
