@@ -83,6 +83,7 @@ fn request_integer_division(
 /// `"imported-function"`, `library` (a library identity) and `function` (a
 /// function identifier). Anything else, and a program that is an FR-480 array
 /// of units, refuses `invalid-request` naming `call_site`.
+#[ix_trace_rs::string_edge]
 fn request_call_site(
     value: Option<&serde_json::Value>,
     program_sources: usize,
@@ -1266,6 +1267,7 @@ pub struct SpineFailure {
 }
 
 impl From<ir::Diagnostic> for RunCause {
+    #[ix_trace_rs::string_edge]
     fn from(value: ir::Diagnostic) -> Self {
         let message = if value.path.ends_with(".formal_revision") {
             value.message.clone()
@@ -1476,6 +1478,7 @@ impl RunError {
             .with_empty_analyze_members()
     }
 
+    #[ix_trace_rs::string_edge]
     fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
         use fsl_replay::{OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
@@ -1981,6 +1984,7 @@ impl Intake<'_> {
 /// FR-664: refuse a current-snapshot `parameters` member before reading the
 /// program or model sources. The selected snapshot is cached for the normal
 /// clause reader so it is still consumed once.
+#[ix_trace_rs::string_edge]
 fn reject_current_parameters_before_sources(
     intake: &mut Intake<'_>,
     clause: Option<&wire::ClauseRun>,
@@ -2303,6 +2307,7 @@ fn run_extracted_clause_bytes(
 /// command harness. The binary driver owns argv parsing at its process
 /// boundary; this entry accepts the exact JSON adapter shape used by FSL's
 /// tests and returns the same inventory document.
+#[ix_trace_rs::string_edge]
 fn version_argv(bytes: &[u8], overrides: &RequestOverrides<'_>) -> Result<Option<RunResult>> {
     let value: serde_json::Value = match serde_json::from_slice(bytes) {
         Ok(value) => value,
@@ -2399,6 +2404,7 @@ struct ExtensionSetFile {
 
 /// FR-562: route the in-process `check --extensions` command surface to the
 /// source-only check API used by FSL's integration harness.
+#[ix_trace_rs::string_edge]
 fn check_argv(
     directory: &Path,
     bytes: &[u8],
@@ -3681,6 +3687,7 @@ fn package_input_from_formal_sources(
     Ok(packages)
 }
 
+#[ix_trace_rs::string_edge]
 fn package_input_from_selected_models(
     models: &[wire::Model],
     sources: &[FormalSource],
@@ -5005,6 +5012,7 @@ fn initial_subject(
 
 /// Prepare FR-100's function or clause selection without executing a stage.
 /// `source` is the program source, already read by bounded intake.
+#[ix_trace_rs::string_edge]
 fn read_integer_division(
     value: Option<&serde_json::Value>,
     member: &str,

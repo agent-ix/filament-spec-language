@@ -253,9 +253,9 @@ fn every_ignored_test_in_the_workspace_cites_a_ticket_or_ci_target() {
             ),
             // A file that cannot be parsed cannot be audited: it may hold no
             // ignore at all, so only a literal attribute is a finding.
-            Err(_) if text.contains("#[ignore") => {
-                findings.push(format!("{path}: unparsable source with an ignore attribute"))
-            }
+            Err(_) if text.contains("#[ignore") => findings.push(format!(
+                "{path}: unparsable source with an ignore attribute"
+            )),
             Err(_) => {}
         }
     }

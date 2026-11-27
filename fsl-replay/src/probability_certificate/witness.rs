@@ -7,8 +7,8 @@ use crate::{ExactProbLimits, ModelCheckLimit};
 use filament_exact::Value as SemanticValue;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    PackageModelInput, PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem,
-    TransitionId, same_values,
+    same_values, PackageModelInput, PredicateReading, ScheduledIdentity, TimedSubjectRefusal,
+    TimedSystem, TransitionId,
 };
 use fsl_package::CheckedPackage;
 use ix_trace_rs::implements;
@@ -19,8 +19,8 @@ mod step;
 mod subsystem;
 mod undefined;
 pub use undefined::{
-    ProbabilityUndefinedWitness, replay_probabilistic_undefined,
-    replay_probabilistic_undefined_with_work_scope,
+    replay_probabilistic_undefined, replay_probabilistic_undefined_with_work_scope,
+    ProbabilityUndefinedWitness,
 };
 
 /// A semantic operation, draw and resulting state in a finite witness.

@@ -150,6 +150,7 @@ fn malformed(reason: impl Into<String>) -> EvidenceLedgerReadError {
 /// unknown member, another `format`, entries out of key order or repeating a
 /// key, a `lineage` past the ceiling, or a `superseded` list whose length
 /// differs from its entry's `lineage`.
+#[ix_trace_rs::string_edge]
 pub fn read_evidence_ledger(bytes: &[u8]) -> Result<EvidenceLedgerFile, EvidenceLedgerReadError> {
     // The canonical reader refuses duplicate members before serde sees them.
     quire_canonical::read(bytes, u64::MAX).map_err(|error| malformed(error.to_string()))?;

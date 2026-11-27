@@ -5,7 +5,7 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
@@ -14,7 +14,7 @@ const UNIT: &str = "profile v = \"filament.value.complete/v1\";\n\
     function t using v(a: Int[0, 9]): Boolean pure { true }\n";
 
 /// S1 to S3 of [`UNIT`] followed by `declarations`.
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{UNIT}{declarations}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "w17"),

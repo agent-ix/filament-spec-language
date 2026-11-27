@@ -67,7 +67,21 @@
       },
       "unevaluatedProperties": false
     },
-    "item": {"type": "object", "required": ["request_index", "category"], "properties": {"request_index": {"type": "integer", "minimum": 0}, "result": {"type": "string"}, "category": {"type": "string"}, "diagnostics": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/itemDiagnostic"}}}, "additionalProperties": true},
+    "notDigitisable": {
+      "type": "object", "required": ["rule", "span"],
+      "properties": {
+        "rule": {"enum": ["clock-atom", "second-bounded-operator", "two-sided-interval", "nested-bounded-operator", "fairness-over-clock-constraint", "always-possible", "unique-path"]},
+        "span": {"type": "object", "required": ["start", "end"], "properties": {"start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}}, "unevaluatedProperties": false}
+      },
+      "unevaluatedProperties": false
+    },
+    "dispositionDiagnostic": {
+      "type": "object",
+      "properties": {"detail": {"type": "object", "properties": {"not_digitisable": {"$ref": "#/$defs/notDigitisable"}}}},
+      "if": {"required": ["detail"], "properties": {"detail": {"required": ["not_digitisable"]}}},
+      "then": {"required": ["code", "cause"], "properties": {"code": {"const": "invalid_runtime_input"}, "cause": {"const": "invalid-value"}}}
+    },
+    "item": {"type": "object", "required": ["request_index", "category"], "properties": {"diagnostic": {"$ref": "#/$defs/dispositionDiagnostic"}, "record": {"type": "object", "properties": {"diagnostic": {"$ref": "#/$defs/dispositionDiagnostic"}}}, "request_index": {"type": "integer", "minimum": 0}, "result": {"type": "string"}, "category": {"type": "string"}, "diagnostics": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/itemDiagnostic"}}}, "additionalProperties": true},
     "aggregate": {"type": "object", "required": ["status", "gaps"], "properties": {"status": {"type": "string"}, "gaps": {"type": "array", "items": {"type": "object", "required": ["request_index", "reason", "result"], "properties": {"request_index": {"type": "integer"}, "reason": {"type": "string"}, "result": {"type": "string"}}, "unevaluatedProperties": false}}}, "unevaluatedProperties": false}
   }
 }

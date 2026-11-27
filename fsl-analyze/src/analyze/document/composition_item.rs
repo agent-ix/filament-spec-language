@@ -26,26 +26,26 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use filament_contract_model::NativeJoinBudget;
 use filament_exact::NodeKey;
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_foundation::RequestIndex;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::{BarePackage, CheckedPackage, CompositionMemberValue, CompositionView};
 use fsl_replay::planner::{
-    DerivedSlot, ItemKey, PackageComposition, PackageCompositionRefusal, SlotKey, SlotRole,
-    composition_premises,
+    composition_premises, DerivedSlot, ItemKey, PackageComposition, PackageCompositionRefusal,
+    SlotKey, SlotRole,
 };
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
-use fsl_route::Registry;
 use fsl_route::request::ExtentClassification;
+use fsl_route::Registry;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{Capability, CheckedComposition, ComponentPackages, DeclarationFamily};
 use fsl_semantics::library::LibraryName;
-use serde_json::{Map, Value, json};
 use ix_trace_rs::implements;
+use serde_json::{json, Map, Value};
 
 use super::{
-    ItemSelection, ResolvedClaim, ResolvedItem, SubjectSelection, candidate_list, invalid_kind,
-    resolve_one, unknown_option,
+    candidate_list, invalid_kind, resolve_one, unknown_option, ItemSelection, ResolvedClaim,
+    ResolvedItem, SubjectSelection,
 };
 use crate::analyze::{
     AnalyzeLimits, ClaimItem, CompositionItem, Diagnostic, GraphUnavailable, ItemForm, ItemOptions,
@@ -1028,8 +1028,8 @@ fn restate<F: CompositionFront>(
     caller: &Value,
 ) -> Result<Value, Box<ResolvedItem>> {
     use fsl_semantics::check::wire_id::{
-        ComponentKeyRefusal, check_component_key_package, component_key_structural,
-        key_holds_index_segment,
+        check_component_key_package, component_key_structural, key_holds_index_segment,
+        ComponentKeyRefusal,
     };
     let Value::Array(entries) = caller else {
         return Ok(caller.clone());

@@ -269,6 +269,7 @@ pub(super) enum Direction {
 }
 
 impl Direction {
+    #[ix_trace_rs::string_edge]
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "minimize" => Some(Self::Minimize),
@@ -1278,6 +1279,7 @@ fn read_limit(
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn select_claim<'p>(
     package: &'p filament_contract_model::CheckedPackageV2,
     requested: Option<&str>,

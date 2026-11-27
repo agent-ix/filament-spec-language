@@ -10,16 +10,16 @@ use fsl_foundation::SourceIdentity;
 use fsl_package::ObligationIdentity;
 use fsl_replay::spine::{self, ParseRequest};
 use fsl_replay::{
-    DependencyEntryWire, DependencyInput, EnvelopeSource, QualifiedName, ReplayLimits,
-    ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
-    StateClauseCounterexample, StateEnvironment, SuppliedLibrary, WitnessEnvelope, WitnessPacket,
-    call_site, replay, replay_state_clause,
+    call_site, replay, replay_state_clause, DependencyEntryWire, DependencyInput, EnvelopeSource,
+    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplaySource,
+    ReplayTargetMembers, RequestTargetWire, StateClauseCounterexample, StateEnvironment,
+    SuppliedLibrary, WitnessEnvelope, WitnessPacket,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,

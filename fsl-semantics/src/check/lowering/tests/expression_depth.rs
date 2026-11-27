@@ -9,8 +9,8 @@
 //! was checked.
 
 use super::*;
+use crate::check::depth_forms::{declarations, Form, FORMS};
 use crate::check::Obligation;
-use crate::check::depth_forms::{FORMS, Form, declarations};
 use filament_semantic_value::call::WrongSnapshotCause;
 use filament_semantic_value::checking::CheckMode;
 
@@ -26,7 +26,7 @@ pub(super) fn check_on_small_stack(
     form: Form,
     levels: usize,
     limits: CheckingLimits,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {
@@ -42,7 +42,9 @@ pub(super) fn check_on_small_stack(
 }
 
 /// What a check gives: checked, or the distinct causes it refused on.
-fn outcome(checked: Result<CheckedGraph, Vec<CheckRefusal>>) -> Result<(), Vec<CheckCause>> {
+fn outcome(
+    checked: Result<CheckedGraph, Vec<SemanticCheckRefusal>>,
+) -> Result<(), Vec<CheckCause>> {
     checked.map(|_| ()).map_err(|refusals| {
         let mut causes: Vec<CheckCause> = Vec::new();
         for refusal in refusals {

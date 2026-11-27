@@ -3658,6 +3658,7 @@ fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeL
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn package_artifact_pointer(pointer: &str) -> String {
     match pointer.strip_prefix("/package") {
         Some("") => String::new(),

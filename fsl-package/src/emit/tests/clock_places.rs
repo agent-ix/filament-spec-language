@@ -5,7 +5,7 @@
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{CheckedTimedModel, read_checked_package_v2};
+use crate::checked_v2::{read_checked_package_v2, CheckedTimedModel};
 use crate::emit::timed_models_of;
 use filament_contract_model::CheckedPackageEvidence;
 use filament_semantic_value::checking::CheckMode;
@@ -631,19 +631,17 @@ fn clock_reference_fields_emit_and_read_back_as_data() {
     let wire = wire(&emission);
     assert!(!emission.equality_producer_identity_rows().is_empty());
     for row in emission.equality_producer_identity_rows() {
-        assert!(
-            nodes(&wire).iter().any(|node| node["node_id"]
-                == serde_json::to_value(row.checked_node()).expect("node id"))
-        );
+        assert!(nodes(&wire)
+            .iter()
+            .any(|node| node["node_id"]
+                == serde_json::to_value(row.checked_node()).expect("node id")));
         assert_eq!(row.source_map_entry().node_id, *row.checked_node());
-        assert!(
-            wire["checked_term_data"]["equality_decisions"]
-                .as_array()
-                .expect("equality decisions")
-                .iter()
-                .any(|decision| decision["application"]
-                    == serde_json::to_value(row.checked_node()).expect("application id"))
-        );
+        assert!(wire["checked_term_data"]["equality_decisions"]
+            .as_array()
+            .expect("equality decisions")
+            .iter()
+            .any(|decision| decision["application"]
+                == serde_json::to_value(row.checked_node()).expect("application id")));
     }
     clock_reference_field_readback(document, emission, &wire);
 }

@@ -199,6 +199,7 @@ const MAX_TYPED_DEPTH: usize = 64;
 
 /// Checks `value` against the schema's `TypedValue` definition (FSpec
 /// FR-181): a closed object per `type`.
+#[ix_trace_rs::string_edge]
 fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskProductShapeRefusal> {
     if depth > MAX_TYPED_DEPTH {
         return refuse(pointer, TaskProductShapeReason::NotCanonical);

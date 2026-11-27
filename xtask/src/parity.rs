@@ -55,6 +55,7 @@ pub(crate) fn report_with_inputs(inputs: &ParityInputs) -> Result<fsl_conformanc
         .map_err(|refusal| Error::QualificationRefusal(refusal_message(refusal)))
 }
 
+#[ix_trace_rs::string_edge]
 fn corpus_arg(operands: &[OsString]) -> Result<Option<PathBuf>> {
     let mut corpus = None;
     let mut index = 0;

@@ -8,6 +8,7 @@ use super::{wire, Result, RunCause};
 
 /// Validate this member before dispatch to a run member's own strict reader,
 /// including readers that strip `export` before decoding the run request.
+#[ix_trace_rs::string_edge]
 pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
     use fsl_foundation::serde_object::Object;
 
@@ -40,6 +41,7 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
                 fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                     f.write_str("a JSON object")
                 }
+                #[ix_trace_rs::string_edge]
                 fn visit_map<M: MapAccess<'de>>(
                     self,
                     mut map: M,
@@ -184,6 +186,7 @@ impl<'de> Visitor<'de> for SourceSeed<'_> {
         f.write_str("a five-member source selection object")
     }
 
+    #[ix_trace_rs::string_edge]
     fn visit_map<M: MapAccess<'de>>(
         self,
         mut map: M,

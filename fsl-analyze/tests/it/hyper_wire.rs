@@ -323,10 +323,9 @@ fn package_hyper_disposition_case(
         &snapshots,
         json!({"items": [{"claim": "Other"}, {"claim": "Universal"}]}),
     );
-    let source_document: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&source_path).expect("source request exists"),
-    )
-    .expect("source request is JSON");
+    let source_document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request exists"))
+            .expect("source request is JSON");
     let (members, _) = package_selection(&ws, &source_document["request"]);
     ws.write("program.fsl", b"not a native unit");
     std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
@@ -340,13 +339,14 @@ fn package_hyper_disposition_case(
     analyze(&package_path)
 }
 
-fn assert_package_hyper_hp4_has_no_target_and_keeps_universal(run: &crate::analyze_cli_support::Run) {
+fn assert_package_hyper_hp4_has_no_target_and_keeps_universal(
+    run: &crate::analyze_cli_support::Run,
+) {
     let document = run.document();
     let unsupported = run.item(0);
     assert_eq!(label(&unsupported), "unsupported", "{document}");
     assert_eq!(
-        unsupported["record"]["diagnostic"]["cause"],
-        "unsupported-requested-capability",
+        unsupported["record"]["diagnostic"]["cause"], "unsupported-requested-capability",
         "{document}"
     );
     assert!(unsupported["request"].is_null(), "{document}");
@@ -434,14 +434,13 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
             {"claim": "FixedSample"}
         ]}),
     );
-    let source_document: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&source_path).expect("source request exists"),
-    )
-    .expect("source request is JSON");
+    let source_document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request exists"))
+            .expect("source request is JSON");
     let (members, _) = package_selection(&ws, &source_document["request"]);
     ws.write("program.fsl", b"not a native unit");
     std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
-    .expect("remove the fixture's retained sources");
+        .expect("remove the fixture's retained sources");
     let package_path = ws.write(
         "package-analyze.json",
         json!({"format": "native-analyze/1", "request": members})
@@ -451,12 +450,15 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
     let run = analyze(&package_path);
     let document = run.document();
     assert_eq!(run.exit, 21, "{document}");
-    assert_eq!(document["items"].as_array().map(Vec::len), Some(5), "{document}");
+    assert_eq!(
+        document["items"].as_array().map(Vec::len),
+        Some(5),
+        "{document}"
+    );
     let hp4 = run.item(0);
     assert_eq!(label(&hp4), "unsupported", "{document}");
     assert_eq!(
-        hp4["record"]["diagnostic"]["cause"],
-        "unsupported-requested-capability",
+        hp4["record"]["diagnostic"]["cause"], "unsupported-requested-capability",
         "{document}"
     );
     assert!(hp4["request"].is_null(), "{document}");
@@ -477,8 +479,7 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
     let fixed_sample = run.item(3);
     assert_eq!(label(&fixed_sample), "unsupported", "{document}");
     assert_eq!(
-        fixed_sample["record"]["diagnostic"]["cause"],
-        "unsupported-requested-capability",
+        fixed_sample["record"]["diagnostic"]["cause"], "unsupported-requested-capability",
         "{document}"
     );
     assert!(fixed_sample["request"].is_null(), "{document}");

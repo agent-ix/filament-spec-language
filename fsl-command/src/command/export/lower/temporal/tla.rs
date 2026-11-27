@@ -895,6 +895,7 @@ fn boolean(value: bool) -> &'static str {
 // ---- Deterministic monitors ------------------------------------------------
 
 /// `left /\ right`, dropping a `TRUE` operand.
+#[ix_trace_rs::string_edge]
 fn both(left: &str, right: &str) -> String {
     if left == "TRUE" {
         right.to_owned()

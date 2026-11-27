@@ -4,8 +4,8 @@
 use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::hyper::{
-    FiniteHyperOutcome, FinitePopulationError, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
-    FiniteTracePopulation, FiniteTupleOutcome, evaluate_finite_hyper,
+    evaluate_finite_hyper, FiniteHyperOutcome, FinitePopulationError, FiniteQuantifier,
+    FiniteTrace, FiniteTraceClosure, FiniteTracePopulation, FiniteTupleOutcome,
 };
 use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -43,6 +43,7 @@ impl PartialEq for FiniteRecord {
     }
 }
 
+#[ix_trace_rs::string_edge]
 pub(super) fn item<'a>(
     analysis: &'a RunInput<'a>,
     binding: &SubjectBinding<'a>,

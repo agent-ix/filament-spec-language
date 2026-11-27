@@ -178,6 +178,7 @@ fn diagnostic(value: &Diagnostic) -> types::Diagnostic<'_> {
 
 #[implements("FR-026-AC-3")]
 #[implements("FR-026-AC-4")]
+#[ix_trace_rs::string_edge]
 pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_json::Error> {
     let (stage, details) = match &error.cause {
         RunCause::Io { path, error } => (

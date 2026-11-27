@@ -60,6 +60,7 @@ mod plan_search;
 mod prob_world;
 mod protocol_bounded_support;
 mod protocol_composition;
+mod protocol_conformance;
 mod protocol_counted_support;
 mod protocol_item_bounds;
 mod provider_external_contract;

@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
-    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
+    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
+    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -22,9 +22,8 @@ use ix_trace_rs::implements;
 use super::limits::CommandLimits;
 use super::settle::Settle;
 use super::{
-    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire,
+    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -662,9 +661,9 @@ mod package_intake_tests {
     use super::*;
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
     use fsl_eval::simulation::model::PendingPackageForm;
-    use fsl_foundation::Span;
     use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::setting::Setting;
+    use fsl_foundation::Span;
     use fsl_semantics::check::{
         AssemblyCause, AssemblyError, AssemblyRefusal, PackageClauseRefusal,
     };
@@ -1270,6 +1269,7 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
 /// before any item resolves when a compile member sits beside it, the reader
 /// refuses the bytes, a recorded domain package is not supplied, or a
 /// supplied one is not recorded.
+#[ix_trace_rs::string_edge]
 fn admit_package<'d>(
     directory: &'d Path,
     dependent_bytes: usize,
