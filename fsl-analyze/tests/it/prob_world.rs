@@ -1267,6 +1267,42 @@ pub(crate) fn fair_bounds_w(extra: &str) -> Model {
     }
 }
 
+/// Low-level fair-product fixture for FR-200's FreeDelays evaluator tests:
+/// `draw` supplies a distinct given-delay identity, while `wait` and `go` are
+/// the free scheduler choices. The focused tests rewrite its product into the
+/// row-factored form because checked-source workloads do not carry fairness.
+pub(crate) fn fair_free_delays(extra: &str) -> Model {
+    Model {
+        package: "test/fair-free-delays",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+            ("f", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "draw", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "g", "f"], deletes: false },
+        ],
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n",
+            "post Waited using v on M::W::wait {{ self.s = true }}\n",
+            "pre DrawAtS using v on M::W::draw {{ self.s }}\n",
+            "post Drew using v on M::W::draw {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::go {{ self.s }}\n",
+            "post Went using v on M::W::go {{ self.s = false and self.g = success and self.f = not success }}\n",
+            "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Stop using v on M when {{ self.g or self.f }};\n",
+            "{}"
+        ), extra),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),
+    }
+}
+
 /// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
 /// only action loops and `go` is disabled; `wait` instead exposes an unfair
 /// live cycle at `s`.
