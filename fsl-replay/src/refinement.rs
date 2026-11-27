@@ -50,6 +50,7 @@ pub use step::{
     check_protocol_state_relations, check_protocol_step, check_protocol_step_with_transition_limit,
     check_step, check_step_for_model, protocol_observation_label, ConcreteStep,
     ProtocolRelationError, ProtocolStateRelation, RefinementPosition,
+    PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES,
 };
 
 /// Canonical abstract step class spelling for one admitted protocol

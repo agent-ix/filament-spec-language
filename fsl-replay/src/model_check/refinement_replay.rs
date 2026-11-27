@@ -130,14 +130,20 @@ pub fn replay_protocol_assumption_witness(
             disagreement(Category::Success),
         ));
     };
-    let Some((mut candidate, initial_closure)) = protocol_initial_closure(
+    let closure = match protocol_initial_closure(
         refinement,
         systems,
         protocol,
         &concrete,
         &witness.path.protocol_initial,
-    )?
-    else {
+    ) {
+        Ok(closure) => closure,
+        Err(InitialClosureStop::Limit(reached)) => {
+            return Ok(ProtocolAssumptionReplaySettlement::Stopped(reached))
+        }
+        Err(InitialClosureStop::Refused(refusal)) => return Err(refusal),
+    };
+    let Some((mut candidate, initial_closure)) = closure else {
         return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
             disagreement(Category::Success),
         ));
@@ -446,13 +452,31 @@ type InitialClosure = (
     )>,
 );
 
+/// Why the initial closure of an assumption witness ended without a path.
+enum InitialClosureStop {
+    /// The replay's transition or retained-byte allowance ran out.
+    Limit(ReachedLimit),
+    /// The replay cannot be carried out.
+    Refused(ReplayRefusal),
+}
+
+impl From<ReplayRefusal> for InitialClosureStop {
+    fn from(refusal: ReplayRefusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
+/// The closure of the protocol's initial roots over its internal classes,
+/// charged to the replay's allowance (FR-255: `model_check.max_transitions`
+/// and `analysis.retained_bytes`) before each state is stored.
+#[implements("FR-255-AC-47")]
 fn protocol_initial_closure(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     protocol: &crate::refinement::AbstractProtocolSystem<'_>,
     concrete: &fsl_eval::simulation::model::ModelSimState,
     target: &[u8],
-) -> Result<Option<InitialClosure>, ReplayRefusal> {
+) -> Result<Option<InitialClosure>, InitialClosureStop> {
     use std::collections::{BTreeSet, VecDeque};
 
     let history = initial_history(refinement, &systems.concrete, concrete.state());
@@ -543,6 +567,7 @@ fn protocol_initial_closure(
             let (next_key, _) = protocol
                 .state_key(&next)
                 .map_err(|_| fault("assumption-replay-protocol-state-has-a-key"))?;
+            let key_bytes = u64::try_from(next_key.len()).unwrap_or(u64::MAX);
             if !seen.insert(next_key) {
                 continue;
             }
@@ -550,6 +575,11 @@ fn protocol_initial_closure(
             if expanded > protocol.model().max_candidates() {
                 return Ok(None);
             }
+            let stored =
+                key_bytes.saturating_add(crate::refinement::PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES);
+            protocol
+                .charge_replay(1, stored)
+                .map_err(InitialClosureStop::Limit)?;
             let mut next_path = path.clone();
             next_path.push((transition, next.clone()));
             queue.push_back((root.clone(), next, next_path));

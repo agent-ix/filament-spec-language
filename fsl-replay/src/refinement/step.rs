@@ -450,7 +450,7 @@ pub fn check_protocol_initial(
         concrete_initial,
         max,
         consumed,
-        None,
+        Some(&protocol.replay_retained()),
     )?;
     protocol.charge_replay_transitions(result.abstract_successors);
     Ok(result)
@@ -579,7 +579,7 @@ pub fn check_protocol_step(
         step,
         max,
         consumed,
-        None,
+        Some(&protocol.replay_retained()),
     );
     protocol.charge_replay_transitions(result.abstract_successors);
     result

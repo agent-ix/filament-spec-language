@@ -420,6 +420,105 @@ fn a_stronger_concrete_assumption_never_settles_proved() {
     ));
 }
 
+/// FR-255-AC-47 (QSL-3573): a replay over a protocol system stores no closure
+/// path past its `analysis.retained_bytes` allowance and expands no more
+/// transitions than the published `model_check.max_transitions` for a direct
+/// caller: with one byte, `check_protocol_initial` stops at its first closure
+/// path naming the limit. The assumption-witness replay charges the closure
+/// states it stores through the same allowance (no fixture here has an
+/// internal initial closure to exceed it).
+#[trace("TC-553", "FR-255-AC-47")]
+#[test]
+fn a_direct_protocol_check_stops_at_the_retained_allowance() {
+    let source = cas_twice(true, false)
+        .replace(
+            "protocol Twice",
+            "pre PeekPre using v on Impl::Counter::peek { self.value = 2 }\nprotocol Twice",
+        )
+        .replace(
+            "step Impl::Counter::peek -> stutter;",
+            "step Impl::Counter::peek -> stutter;\nassume fair weak whole Impl::Counter::beginA;",
+        );
+    let world = World::with_internals(
+        Variant {
+            peek: true,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+    );
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            retained: None,
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+    let SafetyOutcome::Undecided {
+        cause: fsl_replay::SafetyUndecided::ProtocolAssumptionNotEstablished(witness),
+        ..
+    } = &outcome.safety
+    else {
+        panic!("the strengthened assumption is not established");
+    };
+    let systems = open_protocol_systems(
+        world.refinement(),
+        &world.concrete_request(UNLIMITED),
+        world.package(),
+        vec![world.abstract_initial()],
+        protocol_binding().over,
+        &[],
+    )
+    .expect("the assumption lasso replays over its admitted systems");
+    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+    let reached = fsl_replay::ReachedLimit {
+        limit: fsl_replay::ModelCheckLimit::AnalysisRetainedBytes,
+        value: 1,
+    };
+    assert_eq!(protocol.replay_transitions(), (100_000_000, 0));
+    assert_eq!(
+        protocol
+            .replay_retained()
+            .bound(fsl_foundation::Setting::AnalysisRetainedBytes),
+        4_294_967_296
+    );
+    assert_eq!(fsl_replay::value_check::DEFAULT_MAX_CASES, 1_048_576);
+    protocol.bound_replay_retained(1);
+    let initial = systems.concrete.initial_states()[0].clone();
+    let verdict = check_protocol_initial(
+        world.refinement(),
+        &systems.concrete,
+        &systems.abstract_system,
+        protocol,
+        0,
+        initial.state(),
+    )
+    .expect("the initial state settles")
+    .verdict;
+    assert!(
+        matches!(&verdict, StepVerdict::Stopped(stop) if *stop == reached),
+        "{verdict:?}"
+    );
+    // The lasso's initial closure is empty here, so the replay stores nothing
+    // and the one-byte allowance does not stop it.
+    protocol.bound_replay_retained(1);
+    assert_eq!(
+        replay_protocol_assumption_witness(world.refinement(), &systems, witness)
+            .expect("the replay settles"),
+        ProtocolAssumptionReplaySettlement::Reproduced
+    );
+}
+
 /// FR-148-AC-6 (TC-553): the protocol's derived weak whole scheduler
 /// constraint is checked over protocol transitions and implies the matching
 /// concrete weak whole operation assumption on the paired product.
