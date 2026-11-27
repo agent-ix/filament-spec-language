@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! ADR-037's FSL wire module: the one declared type of each value more than
 //! one format writes and reads (FSpec FR-331's State locus, FR-181's source
-//! transition identity and FR-413's claim bound).
+//! transition identity, FR-413's claim bound, FR-418's DBM entry and the
+//! checked-package v2 `Rational` object).
 //!
 //! Each type has one `Serialize` writer and one strict `read`, which names the
 //! member at fault and why. Each format maps that [`WireDefect`] to its own
@@ -9,6 +10,8 @@
 //! `MEMBERS` first where its refusal order is specified.
 
 mod bound;
+mod dbm;
+mod rational;
 mod state;
 mod transition;
 
@@ -16,6 +19,8 @@ use serde::de::{Deserializer, Error as _, MapAccess, Visitor};
 use serde_json::{Map, Value};
 
 pub use bound::{BoundForm, ProbabilisticBound};
+pub use dbm::DbmBound;
+pub use rational::RationalObject;
 pub use state::{state_key_from_text, state_key_text, StateLocus};
 pub use transition::TransitionIdentity;
 

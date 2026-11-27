@@ -244,7 +244,9 @@ impl ClauseProgress {
     /// An internal fault if the typed metadata cannot be serialized.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ClauseRefusal> {
         let wire = Wire {
-            format: "filament.clause-progress/1".to_owned(),
+            format: fsl_foundation::wire_format::WireFormat::ClauseProgress
+                .as_str()
+                .to_owned(),
             timestamped: self.timestamped,
             first: self.first,
             fixed: self.fixed,
@@ -278,7 +280,7 @@ impl ClauseProgress {
         capacity: u64,
     ) -> Result<Self, ClauseRefusal> {
         let wire: Wire = serde_json::from_slice(bytes).map_err(|_| ClauseRefusal::StateMismatch)?;
-        if wire.format != "filament.clause-progress/1"
+        if wire.format != fsl_foundation::wire_format::WireFormat::ClauseProgress.as_str()
             || wire.timestamped != (kind == ClauseTraceKind::Timestamped)
             || wire
                 .first
