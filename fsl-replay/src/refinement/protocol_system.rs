@@ -61,6 +61,17 @@ pub struct AbstractProtocolSystem<'a> {
     replay_transitions: ReplayTransitions,
 }
 
+/// Why a replay charge was not made.
+#[derive(Debug)]
+pub(crate) enum ReplayStop {
+    /// A limit of the replay's allowance was reached.
+    Limit(ReachedLimit),
+    /// The run was cancelled; it decides nothing.
+    Cancelled,
+    /// The byte charge could not be accounted (an internal fault).
+    Fault,
+}
+
 /// The total protocol-closure allowance of one replay, and what its checks
 /// have used so far: transitions, and the bytes its stored closure paths
 /// retain (`analysis.retained_bytes`). A system nobody bounded runs under the
@@ -104,6 +115,7 @@ fn fresh_retained(bound: Option<u64>) -> Budget {
 }
 
 impl Default for ReplayTransitions {
+    #[implements("FR-255-AC-47")]
     fn default() -> Self {
         Self {
             max: std::cell::Cell::new(
@@ -196,6 +208,15 @@ impl<'a> AbstractProtocolSystem<'a> {
         *self.replay_transitions.retained.borrow_mut() = fresh_retained(None);
     }
 
+    /// Charge the retained bytes of this replay's closures to the caller's
+    /// item allowance `retained` instead of a fresh one: a clone shares its
+    /// counters, so the check and the replay spend one allowance
+    /// (FR-255-AC-28). Call after [`Self::bound_replay_transitions`].
+    #[implements("FR-255-AC-47")]
+    pub fn share_replay_retained(&self, retained: &Budget) {
+        *self.replay_transitions.retained.borrow_mut() = retained.clone();
+    }
+
     /// Bound the bytes the closure paths of one replay retain to `bytes`
     /// (`analysis.retained_bytes`), counting from none used. Call after
     /// [`Self::bound_replay_transitions`], which restores the default.
@@ -218,14 +239,14 @@ impl<'a> AbstractProtocolSystem<'a> {
     ///
     /// The limit reached: `max_transitions` or `analysis.retained_bytes`.
     #[implements("FR-255-AC-47")]
-    pub(crate) fn charge_replay(&self, expanded: u64, bytes: u64) -> Result<(), ReachedLimit> {
+    pub(crate) fn charge_replay(&self, expanded: u64, bytes: u64) -> Result<(), ReplayStop> {
         let (max, consumed) = self.replay_transitions();
         let total = consumed.saturating_add(expanded);
         if total > max {
-            return Err(ReachedLimit {
+            return Err(ReplayStop::Limit(ReachedLimit {
                 limit: ModelCheckLimit::MaxTransitions,
                 value: max,
-            });
+            }));
         }
         match self
             .replay_retained()
@@ -235,14 +256,12 @@ impl<'a> AbstractProtocolSystem<'a> {
                 self.replay_transitions.consumed.set(total);
                 Ok(())
             }
-            Err(BudgetStop::Limit(limit)) => Err(ReachedLimit {
+            Err(BudgetStop::Limit(limit)) => Err(ReplayStop::Limit(ReachedLimit {
                 limit: ModelCheckLimit::AnalysisRetainedBytes,
                 value: limit.configured_bound(),
-            }),
-            Err(BudgetStop::Cancelled(_) | BudgetStop::Accounting(_)) => Err(ReachedLimit {
-                limit: ModelCheckLimit::AnalysisRetainedBytes,
-                value: 0,
-            }),
+            })),
+            Err(BudgetStop::Cancelled(_)) => Err(ReplayStop::Cancelled),
+            Err(BudgetStop::Accounting(_)) => Err(ReplayStop::Fault),
         }
     }
 

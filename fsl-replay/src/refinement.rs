@@ -42,15 +42,16 @@ pub use map::{
 };
 pub use outcome::{LivenessHalf, RefinementOutcome, SafetyOutcome, SafetyUndecided};
 pub use package::{PackageRefinement, PackageRefinementRefusal};
+pub(crate) use protocol_system::ReplayStop;
 pub use protocol_system::{
     AbstractProtocolSystem, ProtocolAssumptionFairness, ProtocolCandidate, RequiredTemporalFairness,
 };
+pub(crate) use step::closure_path_node_bytes;
 pub use step::{
     check_initial, check_protocol_initial, check_protocol_initial_with_transition_limit,
     check_protocol_state_relations, check_protocol_step, check_protocol_step_with_transition_limit,
     check_step, check_step_for_model, protocol_observation_label, ConcreteStep,
     ProtocolRelationError, ProtocolStateRelation, RefinementPosition,
-    PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES,
 };
 
 /// Canonical abstract step class spelling for one admitted protocol

@@ -973,7 +973,7 @@ fn c10_a_zero_family_steps_limit_denies_the_first_followed_edge() {
 /// A chain of `n` links holds `n + 1` types and 0 + 1 + ... + n inherited
 /// members besides its `n + 1` declared ones, so 1,001 + 501,501 = 502,502
 /// effective declarations at `n` = 1,000.
-#[trace("FR-083-AC-5", "FR-255-AC-46")]
+#[trace("FR-083-AC-5", "FR-255-AC-45", "FR-255-AC-46")]
 #[test]
 fn a_thousand_link_chain_normalizes_and_links_at_every_published_default() {
     const EDGES: u64 = 1_000;

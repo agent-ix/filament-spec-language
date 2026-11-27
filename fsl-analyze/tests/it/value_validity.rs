@@ -1038,6 +1038,37 @@ fn an_unsatisfiable_domain_is_inconclusive_with_the_value_check_vacuity_cause() 
     assert_eq!(item["cause"]["kind"], "kani-vacuous-proof", "{item}");
 }
 
+/// FR-255-AC-47: a direct `evaluate` runs under the published default case
+/// budget (`DEFAULT_MAX_CASES`, `value_check.max_cases`'s default), not an
+/// unbounded one; a budget of no cases reports `CaseLimit` without
+/// evaluating, and one case admits the single body evaluation.
+#[trace("FR-255-AC-47")]
+#[test]
+fn a_value_evaluation_over_its_case_budget_reports_the_case_limit() {
+    let package = package_of("function subject using v(x: Int[0, 3]): Boolean pure { x >= 0 }");
+    let key = key_of(
+        &package,
+        "subject",
+        &serde_json::json!({"role": "claim", "ordinal": 0}),
+    );
+    let target = ValueTarget::select(&package, "subject", &key).unwrap();
+    let at = [integer(1)];
+    let cancel = Cancel::new();
+    assert_eq!(fsl_replay::value_check::DEFAULT_MAX_CASES, 1_048_576);
+    assert!(matches!(
+        target.evaluate(&at, &cancel).unwrap(),
+        Verdict::Holds
+    ));
+    assert!(matches!(
+        target.evaluate_with_case_budget(&at, &cancel, 0).unwrap(),
+        (Verdict::CaseLimit, 0)
+    ));
+    assert!(matches!(
+        target.evaluate_with_case_budget(&at, &cancel, 1).unwrap(),
+        (Verdict::Holds, 1)
+    ));
+}
+
 /// The mutation kills at the replay: a replay compares the violation it
 /// reproduces with the one it was asked to confirm.
 #[trace("FSpec-TC-972", "FSpec-FR-483-AC-3")]

@@ -34,7 +34,9 @@ use super::contracts::{conjunction, operation_conjunction, Conjunction};
 use super::domain::{Domain, Odometer};
 use super::encode::{self, value_enc, values_equal, Typing};
 use super::footprints::ReadCheck;
-use super::walk::{stop, Applied, CandidateCount, ContractFinding, FindingCase, Row, Selected, Walk};
+use super::walk::{
+    stop, Applied, CandidateCount, ContractFinding, FindingCase, Row, Selected, Walk,
+};
 use super::{
     handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
     FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,

@@ -17,7 +17,9 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use super::walk::{rows_of, sorted_contract_findings, stop, walk_of, Applied, CandidateCount, Row, Walk};
+use super::walk::{
+    rows_of, sorted_contract_findings, stop, walk_of, Applied, CandidateCount, Row, Walk,
+};
 use super::{contracts, frames, Application, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::ExpansionStop;
 

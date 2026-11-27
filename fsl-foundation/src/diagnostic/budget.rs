@@ -11,6 +11,7 @@ use super::LimitExceeded;
 use crate::setting::CountKind;
 use crate::Setting;
 use filament_semantic_value::catalog::CatalogCoded;
+use ix_trace_rs::implements;
 
 /// The stage and accounting contract that own a budget.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -64,6 +65,7 @@ impl BudgetDenial {
     /// A denied meter charge: for a cumulative counter `charge.next_charge`
     /// more on top of `charge.consumed` would pass `limit`; for a high-water
     /// counter the size `charge.next_charge` passes it.
+    #[implements("FR-255-AC-46")]
     pub fn charge(setting: Setting, limit: u64, charge: DeniedCharge) -> Self {
         Self {
             setting,

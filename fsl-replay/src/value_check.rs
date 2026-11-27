@@ -49,6 +49,7 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::limits::AccountingLimits;
 use crate::spine::kernel_undefined_reason;
+use ix_trace_rs::implements;
 
 /// The claim form a target selects (FSpec FR-484 "Forms").
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -593,6 +594,7 @@ impl<'p> ValueTarget<'p> {
     ///
     /// An [`InternalFault`] when the evaluator breaks one of its invariants
     /// or `assignment` does not fit the target's parameters.
+    #[implements("FR-255-AC-47")]
     pub fn evaluate(
         &self,
         assignment: &[Value],
@@ -811,6 +813,7 @@ impl<'p> ValueTarget<'p> {
     /// # Errors
     ///
     /// As [`Self::evaluate`].
+    #[implements("FR-255-AC-47")]
     pub fn replay(
         &self,
         assignment: &[Value],

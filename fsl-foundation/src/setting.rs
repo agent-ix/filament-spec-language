@@ -40,7 +40,7 @@ macro_rules! settings {
             )+
         }
 
-impl Setting {
+        impl Setting {
             /// Every setting, in FR-255's table order.
             pub const ALL: &'static [Setting] = &[$(Self::$variant),+];
 
@@ -220,6 +220,7 @@ impl Setting {
     /// size reached, and the admitted population size, are high-water; every
     /// other counter is cumulative.
     #[must_use]
+    #[implements("FR-255-AC-46")]
     pub const fn count_kind(self) -> CountKind {
         match self {
             Self::ModelDeclarationRecords
