@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use ix_trace_rs::implements;
 
@@ -69,6 +70,14 @@ struct TestSelector {
 struct Recipe {
     selectors: BTreeSet<TestSelector>,
     notes: BTreeSet<String>,
+}
+
+#[derive(Debug)]
+struct MainCheck {
+    head: String,
+    main: String,
+    merge_base: String,
+    overlaps: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -1239,6 +1248,29 @@ impl TestSelector {
         arguments
     }
 
+    #[implements("NFR-142-AC-9")]
+    fn list_arguments(&self, ignored: bool) -> Vec<OsString> {
+        let mut arguments = Vec::new();
+        if let Some(filter) = &self.filter {
+            arguments.push(OsString::from(filter));
+        }
+        if self.exact {
+            arguments.push(OsString::from("--exact"));
+        }
+        for skip in &self.skip {
+            arguments.push(OsString::from("--skip"));
+            arguments.push(OsString::from(skip));
+        }
+        if let Some(threads) = self.threads {
+            arguments.push(OsString::from(format!("--test-threads={threads}")));
+        }
+        if ignored {
+            arguments.push(OsString::from("--ignored"));
+        }
+        arguments.push(OsString::from("--list"));
+        arguments
+    }
+
     fn display(&self) -> String {
         let cargo = self.command(false).join(" ");
         if self.timed {
@@ -1287,19 +1319,29 @@ impl CommandRunner for SystemCommandRunner {
 
 /// Print compile-first and name-filtered test commands for changed paths.
 ///
-/// By default this only prints the recipe. With `--preflight`, each filter is
-/// checked with normal and ignored filtered `--list` invocations, and a filter
-/// that selects no non-ignored tests fails closed.
+/// By default this only prints the recipe. With `--preflight`, each package's
+/// test binaries are built once, then each filter is checked with normal and
+/// ignored `--list` invocations. A filter that selects no non-ignored tests
+/// fails closed.
 #[implements("NFR-142-AC-1")]
 pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<String> {
     let (selected_root, selected_operands) = select_workspace(workspace_root, operands)?;
-    let (head, main) = ensure_compatible(workspace_root, &selected_root, &SystemCommandRunner)?;
+    let paths = changed_paths(&selected_operands)?;
+    let mut recipe = plan_paths(&selected_root, &paths)?;
+    augment_recipe(&selected_root, &paths, &mut recipe, &SystemCommandRunner)?;
+    let verification = ensure_compatible(
+        workspace_root,
+        &selected_root,
+        &paths,
+        &mut recipe,
+        &SystemCommandRunner,
+    )?;
     run_with_verified_main(
         &selected_root,
         &selected_operands,
         &SystemCommandRunner,
-        head,
-        main,
+        recipe,
+        verification,
     )
 }
 
@@ -1335,15 +1377,17 @@ fn select_workspace(_tool_root: &Path, operands: &[OsString]) -> Result<(PathBuf
 fn ensure_compatible(
     tool_root: &Path,
     target_root: &Path,
+    paths: &[String],
+    recipe: &mut Recipe,
     runner: &dyn CommandRunner,
-) -> Result<(String, String)> {
+) -> Result<MainCheck> {
     let same_checkout = tool_root
         .canonicalize()
         .ok()
         .zip(target_root.canonicalize().ok())
         .is_some_and(|(tool, target)| tool == target);
     if same_checkout {
-        let verified = require_main_merged(target_root, runner)?;
+        let verified = require_no_overlap(target_root, paths, recipe, runner)?;
         let mut arguments = vec![
             OsString::from("status"),
             OsString::from("--porcelain"),
@@ -1370,7 +1414,7 @@ fn ensure_compatible(
         return Ok(verified);
     }
     require_tool_on_main_history(tool_root, runner)?;
-    let verified = require_main_merged(target_root, runner)?;
+    let verified = require_no_overlap(target_root, paths, recipe, runner)?;
     let dirty = runner
         .run(
             tool_root,
@@ -1487,21 +1531,65 @@ fn require_tool_on_main_history(tool_root: &Path, runner: &dyn CommandRunner) ->
 }
 
 #[cfg(test)]
+struct RequestedPathRunner<'a> {
+    inner: &'a dyn CommandRunner,
+    pr_changes: Vec<u8>,
+}
+
+#[cfg(test)]
+impl CommandRunner for RequestedPathRunner<'_> {
+    fn run(
+        &self,
+        cwd: &Path,
+        program: &OsStr,
+        arguments: &[OsString],
+    ) -> std::io::Result<ProcessOutput> {
+        let mut output = self.inner.run(cwd, program, arguments)?;
+        let args = arguments
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>();
+        if program == OsStr::new("git")
+            && args.first().is_some_and(|arg| arg == "diff")
+            && args.iter().any(|arg| arg == "-z")
+            && args.last().is_some_and(|arg| arg == "HEAD")
+        {
+            output.stdout = self.pr_changes.clone();
+        }
+        Ok(output)
+    }
+}
+
+#[cfg(test)]
 fn run_with_runner(
     workspace_root: &Path,
     operands: &[OsString],
     runner: &dyn CommandRunner,
 ) -> Result<String> {
-    let (head, main) = require_main_merged(workspace_root, runner)?;
-    run_with_verified_main(workspace_root, operands, runner, head, main)
+    let paths = changed_paths(operands)?;
+    let mut actual_changes = Vec::new();
+    for path in &paths {
+        actual_changes.extend_from_slice(path.as_bytes());
+        actual_changes.push(0);
+    }
+    let path_runner = RequestedPathRunner {
+        inner: runner,
+        pr_changes: actual_changes,
+    };
+    let mut recipe = plan_paths(workspace_root, &paths)?;
+    augment_recipe(workspace_root, &paths, &mut recipe, &path_runner)?;
+    let verification = require_no_overlap(workspace_root, &paths, &mut recipe, &path_runner)?;
+    run_with_verified_main(workspace_root, operands, runner, recipe, verification)
 }
 
+#[implements("NFR-142-AC-6")]
+#[implements("NFR-142-AC-9")]
 fn run_with_verified_main(
     workspace_root: &Path,
     operands: &[OsString],
     runner: &dyn CommandRunner,
-    head: String,
-    main: String,
+    mut recipe: Recipe,
+    verification: MainCheck,
 ) -> Result<String> {
     let (preflight_requested, operands) = match operands.split_first() {
         Some((flag, paths)) if flag.to_str() == Some("--preflight") => (true, paths),
@@ -1510,31 +1598,43 @@ fn run_with_verified_main(
     if operands.is_empty() {
         return Err(Error::Usage(USAGE));
     }
-    let paths = operands
-        .iter()
-        .map(|operand| {
-            operand
-                .to_str()
-                .map(normalize_path)
-                .ok_or(Error::Usage(USAGE))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut output = format!("# PR head {head}; origin/main {main}\n");
-    if paths.iter().all(|path| path.starts_with("spec/")) {
+    let paths = changed_paths(operands)?;
+    if paths.is_empty() {
+        return Err(Error::Usage(USAGE));
+    }
+    let mut output = format!(
+        "# PR head {}; origin/main {}; merge-base {}\nOVERLAP: {}\nVERDICT: ACCEPT (recipe paths do not overlap main changes)\n",
+        verification.head,
+        verification.main,
+        verification.merge_base,
+        if verification.overlaps.is_empty() {
+            "none".to_owned()
+        } else {
+            verification
+                .overlaps
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    );
+    if paths.iter().all(|path| path.starts_with("spec/")) && recipe.selectors.is_empty() {
         output.push_str("NO CARGO: spec-only change.\n");
         return Ok(output);
     }
-    let mut recipe = plan_paths(workspace_root, &paths)?;
-    for path in &paths {
-        if is_test_path(path) && ignore_attribute_changed(workspace_root, path, runner)? {
-            add_named_library_modules(workspace_root, &mut recipe, "xtask")?;
-        }
-    }
-
     if preflight_requested {
         let selectors = recipe.selectors.iter().cloned().collect::<Vec<_>>();
+        let binaries = build_test_binaries(workspace_root, &selectors, runner)?;
         for selector in selectors {
-            let matched = preflight(workspace_root, &selector, runner)?;
+            let binary = binaries
+                .get(&(selector.package.clone(), selector.target.clone()))
+                .ok_or_else(|| {
+                    Error::MergeGateRecipe(format!(
+                        "test binary not found for {:?}",
+                        selector.display()
+                    ))
+                })?;
+            let matched = preflight(workspace_root, &selector, binary, runner)?;
             if matched == 0 {
                 if selector.no_match_is_note {
                     recipe.selectors.remove(&selector);
@@ -1562,6 +1662,34 @@ fn run_with_verified_main(
     }
     output.push_str("cargo check --locked --workspace --all-targets\n");
     Ok(output)
+}
+
+#[implements("NFR-142-AC-5")]
+fn augment_recipe(
+    workspace_root: &Path,
+    paths: &[String],
+    recipe: &mut Recipe,
+    runner: &dyn CommandRunner,
+) -> Result<()> {
+    for path in paths {
+        if is_test_path(path) && ignore_attribute_changed(workspace_root, path, runner)? {
+            add_named_library_modules(workspace_root, recipe, "xtask")?;
+        }
+    }
+    Ok(())
+}
+
+fn changed_paths(operands: &[OsString]) -> Result<Vec<String>> {
+    operands
+        .iter()
+        .filter(|operand| operand.to_str() != Some("--preflight"))
+        .map(|operand| {
+            operand
+                .to_str()
+                .map(normalize_path)
+                .ok_or(Error::Usage(USAGE))
+        })
+        .collect()
 }
 
 fn normalize_path(path: &str) -> String {
@@ -2544,11 +2672,13 @@ fn no_run_command(target: &(String, TestTarget)) -> String {
     command
 }
 
-#[implements("NFR-142-AC-3")]
-fn require_main_merged(
+#[implements("NFR-142-AC-3", "NFR-142-AC-5", "NFR-142-AC-6")]
+fn require_no_overlap(
     workspace_root: &Path,
+    requested_paths: &[String],
+    recipe: &mut Recipe,
     runner: &dyn CommandRunner,
-) -> Result<(String, String)> {
+) -> Result<MainCheck> {
     let fetch = runner
         .run(
             workspace_root,
@@ -2568,21 +2698,240 @@ fn require_main_merged(
     }
     let head = git_revision(workspace_root, runner, "HEAD")?;
     let main = git_revision(workspace_root, runner, "origin/main")?;
-    let ancestor = runner
+    let merge_base_output = runner
         .run(
             workspace_root,
             OsStr::new("git"),
-            &os_args(&["merge-base", "--is-ancestor", "origin/main", "HEAD"]),
+            &os_args(&["merge-base", "HEAD", "origin/main"]),
         )
         .map_err(|error| {
-            Error::MergeGateRecipe(format!("cannot check origin/main merge: {error}"))
+            Error::MergeGateRecipe(format!("cannot find merge-base with origin/main: {error}"))
         })?;
-    if !ancestor.success {
+    if !merge_base_output.success {
+        return Err(Error::MergeGateRecipe(format!(
+            "cannot find merge-base with origin/main: {}",
+            String::from_utf8_lossy(&merge_base_output.stderr)
+        )));
+    }
+    let merge_base = String::from_utf8_lossy(&merge_base_output.stdout)
+        .trim()
+        .to_owned();
+    if merge_base.is_empty() {
         return Err(Error::MergeGateRecipe(
-            "merge origin/main into the PR head before generating the merge recipe".to_owned(),
+            "cannot find merge-base with origin/main: empty revision".to_owned(),
         ));
     }
-    Ok((head, main))
+    let pr_changes = runner
+        .run(
+            workspace_root,
+            OsStr::new("git"),
+            &os_args(&[
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                &merge_base,
+                "HEAD",
+            ]),
+        )
+        .map_err(|error| Error::MergeGateRecipe(format!("cannot inspect PR changes: {error}")))?;
+    if !pr_changes.success {
+        return Err(Error::MergeGateRecipe(format!(
+            "cannot inspect PR changes: {}",
+            String::from_utf8_lossy(&pr_changes.stderr)
+        )));
+    }
+    let pr_paths = parse_nul_paths(&pr_changes.stdout)?;
+    let requested_paths = requested_paths.iter().cloned().collect::<BTreeSet<_>>();
+    if requested_paths != pr_paths {
+        let missing = pr_paths
+            .difference(&requested_paths)
+            .cloned()
+            .collect::<Vec<_>>();
+        let extra = requested_paths
+            .difference(&pr_paths)
+            .cloned()
+            .collect::<Vec<_>>();
+        return Err(Error::MergeGateRecipe(format!(
+            "supplied changed paths do not match PR Git diff; missing: {}; extra: {}",
+            if missing.is_empty() {
+                "none".to_owned()
+            } else {
+                missing.join(", ")
+            },
+            if extra.is_empty() {
+                "none".to_owned()
+            } else {
+                extra.join(", ")
+            }
+        )));
+    }
+    let pr_paths = pr_paths.into_iter().collect::<Vec<_>>();
+    let mut actual_recipe = plan_paths(workspace_root, &pr_paths)?;
+    augment_recipe(workspace_root, &pr_paths, &mut actual_recipe, runner)?;
+    recipe.selectors.extend(actual_recipe.selectors);
+    recipe.notes.extend(actual_recipe.notes);
+    let main_changes = runner
+        .run(
+            workspace_root,
+            OsStr::new("git"),
+            &os_args(&[
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                &merge_base,
+                "origin/main",
+            ]),
+        )
+        .map_err(|error| {
+            Error::MergeGateRecipe(format!("cannot inspect origin/main changes: {error}"))
+        })?;
+    if !main_changes.success {
+        return Err(Error::MergeGateRecipe(format!(
+            "cannot inspect origin/main changes: {}",
+            String::from_utf8_lossy(&main_changes.stderr)
+        )));
+    }
+    let main_paths = parse_nul_paths(&main_changes.stdout)?;
+    let recipe_paths = recipe_relevant_paths(workspace_root, &pr_paths, recipe)?;
+    let overlaps = find_path_overlaps(&recipe_paths, &main_paths);
+    let check = MainCheck {
+        head,
+        main,
+        merge_base,
+        overlaps,
+    };
+    if !check.overlaps.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "# PR head {}; origin/main {}; merge-base {}\nOVERLAP: {}\nVERDICT: MERGE REQUIRED (recipe paths overlap main changes)",
+            check.head,
+            check.main,
+            check.merge_base,
+            check
+                .overlaps
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    Ok(check)
+}
+
+fn parse_nul_paths(bytes: &[u8]) -> Result<BTreeSet<String>> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(normalize_path)
+                .map_err(|error| {
+                    Error::MergeGateRecipe(format!("git returned a non-UTF-8 path: {error}"))
+                })
+        })
+        .collect()
+}
+
+#[implements("NFR-142-AC-5")]
+fn recipe_relevant_paths(
+    workspace_root: &Path,
+    changed_paths: &[String],
+    recipe: &Recipe,
+) -> Result<BTreeSet<String>> {
+    let mut paths = changed_paths.iter().cloned().collect::<BTreeSet<_>>();
+    for package in recipe
+        .selectors
+        .iter()
+        .map(|selector| selector.package.as_str())
+    {
+        paths.extend(package_footprint(package));
+    }
+    for selector in &recipe.selectors {
+        let TestTarget::Integration(target) = &selector.target else {
+            continue;
+        };
+        for (_, root) in integration_roots(&selector.package)
+            .into_iter()
+            .filter(|(name, _)| name == target)
+        {
+            for module in integration_module_files(workspace_root, &root)?.iter() {
+                let selected = selector
+                    .filter
+                    .as_ref()
+                    .is_none_or(|filter| module.tests.iter().any(|test| test.contains(filter)));
+                if selected {
+                    let path = module
+                        .path
+                        .strip_prefix(workspace_root)
+                        .unwrap_or(&module.path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    paths.insert(normalize_path(&path));
+                }
+            }
+        }
+    }
+    Ok(paths)
+}
+
+#[implements("NFR-142-AC-5")]
+fn package_footprint(package: &str) -> BTreeSet<String> {
+    let prefix = match package {
+        "filament-spec-language" => {
+            return BTreeSet::from([
+                "src".to_owned(),
+                "tests".to_owned(),
+                "benches".to_owned(),
+                "examples".to_owned(),
+                "build.rs".to_owned(),
+            ]);
+        }
+        "xtask" => "xtask",
+        "fsl-probability-check" | "fsl-hybrid-test-provider" => {
+            return BTreeSet::from([format!("tools/{package}")]);
+        }
+        _ => package,
+    };
+    BTreeSet::from([prefix.to_owned()])
+}
+
+#[implements("NFR-142-AC-5")]
+fn paths_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left.starts_with(&format!("{right}/"))
+        || right.starts_with(&format!("{left}/"))
+}
+
+#[implements("NFR-142-AC-5")]
+fn find_path_overlaps(
+    recipe_paths: &BTreeSet<String>,
+    main_paths: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut overlaps = BTreeSet::new();
+    for recipe_path in recipe_paths {
+        for main_path in main_paths {
+            if paths_overlap(recipe_path, main_path)
+                || unconditional_overlap(recipe_path)
+                || unconditional_overlap(main_path)
+            {
+                overlaps.insert(main_path.clone());
+            }
+        }
+    }
+    overlaps
+}
+
+#[implements("NFR-142-AC-5")]
+fn unconditional_overlap(path: &str) -> bool {
+    matches!(
+        path,
+        "Cargo.toml" | "Cargo.lock" | ".cargo" | "rust-toolchain.toml"
+    ) || path.ends_with("/Cargo.toml")
+        || path.ends_with("/Cargo.lock")
+        || path == "xtask"
+        || path.starts_with("xtask/")
+        || path.starts_with(".cargo/")
 }
 
 fn git_revision(
@@ -2735,19 +3084,140 @@ fn collect_test_names(items: &[syn::Item], modules: &mut Vec<String>, names: &mu
     }
 }
 
+#[implements("NFR-142-AC-9")]
+fn build_test_binaries(
+    workspace_root: &Path,
+    selectors: &[TestSelector],
+    runner: &dyn CommandRunner,
+) -> Result<BTreeMap<(String, TestTarget), PathBuf>> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let packages = selectors
+        .iter()
+        .map(|selector| selector.package.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut binaries = BTreeMap::new();
+    for package in packages {
+        let started = Instant::now();
+        let package_selectors = selectors
+            .iter()
+            .filter(|selector| selector.package == package)
+            .collect::<Vec<_>>();
+        let mut arguments = vec![
+            OsString::from("test"),
+            OsString::from("--locked"),
+            OsString::from("-p"),
+            OsString::from(package),
+        ];
+        let targets = package_selectors
+            .iter()
+            .map(|selector| selector.target.clone())
+            .collect::<BTreeSet<_>>();
+        for target in targets {
+            match target {
+                TestTarget::Library => arguments.push(OsString::from("--lib")),
+                TestTarget::Integration(name) => {
+                    arguments.push(OsString::from("--test"));
+                    arguments.push(OsString::from(name));
+                }
+            }
+        }
+        if package == "fsl-semantics"
+            && package_selectors
+                .iter()
+                .any(|selector| matches!(selector.target, TestTarget::Integration(_)))
+        {
+            arguments.extend([OsString::from("--features"), OsString::from("test-support")]);
+        }
+        arguments.extend([
+            OsString::from("--no-run"),
+            OsString::from("--message-format=json"),
+        ]);
+        let output = runner
+            .run(workspace_root, &cargo, &arguments)
+            .map_err(|error| {
+                Error::MergeGateRecipe(format!("cannot build test binaries for {package}: {error}"))
+            })?;
+        if !output.success {
+            return Err(Error::MergeGateRecipe(format!(
+                "test-binary build failed for {package}: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        for line in output.stdout.split(|byte| *byte == b'\n') {
+            let Ok(message) = serde_json::from_slice::<serde_json::Value>(line) else {
+                continue;
+            };
+            if message.get("reason").and_then(|value| value.as_str()) != Some("compiler-artifact") {
+                continue;
+            }
+            let Some(target) = message.get("target") else {
+                continue;
+            };
+            if target.get("test").and_then(|value| value.as_bool()) != Some(true) {
+                continue;
+            }
+            let Some(executable) = message.get("executable").and_then(|value| value.as_str())
+            else {
+                continue;
+            };
+            let Some(name) = target.get("name").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let kinds = target
+                .get("kind")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str())
+                .collect::<BTreeSet<_>>();
+            let key = if kinds.contains("lib") || kinds.contains("proc-macro") {
+                Some((package.to_owned(), TestTarget::Library))
+            } else if kinds.contains("test") {
+                Some((package.to_owned(), TestTarget::Integration(name.to_owned())))
+            } else {
+                None
+            };
+            if let Some(key) = key {
+                if package_selectors
+                    .iter()
+                    .any(|selector| (selector.package.clone(), selector.target.clone()) == key)
+                {
+                    binaries.insert(key, PathBuf::from(executable));
+                }
+            }
+        }
+        eprintln!(
+            "merge-gate-recipe preflight: built {} test target(s) for {package} in {:.2}s",
+            binaries
+                .keys()
+                .filter(|(candidate, _)| candidate == package)
+                .count(),
+            started.elapsed().as_secs_f64()
+        );
+        for selector in &package_selectors {
+            if !binaries.contains_key(&(package.to_owned(), selector.target.clone())) {
+                return Err(Error::MergeGateRecipe(format!(
+                    "test binary not found for {:?}",
+                    selector.display()
+                )));
+            }
+        }
+    }
+    Ok(binaries)
+}
+
+#[implements("NFR-142-AC-9")]
 fn preflight(
     workspace_root: &Path,
     selector: &TestSelector,
+    executable: &Path,
     runner: &dyn CommandRunner,
 ) -> Result<usize> {
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let list_arguments = selector
-        .command(true)
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
+    let started = Instant::now();
+    let list_arguments = selector.list_arguments(false);
     let output = runner
-        .run(workspace_root, &cargo, &list_arguments)
+        .run(workspace_root, executable.as_os_str(), &list_arguments)
         .map_err(|error| {
             Error::MergeGateRecipe(format!(
                 "cannot list tests for {:?}: {error}",
@@ -2762,10 +3232,9 @@ fn preflight(
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-    let mut ignored_arguments = list_arguments;
-    ignored_arguments.insert(ignored_arguments.len() - 1, OsString::from("--ignored"));
+    let ignored_arguments = selector.list_arguments(true);
     let ignored = runner
-        .run(workspace_root, &cargo, &ignored_arguments)
+        .run(workspace_root, executable.as_os_str(), &ignored_arguments)
         .map_err(|error| {
             Error::MergeGateRecipe(format!(
                 "cannot list ignored tests for {:?}: {error}",
@@ -2780,6 +3249,11 @@ fn preflight(
             String::from_utf8_lossy(&ignored.stderr)
         )));
     }
+    eprintln!(
+        "merge-gate-recipe preflight: listed {:?} in {:.2}s",
+        selector.display(),
+        started.elapsed().as_secs_f64()
+    );
     let selected = listed_test_names(&output.stdout);
     let ignored = listed_test_names(&ignored.stdout);
     Ok(selected.difference(&ignored).count())
@@ -2821,6 +3295,8 @@ mod tests {
         fetch_fails: bool,
         merge_fails: bool,
         changed_build_inputs: bool,
+        main_changes: String,
+        pr_changes: String,
         dirty_tool: bool,
         dirty_target: bool,
     }
@@ -2835,6 +3311,8 @@ mod tests {
                 fetch_fails: false,
                 merge_fails: false,
                 changed_build_inputs: false,
+                main_changes: String::new(),
+                pr_changes: String::new(),
                 dirty_tool: false,
                 dirty_target: false,
             }
@@ -2861,6 +3339,36 @@ mod tests {
                     || (is_git
                         && args.first().is_some_and(|arg| arg == "merge-base")
                         && self.merge_fails);
+            if !is_git && args.contains(&"--no-run".to_owned()) {
+                let package = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "-p")
+                    .map(|pair| pair[1].as_str())
+                    .unwrap_or("fixture-package");
+                let mut targets = vec![("lib", "library")];
+                if package == "fsl-analyze" {
+                    targets.extend(ANALYZE_IT_ROOTS.iter().map(|(name, _)| ("test", *name)));
+                } else {
+                    targets.push(("test", "it"));
+                }
+                let stdout = targets
+                    .into_iter()
+                    .map(|(kind, name)| {
+                        format!(
+                            "{{\"reason\":\"compiler-artifact\",\"target\":{{\"name\":\"{name}\",\"kind\":[\"{kind}\"],\"test\":true}},\"executable\":\"/fixture/{package}-{name}\"}}\n"
+                        )
+                    })
+                    .collect::<String>();
+                return Ok(ProcessOutput {
+                    success: !fail,
+                    stdout: stdout.into_bytes(),
+                    stderr: if fail {
+                        b"injected failure".to_vec()
+                    } else {
+                        Vec::new()
+                    },
+                });
+            }
             let text = if is_git
                 && args.first().is_some_and(|arg| arg == "status")
                 && (self.dirty_tool || (self.dirty_target && args.contains(&"--".to_owned())))
@@ -2877,6 +3385,17 @@ mod tests {
                     "head-sha\n"
                 } else {
                     "main-sha\n"
+                }
+            } else if is_git && args.first().is_some_and(|arg| arg == "merge-base") {
+                "merge-base-sha\n"
+            } else if is_git
+                && args.first().is_some_and(|arg| arg == "diff")
+                && args.contains(&"-z".to_owned())
+            {
+                if args.last().is_some_and(|arg| arg == "HEAD") {
+                    self.pr_changes.as_str()
+                } else {
+                    self.main_changes.as_str()
                 }
             } else if is_git && args.first().is_some_and(|arg| arg == "diff") && self.changed_ignore
             {
@@ -2926,6 +3445,33 @@ mod tests {
             threads: None,
             no_match_is_note: false,
         }
+    }
+
+    fn ensure_tool_compatible(paths: &[&str], runner: &dyn CommandRunner) -> Result<MainCheck> {
+        let paths = paths
+            .iter()
+            .map(|path| (*path).to_owned())
+            .collect::<Vec<_>>();
+        let mut actual_changes = Vec::new();
+        for path in &paths {
+            actual_changes.extend_from_slice(path.as_bytes());
+            actual_changes.push(0);
+        }
+        let path_runner = RequestedPathRunner {
+            inner: runner,
+            pr_changes: actual_changes,
+        };
+        let mut recipe = plan(
+            workspace_root(),
+            &paths.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        ensure_compatible(
+            tool_workspace(),
+            workspace_root(),
+            &paths,
+            &mut recipe,
+            &path_runner,
+        )
     }
 
     /// The binary holding the module or tests a live-workspace filter is named
@@ -3088,10 +3634,12 @@ mod tests {
     #[test]
     fn unrelated_replay_paths_do_not_run_the_probability_check() {
         let recipe = plan(workspace_root(), &["fsl-replay/src/refinement.rs"]);
-        assert!(!recipe
-            .selectors
-            .iter()
-            .any(|item| item.package == "fsl-probability-check"));
+        assert!(
+            !recipe
+                .selectors
+                .iter()
+                .any(|item| item.package == "fsl-probability-check")
+        );
     }
 
     #[test]
@@ -3113,10 +3661,12 @@ mod tests {
                 "cyclic_mdp"
             )]
         );
-        assert!(!module
-            .selectors
-            .iter()
-            .any(|item| item.package == "filament-spec-language"));
+        assert!(
+            !module
+                .selectors
+                .iter()
+                .any(|item| item.package == "filament-spec-language")
+        );
         for path in [
             "tools/fsl-probability-check/tests/it/main.rs",
             "tools/fsl-probability-check/src/main.rs",
@@ -3188,9 +3738,11 @@ mod tests {
             }
         }
         let other = plan(workspace_root(), &["fsl-analyze/src/provider.rs"]);
-        assert!(!integration_runs(&other, "fsl-analyze")
-            .iter()
-            .any(|(_, filter)| filter == "analyze_request_wire"));
+        assert!(
+            !integration_runs(&other, "fsl-analyze")
+                .iter()
+                .any(|(_, filter)| filter == "analyze_request_wire")
+        );
     }
 
     #[test]
@@ -3263,8 +3815,10 @@ mod tests {
             workspace_root(),
             &["fsl-analyze/tests/it/weak_memory/replay_boundary_cases.rs"],
         );
-        assert!(integration_runs(&recipe, "fsl-analyze")
-            .contains(&pair("it_refinement", "weak_memory::replay_boundary_cases")));
+        assert!(
+            integration_runs(&recipe, "fsl-analyze")
+                .contains(&pair("it_refinement", "weak_memory::replay_boundary_cases"))
+        );
     }
 
     #[test]
@@ -3562,18 +4116,24 @@ mod tests {
                 .map(|item| item.to_string())
                 .collect::<Vec<_>>()
         );
-        assert!(recipe
-            .selectors
-            .iter()
-            .any(|item| item.package == "fsl-replay"
-                && item.filter.as_deref()
-                    == Some("tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict")
-                && item.timed));
-        assert!(recipe
-            .selectors
-            .iter()
-            .filter(|item| item.timed)
-            .all(|item| item.threads == Some(1)));
+        assert!(
+            recipe
+                .selectors
+                .iter()
+                .any(|item| item.package == "fsl-replay"
+                    && item.filter.as_deref()
+                        == Some(
+                            "tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict"
+                        )
+                    && item.timed)
+        );
+        assert!(
+            recipe
+                .selectors
+                .iter()
+                .filter(|item| item.timed)
+                .all(|item| item.threads == Some(1))
+        );
     }
 
     #[test]
@@ -3594,10 +4154,12 @@ mod tests {
                 && item.target == TestTarget::Library
                 && item.filter.as_deref() == Some("spans::")
         }));
-        assert!(spans
-            .selectors
-            .iter()
-            .any(|item| item.filter.as_deref() == Some(LARGE_EMIT_FILTER)));
+        assert!(
+            spans
+                .selectors
+                .iter()
+                .any(|item| item.filter.as_deref() == Some(LARGE_EMIT_FILTER))
+        );
     }
 
     #[test]
@@ -3670,12 +4232,18 @@ mod tests {
             &runner,
         )
         .expect("recipe");
-        assert!(result.starts_with("# PR head head-sha; origin/main main-sha\n"));
+        assert!(
+            result.starts_with(
+                "# PR head head-sha; origin/main main-sha; merge-base merge-base-sha\n"
+            )
+        );
         let calls = runner.calls.borrow();
         assert_eq!(calls[0].1[0], "fetch");
-        assert!(calls
-            .iter()
-            .any(|(_, args)| args.first().is_some_and(|arg| arg == "merge-base")));
+        assert!(
+            calls
+                .iter()
+                .any(|(_, args)| args.first().is_some_and(|arg| arg == "merge-base"))
+        );
         let compile = result.find("--no-run").expect("compile first");
         let tests = result
             .find("\ncargo test --locked -p fsl-analyze --test it_probabilistic -- probabilistic")
@@ -3695,11 +4263,13 @@ mod tests {
         assert!(result.contains(
             "cargo test --locked -p fsl-analyze --test it_probabilistic -- probabilistic"
         ));
-        assert!(runner
-            .calls
-            .borrow()
-            .iter()
-            .all(|(program, _)| program == "git"));
+        assert!(
+            runner
+                .calls
+                .borrow()
+                .iter()
+                .all(|(program, _)| program == "git")
+        );
     }
 
     #[test]
@@ -3708,20 +4278,156 @@ mod tests {
             no_tests: true,
             ..FakeRunner::new()
         };
-        assert!(run_with_runner(
+        assert!(
+            run_with_runner(
+                workspace_root(),
+                &[
+                    OsString::from("--preflight"),
+                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
+                ],
+                &runner,
+            )
+            .is_err()
+        );
+        assert!(
+            runner.calls.borrow().iter().any(|(program, args)| {
+                program != "git" && args.contains(&"--ignored".to_owned())
+            })
+        );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-9")]
+    fn preflight_output_is_stable_and_builds_once_per_package() {
+        let runner = FakeRunner::new();
+        let selector = |package: &str, filter: &str| TestSelector {
+            package: package.to_owned(),
+            target: TestTarget::Integration("it".to_owned()),
+            filter: Some(filter.to_owned()),
+            exact: false,
+            skip: Vec::new(),
+            timed: false,
+            threads: None,
+            no_match_is_note: false,
+        };
+        let recipe = Recipe {
+            selectors: BTreeSet::from([
+                selector("fsl-analyze", "alpha"),
+                selector("fsl-analyze", "beta"),
+                selector("fsl-command", "command"),
+            ]),
+            notes: BTreeSet::new(),
+        };
+        let output = run_with_verified_main(
             workspace_root(),
-            &[
-                OsString::from("--preflight"),
-                OsString::from("fsl-analyze/src/analyze/exact.rs"),
-            ],
+            &[OsString::from("--preflight"), OsString::from("fixture.rs")],
             &runner,
+            recipe,
+            MainCheck {
+                head: "fixture-head".to_owned(),
+                main: "fixture-main".to_owned(),
+                merge_base: "fixture-base".to_owned(),
+                overlaps: BTreeSet::new(),
+            },
         )
-        .is_err());
-        assert!(runner
-            .calls
-            .borrow()
-            .iter()
-            .any(|(program, args)| { program != "git" && args.contains(&"--ignored".to_owned()) }));
+        .expect("preflight recipe");
+        assert_eq!(
+            output,
+            concat!(
+                "# PR head fixture-head; origin/main fixture-main; merge-base fixture-base\n",
+                "OVERLAP: none\n",
+                "VERDICT: ACCEPT (recipe paths do not overlap main changes)\n",
+                "cargo test --locked -p fsl-analyze --test it --no-run\n",
+                "cargo test --locked -p fsl-command --test it --no-run\n",
+                "cargo test --locked -p fsl-analyze --test it -- alpha\n",
+                "cargo test --locked -p fsl-analyze --test it -- beta\n",
+                "cargo test --locked -p fsl-command --test it -- command\n",
+                "cargo check --locked --workspace --all-targets\n",
+            )
+        );
+        let calls = runner.calls.borrow();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(_, arguments)| {
+                    arguments.first().is_some_and(|argument| argument == "test")
+                        && arguments.iter().any(|argument| argument == "--no-run")
+                })
+                .count(),
+            2,
+            "one Cargo build invocation per package, regardless of selector count"
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(_, arguments)| arguments.iter().any(|argument| argument == "--list"))
+                .count(),
+            6,
+            "each of three selectors is listed once normally and once as ignored"
+        );
+        for package in ["fsl-analyze", "fsl-command"] {
+            let build = calls
+                .iter()
+                .find(|(_, arguments)| {
+                    arguments.first().is_some_and(|argument| argument == "test")
+                        && arguments.iter().any(|argument| argument == "--no-run")
+                        && arguments.windows(2).any(|pair| {
+                            pair[0] == "-p" && pair[1] == package
+                        })
+                })
+                .expect("package build invocation");
+            assert_eq!(
+                build.1.iter().filter(|argument| *argument == "--test").count(),
+                1,
+                "only the selected integration target is built for {package}"
+            );
+            assert!(!build.1.iter().any(|argument| argument == "--lib"));
+        }
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-9")]
+    fn local_module_without_tests_keeps_its_preflight_note() {
+        let runner = FakeRunner {
+            no_tests: true,
+            ..FakeRunner::new()
+        };
+        let recipe = Recipe {
+            selectors: BTreeSet::from([TestSelector {
+                package: "fsl-analyze".to_owned(),
+                target: TestTarget::Library,
+                filter: Some("missing_local_module::".to_owned()),
+                exact: false,
+                skip: Vec::new(),
+                timed: false,
+                threads: None,
+                no_match_is_note: true,
+            }]),
+            notes: BTreeSet::new(),
+        };
+        let output = run_with_verified_main(
+            workspace_root(),
+            &[OsString::from("--preflight"), OsString::from("fixture.rs")],
+            &runner,
+            recipe,
+            MainCheck {
+                head: "fixture-head".to_owned(),
+                main: "fixture-main".to_owned(),
+                merge_base: "fixture-base".to_owned(),
+                overlaps: BTreeSet::new(),
+            },
+        )
+        .expect("local filter is reported as a note");
+        assert_eq!(
+            output,
+            concat!(
+                "# PR head fixture-head; origin/main fixture-main; merge-base fixture-base\n",
+                "OVERLAP: none\n",
+                "VERDICT: ACCEPT (recipe paths do not overlap main changes)\n",
+                "NOTE: no named tests match the local module filter Some(\"missing_local_module::\") in fsl-analyze\n",
+                "cargo check --locked --workspace --all-targets\n",
+            )
+        );
     }
 
     #[test]
@@ -3732,6 +4438,7 @@ mod tests {
             preflight(
                 workspace_root(),
                 &integration_selector("fsl-analyze", "it", "explicit"),
+                Path::new("/fixture/fsl-analyze-it"),
                 &runner
             )
             .expect("list"),
@@ -3743,6 +4450,7 @@ mod tests {
             preflight(
                 workspace_root(),
                 &integration_selector("fsl-analyze", "it", "explicit"),
+                Path::new("/fixture/fsl-analyze-it"),
                 &runner
             )
             .expect("list"),
@@ -3756,46 +4464,58 @@ mod tests {
             no_tests: true,
             ..FakeRunner::new()
         };
-        assert!(run_with_runner(
-            workspace_root(),
-            &[
-                OsString::from("--preflight"),
-                OsString::from("fsl-analyze/src/analyze/exact.rs"),
-            ],
-            &runner
-        )
-        .is_err());
+        assert!(
+            run_with_runner(
+                workspace_root(),
+                &[
+                    OsString::from("--preflight"),
+                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
+                ],
+                &runner
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn empty_unknown_manifest_fixture_deleted_and_root_paths_have_fallbacks() {
-        assert!(plan_paths(workspace_root(), &[])
-            .expect("empty planning")
-            .selectors
-            .is_empty());
+        assert!(
+            plan_paths(workspace_root(), &[])
+                .expect("empty planning")
+                .selectors
+                .is_empty()
+        );
         assert!(run_with_runner(workspace_root(), &[], &FakeRunner::new()).is_err());
-        assert!(plan(workspace_root(), &["untracked/unknown.dat"])
-            .notes
-            .iter()
-            .any(|note| note.contains("unknown.dat")));
-        assert!(plan(workspace_root(), &["Cargo.lock"])
-            .selectors
-            .iter()
-            .any(|item| item.filter.as_deref() == Some("monitor_")));
-        assert!(plan(workspace_root(), &["fsl-eval/src/new_unknown.rs"])
-            .notes
-            .iter()
-            .any(|note| note.contains("unknown fsl-eval")));
+        assert!(
+            plan(workspace_root(), &["untracked/unknown.dat"])
+                .notes
+                .iter()
+                .any(|note| note.contains("unknown.dat"))
+        );
+        assert!(
+            plan(workspace_root(), &["Cargo.lock"])
+                .selectors
+                .iter()
+                .any(|item| item.filter.as_deref() == Some("monitor_"))
+        );
+        assert!(
+            plan(workspace_root(), &["fsl-eval/src/new_unknown.rs"])
+                .notes
+                .iter()
+                .any(|note| note.contains("unknown fsl-eval"))
+        );
         assert!(
             plan(workspace_root(), &["fsl-semantics/src/new_unknown.rs"])
                 .notes
                 .iter()
                 .any(|note| note.contains("unknown fsl-semantics"))
         );
-        assert!(plan(workspace_root(), &["xtask/src/new_task.rs"])
-            .selectors
-            .iter()
-            .any(|item| item.package == "xtask" && item.filter.is_some()));
+        assert!(
+            plan(workspace_root(), &["xtask/src/new_task.rs"])
+                .selectors
+                .iter()
+                .any(|item| item.package == "xtask" && item.filter.is_some())
+        );
         assert!(
             plan(
                 workspace_root(),
@@ -3805,18 +4525,24 @@ mod tests {
             .len()
                 > 1
         );
-        assert!(plan(workspace_root(), &["fsl-analyze/src/deleted.rs"])
-            .notes
-            .iter()
-            .any(|note| note.contains("absent")));
-        assert!(plan(workspace_root(), &["fsl-analyze/src/lib.rs"])
-            .selectors
-            .iter()
-            .any(|item| item.filter.as_deref() == Some("monitor_")));
-        assert!(plan(workspace_root(), &["src/lib.rs"])
-            .selectors
-            .iter()
-            .any(|item| item.package == "filament-spec-language" && item.filter.is_some()));
+        assert!(
+            plan(workspace_root(), &["fsl-analyze/src/deleted.rs"])
+                .notes
+                .iter()
+                .any(|note| note.contains("absent"))
+        );
+        assert!(
+            plan(workspace_root(), &["fsl-analyze/src/lib.rs"])
+                .selectors
+                .iter()
+                .any(|item| item.filter.as_deref() == Some("monitor_"))
+        );
+        assert!(
+            plan(workspace_root(), &["src/lib.rs"])
+                .selectors
+                .iter()
+                .any(|item| item.package == "filament-spec-language" && item.filter.is_some())
+        );
     }
 
     #[test]
@@ -3830,11 +4556,10 @@ mod tests {
             ],
         );
         assert!(recipe.notes.iter().any(|note| note.contains("README.md")));
-        assert!(recipe
-            .selectors
-            .iter()
-            .any(|item| item.package == "xtask"
-                && item.filter.as_deref() == Some("merge_gate_recipe::")));
+        assert!(
+            recipe.selectors.iter().any(|item| item.package == "xtask"
+                && item.filter.as_deref() == Some("merge_gate_recipe::"))
+        );
     }
 
     #[test]
@@ -3875,14 +4600,16 @@ mod tests {
                     == Some("tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict")
                 && !item.exact
         }));
-        assert!(foundation
-            .selectors
-            .iter()
-            .chain(source.selectors.iter())
-            .chain(cst.selectors.iter())
-            .chain(forms.selectors.iter())
-            .chain(package.selectors.iter())
-            .all(|item| item.filter.is_some()));
+        assert!(
+            foundation
+                .selectors
+                .iter()
+                .chain(source.selectors.iter())
+                .chain(cst.selectors.iter())
+                .chain(forms.selectors.iter())
+                .chain(package.selectors.iter())
+                .all(|item| item.filter.is_some())
+        );
     }
 
     #[test]
@@ -3956,10 +4683,12 @@ mod tests {
         ] {
             assert_selects_owner(&manifest, package, filter);
         }
-        assert!(manifest
-            .selectors
-            .iter()
-            .all(|selector| selector.filter.is_some()));
+        assert!(
+            manifest
+                .selectors
+                .iter()
+                .all(|selector| selector.filter.is_some())
+        );
     }
 
     #[test]
@@ -4132,7 +4861,7 @@ mod tests {
             changed_build_inputs: true,
             ..FakeRunner::new()
         };
-        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+        let error = ensure_tool_compatible(&["README.md"], &runner)
             .expect_err("different xtask source trees must refuse reuse");
         assert!(error.to_string().contains("xtask/src/merge_gate_recipe.rs"));
 
@@ -4140,7 +4869,7 @@ mod tests {
             dirty_tool: true,
             ..FakeRunner::new()
         };
-        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+        let error = ensure_tool_compatible(&["README.md"], &runner)
             .expect_err("dirty tool sources must refuse reuse");
         assert!(error.to_string().contains("must be clean"));
 
@@ -4148,7 +4877,7 @@ mod tests {
             dirty_target: true,
             ..FakeRunner::new()
         };
-        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+        let error = ensure_tool_compatible(&["README.md"], &runner)
             .expect_err("uncommitted target sources must refuse reuse");
         assert!(error.to_string().contains("uncommitted xtask build inputs"));
     }
@@ -4157,8 +4886,7 @@ mod tests {
     #[trace("NFR-142-AC-2", "NFR-142-AC-3")]
     fn stable_tool_workspace_accepts_matching_clean_recipe_inputs() {
         let runner = FakeRunner::new();
-        ensure_compatible(tool_workspace(), pr_workspace(), &runner)
-            .expect("same clean Git tree is compatible");
+        ensure_tool_compatible(&["README.md"], &runner).expect("same clean Git tree is compatible");
         let calls = runner.calls.borrow();
         assert!(calls.iter().any(|(_, args)| {
             args.first().is_some_and(|arg| arg == "fetch")
@@ -4191,7 +4919,7 @@ mod tests {
             fetch_fails: true,
             ..FakeRunner::new()
         };
-        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+        let error = ensure_tool_compatible(&["README.md"], &runner)
             .expect_err("tool fetch failure must refuse reuse");
         assert!(error.to_string().contains("cannot fetch origin/main"));
 
@@ -4199,19 +4927,28 @@ mod tests {
             merge_fails: true,
             ..FakeRunner::new()
         };
-        let error = ensure_compatible(tool_workspace(), pr_workspace(), &runner)
+        let error = ensure_tool_compatible(&["README.md"], &runner)
             .expect_err("ancestry failure must refuse reuse");
-        assert!(error
-            .to_string()
-            .contains("tool workspace HEAD must be on origin/main history"));
+        assert!(
+            error
+                .to_string()
+                .contains("tool workspace HEAD must be on origin/main history")
+        );
     }
 
     #[test]
     #[trace("NFR-142-AC-4")]
     fn same_workspace_tooling_change_uses_runtime_main_check_without_stable_tree_comparison() {
         let runner = FakeRunner::new();
-        ensure_compatible(workspace_root(), workspace_root(), &runner)
-            .expect("tooling PR may build and run in its own clean workspace");
+        let mut empty_recipe = Recipe::default();
+        ensure_compatible(
+            workspace_root(),
+            workspace_root(),
+            &[],
+            &mut empty_recipe,
+            &runner,
+        )
+        .expect("tooling PR may build and run in its own clean workspace");
         let calls = runner.calls.borrow();
         assert_eq!(
             calls
@@ -4221,11 +4958,249 @@ mod tests {
             1,
             "same workspace only needs the PR's runtime main check"
         );
+        assert!(calls.iter().any(|(_, args)| {
+            args.first().is_some_and(|arg| arg == "diff")
+                && args.contains(&"-z".to_owned())
+                && args.last().is_some_and(|arg| arg == "HEAD")
+        }));
         assert!(!calls.iter().any(|(_, args)| {
             args.first().is_some_and(|arg| arg == "diff")
-                || (args.first().is_some_and(|arg| arg == "merge-base")
-                    && args.get(2).is_some_and(|arg| arg == "HEAD")
-                    && args.get(3).is_some_and(|arg| arg == "origin/main"))
+                && args.iter().any(|arg| arg == "xtask/src")
         }));
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-3", "NFR-142-AC-5", "NFR-142-AC-6")]
+    fn behind_main_with_disjoint_paths_is_accepted_and_reports_revisions_and_verdict() {
+        let runner = FakeRunner {
+            main_changes: "README.md\0".to_owned(),
+            ..FakeRunner::new()
+        };
+        let result = run_with_runner(
+            workspace_root(),
+            &[OsString::from("docs/merge-gate-recipe.md")],
+            &runner,
+        )
+        .expect("unrelated main change is accepted");
+        assert!(result.contains("PR head head-sha"));
+        assert!(result.contains("origin/main main-sha"));
+        assert!(result.contains("merge-base merge-base-sha"));
+        assert!(result.contains("OVERLAP: none"));
+        assert!(result.contains("VERDICT: ACCEPT"));
+        assert!(runner.calls.borrow().iter().any(|(_, args)| {
+            args.first().is_some_and(|arg| arg == "diff")
+                && args.contains(&"-z".to_owned())
+                && args.contains(&"merge-base-sha".to_owned())
+                && args.contains(&"origin/main".to_owned())
+        }));
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-5", "NFR-142-AC-6")]
+    fn direct_path_overlap_requires_merge_and_reports_deterministic_overlap() {
+        let runner = FakeRunner {
+            main_changes: "docs/merge-gate-recipe.md\0README.md\0".to_owned(),
+            ..FakeRunner::new()
+        };
+        let error = run_with_runner(
+            workspace_root(),
+            &[OsString::from("docs/merge-gate-recipe.md")],
+            &runner,
+        )
+        .expect_err("direct overlap must require merge");
+        let message = error.to_string();
+        assert!(message.contains("VERDICT: MERGE REQUIRED"));
+        assert!(message.contains("OVERLAP: docs/merge-gate-recipe.md"));
+        assert!(message.contains("PR head head-sha"));
+        assert!(message.contains("origin/main main-sha"));
+        assert!(message.contains("merge-base merge-base-sha"));
+        assert!(!message.contains("README.md"));
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-3", "NFR-142-AC-5")]
+    fn rename_insensitive_diffs_overlap_on_the_pr_rename_old_path() {
+        let runner = FakeRunner {
+            pr_changes: "docs/old-guide.md\0docs/new-guide.md\0".to_owned(),
+            main_changes: "docs/old-guide.md\0".to_owned(),
+            ..FakeRunner::new()
+        };
+        let paths = vec![
+            "docs/old-guide.md".to_owned(),
+            "docs/new-guide.md".to_owned(),
+        ];
+        let mut recipe = plan(
+            workspace_root(),
+            &["docs/old-guide.md", "docs/new-guide.md"],
+        );
+        let error = ensure_compatible(
+            tool_workspace(),
+            workspace_root(),
+            &paths,
+            &mut recipe,
+            &runner,
+        )
+        .expect_err("the deleted PR-side rename path overlaps the main edit");
+        assert!(error.to_string().contains("OVERLAP: docs/old-guide.md"));
+        let calls = runner.calls.borrow();
+        for endpoint in ["HEAD", "origin/main"] {
+            assert!(calls.iter().any(|(_, args)| {
+                args.first().is_some_and(|arg| arg == "diff")
+                    && args.contains(&"--no-renames".to_owned())
+                    && args.contains(&"-z".to_owned())
+                    && args.last().is_some_and(|arg| arg == endpoint)
+            }));
+        }
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-5")]
+    fn lockfile_manifest_and_xtask_changes_are_unconditional_overlaps() {
+        for main_change in ["Cargo.lock", "fsl-analyze/Cargo.toml", "xtask/src/main.rs"] {
+            let runner = FakeRunner {
+                main_changes: format!("{main_change}\0"),
+                ..FakeRunner::new()
+            };
+            let error = ensure_tool_compatible(&["README.md"], &runner)
+                .expect_err("unconditional build input must require merge");
+            assert!(error.to_string().contains("VERDICT: MERGE REQUIRED"));
+            assert!(error.to_string().contains(main_change));
+        }
+
+        for pr_change in ["Cargo.lock", "fsl-analyze/Cargo.toml", "xtask/src/main.rs"] {
+            let runner = FakeRunner {
+                main_changes: "README.md\0".to_owned(),
+                ..FakeRunner::new()
+            };
+            let error = ensure_tool_compatible(&[pr_change], &runner)
+                .expect_err("PR-side unconditional build input must require merge");
+            assert!(
+                error.to_string().contains("VERDICT: MERGE REQUIRED"),
+                "{pr_change}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-5")]
+    fn selected_package_footprint_and_exact_selected_test_modules_expand_overlap_set() {
+        let changed = vec!["fsl-analyze/src/analyze/exact.rs".to_owned()];
+        let recipe = plan(workspace_root(), &["fsl-analyze/src/analyze/exact.rs"]);
+        let relevant = recipe_relevant_paths(workspace_root(), &changed, &recipe)
+            .expect("expand selected paths");
+        assert!(relevant.contains("fsl-analyze"));
+        let selected = recipe
+            .selectors
+            .iter()
+            .find(|selector| {
+                selector.package == "fsl-probability-check"
+                    && matches!(&selector.target, TestTarget::Integration(_))
+            })
+            .expect("selected probability-check test module");
+        let selected_name = selected.filter.as_deref().expect("module filter");
+        let selected_root = integration_roots("fsl-probability-check")
+            .into_iter()
+            .next()
+            .expect("test root")
+            .1;
+        let selected_file = integration_module_files(workspace_root(), &selected_root)
+            .expect("modules")
+            .iter()
+            .find(|module| module.name == selected_name)
+            .expect("selected module file")
+            .path
+            .strip_prefix(workspace_root())
+            .expect("workspace relative path")
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(relevant.contains(&selected_file));
+
+        let main_changes = BTreeSet::from(["fsl-analyze/src/analyze/request.rs".to_owned()]);
+        assert_eq!(
+            find_path_overlaps(&relevant, &main_changes),
+            main_changes,
+            "a sibling source file in the selected package footprint overlaps"
+        );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-5")]
+    fn root_package_all_target_check_includes_examples_in_overlap_footprint() {
+        let changed = vec!["src/lib.rs".to_owned()];
+        let recipe = plan(workspace_root(), &["src/lib.rs"]);
+        let relevant = recipe_relevant_paths(workspace_root(), &changed, &recipe)
+            .expect("expand root package path set");
+        assert!(relevant.contains("examples"));
+
+        let main_changes = BTreeSet::from(["examples/check_gate.rs".to_owned()]);
+        assert_eq!(
+            find_path_overlaps(&relevant, &main_changes),
+            main_changes,
+            "the workspace all-target check builds root-package examples"
+        );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-3", "NFR-142-AC-5")]
+    fn pr_side_git_diff_is_authoritative_when_caller_path_list_omits_a_change() {
+        let runner = FakeRunner {
+            pr_changes: "fsl-analyze/src/analyze/exact.rs\0".to_owned(),
+            main_changes: "fsl-analyze/src/analyze/request.rs\0".to_owned(),
+            ..FakeRunner::new()
+        };
+        let requested = vec!["README.md".to_owned()];
+        let mut recipe = plan(workspace_root(), &["README.md"]);
+        let error = ensure_compatible(
+            tool_workspace(),
+            pr_workspace(),
+            &requested,
+            &mut recipe,
+            &runner,
+        )
+        .expect_err("caller path mismatch must fail closed");
+        assert!(error.to_string().contains("do not match PR Git diff"));
+        assert!(
+            error
+                .to_string()
+                .contains("fsl-analyze/src/analyze/exact.rs")
+        );
+        assert!(runner.calls.borrow().iter().any(|(_, args)| {
+            args.first().is_some_and(|arg| arg == "diff")
+                && args.contains(&"-z".to_owned())
+                && args.contains(&"HEAD".to_owned())
+        }));
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-3", "NFR-142-AC-5")]
+    fn matching_pr_diff_selects_package_footprint_for_overlap_check() {
+        let runner = FakeRunner {
+            pr_changes: "fsl-analyze/src/analyze/exact.rs\0".to_owned(),
+            main_changes: "fsl-analyze/src/analyze/request.rs\0".to_owned(),
+            ..FakeRunner::new()
+        };
+        let error = ensure_tool_compatible(&["fsl-analyze/src/analyze/exact.rs"], &runner)
+            .expect_err("selected package sibling change must require merge");
+        assert!(
+            error
+                .to_string()
+                .contains("fsl-analyze/src/analyze/request.rs"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    #[trace("NFR-142-AC-9")]
+    fn repository_declares_xtask_cargo_alias() {
+        let config: toml::Value =
+            toml::from_str(include_str!("../../.cargo/config.toml")).expect("valid Cargo config");
+        assert!(
+            config
+                .get("alias")
+                .and_then(|aliases| aliases.get("xtask"))
+                .and_then(toml::Value::as_str)
+                == Some("run --locked -p xtask --"),
+            "a fresh checkout must expose `cargo xtask`"
+        );
     }
 }

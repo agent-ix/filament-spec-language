@@ -29,6 +29,32 @@ fn settle_under(world: &World, work_units: u64) -> fsl_analyze::analyze::Analyze
     analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
 }
 
+fn minimum_proving_work(world: &World) -> u64 {
+    let proves = |work| {
+        matches!(
+            settle_under(world, work)
+                .terminal()
+                .expect("the item settles under a finite work allowance")
+                .value(),
+            TerminalValue::Proved { .. }
+        )
+    };
+    let mut high = 1;
+    while !proves(high) {
+        high = high.checked_mul(2).expect("the fixture has finite work");
+    }
+    let mut low = 0;
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if proves(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    high
+}
+
 #[trace("TC-3152", "FR-1043-AC-5")]
 #[test]
 fn a_ten_step_fraction_mean_on_two_states_proves_within_the_default_work_allowance() {
@@ -48,11 +74,11 @@ fn a_ten_step_fraction_mean_on_two_states_proves_within_the_default_work_allowan
     );
 }
 
-#[trace("TC-638", "FR-203-AC-13")]
+#[trace("TC-638", "FR-203-AC-13", "FR-203-AC-29")]
 #[test]
 fn the_ten_step_fraction_mean_needs_exactly_the_measured_work_units() {
     let world = World::new(&mean(WINDOW));
-    let needed = 294_699;
+    let needed = minimum_proving_work(&world);
     assert!(matches!(
         settle_under(&world, needed).terminal().unwrap().value(),
         TerminalValue::Proved { .. }

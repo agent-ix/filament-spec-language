@@ -41,6 +41,7 @@ mod finite_hyper_item;
 mod hybrid_item;
 mod hybrid_process;
 mod hyper_route;
+mod instance_records;
 mod invariant_item;
 mod items;
 mod package_hyper;
@@ -65,8 +66,9 @@ pub use request::{
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
 use filament_semantic_value::catalog::{CatalogCode, Category};
-use fsl_eval::simulation::model::PopulationUniverse;
+use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_eval::simulation::protocol::ProtocolTransition;
+use fsl_foundation::budget::Budget;
 use fsl_foundation::diagnostic::category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex, Setting};
@@ -87,6 +89,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
     AdmissionFailure, DocumentProvision, DocumentRef, ObservationLimits,
 };
+use ix_trace_rs::implements;
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
@@ -100,7 +103,8 @@ pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
 #[cfg(feature = "test-support")]
 pub use exact::{
     exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered,
-    settle_exact_engine_report,
+    exact_work_checkpoints, reset_exact_work_checkpoints, settle_exact_engine_report,
+    ExactWorkCheckpoint, ExactWorkPhase,
 };
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
@@ -110,6 +114,8 @@ pub use items::{
     hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
+#[cfg(feature = "test-support")]
+pub use state_graph_item::AlterEvidence;
 pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{
@@ -688,7 +694,14 @@ impl SubjectBinding<'_> {
 /// exception: it is accepted and carried in [`EngineBounds`], but no engine
 /// in this repository reads it yet (FR-255 states only that it is carried).
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 16] = [
+pub const ENGINE_SETTINGS: [Setting; 23] = [
+    Setting::ExpansionMaxCandidates,
+    Setting::ZoneCheckMaxSymbolicStates,
+    Setting::ZoneCheckMaxSymbolicTransitions,
+    Setting::ZoneCheckMaxAutomatonStates,
+    Setting::ZoneCheckMaxZoneBytes,
+    Setting::ZoneCheckMaxCheckWork,
+    Setting::AnalysisRetainedBytes,
     Setting::SimulationMaxSteps,
     Setting::ScheduleMaxDemandPoints,
     Setting::ExactProbMaxStates,
@@ -766,6 +779,42 @@ impl EngineBounds {
         })
     }
 
+    /// [`EngineBounds::conflict`] for the `temporal.limits` members, which
+    /// state `zone_check.*` settings only on an item that reads a timed model
+    /// (FR-239 "Budget sources"), so it is judged over the resolved items.
+    /// `selected` is the number of items the caller stated.
+    #[must_use]
+    #[implements("FR-255-AC-25")]
+    pub fn timed_conflict(
+        &self,
+        package: &CheckedPackage,
+        binding: &SubjectBinding<'_>,
+        selected: usize,
+        resolved: &[document::ResolvedItem],
+    ) -> Option<(usize, Setting)> {
+        resolved.iter().find_map(|item| {
+            let document::ResolvedItem::Claim(claim) = item else {
+                return None;
+            };
+            let item = &claim.item;
+            let position = item.request_index.get();
+            if position >= selected || !document::claim_timed(package, &item.claim, binding) {
+                return None;
+            }
+            [
+                (item.options.max_states, Setting::ZoneCheckMaxSymbolicStates),
+                (
+                    item.options.max_transitions,
+                    Setting::ZoneCheckMaxSymbolicTransitions,
+                ),
+                (item.options.max_check_work, Setting::ZoneCheckMaxCheckWork),
+            ]
+            .into_iter()
+            .find(|(member, setting)| member.is_some() && self.get(*setting).is_some())
+            .map(|(_, setting)| (position, setting))
+        })
+    }
+
     /// The settings `item` states in its own members.
     fn stated(&self, item: &document::ItemSelection) -> Vec<Setting> {
         use Setting as S;
@@ -812,6 +861,16 @@ impl EngineBounds {
     }
 }
 
+impl EngineBounds {
+    /// One analysis item's allowance: every setting at the caller's bound,
+    /// else its published default, polling `cancel`. The retained exploration
+    /// state of the item draws on it (`analysis.retained_bytes`).
+    #[must_use]
+    pub fn item_budget(&self, accounting: ScalarLimits, cancel: &Cancel) -> Budget {
+        Budget::from_settings(self, accounting, cancel)
+    }
+}
+
 /// The caller's shared accounting, observation, normalization and deadline
 /// limits for one analyze request (FR-277, FR-281).
 ///
@@ -823,11 +882,8 @@ impl EngineBounds {
 ///
 /// ```
 /// use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply};
-/// let limits = AnalyzeLimits {
-///     deadline: DeadlineSupply::Unbounded,
-///     ..AnalyzeLimits::unbounded()
-/// };
-/// assert_eq!(limits.deadline, DeadlineSupply::Unbounded);
+/// let limits = AnalyzeLimits::published(DeadlineSupply::Milliseconds(5));
+/// assert_eq!(limits.deadline, DeadlineSupply::Milliseconds(5));
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AnalyzeLimits {
@@ -837,6 +893,14 @@ pub struct AnalyzeLimits {
     pub observation: ObservationLimits,
     /// The model normalization budgets.
     pub normalization: ModelNormalizationLimits,
+    /// The work of each model expansion (`expansion.max_candidates`).
+    pub expansion: ExpansionLimits,
+    /// The state exploration and trace length of a `model_based_test` plan
+    /// step; an `analyze` item's own `simulation` member keeps its settings.
+    pub simulation: SimulationLimits,
+    /// The most model-domain positions of a model-based test. It has no
+    /// FR-255 setting and is not the trace-step limit.
+    pub position_limit: u64,
     /// The operation deadline in milliseconds, if one was supplied.
     pub deadline: DeadlineSupply,
     /// The ceiling on the canonical bytes of each package emission the
@@ -852,27 +916,63 @@ pub struct AnalyzeLimits {
 }
 
 impl AnalyzeLimits {
-    /// Published default budgets with an explicitly unbounded deadline.
-    pub fn unbounded() -> Self {
+    /// Every budget at its published default, with the caller's `deadline`.
+    #[implements("FR-281-AC-26")]
+    #[must_use]
+    pub fn published(deadline: DeadlineSupply) -> Self {
         Self {
-            accounting: ScalarLimits {
-                integer_bits: u64::MAX,
-                decimal_digits: u64::MAX,
-                scale_expansion: u64::MAX,
-                text_input_bytes: u64::MAX,
-                text_scalars: u64::MAX,
-                normalized_scalars: u64::MAX,
-                unit_edges: u64::MAX,
-                value_occurrences: u64::MAX,
-                work_units: 1_000_000,
-                result_units: u64::MAX,
-            },
+            accounting: fsl_replay::spine::default_accounting(
+                fsl_replay::spine::DEFAULT_WORK_UNITS,
+            ),
             observation: ObservationLimits::default(),
             normalization: ModelNormalizationLimits::default(),
-            deadline: DeadlineSupply::Unbounded,
+            expansion: ExpansionLimits {
+                max_candidates: const {
+                    Setting::ExpansionMaxCandidates
+                        .default_bound()
+                        .expect("FR-255 tabulates a default")
+                },
+            },
+            simulation: SimulationLimits::default(),
+            position_limit: crate::plan::MODEL_BASED_POSITIONS,
+            deadline,
             emit: fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT),
             replay: fsl_replay::ReplayLimits::default(),
             engines: EngineBounds::default(),
+        }
+    }
+}
+
+/// The exploration and trace-length limits of a `model_based_test` plan step
+/// (FR-281 "Inputs").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SimulationLimits {
+    /// `explore.states`: the distinct states discovered.
+    pub max_states: u64,
+    /// `explore.transitions`: the transitions explored.
+    pub max_transitions: u64,
+    /// `simulation.max_steps`: the positions of a generated trace.
+    pub max_steps: u64,
+}
+
+impl Default for SimulationLimits {
+    fn default() -> Self {
+        Self {
+            max_states: const {
+                Setting::ExploreStates
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
+            max_transitions: const {
+                Setting::ExploreTransitions
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
+            max_steps: const {
+                Setting::SimulationMaxSteps
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
         }
     }
 }

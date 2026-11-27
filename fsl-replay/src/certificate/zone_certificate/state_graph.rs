@@ -467,9 +467,9 @@ fn violation(rule: CertificateRule, at: CertificateLocus) -> Option<CertificateR
 
 /// The parts of `zone` that no zone of `held` holds.
 ///
-/// `charge` is called with zero before each pair of a held zone and a piece
-/// is read, to poll, and with the number of pieces each split makes; its
-/// error stops the subtraction.
+/// `charge` is called with one for each pair of a held zone and a piece it
+/// reads, and with the number of pieces each split makes; its error stops
+/// the subtraction.
 #[implements("FR-852-AC-33")]
 fn outside<O>(
     zone: &Zone,
@@ -486,7 +486,7 @@ fn outside<O>(
         }
         let mut next = Vec::new();
         for piece in rest {
-            charge(0)?;
+            charge(1)?;
             let mut meet = piece.clone();
             intersect(&mut meet, other)?;
             if meet.is_empty() {
@@ -541,8 +541,11 @@ mod tests {
         // 20,000 held zones, none meeting the point: nothing is split.
         let held: Vec<Zone> = (0..20_000).map(|index| unit(2 * index + 1)).collect();
         let point = Zone::zero(2);
-        let rest = outside::<()>(&point, &held, &budget(0));
+        // Each of the 20,000 pairs it reads is charged.
+        let rest = outside::<()>(&point, &held, &budget(20_000));
         assert!(matches!(rest, Ok(parts) if parts == vec![point.clone()]));
+        let rest = outside::<()>(&point, &held, &budget(19_999));
+        assert!(matches!(rest, Err(Halt::Refusal(_))));
         // 12,000 held zones that each split the rest stop at the budget.
         let held: Vec<Zone> = (0..12_000).map(|index| unit(2 * index + 1)).collect();
         let rest = outside(&Zone::universe(2), &held, &budget(200));

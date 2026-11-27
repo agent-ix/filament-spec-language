@@ -14,6 +14,8 @@ use crate::counter::{document, package_with_clauses, subject, Documents, CONTRAC
 const DIRECT_DENSE: &str =
     "dimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n";
 
+mod mutation;
+
 /// Dense delay tables preserve the original clock identities and exact valuations.
 #[trace("FR-940-AC-6", "FR-120")]
 #[test]
@@ -380,7 +382,7 @@ fn dense_replay_rejects_incomplete_certificate_coverage() {
                     steps: Vec::new(),
                 },
                 closure: TrapClosure::StateGraph,
-                over: Some(instance.clone()),
+                over: vec![instance.clone()],
             },
         )
         .with_zone_certificate(certificate);
@@ -1076,6 +1078,7 @@ fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal()
 /// routes, which must agree; the source replay's settlement.
 fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
     use filament_exact::Cancel;
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{
         analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
         PackageDeadlockSubject, RunInput, TemporalItem,
@@ -1097,7 +1100,7 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
         deadlock_model_item(
             &run,
             &world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &world.provision,
             derived.occurrence(),
             &form,
@@ -1118,7 +1121,7 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
             &handoff.bytes,
             handoff.supply(),
             world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             derived.occurrence(),
             &form,
         )
@@ -1198,6 +1201,7 @@ fn a_package_route_deadlock_item_joins_a_terminal_declaration_as_the_source_does
 #[trace("TC-1142", "FR-411-AC-5")]
 #[test]
 fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_source_is() {
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::DerivedItemMismatch;
     use fsl_analyze::analyze::{
         derived_model_item, AnalyzeLimits, PackageDeadlockSubject, TemporalItem,
@@ -1233,7 +1237,7 @@ fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_sourc
             &handoff.bytes,
             handoff.supply(),
             world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             derived.occurrence(),
             &form,
         )

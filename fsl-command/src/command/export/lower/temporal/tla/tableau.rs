@@ -2,12 +2,15 @@
 //! A finite tableau for the negated clause. Invalid guesses reject the
 //! monitor run without disabling any transition of the subject.
 
-use super::{conjuncts, fairness, Cond, Ctx, Extra, Iv, Tf, Var};
-use crate::command::export::lower::temporal::FormulaSite;
+use super::{conjuncts, fairness, Cond, Ctx, Extra, Iv, Tf, TfId, Var};
+use crate::command::export::lower::temporal::{FormulaSite, Formulas};
 use crate::command::export::lower::{
     bullets, defer_at, define, mangle, Definition, Kind, Lower, E,
 };
+use filament_walk::{walk, Children, Walk};
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
+use std::ops::ControlFlow;
 
 /// A row ranges over a Boolean assignment to this finite formula closure.
 /// Bound it before constructing a TLA+ function set of assignments.
@@ -27,14 +30,17 @@ enum Node {
 
 #[derive(Clone, Copy, Debug)]
 enum Refused {
+    /// An operand that is not in the formula, or lost its value.
+    Broken,
     History,
     Limit(Option<usize>),
 }
 
 impl Refused {
-    fn at(self, site: Site<'_>) -> Self {
+    /// Attribute an unattributed limit to `node`.
+    fn at(self, node: Option<usize>) -> Self {
         match self {
-            Self::Limit(None) => Self::Limit(site.node()),
+            Self::Limit(None) => Self::Limit(node),
             error => error,
         }
     }
@@ -75,27 +81,29 @@ struct Response {
 }
 
 impl Response {
-    fn of(tf: &Tf) -> Option<Self> {
-        let Tf::Always(iv, inner) = tf else {
+    fn of(formulas: &Formulas, tf: TfId) -> Option<Self> {
+        let get = |id| formulas.get(id).ok();
+        let &Tf::Always(iv, inner) = get(tf)? else {
             return None;
         };
         if iv.is_some() {
             return None;
         }
-        let Tf::Implies(trigger, response) = &**inner else {
+        let &Tf::Implies(trigger, response) = get(inner)? else {
             return None;
         };
-        let (Tf::Atom(trigger), Tf::Eventually(window, ready)) = (&**trigger, &**response) else {
+        let (&Tf::Atom(trigger), &Tf::Eventually(window, ready)) = (get(trigger)?, get(response)?)
+        else {
             return None;
         };
-        let Tf::Atom(ready) = &**ready else {
+        let &Tf::Atom(ready) = get(ready)? else {
             return None;
         };
         Some(Self {
             lower: window.lower(),
             upper: window.upper()?,
-            trigger: *trigger,
-            ready: *ready,
+            trigger,
+            ready,
             node: None,
         })
     }
@@ -153,6 +161,239 @@ impl Response {
     }
 }
 
+/// A use of the formula still to turn into closure nodes.
+#[derive(Clone, Copy)]
+enum Visit<'s> {
+    /// A conjunct of the clause, negated.
+    Conjunct(TfId, Site<'s>),
+    Formula {
+        tf: TfId,
+        positive: bool,
+        site: Site<'s>,
+        /// The innermost checked node at or around this use.
+        node: Option<usize>,
+    },
+}
+
+/// What an entered use adds once its operands have their nodes.
+enum Add {
+    Nothing,
+    Binary {
+        and: bool,
+        node: Option<usize>,
+    },
+    Window {
+        interval: Iv,
+        until: bool,
+        node: Option<usize>,
+    },
+}
+
+/// The walk that builds the closure; `done` holds the operands not yet taken.
+struct Negation<'c, 's> {
+    closure: &'c mut Closure,
+    formulas: &'c Formulas,
+    done: Vec<usize>,
+    sites: PhantomData<Site<'s>>,
+}
+
+impl<'s> Negation<'_, 's> {
+    fn leaf(&mut self, leaf: Node, node: Option<usize>) -> Result<Add, Refused> {
+        let at = self.closure.add(leaf).map_err(|error| error.at(node))?;
+        self.done.push(at);
+        Ok(Add::Nothing)
+    }
+
+    fn conjunct(
+        &mut self,
+        tf: TfId,
+        site: Site<'s>,
+        children: &mut Children<'_, Visit<'s>>,
+    ) -> Result<Add, Refused> {
+        if let &Tf::And(left, right) = self.formulas.get(tf).map_err(|_| Refused::Broken)? {
+            children.extend([
+                Visit::Conjunct(left, site.operand(0)),
+                Visit::Conjunct(right, site.operand(1)),
+            ]);
+            return Ok(Add::Binary {
+                and: false,
+                node: site.node(),
+            });
+        }
+        let Some(mut response) = Response::of(self.formulas, tf) else {
+            children.push(Visit::Formula {
+                tf,
+                positive: false,
+                site,
+                node: site.node(),
+            });
+            return Ok(Add::Nothing);
+        };
+        // The interval is the right operand of the implication under `always`.
+        response.node = site.operand(0).operand(1).node();
+        let at = self
+            .closure
+            .response_counterexample(response)
+            .map_err(|_| Refused::Limit(response.node))?;
+        self.done.push(at);
+        Ok(Add::Nothing)
+    }
+
+    fn formula(
+        &mut self,
+        (tf, positive): (TfId, bool),
+        site: Site<'s>,
+        node: Option<usize>,
+        children: &mut Children<'_, Visit<'s>>,
+    ) -> Result<Add, Refused> {
+        let operand = |tf, positive, index| {
+            let site = site.operand(index);
+            Visit::Formula {
+                tf,
+                positive,
+                site,
+                node: site.node().or(node),
+            }
+        };
+        match self.formulas.get(tf).map_err(|_| Refused::Broken)? {
+            &Tf::Const(value) => self.leaf(Node::Constant(positive == value), node),
+            &Tf::Atom(index) => self.leaf(Node::Atom { index, positive }, node),
+            &Tf::Not(inner) => {
+                children.push(operand(inner, !positive, 0));
+                Ok(Add::Nothing)
+            }
+            &Tf::And(left, right) => {
+                children.extend([operand(left, positive, 0), operand(right, positive, 1)]);
+                Ok(Add::Binary {
+                    and: positive,
+                    node,
+                })
+            }
+            &Tf::Or(left, right) => {
+                children.extend([operand(left, positive, 0), operand(right, positive, 1)]);
+                Ok(Add::Binary {
+                    and: !positive,
+                    node,
+                })
+            }
+            &Tf::Implies(left, right) => {
+                children.extend([operand(left, !positive, 0), operand(right, positive, 1)]);
+                Ok(Add::Binary {
+                    and: !positive,
+                    node,
+                })
+            }
+            &Tf::Always(interval, inner) => {
+                self.leaf(Node::Constant(!positive), node)?;
+                children.push(operand(inner, positive, 0));
+                Ok(Add::Window {
+                    interval,
+                    until: !positive,
+                    node,
+                })
+            }
+            &Tf::Eventually(interval, inner) => {
+                self.leaf(Node::Constant(positive), node)?;
+                children.push(operand(inner, positive, 0));
+                Ok(Add::Window {
+                    interval,
+                    until: positive,
+                    node,
+                })
+            }
+            &Tf::Until(interval, left, right) => {
+                children.extend([operand(left, positive, 0), operand(right, positive, 1)]);
+                Ok(Add::Window {
+                    interval,
+                    until: positive,
+                    node,
+                })
+            }
+            &Tf::Release(interval, left, right) => {
+                children.extend([operand(left, positive, 0), operand(right, positive, 1)]);
+                Ok(Add::Window {
+                    interval,
+                    until: !positive,
+                    node,
+                })
+            }
+            Tf::Hist(_)
+            | Tf::Once(..)
+            | Tf::Historically(..)
+            | Tf::Since(..)
+            | Tf::Triggered(..)
+            | Tf::Timed(_) => Err(Refused::History),
+        }
+    }
+
+    /// The nodes of the two operands, left first.
+    fn operands(&mut self) -> Result<(usize, usize), Refused> {
+        let right = self.done.pop().ok_or(Refused::Broken)?;
+        let left = self.done.pop().ok_or(Refused::Broken)?;
+        Ok((left, right))
+    }
+
+    fn join(&mut self, add: Add) -> Result<(), Refused> {
+        let at = match add {
+            Add::Nothing => return Ok(()),
+            Add::Binary { and, node } => {
+                let (left, right) = self.operands()?;
+                let joined = if and {
+                    Node::And(left, right)
+                } else {
+                    Node::Or(left, right)
+                };
+                self.closure.add(joined).map_err(|error| error.at(node))?
+            }
+            Add::Window {
+                interval,
+                until,
+                node,
+            } => {
+                let (left, right) = self.operands()?;
+                self.closure
+                    .window(interval, until, left, right)
+                    .map_err(|error| error.at(node))?
+            }
+        };
+        self.done.push(at);
+        Ok(())
+    }
+}
+
+impl<'s> Walk for Negation<'_, 's> {
+    type Node = Visit<'s>;
+    type Frame = Add;
+    type Stop = Refused;
+
+    fn enter(
+        &mut self,
+        visit: Visit<'s>,
+        children: &mut Children<'_, Visit<'s>>,
+    ) -> ControlFlow<Refused, Add> {
+        let entered = match visit {
+            Visit::Conjunct(tf, site) => self.conjunct(tf, site, children),
+            Visit::Formula {
+                tf,
+                positive,
+                site,
+                node,
+            } => self.formula((tf, positive), site, node, children),
+        };
+        match entered {
+            Ok(add) => ControlFlow::Continue(add),
+            Err(refused) => ControlFlow::Break(refused),
+        }
+    }
+
+    fn exit(&mut self, add: Add) -> ControlFlow<Refused> {
+        match self.join(add) {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(refused) => ControlFlow::Break(refused),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Closure {
     nodes: Vec<Node>,
@@ -174,21 +415,24 @@ impl Closure {
         Ok(at)
     }
 
-    fn counterexample(&mut self, tf: &Tf, site: Site<'_>) -> Result<usize, Refused> {
-        if let Tf::And(left, right) = tf {
-            let left = self.counterexample(left, site.operand(0))?;
-            let right = self.counterexample(right, site.operand(1))?;
-            return self
-                .add(Node::Or(left, right))
-                .map_err(|error| error.at(site));
-        }
-        let Some(mut response) = Response::of(tf) else {
-            return self.formula(tf, false, site);
+    /// The nodes of the negation of the clause's formula `root`: some
+    /// conjunct fails.
+    fn counterexample(
+        &mut self,
+        formulas: &Formulas,
+        root: TfId,
+        site: Site<'_>,
+    ) -> Result<usize, Refused> {
+        let mut negation = Negation {
+            closure: self,
+            formulas,
+            done: Vec::new(),
+            sites: PhantomData,
         };
-        // The interval is the right operand of the implication under `always`.
-        response.node = site.operand(0).operand(1).node();
-        self.response_counterexample(response)
-            .map_err(|_| Refused::Limit(response.node))
+        if let ControlFlow::Break(refused) = walk(&mut negation, Visit::Conjunct(root, site)) {
+            return Err(refused);
+        }
+        negation.done.pop().ok_or(Refused::Broken)
     }
 
     fn response_counterexample(&mut self, response: Response) -> Result<usize, Refused> {
@@ -202,58 +446,6 @@ impl Closure {
         // obligation that every trigger receives a response in its window.
         let any = self.add(Node::Constant(true))?;
         self.add(Node::Until(any, violation))
-    }
-
-    fn formula(&mut self, tf: &Tf, positive: bool, site: Site<'_>) -> Result<usize, Refused> {
-        self.formula_nodes(tf, positive, site)
-            .map_err(|error| error.at(site))
-    }
-
-    fn formula_nodes(&mut self, tf: &Tf, positive: bool, site: Site<'_>) -> Result<usize, Refused> {
-        match tf {
-            Tf::Const(value) => self.add(Node::Constant(positive == *value)),
-            Tf::Atom(index) => self.add(Node::Atom {
-                index: *index,
-                positive,
-            }),
-            Tf::Not(inner) => self.formula(inner, !positive, site.operand(0)),
-            Tf::And(left, right) | Tf::Or(left, right) => {
-                let left = self.formula(left, positive, site.operand(0))?;
-                let right = self.formula(right, positive, site.operand(1))?;
-                self.add(if positive == matches!(tf, Tf::And(..)) {
-                    Node::And(left, right)
-                } else {
-                    Node::Or(left, right)
-                })
-            }
-            Tf::Implies(left, right) => {
-                let left = self.formula(left, !positive, site.operand(0))?;
-                let right = self.formula(right, positive, site.operand(1))?;
-                self.add(if positive {
-                    Node::Or(left, right)
-                } else {
-                    Node::And(left, right)
-                })
-            }
-            Tf::Always(iv, inner) | Tf::Eventually(iv, inner) => {
-                let eventually = positive == matches!(tf, Tf::Eventually(..));
-                let left = self.add(Node::Constant(eventually))?;
-                let right = self.formula(inner, positive, site.operand(0))?;
-                self.window(*iv, eventually, left, right)
-            }
-            Tf::Until(iv, left, right) | Tf::Release(iv, left, right) => {
-                let until = positive == matches!(tf, Tf::Until(..));
-                let left = self.formula(left, positive, site.operand(0))?;
-                let right = self.formula(right, positive, site.operand(1))?;
-                self.window(*iv, until, left, right)
-            }
-            Tf::Hist(_)
-            | Tf::Once(..)
-            | Tf::Historically(..)
-            | Tf::Since(..)
-            | Tf::Triggered(..)
-            | Tf::Timed(_) => Err(Refused::History),
-        }
     }
 
     /// Expand a finite window as recurrence equations with a fixed number
@@ -352,37 +544,39 @@ impl Closure {
 /// that conjunction, so the bounded-response conjuncts do not eliminate
 /// either condition. Formulas outside this fragment may have deterministic
 /// monitors even when the current exporter cannot build one.
-fn mixed_fragment(ctx: &Ctx<'_>, formula: &Tf) -> bool {
-    let mut leaves = Vec::new();
-    conjuncts(formula, &mut leaves);
+fn mixed_fragment(ctx: &Ctx<'_>, formulas: &Formulas, formula: TfId) -> bool {
+    let Ok(leaves) = conjuncts(formulas, formula) else {
+        return false;
+    };
+    let get = |id| formulas.get(id).ok();
     let mut persistence = None;
     let mut recurrence = None;
     let mut responses = Vec::new();
     for leaf in leaves {
-        if let Some(response) = Response::of(leaf) {
+        if let Some(response) = Response::of(formulas, leaf) {
             responses.extend([response.trigger, response.ready]);
             continue;
         }
-        match leaf {
-            Tf::Eventually(outer, inner) if !outer.is_some() => {
-                let Tf::Always(inner, operand) = &**inner else {
+        match get(leaf) {
+            Some(&Tf::Eventually(outer, inner)) if !outer.is_some() => {
+                let Some(&Tf::Always(inner, operand)) = get(inner) else {
                     return false;
                 };
-                let Tf::Atom(index) = &**operand else {
+                let Some(&Tf::Atom(index)) = get(operand) else {
                     return false;
                 };
-                if inner.is_some() || persistence.replace(*index).is_some() {
+                if inner.is_some() || persistence.replace(index).is_some() {
                     return false;
                 }
             }
-            Tf::Always(outer, inner) if !outer.is_some() => {
-                let Tf::Eventually(inner, operand) = &**inner else {
+            Some(&Tf::Always(outer, inner)) if !outer.is_some() => {
+                let Some(&Tf::Eventually(inner, operand)) = get(inner) else {
                     return false;
                 };
-                let Tf::Atom(index) = &**operand else {
+                let Some(&Tf::Atom(index)) = get(operand) else {
                     return false;
                 };
-                if inner.is_some() || recurrence.replace(*index).is_some() {
+                if inner.is_some() || recurrence.replace(index).is_some() {
                     return false;
                 }
             }
@@ -390,18 +584,20 @@ fn mixed_fragment(ctx: &Ctx<'_>, formula: &Tf) -> bool {
         }
     }
     let field = |index| {
-        let E::Field {
+        let exprs = ctx.input.show.exprs;
+        let &E::Field {
             object,
             key,
             field,
             primed: false,
-        } = ctx.clause.cur.get(index)?
+        } = exprs.get(*ctx.clause.cur.get(index)?).ok()?
         else {
             return None;
         };
-        let value = ctx.input.objects.get(*object)?.fields.get(*field)?;
-        (matches!(&**key, E::Param(name) if name == ctx.key()) && matches!(value.kind, Kind::Bool))
-            .then_some((*object, *field))
+        let value = ctx.input.objects.get(object)?.fields.get(field)?;
+        (matches!(exprs.get(key), Ok(E::Param(name)) if name == ctx.key())
+            && matches!(value.kind, Kind::Bool))
+        .then_some((object, field))
     };
     let (Some(persistence), Some(recurrence)) =
         (persistence.and_then(field), recurrence.and_then(field))
@@ -417,10 +613,10 @@ fn mixed_fragment(ctx: &Ctx<'_>, formula: &Tf) -> bool {
 
 pub(super) fn emit(ctx: &Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) -> Lower<()> {
     let clause = ctx.clause;
-    let formula = &clause.tf;
+    let (formulas, formula) = (&clause.formulas, clause.tf);
     let names = &ctx.names;
     let anchor = clause.refuse_at.unwrap_or(clause.position);
-    if !mixed_fragment(ctx, formula) {
+    if !mixed_fragment(ctx, formulas, formula) {
         return defer_at(
             anchor,
             "temporal/nondeterministic-monitor",
@@ -432,10 +628,11 @@ pub(super) fn emit(ctx: &Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) 
         nodes: &clause.formula_sites,
         at: 0,
     };
-    let root = match closure.counterexample(formula, site) {
+    let root = match closure.counterexample(formulas, formula, site) {
         Ok(root) => root,
         Err(reason) => {
             let (node, detail) = match reason {
+                Refused::Broken => (anchor, "a tableau over an incomplete formula"),
                 Refused::History => (
                     anchor,
                     "a nondeterministic tableau with a history or timed operand",
@@ -615,7 +812,7 @@ pub(super) fn emit(ctx: &Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) 
 
 #[cfg(test)]
 mod tests {
-    use super::{Closure, FormulaSite, Iv, Node, Refused, Site, Tf, MAX_NODES};
+    use super::{Closure, FormulaSite, Formulas, Iv, Node, Refused, Site, Tf, TfId, MAX_NODES};
     use ix_trace_rs::trace;
 
     fn bit(assignment: usize, node: usize) -> bool {
@@ -634,7 +831,10 @@ mod tests {
                 })
                 .unwrap();
         }
-        let formula = Tf::And(Box::new(Tf::Atom(0)), Box::new(Tf::Atom(1)));
+        let mut formulas = Formulas::default();
+        let left = formulas.add(Tf::Atom(0));
+        let right = formulas.add(Tf::Atom(1));
+        let formula = formulas.add(Tf::And(left, right));
         let nodes = [
             FormulaSite {
                 position: 90,
@@ -651,7 +851,8 @@ mod tests {
         ];
         assert!(matches!(
             closure.counterexample(
-                &formula,
+                &formulas,
+                formula,
                 Site {
                     nodes: &nodes,
                     at: 0
@@ -665,13 +866,13 @@ mod tests {
     /// infinite word. A reachable cycle accepts when its strongly connected
     /// component meets every eventuality's acceptance set.
     fn accepts_negation<const N: usize>(
-        formula: &Tf,
+        (formulas, formula): (&Formulas, TfId),
         word: &[[bool; N]],
         repeat_at: usize,
     ) -> bool {
         let mut closure = Closure::default();
         let root = closure
-            .counterexample(formula, Site::default())
+            .counterexample(formulas, formula, Site::default())
             .expect("small future formula");
         // Extend the finite prefix until every position in the loop has
         // the same history on each repetition.
@@ -773,48 +974,58 @@ mod tests {
     #[test]
     #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
     fn tableau_accepts_exactly_the_nested_until_violations() {
-        let a = Box::new(Tf::Atom(0));
-        let b = Box::new(Tf::Atom(1));
-        let formula = Tf::Always(Iv::none(), Box::new(Tf::Until(Iv::none(), a, b)));
+        let mut formulas = Formulas::default();
+        let a = formulas.add(Tf::Atom(0));
+        let b = formulas.add(Tf::Atom(1));
+        let until = formulas.add(Tf::Until(Iv::none(), a, b));
+        let root = formulas.add(Tf::Always(Iv::none(), until));
+        let formula = (&formulas, root);
         assert!(accepts_negation(
-            &formula,
+            formula,
             &[[false, false], [true, true]],
             1
         ));
-        assert!(accepts_negation(&formula, &[[true, false]], 0));
+        assert!(accepts_negation(formula, &[[true, false]], 0));
         assert!(!accepts_negation(
-            &formula,
+            formula,
             &[[true, false], [true, true]],
             1
         ));
-        assert!(!accepts_negation(&formula, &[[true, true]], 0));
+        assert!(!accepts_negation(formula, &[[true, true]], 0));
+    }
+
+    /// `always (atom 0 implies eventually[1, upper] atom 1)`.
+    fn response(formulas: &mut Formulas, upper: u64) -> TfId {
+        let a = formulas.add(Tf::Atom(0));
+        let b = formulas.add(Tf::Atom(1));
+        let eventually = formulas.add(Tf::Eventually(Iv(Some((1, Some(upper)))), b));
+        let implies = formulas.add(Tf::Implies(a, eventually));
+        formulas.add(Tf::Always(Iv::none(), implies))
     }
 
     #[test]
     #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
     fn tableau_distinguishes_the_following_position_at_a_deadline() {
-        let a = Box::new(Tf::Atom(0));
-        let b = Box::new(Tf::Atom(1));
-        let interval = Iv(Some((1, Some(1))));
-        let response = Tf::Eventually(interval, b);
-        let formula = Tf::Always(Iv::none(), Box::new(Tf::Implies(a, Box::new(response))));
+        let mut formulas = Formulas::default();
+        let root = response(&mut formulas, 1);
+        let formula = (&formulas, root);
         assert!(!accepts_negation(
-            &formula,
+            formula,
             &[[true, false], [false, true]],
             1
         ));
         assert!(accepts_negation(
-            &formula,
+            formula,
             &[[true, true], [false, false]],
             1
         ));
         assert!(accepts_negation(
-            &formula,
+            formula,
             &[[true, false], [false, false], [false, true]],
             2
         ));
         assert!(accepts_negation(
-            &formula,
+            formula,
             &[[false, false], [true, false]],
             1
         ));
@@ -823,41 +1034,41 @@ mod tests {
     #[test]
     #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
     fn tableau_reads_both_window_ends_after_the_first_deadline() {
-        let trigger = Box::new(Tf::Atom(0));
-        let ready = Box::new(Tf::Atom(1));
-        let interval = Iv(Some((1, Some(2))));
-        let response = Tf::Eventually(interval, ready);
-        let formula = Tf::Always(
-            Iv::none(),
-            Box::new(Tf::Implies(trigger, Box::new(response))),
-        );
+        let mut formulas = Formulas::default();
+        let root = response(&mut formulas, 2);
+        let formula = (&formulas, root);
         for word in [
             [[true, false], [false, true], [false, false]],
             [[true, false], [false, false], [false, true]],
             [[false, true], [false, false], [false, false]],
         ] {
-            assert!(!accepts_negation(&formula, &word, 2));
+            assert!(!accepts_negation(formula, &word, 2));
         }
         for word in [
             [[true, true], [false, false], [false, false], [false, false]],
             [[true, false], [false, false], [false, false], [false, true]],
         ] {
-            assert!(accepts_negation(&formula, &word, 3));
+            assert!(accepts_negation(formula, &word, 3));
         }
     }
 
     #[test]
     #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
     fn tableau_accepts_each_way_a_mixed_obligation_can_fail() {
-        let g = |inner| Tf::Always(Iv::none(), Box::new(inner));
-        let f = |inner| Tf::Eventually(Iv::none(), Box::new(inner));
-        let and = |a, b| Tf::And(Box::new(a), Box::new(b));
-        let interval = Iv(Some((1, Some(1))));
-        let response = Tf::Eventually(interval, Box::new(Tf::Atom(3)));
-        let response = g(Tf::Implies(Box::new(Tf::Atom(2)), Box::new(response)));
-        let formula = and(and(f(g(Tf::Atom(0))), g(f(Tf::Atom(1)))), response);
+        let mut formulas = Formulas::default();
+        let [p, q, trigger, ready] = [0, 1, 2, 3].map(|index| formulas.add(Tf::Atom(index)));
+        let inner = formulas.add(Tf::Always(Iv::none(), p));
+        let persistence = formulas.add(Tf::Eventually(Iv::none(), inner));
+        let inner = formulas.add(Tf::Eventually(Iv::none(), q));
+        let recurrence = formulas.add(Tf::Always(Iv::none(), inner));
+        let eventually = formulas.add(Tf::Eventually(Iv(Some((1, Some(1)))), ready));
+        let implies = formulas.add(Tf::Implies(trigger, eventually));
+        let response = formulas.add(Tf::Always(Iv::none(), implies));
+        let both = formulas.add(Tf::And(persistence, recurrence));
+        let root = formulas.add(Tf::And(both, response));
+        let formula = (&formulas, root);
         assert!(!accepts_negation(
-            &formula,
+            formula,
             &[
                 [true, true, false, false],
                 [true, false, true, false],
@@ -865,17 +1076,9 @@ mod tests {
             ],
             0,
         ));
-        assert!(accepts_negation(
-            &formula,
-            &[[false, true, false, false]],
-            0
-        ));
-        assert!(accepts_negation(
-            &formula,
-            &[[true, false, false, false]],
-            0
-        ));
-        assert!(accepts_negation(&formula, &[[true, true, true, false]], 0));
+        assert!(accepts_negation(formula, &[[false, true, false, false]], 0));
+        assert!(accepts_negation(formula, &[[true, false, false, false]], 0));
+        assert!(accepts_negation(formula, &[[true, true, true, false]], 0));
 
         // Lamp starts unlit. Repeating noop forever falsifies the clause,
         // but light remains enabled and changes the subject state. Every
@@ -883,8 +1086,8 @@ mod tests {
         // lit. The bounded response is vacuous on both traces.
         let unlit = [false, false, false, false];
         let lit = [true, true, false, false];
-        assert!(accepts_negation(&formula, &[unlit], 0));
-        assert!(!accepts_negation(&formula, &[unlit, lit], 1));
-        assert!(!accepts_negation(&formula, &[unlit, unlit, lit], 2));
+        assert!(accepts_negation(formula, &[unlit], 0));
+        assert!(!accepts_negation(formula, &[unlit, lit], 1));
+        assert!(!accepts_negation(formula, &[unlit, unlit, lit], 2));
     }
 }

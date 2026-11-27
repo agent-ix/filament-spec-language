@@ -2,8 +2,8 @@
 //! Named-reward documents are recomputed by a fresh qualified-core process.
 
 use super::bounded::{
-    alter_keys, document, document_limits, key, mutate, request_with, requests_with_mode, run,
-    run_with,
+    alter_keys, document, document_limits, key, mutate, request_with, requests_with_accounting,
+    run, run_with,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/reward.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
+// Checker conformance fixtures need room for analyzer certificate production.
+const CHECKER_FIXTURE_WORK: u64 = 10_000_000;
 fn header() -> String {
     // Retain the production fixture's admitted language identity.
     let language = include_str!("../fixtures/link.native")
@@ -265,7 +267,10 @@ fn low_budget_expected_reward_bounds_are_accepted_by_the_separate_checker() {
         max_precision_bits: 16,
         ..ExactProbLimits::default()
     };
-    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = CHECKER_FIXTURE_WORK;
+    let (requests, settlement) =
+        requests_with_accounting(&source, SNAPSHOT, limits, DOMAIN, accounting, false);
     let [lower, upper] = requests.as_slice() else {
         panic!("the reward interval has two documents: {settlement:?}");
     };

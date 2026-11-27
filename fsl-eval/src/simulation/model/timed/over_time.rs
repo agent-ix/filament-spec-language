@@ -50,6 +50,62 @@ impl DelayInterval {
         }
     }
 
+    /// `[lower, upper]`.
+    pub(crate) fn closed(lower: Rational, upper: Rational) -> Self {
+        Self {
+            lower: (lower, true),
+            upper: Some((upper, true)),
+        }
+    }
+
+    /// An interval with each end and whether it is included.
+    #[cfg(test)]
+    pub(crate) fn between(lower: (Rational, bool), upper: Option<(Rational, bool)>) -> Self {
+        Self { lower, upper }
+    }
+
+    /// Whether the interval has positive length.
+    pub(crate) fn has_length(&self) -> bool {
+        self.upper
+            .as_ref()
+            .is_none_or(|(upper, _)| *upper > self.lower.0)
+    }
+
+    /// The union of the non-empty `intervals`, in time order, as intervals
+    /// that share no delay. Two that meet at an end join only when one of
+    /// them includes it, so an excluded delay stays excluded.
+    #[implements("FSpec-FR-420-AC-2")]
+    pub(crate) fn union(mut intervals: Vec<Self>) -> Vec<Self> {
+        intervals.sort_by(|left, right| {
+            let by_value = left.lower.0.cmp(&right.lower.0);
+            by_value.then(right.lower.1.cmp(&left.lower.1))
+        });
+        let mut joined: Vec<Self> = Vec::with_capacity(intervals.len());
+        for next in intervals {
+            let Some(last) = joined.last_mut() else {
+                joined.push(next);
+                continue;
+            };
+            let Some((end, end_closed)) = &last.upper else {
+                continue;
+            };
+            let meets =
+                next.lower.0 < *end || (next.lower.0 == *end && (*end_closed || next.lower.1));
+            if !meets {
+                joined.push(next);
+                continue;
+            }
+            let further = match &next.upper {
+                None => true,
+                Some((upper, closed)) => upper > end || (upper == end && *closed),
+            };
+            if further {
+                last.upper = next.upper;
+            }
+        }
+        joined
+    }
+
     /// The least delay, and whether it is included.
     pub fn lower(&self) -> (&Rational, bool) {
         (&self.lower.0, self.lower.1)

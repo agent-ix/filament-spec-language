@@ -812,3 +812,66 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
         assert_ne!(stutter_identity, written(&ProductTransition::Model(inc)));
     }
 }
+
+/// FR-255 behaviour 14 over the liveness product: the Counter behaviour
+/// `0, 1, 2, 3, 3, ...` has four product states, each charged more than its
+/// 256-byte entry overhead, so neither one byte nor 1,024 bytes holds them
+/// all. With no setting the claim proves.
+#[trace("FR-255-AC-42")]
+#[test]
+fn a_liveness_run_charges_each_product_state_to_retained_bytes() {
+    use fsl_analyze::analyze::{analyze_items, model_item, split_records, Engines, ModelItem};
+    use fsl_foundation::{RequestIndex, Setting};
+    use fsl_replay::TerminalValue;
+
+    let fixture = counter(document(false), "", "always eventually holds(c.value = 3)");
+    let letters = fixture.letters(is_three);
+    let run = |bound: Option<u64>| {
+        let request = fsl_analyze::model_check::ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &fixture.temporal_clock_selections,
+            subject: crate::counter::subject(
+                &fixture.package,
+                &fixture.documents,
+                fixture.initial.clone(),
+                &fixture.keys,
+                UNLIMITED,
+            ),
+            item: fsl_replay::ModelCheckItem::Clause {
+                clause: &fixture.clauses[0],
+                letters: &letters,
+            },
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+            reductions: Default::default(),
+        };
+        let mut item = ModelItem {
+            request,
+            stutter_closure: false,
+            certificate: fixture.certificate_request(&letters, UNLIMITED),
+            engines: Default::default(),
+            replay: Box::new(|_| panic!("a claim that holds has no counterexample")),
+        };
+        if let Some(bound) = bound {
+            assert!(item.engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let records = analyze_items(
+            &Engines::fsl().expect("the engines register"),
+            vec![model_item(RequestIndex::new(0), item).expect("a clause run")],
+            &Cancel::new(),
+        );
+        let (mut records, _) = split_records(records, &fixture.package);
+        records.remove(0)
+    };
+    for bound in [1, 1_024] {
+        let printed = format!("{:?}", run(Some(bound)));
+        assert!(
+            printed.contains("AnalysisRetainedBytes")
+                && printed.contains(&format!("value: {bound}")),
+            "{printed}"
+        );
+    }
+    assert!(!matches!(run(None).value(), TerminalValue::Incomplete(_)));
+}

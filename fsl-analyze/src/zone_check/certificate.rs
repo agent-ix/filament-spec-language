@@ -23,6 +23,10 @@ use fsl_replay::{
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use num_bigint::BigInt;
 
+#[cfg(test)]
+#[path = "certificate/mutation_tests.rs"]
+mod mutation_tests;
+
 use super::divergence::{EscapeTarget, EscapeWitness, Move};
 use super::search::{Halt, Run, SymbolicEdge, TimedStateGraph};
 use super::{Bound, Dbm, ZoneCheckRefusal};

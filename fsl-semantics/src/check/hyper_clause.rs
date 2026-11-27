@@ -35,6 +35,7 @@ use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use ix_trace_rs::implements;
 
 use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
@@ -52,6 +53,7 @@ use super::{AdmittedModel, Capability};
 use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
+use crate::model::state::StateModel;
 
 pub(crate) mod emission;
 pub(crate) mod lowering;
@@ -165,16 +167,19 @@ impl ModelAlias {
     }
 }
 
-/// One object parameter `v: V::T`, bound to a population of its alias's model
-/// (FR-172 "Object parameters").
+/// One object parameter `v: V::T` of its alias's model (FR-172 "Object
+/// parameters").
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObjectParameter {
     /// The parameter's name.
     pub name: String,
-    /// The alias whose model declares the population.
+    /// The alias whose model declares the type.
     pub alias: ModelAlias,
-    /// The population the parameter's objects are drawn from.
-    pub population: PopulationDomain,
+    /// The declared object type `T`.
+    pub object: EffectiveId,
+    /// Every population of the alias's model that overlaps `T`, in
+    /// declaration-key order; empty when none does.
+    pub populations: Vec<PopulationDomain>,
 }
 
 /// One checked quantifier: its kind, variable, model alias and fairness set.
@@ -365,6 +370,18 @@ impl HyperForm {
             | Self::ProjectionAligned => None,
         }
     }
+
+    /// Classify package-read quantifier facts with the same HP-4 rule used by
+    /// source checking. Each pair is the quantifier kind and whether that
+    /// quantifier has a non-empty fairness set.
+    #[implements("FR-173-AC-5")]
+    pub fn classify_package_facts(
+        quantifiers: &[(QuantifierKind, bool)],
+        aligned: bool,
+        safety: bool,
+    ) -> Self {
+        classify_facts(quantifiers, aligned, safety)
+    }
 }
 
 /// Which rule of ADR-023 section 3 places a clause in HP-4.
@@ -446,8 +463,6 @@ pub struct CheckedHyperClause {
     atoms: BTreeMap<usize, lowering::AtomCondition>,
     /// Package atom identities, with no source-checked expression body.
     package_atoms: BTreeMap<usize, (NodeKey, usize)>,
-    /// The object type each object parameter declares, in source order.
-    parameter_objects: Vec<EffectiveId>,
     /// The span of each quantifier's written constraint that resolved to
     /// each member of its fairness set, in fairness-set order.
     fairness_spans: Vec<Vec<Span>>,
@@ -466,12 +481,22 @@ pub struct PackageHyperParameter {
     pub alias: String,
     /// The parameter's declared object type.
     pub object: EffectiveId,
-    /// The covering population's declared object type.
-    pub population_object: EffectiveId,
-    /// The population's declaration-key ordinal within its model.
-    pub population_ordinal: usize,
-    /// An authored population bound, when present.
-    pub maximum: Option<u64>,
+    /// Every population of the alias's model that overlaps the type. A
+    /// package reader leaves it empty; [`PackageHyperForm::bind_populations`]
+    /// fills it from the admitted model.
+    pub populations: Vec<PopulationDomain>,
+}
+
+impl PackageHyperForm {
+    /// FR-172 "Object parameters": give each object parameter every
+    /// population of `model` that overlaps its type, as S3 does for a source
+    /// clause. Every rebuild from a package calls this.
+    #[implements("FR-172-AC-10")]
+    pub fn bind_populations(&mut self, model: &StateModel) {
+        for parameter in &mut self.parameters {
+            parameter.populations = model.overlapping_populations(parameter.object.clone());
+        }
+    }
 }
 
 /// A trace quantifier read from a package's ordered quantifier tuple.
@@ -629,13 +654,17 @@ impl CheckedHyperClause {
     /// # Errors
     /// Refuses an unsupported profile, malformed arena, unknown alias or
     /// inconsistent atom slot; it never constructs a partial checked clause.
+    #[implements("FR-173-AC-3")]
     pub fn of_package_form(
         form: PackageHyperForm,
         types: &filament_semantic_value::declaration::TypeEnvironment,
         position_limit: u64,
     ) -> Result<Self, super::PackageClauseRefusal> {
         use super::PackageClauseRefusal::{Domains, Shape};
-        if form.profile != TemporalProfile::InfiniteTrace {
+        if !matches!(
+            form.profile,
+            TemporalProfile::InfiniteTrace | TemporalProfile::EventPositionFalseExtension
+        ) {
             return Err(super::PackageClauseRefusal::Profile(form.profile));
         }
         if form.subject_models.len() != form.aliases.len()
@@ -686,21 +715,16 @@ impl CheckedHyperClause {
             return Err(Shape);
         }
         let mut parameters = Vec::with_capacity(form.parameters.len());
-        let mut parameter_objects = Vec::with_capacity(form.parameters.len());
         for p in form.parameters {
             let alias = ModelAlias(p.alias);
             if !aliases.contains(&alias) {
                 return Err(Shape);
             }
-            parameter_objects.push(p.object);
             parameters.push(ObjectParameter {
                 name: p.name,
                 alias,
-                population: PopulationDomain {
-                    object: p.population_object,
-                    ordinal: p.population_ordinal,
-                    maximum: p.maximum,
-                },
+                object: p.object,
+                populations: p.populations,
             });
         }
         if form.atom_slots.iter().any(|slot| {
@@ -776,10 +800,9 @@ impl CheckedHyperClause {
                 return Err(Shape);
             }
         }
-        let roots: Vec<ValueType> = parameter_objects
+        let roots: Vec<ValueType> = parameters
             .iter()
-            .cloned()
-            .map(ValueType::Reference)
+            .map(|parameter| ValueType::Reference(parameter.object.clone()))
             .collect();
         let domains = classify_domains(&roots.iter().collect::<Vec<_>>(), types, position_limit)
             .map_err(Domains)?;
@@ -817,7 +840,6 @@ impl CheckedHyperClause {
             atom_slots: form.atom_slots,
             atoms: BTreeMap::new(),
             package_atoms,
-            parameter_objects,
             fairness_spans,
             occurrence: Some(form.occurrence),
         })
@@ -882,10 +904,11 @@ impl CheckedHyperClause {
         &self.parameters
     }
 
-    /// The declared object type of parameter `index`, before resolving it to
-    /// the canonical member type of its selected population.
+    /// The declared object type of parameter `index`.
     pub fn parameter_object_type(&self, index: usize) -> Option<&EffectiveId> {
-        self.parameter_objects.get(index)
+        self.parameters
+            .get(index)
+            .map(|parameter| &parameter.object)
     }
 
     /// The quantifier prefix, in source order.
@@ -1010,12 +1033,6 @@ impl CheckedHyperClause {
     pub(crate) fn assembled_at(mut self, occurrence: OccurrenceKey) -> Self {
         self.occurrence = Some(occurrence);
         self
-    }
-
-    /// The object type each object parameter declares (`v: V::T`), in
-    /// source order.
-    pub(crate) fn parameter_objects(&self) -> &[EffectiveId] {
-        &self.parameter_objects
     }
 
     /// The span of each quantifier's written fairness constraints, one per
@@ -1393,23 +1410,6 @@ pub enum HyperCause {
         /// The parameter's span.
         span: Span,
     },
-    /// No population of the alias's model has the parameter's object type as
-    /// its element type. `missing_declaration`/`missing-name`, at the
-    /// parameter.
-    UnresolvedPopulation {
-        /// The parameter's name.
-        parameter: String,
-        /// The parameter's span.
-        span: Span,
-    },
-    /// More than one population has the parameter's object type as its element
-    /// type. `ambiguous_declaration`/`ambiguous-name`, at the parameter.
-    AmbiguousPopulation {
-        /// The parameter's name.
-        parameter: String,
-        /// The parameter's span.
-        span: Span,
-    },
     /// A model member read in the body carries no trace variable.
     /// `ill_typed`/`type-mismatch`, at the read.
     UnindexedRead {
@@ -1573,8 +1573,6 @@ impl HyperCause {
             | Self::UnresolvedAlias { span, .. }
             | Self::UnboundParameterAlias { span, .. }
             | Self::ParameterNotAnObject { span, .. }
-            | Self::UnresolvedPopulation { span, .. }
-            | Self::AmbiguousPopulation { span, .. }
             | Self::UnindexedRead { span }
             | Self::MismatchedTrace { span }
             | Self::UnknownTrace { span, .. }
@@ -1622,14 +1620,11 @@ impl HyperCause {
             }
             Self::DuplicateName { .. } => Code::ConflictingDeclaration,
             Self::UnresolvedAlias { .. }
-            | Self::UnresolvedPopulation { .. }
             | Self::FiniteRecordMissing { .. }
             | Self::UnknownTrace { .. }
             | Self::BodyMissing { .. }
             | Self::UnresolvedStepLabel { .. } => Code::MissingDeclaration,
-            Self::AmbiguousPopulation { .. } | Self::BodyShadows { .. } => {
-                Code::AmbiguousDeclaration
-            }
+            Self::BodyShadows { .. } => Code::AmbiguousDeclaration,
             Self::BodyUnproved { .. } => Code::UndefinedExpression,
             Self::UnboundParameterAlias { .. }
             | Self::ParameterNotAnObject { .. }
@@ -1665,12 +1660,11 @@ impl HyperCause {
             }
             Self::DuplicateName { .. } => "duplicate-declaration",
             Self::UnresolvedAlias { .. }
-            | Self::UnresolvedPopulation { .. }
             | Self::UnknownTrace { .. }
             | Self::BodyMissing { .. }
             | Self::UnresolvedStepLabel { .. }
             | Self::FiniteRecordMissing { .. } => "missing-name",
-            Self::AmbiguousPopulation { .. } | Self::BodyShadows { .. } => "ambiguous-name",
+            Self::BodyShadows { .. } => "ambiguous-name",
             Self::UnboundParameterAlias { .. }
             | Self::ParameterNotAnObject { .. }
             | Self::UnindexedRead { .. }
@@ -2019,7 +2013,7 @@ fn check_behaviours<'a>(
         .collect();
     let parameter_names: Vec<&str> = parameters
         .iter()
-        .map(|(parameter, _)| parameter.name.as_str())
+        .map(|parameter| parameter.name.as_str())
         .collect();
     let slots = lowering::AtomSlots::of(
         &quantifiers
@@ -2028,11 +2022,11 @@ fn check_behaviours<'a>(
             .collect::<Vec<_>>(),
         &parameters
             .iter()
-            .map(|(parameter, object)| {
+            .map(|parameter| {
                 (
                     parameter.name.as_str(),
                     parameter.alias.as_str(),
-                    object.clone(),
+                    parameter.object.clone(),
                 )
             })
             .collect::<Vec<_>>(),
@@ -2040,8 +2034,8 @@ fn check_behaviours<'a>(
     let first_trace = |parameter: &str| {
         let alias = parameters
             .iter()
-            .find(|(candidate, _)| candidate.name == parameter)
-            .map(|(candidate, _)| &candidate.alias)?;
+            .find(|candidate| candidate.name == parameter)
+            .map(|candidate| &candidate.alias)?;
         quantifiers
             .iter()
             .position(|quantifier| &quantifier.alias == alias)
@@ -2082,7 +2076,7 @@ fn check_behaviours<'a>(
                         &condition.spans,
                         &parameters
                             .iter()
-                            .map(|(parameter, object)| (parameter.name.clone(), object.clone()))
+                            .map(|parameter| (parameter.name.clone(), parameter.object.clone()))
                             .collect(),
                         &BTreeMap::new(),
                         scope,
@@ -2204,13 +2198,9 @@ fn check_behaviours<'a>(
         _ => CopyGroup::default(),
     };
 
-    let parameter_objects: Vec<EffectiveId> = parameters
-        .iter()
-        .map(|(_, object)| object.clone())
-        .collect();
     let roots: Vec<ValueType> = parameters
         .iter()
-        .map(|(_, object)| ValueType::Reference(object.clone()))
+        .map(|parameter| ValueType::Reference(parameter.object.clone()))
         .collect();
     let root_refs: Vec<&ValueType> = roots.iter().collect();
     let parameter_domains = classify_domains(&root_refs, scope.types(), temporal.position_limit)
@@ -2222,10 +2212,7 @@ fn check_behaviours<'a>(
         })?;
     let identity = identity(
         &aliases,
-        &parameters
-            .iter()
-            .map(|(parameter, _)| parameter.clone())
-            .collect::<Vec<_>>(),
+        &parameters,
         &quantifiers,
         &form.body,
         match_expression.as_ref(),
@@ -2238,10 +2225,7 @@ fn check_behaviours<'a>(
         profile,
         aliases,
         package_subject_models: None,
-        parameters: parameters
-            .into_iter()
-            .map(|(parameter, _)| parameter)
-            .collect(),
+        parameters,
         quantifiers,
         match_expression,
         mu_universal,
@@ -2260,7 +2244,6 @@ fn check_behaviours<'a>(
         atom_slots: slots.slots().to_vec(),
         atoms,
         package_atoms: BTreeMap::new(),
-        parameter_objects,
         fairness_spans,
         occurrence: None,
     })
@@ -2410,14 +2393,16 @@ fn operation_key(
     })
 }
 
-/// Each object parameter bound to a population of a bound alias (FR-172
-/// "Object parameters"), with the parameter's object type.
+/// Each object parameter of a bound alias, with every population that
+/// overlaps its type (FR-172 "Object parameters"). A type no population
+/// overlaps is not refused.
+#[implements("FR-172-AC-10", "FR-172-AC-11")]
 fn checked_parameters(
     form: &HyperBehavioursForm,
     declarations: &HyperDeclarations<'_>,
     aliases: &[ModelAlias],
     found: &mut Vec<Found>,
-) -> Vec<(ObjectParameter, EffectiveId)> {
+) -> Vec<ObjectParameter> {
     let scope = declarations.temporal.scope;
     let mut checked = Vec::new();
     let mut seen: Vec<&str> = Vec::new();
@@ -2461,26 +2446,16 @@ fn checked_parameters(
             }));
             continue;
         };
-        let populations =
-            populations_overlapping(declarations.models, object.clone(), scope.types());
-        match populations.as_slice() {
-            [population] => checked.push((
-                ObjectParameter {
-                    name,
-                    alias: ModelAlias(alias.to_owned()),
-                    population: population.clone(),
-                },
-                object,
-            )),
-            [] => found.push(Found::Hyper(HyperCause::UnresolvedPopulation {
-                parameter: name,
-                span,
-            })),
-            _ => found.push(Found::Hyper(HyperCause::AmbiguousPopulation {
-                parameter: name,
-                span,
-            })),
-        }
+        checked.push(ObjectParameter {
+            name,
+            alias: ModelAlias(alias.to_owned()),
+            populations: populations_overlapping(
+                declarations.models,
+                object.clone(),
+                scope.types(),
+            ),
+            object,
+        });
     }
     checked
 }
@@ -2726,16 +2701,11 @@ fn read_root<'e>(mut node: ExprRef<'e>) -> Option<&'e str> {
 fn check_atom(
     expression: &Expression,
     spans: &ExpressionSpans,
-    parameters: &[(ObjectParameter, EffectiveId)],
+    parameters: &[ObjectParameter],
     variables: &Variables<'_>,
     found: &mut Vec<Found>,
 ) {
-    let parameter = |name: &str| {
-        parameters
-            .iter()
-            .map(|(parameter, _)| parameter)
-            .find(|parameter| parameter.name == name)
-    };
+    let parameter = |name: &str| parameters.iter().find(|parameter| parameter.name == name);
     let enclosing = lowering::enclosing_reads(expression);
     let mut located: Vec<Option<Span>> = vec![None; expression.len()];
     walk(expression, spans, |visit| {
@@ -3374,21 +3344,54 @@ fn checked_align_skip(
 /// The form of a clause over `behaviours` under infinite-trace (ADR-023 section
 /// 3, in the order FR-173 states).
 fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> HyperForm {
-    let exists = |quantifier: &&CheckedQuantifier| quantifier.kind == QuantifierKind::Exists;
+    classify_facts(quantifiers, aligned, safety)
+}
+
+trait QuantifierFacts {
+    fn kind(&self) -> QuantifierKind;
+    fn has_fairness(&self) -> bool;
+}
+
+impl QuantifierFacts for CheckedQuantifier {
+    fn kind(&self) -> QuantifierKind {
+        self.kind
+    }
+
+    fn has_fairness(&self) -> bool {
+        !self.fairness.is_empty()
+    }
+}
+
+impl QuantifierFacts for (QuantifierKind, bool) {
+    fn kind(&self) -> QuantifierKind {
+        self.0
+    }
+
+    fn has_fairness(&self) -> bool {
+        self.1
+    }
+}
+
+fn classify_facts<Q: QuantifierFacts>(
+    quantifiers: &[Q],
+    aligned: bool,
+    safety: bool,
+) -> HyperForm {
     let any_exists = quantifiers
         .iter()
-        .any(|quantifier| quantifier.kind == QuantifierKind::Exists);
-    if let [only] = quantifiers {
-        if only.kind == QuantifierKind::Exists && !aligned {
-            return HyperForm::SingleExistential;
-        }
+        .any(|quantifier| quantifier.kind() == QuantifierKind::Exists);
+    if quantifiers.len() == 1
+        && quantifiers[0].kind() == QuantifierKind::Exists
+        && !aligned
+    {
+        return HyperForm::SingleExistential;
     }
     let first_exists = quantifiers
         .iter()
-        .position(|quantifier| quantifier.kind == QuantifierKind::Exists);
+        .position(|quantifier| quantifier.kind() == QuantifierKind::Exists);
     let last_forall = quantifiers
         .iter()
-        .rposition(|quantifier| quantifier.kind == QuantifierKind::Forall);
+        .rposition(|quantifier| quantifier.kind() == QuantifierKind::Forall);
     if first_exists
         .zip(last_forall)
         .is_some_and(|(exists, forall)| exists < forall)
@@ -3399,8 +3402,9 @@ fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> H
     }
     let existential_fairness = quantifiers
         .iter()
-        .filter(exists)
-        .any(|quantifier| !quantifier.fairness.is_empty());
+        .any(|quantifier| {
+            quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness()
+        });
     if any_exists && quantifiers.len() >= 2 && (!safety || existential_fairness) {
         return HyperForm::Other {
             reason: HyperUnsupported::ExistentialOutsideSafety,

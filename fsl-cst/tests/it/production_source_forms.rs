@@ -74,12 +74,16 @@ fn children<'a>(
 }
 
 fn refused(source: &str, marker: &str, width: usize) {
+    refused_with_cause(source, marker, width, CompleteCause::UnexpectedToken);
+}
+
+fn refused_with_cause(source: &str, marker: &str, width: usize, cause: CompleteCause) {
     let parsed = parse(source);
     assert!(!parsed.is_admissible(), "{source}");
     let first = parsed.diagnostics().first().expect("specified refusal");
     assert_eq!(
         (first.code, first.cause),
-        (CompleteCode::InvalidSyntax, CompleteCause::UnexpectedToken),
+        (CompleteCode::InvalidSyntax, cause),
         "{source}: {first:?}"
     );
     let start = source.rfind(marker).expect("authored offending token");
@@ -139,15 +143,17 @@ fn bit_exact_float_constructors_keep_every_digit_inside_their_width() {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-4")]
+#[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-4", "FR-091-AC-49")]
 fn incomplete_numeric_constructor_arguments_refuse_at_the_unfilled_slot() {
-    for (value, marker) in [
-        ("rational(3,)", ")"),
-        ("decimal(5,)", ")"),
-        ("float32(bits: 0x1234567)", ")"),
-        ("float64(bits: 0x123456789abcdef)", ")"),
-    ] {
+    for (value, marker) in [("rational(3,)", ")"), ("decimal(5,)", ")")] {
         refused(&expression(value), marker, 1);
+    }
+    for value in [
+        "float32(bits: 0x1234567)",
+        "float64(bits: 0x123456789abcdef)",
+    ] {
+        let source = expression(value);
+        refused_with_cause(&source, value, value.len(), CompleteCause::InvalidToken);
     }
 }
 
@@ -357,18 +363,18 @@ fn source_objects_keep_inheritance_identity_fields_and_population_members() {
 }
 
 #[test]
-#[trace("FSpec-FR-339-AC-1")]
+#[trace("FSpec-FR-339-AC-1", "FR-569-AC-1")]
 fn operation_members_keep_optional_results_redefinitions_and_each_frame_kind() {
     let simple = "operation clear();";
     let complex = "operation revise(amount: Integer, target: Reference<Row>): Boolean redefines Base::revise modifies self.key, Row.key, key creates Row, Other deletes self, target;";
     let source = unit(&format!("object Row {{ {simple} {complex} }}"));
     let parsed = accepted(&source);
     let clear = one(&source, &parsed, Production::ObjectOperation, simple);
-    assert!(children(&source, &parsed, clear, Production::Parameter).is_empty());
+    assert!(children(&source, &parsed, clear, Production::OperationParameter).is_empty());
     assert!(children(&source, &parsed, clear, Production::TypeReference).is_empty());
     let operation = one(&source, &parsed, Production::ObjectOperation, complex);
     assert_eq!(
-        children(&source, &parsed, operation, Production::Parameter),
+        children(&source, &parsed, operation, Production::OperationParameter),
         ["amount: Integer", "target: Reference<Row>"]
     );
     assert_eq!(

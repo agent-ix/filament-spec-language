@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
-    CapabilityKind, CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
-    CheckedTerm, ValueValidityRecord,
+    CapabilityKind, CheckedBodyLocationOrigin, CheckedKeyOrdinal, CheckedNodeId,
+    CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult, CheckedTerm,
+    ValueValidityRecord,
 };
 use fsl_semantics::check::wire_id::WireGraph;
 use ix_trace_rs::trace;
@@ -895,6 +896,198 @@ fn bounded_mutual_recursion_emits_guarded_range_records() {
         |regions: &serde_json::Value| regions[0]["start"].as_u64().expect("source region start");
     assert_eq!(region_start(&regions[&1]), source_a_start);
     assert_eq!(region_start(&regions[&3]), source_b_start);
+}
+
+/// FSpec FR-322's body-location sidecar follows the same final occurrence
+/// ordinals as source-body uses. The recursive functions create synthetic
+/// owner-walk slots; their source rows land at a: 2, 5 and b: 8, 11. The
+/// source body and effective precondition exercise the two producer origins
+/// independently. Contract IR admission and its body-location cursor verify
+/// the paired rows and paths.
+#[trace(
+    "FSpec-FR-322-AC-490",
+    "FSpec-FR-322-AC-510",
+    "FSpec-FR-322-AC-513",
+    "FSpec-FR-825-AC-11"
+)]
+#[test]
+fn body_locations_follow_final_ordinals_for_bodies_and_effective_preconditions() {
+    let recursive = "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) + b(n - 1) else 0 }\n\
+         function b using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then a(n - 1) + a(n - 1) else 0 }\n";
+    let (_, _, admitted, records) = emitted_records(recursive);
+    let subtraction = records
+        .iter()
+        .find(|record| {
+            matches!(
+                admitted
+                    .resolved_graph()
+                    .nodes
+                    .iter()
+                    .find(|node| node.node_id == record.application)
+                    .map(|node| &node.body),
+                Some(CheckedTerm::Application { operation, .. })
+                    if operation.identity() == Some("filament.op.integer.sub")
+            )
+        })
+        .expect("the shared decrement has a value-validity record");
+    let is_function = |owner: &CheckedNodeId, name: &str| {
+        admitted.resolved_graph().nodes.iter().any(|node| {
+            node.node_id == *owner
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration.qualified_name.last().map(AsRef::as_ref) == Some(name)
+                })
+        })
+    };
+    let record_for = |name: &str| {
+        records
+            .iter()
+            .find(|record| {
+                record.application == subtraction.application && is_function(&record.owner, name)
+            })
+            .expect("the recursive function has its checked record")
+    };
+    let recursive_paths = |owner: &CheckedNodeId,
+                           expected: &[(u64, Vec<CheckedKeyOrdinal>)]| {
+        let mut cursor = admitted.body_locations(owner, 100_000).unwrap();
+        let mut paths = Vec::new();
+        while let Some(view) = cursor.next_location().unwrap() {
+            if view.row.application == subtraction.application {
+                paths.push((view.row.occurrence.ordinal, view.path.to_vec()));
+            }
+        }
+        assert_eq!(paths, expected);
+    };
+    let record_a = record_for("a");
+    let record_b = record_for("b");
+    assert_eq!(record_a.occurrence, 2);
+    assert_eq!(record_b.occurrence, 8);
+    recursive_paths(
+        &record_a.owner,
+        &[
+            (
+                2,
+                vec![
+                    CheckedKeyOrdinal::Safe(1),
+                    CheckedKeyOrdinal::Safe(0),
+                    CheckedKeyOrdinal::Safe(0),
+                ],
+            ),
+            (
+                5,
+                vec![
+                    CheckedKeyOrdinal::Safe(1),
+                    CheckedKeyOrdinal::Safe(1),
+                    CheckedKeyOrdinal::Safe(0),
+                ],
+            ),
+        ],
+    );
+    recursive_paths(
+        &record_b.owner,
+        &[
+            (
+                8,
+                vec![
+                    CheckedKeyOrdinal::Safe(1),
+                    CheckedKeyOrdinal::Safe(0),
+                    CheckedKeyOrdinal::Safe(0),
+                ],
+            ),
+            (
+                11,
+                vec![
+                    CheckedKeyOrdinal::Safe(1),
+                    CheckedKeyOrdinal::Safe(1),
+                    CheckedKeyOrdinal::Safe(0),
+                ],
+            ),
+        ],
+    );
+
+    let package = crate::emit::tests::source_objects::fixture_s_package();
+    let emission = emit_checked(&package, crate::EmitLimits::fixture()).expect("fixture emits");
+    let admitted = match CheckedPackageV2::read(
+        emission.package().bytes(),
+        CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        CheckedPackageV2ReadResult::Admitted(admitted) => *admitted,
+        failure => panic!("the independent Contract IR reader admits fixture S: {failure:?}"),
+    };
+    let nodes = &admitted.resolved_graph().nodes;
+    let data = admitted.checked_term_data().expect("term data");
+    let is_effective_precondition = |function: &CheckedNodeId| {
+        nodes.iter().any(|node| {
+            node.node_id == *function
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration.qualified_name.last().map(AsRef::as_ref)
+                        == Some("effective_precondition")
+                })
+        })
+    };
+    // The fixture's invariant and effective precondition share the root
+    // comparison. The effective-precondition owner sorts first (ordinal 0),
+    // then the invariant owner (ordinal 1); both root paths are empty.
+    let application = data
+        .body_locations
+        .iter()
+        .find(|row| {
+            matches!(
+                &row.location.origin,
+                CheckedBodyLocationOrigin::FunctionBody { function, .. }
+                    if is_effective_precondition(function)
+            ) && data.body_locations.iter().any(|other| {
+                other.application == row.application
+                    && matches!(
+                        &other.location.origin,
+                        CheckedBodyLocationOrigin::FunctionBody { function, .. }
+                            if !is_effective_precondition(function)
+                    )
+            })
+        })
+        .map(|row| row.application.clone())
+        .expect("a shared application has body and effective-precondition origins");
+    let application_node = nodes
+        .iter()
+        .find(|node| node.node_id == application)
+        .expect("the shared application is in the admitted graph");
+    assert!(matches!(
+        &application_node.body,
+        CheckedTerm::Application { operation, .. }
+            if operation.identity() == Some("filament.op.integer.ge")
+    ));
+    let rows: Vec<_> = data
+        .body_locations
+        .iter()
+        .filter(|row| row.application == application)
+        .collect();
+    let body_row = rows
+        .iter()
+        .find(|row| {
+            let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+            !is_effective_precondition(function)
+        })
+        .expect("the direct function-body producer row");
+    let precondition_row = rows
+        .iter()
+        .find(|row| {
+            let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+            is_effective_precondition(function)
+        })
+        .expect("the effective-precondition producer row");
+    assert_eq!(body_row.occurrence.ordinal, 1);
+    assert_eq!(precondition_row.occurrence.ordinal, 0);
+    for (row, expected_path) in [(body_row, vec![]), (precondition_row, vec![])] {
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+        let mut cursor = admitted.body_locations(function, 10_000).unwrap();
+        let mut found = Vec::new();
+        while let Some(view) = cursor.next_location().unwrap() {
+            if view.row.application == application {
+                found.push(view.path.to_vec());
+            }
+        }
+        assert_eq!(found, vec![expected_path]);
+    }
 }
 
 /// FSpec FR-322 and FSpec FR-825-AC-11: repeated structurally equal uses keep the

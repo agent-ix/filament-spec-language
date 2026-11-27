@@ -20,14 +20,16 @@
 //! "Budgets"): a zone it holds counts against `max_symbolic_states` and
 //! `max_zone_bytes` with the graph's, and each predecessor or successor it
 //! computes, each piece a zone subtraction makes and each pair of zones it
-//! intersects count against `max_symbolic_transitions` with the graph's
-//! edges.
+//! reads or intersects count against `max_symbolic_transitions` with the
+//! graph's edges.
 
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint, TimedSystem};
+use fsl_eval::simulation::model::{
+    GuardedStep, ModelSimState, PlaceConstraint, TimedStop, TimedSystem,
+};
 use fsl_replay::{ModelPath, ModelStep};
 use ix_trace_rs::implements;
 use num_bigint::BigInt;
@@ -133,9 +135,14 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         }
         let mut moves = Vec::new();
         for source in 0..states.len() {
-            let steps = timed
-                .guarded_steps(&states[source].state)
-                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-guarded-steps"))?;
+            // A guard that reads undefined leaves the state with no steps
+            // here: the exploration recorded that reading in
+            // `graph.undefined`, where it outranks a later verdict.
+            let steps = match timed.guarded_steps(&states[source].state) {
+                Ok(steps) => steps,
+                Err(TimedStop::Undecided(_)) if !graph.undefined.is_empty() => Vec::new(),
+                Err(_) => return Err(ZoneCheckRefusal::Fault("state-graph-guarded-steps")),
+            };
             for step in steps {
                 // A post-state no node holds is entered from no reachable
                 // valuation.
@@ -234,27 +241,31 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         let ef = self.eventually(&p)?;
         let mut ef_nodes = Vec::new();
         let mut trapped = None;
+        let mut unwritten = None;
         let graph = self.graph;
         for (node, from) in q.iter().enumerate() {
             let outside = self.outside(&graph.nodes[node].zone, &ef[self.of_node[node]])?;
             if outside.is_empty() {
                 ef_nodes.push(node);
             } else if trapped.is_none() && *from {
-                trapped = Some((node, outside));
+                match self.trap_stem(node, &outside)? {
+                    Some(stem) => trapped = Some((node, stem)),
+                    None => unwritten = Some(node),
+                }
             }
         }
-        let Some((node, outside)) = trapped else {
-            return Ok(TimedStateGraphDecision::Holds {
+        Ok(match (trapped, unwritten) {
+            (Some((node, stem)), _) => TimedStateGraphDecision::Refuted {
+                stem,
+                node,
+                ef_nodes,
+                paths: None,
+            },
+            (None, Some(node)) => TimedStateGraphDecision::Unwritten { node },
+            (None, None) => TimedStateGraphDecision::Holds {
                 witness_paths: Vec::new(),
                 ef_nodes,
-            });
-        };
-        let (stem, _) = self.stem(node, &outside)?;
-        Ok(TimedStateGraphDecision::Refuted {
-            stem,
-            node,
-            ef_nodes,
-            paths: None,
+            },
         })
     }
 
@@ -271,27 +282,56 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         // A valuation with no sequence.
         let ef = self.eventually(&y)?;
         let graph = self.graph;
+        let mut unwritten = None;
         for &node in &sources {
             let outside = self.outside(&graph.nodes[node].zone, &ef[self.of_node[node]])?;
-            if !outside.is_empty() {
-                let (stem, _) = self.stem(node, &outside)?;
-                return Ok(TimedStateGraphDecision::Refuted {
-                    stem,
-                    node,
-                    ef_nodes: Vec::new(),
-                    paths: None,
-                });
+            if outside.is_empty() {
+                continue;
+            }
+            match self.trap_stem(node, &outside)? {
+                Some(stem) => {
+                    return Ok(TimedStateGraphDecision::Refuted {
+                        stem,
+                        node,
+                        ef_nodes: Vec::new(),
+                        paths: None,
+                    });
+                }
+                None => unwritten = Some(node),
             }
         }
-        // A valuation with two. Sequences are read backwards from `Y`,
-        // shortest first, each as the valuations it leads from. Only those
-        // that still meet the states reachable from an `X` state are
-        // extended; while the claim holds they are pairwise disjoint there,
-        // so there are finitely many.
-        let seeds = sources
-            .iter()
-            .map(|&node| (self.of_node[node], self.graph.nodes[node].zone.clone()))
-            .collect();
+        // A valuation with two, at the earliest node that has one
+        // (FR-852): each node's search reads its sequences shortest first.
+        for &node in &sources {
+            let (stored, bytes) = (self.stored, self.bytes);
+            if let Some(decision) = self.pair_at(node, &y)? {
+                return Ok(decision);
+            }
+            // The zones a search without a pair held are dropped with it.
+            (self.stored, self.bytes) = (stored, bytes);
+        }
+        // No two sequences refute it with a path, so a violation no trap
+        // stem reaches is left without a counterexample.
+        Ok(match unwritten {
+            Some(node) => TimedStateGraphDecision::Unwritten { node },
+            None => TimedStateGraphDecision::Holds {
+                witness_paths: Vec::new(),
+                ef_nodes: Vec::new(),
+            },
+        })
+    }
+
+    /// The two sequences from a valuation of `node` to `y`, if it has two.
+    /// Sequences are read backwards from `Y`, shortest first, each as the
+    /// valuations it leads from. Only those that still meet the states
+    /// reachable from the node are extended; while the claim holds they are
+    /// pairwise disjoint there, so there are finitely many.
+    fn pair_at(
+        &mut self,
+        node: usize,
+        y: &[bool],
+    ) -> Result<Option<TimedStateGraphDecision>, ZoneCheckRefusal> {
+        let seeds = vec![(self.of_node[node], self.graph.nodes[node].zone.clone())];
         let (reachable, _) = self.search(seeds, None)?;
         let mut words = vec![Word {
             first: None,
@@ -304,14 +344,11 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                 words[0].zones.insert(state, vec![zone]);
             }
         }
-        let mut seen: BTreeMap<usize, Vec<(Dbm, usize)>> = BTreeMap::new();
+        let mut seen: Vec<(Dbm, usize)> = Vec::new();
         let mut at = 0;
         while at < words.len() {
             self.poll()?;
-            for &node in &sources {
-                let Some(zones) = words[at].zones.get(&self.of_node[node]) else {
-                    continue;
-                };
+            if let Some(zones) = words[at].zones.get(&self.of_node[node]) {
                 let mut fresh = Vec::new();
                 for zone in zones {
                     let mut here = zone.clone();
@@ -319,20 +356,20 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                     if here.is_empty() {
                         continue;
                     }
-                    for (other, word) in seen.get(&node).into_iter().flatten() {
+                    for (other, word) in &seen {
                         self.charge_step()?;
                         let mut both = here.clone();
                         intersect(&mut both, other)?;
                         if !both.is_empty() {
                             let word = *word;
-                            return self.two_paths(node, both, &words, (word, at));
+                            return self.two_paths(node, both, &words, (word, at)).map(Some);
                         }
                     }
                     fresh.push(here);
                 }
                 for zone in fresh {
                     self.charge_zone(&zone)?;
-                    seen.entry(node).or_default().push((zone, at));
+                    seen.push((zone, at));
                 }
             }
             for (transition, zones) in self.extend(&words[at])? {
@@ -349,10 +386,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
             }
             at += 1;
         }
-        Ok(TimedStateGraphDecision::Holds {
-            witness_paths: Vec::new(),
-            ef_nodes: Vec::new(),
-        })
+        Ok(None)
     }
 
     /// The sequences one transition longer than `word`, by that transition.
@@ -444,7 +478,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         let room = self.limits.max_symbolic_states.saturating_sub(self.stored);
         let states = self.limits.max_symbolic_states;
         subtract(zone, held, &mut |split| match split {
-            Split::Read => self.poll(),
+            Split::Read => self.charge_step(),
             Split::Piece(pieces) => {
                 if u64::try_from(pieces).map_or(true, |pieces| pieces > room) {
                     return Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(
@@ -738,40 +772,42 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         }
     }
 
-    /// A path to `node` that ends in one of `zones`, parts of the node's
-    /// zone, or, when no step lands there, at a valuation a delay takes
-    /// there; with the clock values at its end.
-    fn stem(
+    /// A path to `node` whose last step lands in one of `trapped`, parts of
+    /// the node's zone, if its tree path has one. A trap stem has no delay
+    /// after its last step, so one that lands elsewhere ends at a state the
+    /// target may still be reached from.
+    #[implements("FR-852-AC-34")]
+    fn trap_stem(
+        &self,
+        node: usize,
+        trapped: &[Dbm],
+    ) -> Result<Option<ModelPath>, ZoneCheckRefusal> {
+        Ok(self.path_into(node, trapped)?.map(|(stem, _)| stem))
+    }
+
+    /// The first of `zones` the tree path to `node` can end in: the path and
+    /// the clock values at its end.
+    fn path_into(
         &self,
         node: usize,
         zones: &[Dbm],
-    ) -> Result<(ModelPath, Vec<Rational>), ZoneCheckRefusal> {
+    ) -> Result<Option<(ModelPath, Vec<Rational>)>, ZoneCheckRefusal> {
         let (initial, moves) = self.tree_path(node)?;
-        let state = &self.states[self.of_node[node]];
-        let mut candidates = zones.to_vec();
-        if state.elapses {
-            for zone in zones {
-                let mut before = zone.clone();
-                before.down();
-                constrain_at(&mut before, &state.invariants, &self.graph.scale)?;
-                candidates.push(before);
-            }
-        }
         let start = self.zero_clocks();
-        for candidate in candidates {
+        for zone in zones {
             self.poll()?;
-            let target = Target::Within(candidate);
+            let target = Target::Within(zone.clone());
             if let Some(concrete) = self.concretise(&moves, &start, &self.graph.scale, &target)? {
-                return Ok((
+                return Ok(Some((
                     ModelPath {
                         initial,
                         steps: concrete.prefix,
                     },
                     concrete.last_clocks,
-                ));
+                )));
             }
         }
-        Err(ZoneCheckRefusal::Fault("state-graph-stem"))
+        Ok(None)
     }
 
     /// The `unique path` refutation at `both`, valuations of `node` from
@@ -783,8 +819,24 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         words: &[Word],
         found: (usize, usize),
     ) -> Result<TimedStateGraphDecision, ZoneCheckRefusal> {
-        let (stem, clocks) = self.stem(node, &[both])?;
+        // The path may end before a wait that leads to `both`: the two
+        // sequences from `both` run from the earlier valuation too, the
+        // wait added to their first delay.
         let state = self.of_node[node];
+        let mut candidates = vec![both.clone()];
+        if self.states[state].elapses {
+            let mut before = both;
+            before.down();
+            constrain_at(
+                &mut before,
+                &self.states[state].invariants,
+                &self.graph.scale,
+            )?;
+            candidates.push(before);
+        }
+        let (stem, clocks) = self
+            .path_into(node, &candidates)?
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-stem"))?;
         let first = self.follow(state, &clocks, words, found.0)?;
         let second = self.follow(state, &clocks, words, found.1)?;
         Ok(TimedStateGraphDecision::Refuted {
