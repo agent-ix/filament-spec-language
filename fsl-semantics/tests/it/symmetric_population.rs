@@ -13,7 +13,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::{IntakeLimits, Span};
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedGraph, IdentityForm, IdentityNode, IdentityObserving,
+    CheckCause, SemanticCheckRefusal, CheckedGraph, IdentityForm, IdentityNode, IdentityObserving,
 };
 use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::intake::{read_records, PackageDocument};
@@ -172,7 +172,7 @@ fn with_drafts(document: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&envelope).expect("valid JSON")
 }
 
-fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     admit_and_assemble_with_body(document, body)
         .unwrap_or_else(|refusal| panic!("{body}: the unit assembles: {refusal:?}"))
         .check(
@@ -220,7 +220,7 @@ fn identity_refusal(document: &[u8], body: &str, needle: &str) -> IdentityObserv
     }
 }
 
-fn causes(refusals: &[CheckRefusal]) -> Vec<(Code, Option<&'static str>)> {
+fn causes(refusals: &[SemanticCheckRefusal]) -> Vec<(Code, Option<&'static str>)> {
     refusals
         .iter()
         .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))

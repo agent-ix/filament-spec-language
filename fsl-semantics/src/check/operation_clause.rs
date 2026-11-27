@@ -24,7 +24,7 @@ use fsl_forms::StateClauseKind;
 
 use super::StatePredicate;
 use super::observation::Observations;
-use super::refusal::CheckRefusal;
+use super::refusal::SemanticCheckRefusal;
 use super::state_clause::{ClauseOperation, ClauseView, TypedStateClause};
 use crate::model::domain_package::ParsedOperationClause;
 use crate::model::refusal::{MemberPath, MemberRoot};
@@ -215,7 +215,7 @@ impl StatePredicate for CheckedOperationClause {
     }
 }
 
-impl CheckRefusal {
+impl SemanticCheckRefusal {
     /// The operation a refusal in a kept `requires`/`ensures` clause is
     /// about, by its declaration node identity; `None` for a refusal located
     /// anywhere else.

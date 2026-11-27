@@ -93,7 +93,7 @@ pub(super) fn check_on_small_stack(
     records: Vec<CompositeDeclaration>,
     functions: Vec<FunctionDeclaration>,
     limits: CheckingLimits,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {

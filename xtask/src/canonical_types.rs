@@ -1625,4 +1625,67 @@ mod tests {
         assert!(!source.contains("DeclarationKey as"));
         assert_no_reexport_finding("DeclarationKey");
     }
+
+    /// FR-273-AC-52 through AC-55 (TC-748): workspace namesakes use names
+    /// that distinguish their meaning from the canonical type.
+    #[trace(
+        "TC-748",
+        "FR-273-AC-52",
+        "FR-273-AC-53",
+        "FR-273-AC-54",
+        "FR-273-AC-55"
+    )]
+    #[test]
+    fn remaining_workspace_namesakes_use_meaning_specific_names() {
+        let namesakes = [
+            (
+                "Member",
+                "ClosedOrderMember",
+                "fsl-analyze/src/model_check/hyper/closed/reduction.rs",
+            ),
+            (
+                "Member",
+                "CompositionSourceMember",
+                "fsl-replay/src/planner/from_admitted.rs",
+            ),
+            (
+                "ParsedSource",
+                "FormsSource",
+                "fsl-forms/src/cst.rs",
+            ),
+            (
+                "CheckRefusal",
+                "SemanticCheckRefusal",
+                "fsl-semantics/src/check/refusal.rs",
+            ),
+        ];
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask is a workspace member");
+        let findings = current_workspace_findings();
+        for (former_name, replacement, production_file) in namesakes {
+            let source = fs::read_to_string(workspace_root.join(production_file))
+                .expect("production source exists");
+            assert!(
+                source.contains(replacement),
+                "{production_file} defines the meaning-specific name {replacement}"
+            );
+            assert!(
+                !findings.iter().any(|found| {
+                    found.rule == Rule::Identifier
+                        && found.ident == former_name
+                        && Path::new(&found.other.file).ends_with(production_file)
+                }),
+                "{production_file} no longer defines the namesake {former_name}"
+            );
+        }
+        let semantic_refusal = fs::read_to_string(
+            workspace_root.join("fsl-semantics/src/check/refusal.rs"),
+        )
+        .expect("semantic refusal source exists");
+        assert!(
+            semantic_refusal.contains("/// filament:canonical\npub struct SemanticCheckRefusal"),
+            "the meaning-specific semantic refusal type retains its canonical marker"
+        );
+    }
 }

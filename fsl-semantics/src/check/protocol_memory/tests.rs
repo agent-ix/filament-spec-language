@@ -9,7 +9,7 @@ use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use crate::check::{
-    AccessClass, CheckCause, CheckRefusal, CheckedAccess, CheckedGraph, PackageDeclarations,
+    AccessClass, CheckCause, SemanticCheckRefusal, CheckedAccess, CheckedGraph, PackageDeclarations,
     ProtocolAnchorCause,
 };
 use crate::model::accounting::ModelNormalizationLimits;
@@ -93,7 +93,7 @@ fn checks(declarations: &str) -> CheckedGraph {
 /// and tag.
 fn only_refusal(declarations: &str) -> (String, ProtocolAnchorCause, &'static str, String) {
     let (text, assembled) = assemble(declarations);
-    let found: Vec<CheckRefusal> = match assembled.check(
+    let found: Vec<SemanticCheckRefusal> = match assembled.check(
         CheckMode::Linked,
         CheckingLimits::default(),
         &crate::check::test_support::ZeroRewardEvaluator,

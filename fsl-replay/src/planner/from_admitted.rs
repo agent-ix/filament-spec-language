@@ -309,7 +309,7 @@ fn key_error(error: KeyBuildRefusal) -> PackageCompositionRefusal {
         KeyBuildRefusal::Wire(e) => e.into(),
     }
 }
-struct Member<'p> {
+struct CompositionSourceMember<'p> {
     value: CompositionMemberValue<'p>,
     source: SourceRegion,
 }
@@ -580,7 +580,7 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
         authored.try_reserve_exact(count)?;
         for member in view.members_with_budget(work.budget) {
             let (value, source) = member?.into_parts();
-            authored.push(Member {
+            authored.push(CompositionSourceMember {
                 value,
                 source: source.region,
             });

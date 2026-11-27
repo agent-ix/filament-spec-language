@@ -10,7 +10,7 @@ use super::protocol_reference::{clause_argument, node_by_id, node_of};
 use super::reachability::{lower_package, lower_with, model_node, Lowered};
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolAnchorCause};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
 
 pub(super) const PROFILES: &str = "profile p = \"filament.protocol.finite-global/v1\";\n\
                          profile e = \"filament.temporal.timed/v1\";\n";
@@ -592,7 +592,7 @@ fn every_channel_premise_changes_the_emitted_body() {
 pub(super) fn checked(
     text: &str,
     open: bool,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     checked_package(model(), ("acme/orders", "1.0.0"), text, open)
 }
 
@@ -603,7 +603,7 @@ pub(super) fn checked_package(
     (package, _version): (&str, &str),
     text: &str,
     open: bool,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -841,7 +841,7 @@ fn parallel_flow(parallel: &str) -> String {
 fn checked_protocols_with_budget(
     protocols: &str,
     work_budget: u64,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     let document = model();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
         .expect("the test model admits");

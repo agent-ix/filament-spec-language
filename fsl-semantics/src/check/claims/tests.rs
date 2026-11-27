@@ -994,7 +994,7 @@ fn tc_160_two_sites_of_one_node_pair_by_location_not_order() {
 fn family_check(
     declarations: &str,
     node_count: u64,
-) -> crate::family::CheckOutcome<crate::check::CheckedDeclaration, crate::check::CheckRefusal> {
+) -> crate::family::CheckOutcome<crate::check::CheckedDeclaration, crate::check::SemanticCheckRefusal> {
     use crate::check::family::SCALAR_LIMITS_UNLIMITED;
     use crate::check::family::fixtures::{check_context, declarations_for, empty_scope, limits};
     use crate::check::{Signature, Signatures, ValueFunctionFamily};

@@ -12,7 +12,7 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::{SourceIdentity, Span};
 use fsl_semantics::check::{
-    ApplicationTerm, AssemblyCause, BodyTerm, CheckCause, CheckRefusal, CheckedGraph,
+    ApplicationTerm, AssemblyCause, BodyTerm, CheckCause, SemanticCheckRefusal, CheckedGraph,
     PackageDeclarations, SemanticNode,
 };
 use fsl_semantics::model::intake::SelectedModels;
@@ -56,7 +56,7 @@ fn assemble(
     )
 }
 
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     assemble(declarations)
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
         .check(

@@ -37,7 +37,7 @@ pub(crate) const PACKAGE: &str = "pkg";
 pub(crate) enum Failure {
     Syntax(Vec<fsl_cst::CompleteDiagnostic>),
     Assembly(fsl_semantics::check::AssemblyRefusal),
-    Check(Vec<fsl_semantics::check::CheckRefusal>),
+    Check(Vec<fsl_semantics::check::SemanticCheckRefusal>),
 }
 
 /// Compile `unit` over the domain package `documents` through S1 to S4.

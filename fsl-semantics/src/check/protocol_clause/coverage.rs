@@ -12,7 +12,7 @@ use super::refusal;
 use crate::check::Scope;
 use crate::check::profile::TemporalProfile;
 use crate::check::profile::protocol_profile;
-use crate::check::refusal::{AliasKind, CheckRefusal, ProtocolAnchorCause};
+use crate::check::refusal::{AliasKind, SemanticCheckRefusal, ProtocolAnchorCause};
 use crate::value::layer::HeaderLayer;
 use fsl_foundation::selection::ProfileSelection;
 
@@ -93,7 +93,7 @@ pub fn content(
     alias_names: &BTreeMap<String, AliasKind>,
     scope: &Scope,
     models: &[crate::check::lowering::AdmittedModel],
-) -> Vec<CheckRefusal> {
+) -> Vec<SemanticCheckRefusal> {
     let uncovered = protocol
         .declarations
         .iter()
@@ -115,7 +115,7 @@ pub fn content(
         })];
     }
 
-    let mut refusals: Vec<(Span, CheckRefusal)> = Vec::new();
+    let mut refusals: Vec<(Span, SemanticCheckRefusal)> = Vec::new();
     let mut roles: BTreeMap<&str, Vec<Span>> = BTreeMap::new();
     let types = scope.for_declaration(&protocol.name.name);
     for role in &protocol.roles {
@@ -237,7 +237,7 @@ pub fn profile_uses(
     protocol: &ProtocolDeclarationForm,
     alias_names: &BTreeMap<String, AliasKind>,
     profiles: &[ProfileSelection],
-) -> Vec<(Span, CheckRefusal)> {
+) -> Vec<(Span, SemanticCheckRefusal)> {
     let mut refusals = Vec::new();
     let mut add = |using: &fsl_forms::UsingAlias, required, admits| {
         if let Some(refusal) = validate_profile_use(using, required, profiles, alias_names, admits)
@@ -269,7 +269,7 @@ fn validate_profile_use(
     profiles: &[ProfileSelection],
     alias_names: &BTreeMap<String, AliasKind>,
     admits: fn(&str) -> bool,
-) -> Option<(Span, CheckRefusal)> {
+) -> Option<(Span, SemanticCheckRefusal)> {
     let Some(selection) = profiles.iter().find(|profile| profile.alias == using.alias) else {
         if alias_names.get(&using.alias) != Some(&AliasKind::Profile) {
             return Some((

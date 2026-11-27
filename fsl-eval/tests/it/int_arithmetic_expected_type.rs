@@ -10,7 +10,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{SemanticCheckRefusal, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_integer_division, DefinitionRole};
 use ix_trace_rs::trace;
@@ -67,7 +67,7 @@ fn assemble(text: &str) -> PackageDeclarations {
 
 /// `function f using v(parameters): Boolean pure { body }` checked as a
 /// package, or the refusals of its check.
-fn compile(parameters: &str, body: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn compile(parameters: &str, body: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     compile_with("", parameters, body)
 }
 
@@ -76,7 +76,7 @@ fn compile_with(
     extra: &str,
     parameters: &str,
     body: &str,
-) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     assemble(&source(extra, parameters, body))
         .check(
             CheckMode::Linked,

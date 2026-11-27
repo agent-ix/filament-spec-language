@@ -31,7 +31,7 @@ use super::check::{DispatchOperation, holds_float};
 use super::ir::{CheckedNode, DispatchTable, NodeId, Slot};
 use super::observation::Observations;
 use super::refusal::{
-    CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, OperandText, ProvedInterval,
+    CheckCause, SemanticCheckRefusal, InvalidDispatchDeclaration, Obligation, OperandText, ProvedInterval,
 };
 use crate::model::clause_observation::Observation;
 use filament_exact::{ArithmeticOperator, OrderingOperator};
@@ -683,7 +683,7 @@ impl<'a> Definedness<'a> {
     }
 
     /// Check every obligation on a path that can execute.
-    pub(crate) fn check(&mut self, root: CheckedNode<'_>) -> Result<(), CheckRefusal> {
+    pub(crate) fn check(&mut self, root: CheckedNode<'_>) -> Result<(), SemanticCheckRefusal> {
         self.aliases.clear();
         self.walk(root, self.initial.clone())
     }
@@ -693,7 +693,7 @@ impl<'a> Definedness<'a> {
     pub(crate) fn check_and_retain(
         &mut self,
         root: CheckedNode<'_>,
-    ) -> Result<CheckedFacts, CheckRefusal> {
+    ) -> Result<CheckedFacts, SemanticCheckRefusal> {
         self.check(root)?;
         let (when_true, _) = self.outcomes(root, &Rc::new(Facts::default()));
         Ok(CheckedFacts {
@@ -1438,7 +1438,7 @@ impl<'a> Definedness<'a> {
     fn carried_prefixes(
         node: CheckedNode<'_>,
         proved: Option<Interval>,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         proved.map(|_| ()).ok_or_else(|| {
             Self::refuse(
                 node,
@@ -1465,8 +1465,8 @@ impl<'a> Definedness<'a> {
         )
     }
 
-    fn refuse(node: CheckedNode<'_>, obligation: Obligation) -> CheckRefusal {
-        CheckRefusal {
+    fn refuse(node: CheckedNode<'_>, obligation: Obligation) -> SemanticCheckRefusal {
+        SemanticCheckRefusal {
             location: node.location().clone(),
             cause: Box::new(CheckCause::Unproved(obligation)),
         }
@@ -1514,7 +1514,7 @@ impl<'a> Definedness<'a> {
     /// operand establishes (`if`, a connective, `let`) walks them once that
     /// operand is walked: the order, and so the first refusal and the order
     /// of [`Self::calls`], is the recursive walk's.
-    fn walk(&mut self, root: CheckedNode<'_>, facts: Facts) -> Result<(), CheckRefusal> {
+    fn walk(&mut self, root: CheckedNode<'_>, facts: Facts) -> Result<(), SemanticCheckRefusal> {
         let mut walk = DefinednessWalk {
             definedness: self,
             nodes: PhantomData,
@@ -1574,7 +1574,7 @@ impl<'a> Definedness<'a> {
 
     /// Discharge `node`'s own obligation, its operands walked under `facts`,
     /// and record the call sites it makes.
-    fn discharge(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
+    fn discharge(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), SemanticCheckRefusal> {
         match self.mode {
             CheckMode::Linked => self.discharge_node(node, facts),
             CheckMode::Kernel => {
@@ -1584,7 +1584,7 @@ impl<'a> Definedness<'a> {
                 match self.discharge_node(node, facts) {
                     // FR-495: an unproved obligation is not recorded; the
                     // evaluator meets it at run time.
-                    Err(CheckRefusal { cause, .. })
+                    Err(SemanticCheckRefusal { cause, .. })
                         if matches!(cause.as_ref(), CheckCause::Unproved(_)) =>
                     {
                         Ok(())
@@ -1616,7 +1616,7 @@ impl<'a> Definedness<'a> {
         collection: NodeId,
         index: NodeId,
         facts: &Facts,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let collection_node = node.at(collection);
         let ValueType::Collection(collection_type) = collection_node.value_type() else {
             return Err(Self::refuse(node, Obligation::Presence));
@@ -1648,7 +1648,7 @@ impl<'a> Definedness<'a> {
         }
     }
 
-    fn discharge_node(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
+    fn discharge_node(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), SemanticCheckRefusal> {
         match node.kind() {
             NodeKind::ConvertScalar(_, operand) => {
                 self.discharge_conversion(node, node.at(*operand), facts)
@@ -1671,7 +1671,7 @@ impl<'a> Definedness<'a> {
                             OperandText::new(&diagnostic)
                         },
                     );
-                    Err(CheckRefusal {
+                    Err(SemanticCheckRefusal {
                         location: node.location().clone(),
                         cause: Box::new(CheckCause::Unproved(Obligation::Range {
                             required: Box::new(required.proved()),
@@ -2087,7 +2087,7 @@ impl<'a> Definedness<'a> {
                 let table_index = *table;
                 let operation_index = *operation;
                 let Some(declared_operation) = self.dispatch_operations.get(operation_index) else {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location: node.location().clone(),
                         cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(
                             InvalidDispatchDeclaration::OperationOutOfRange {
@@ -2100,7 +2100,7 @@ impl<'a> Definedness<'a> {
                     .dispatch_tables
                     .get(table_index)
                     .map(DispatchTable::callees)
-                    .ok_or_else(|| CheckRefusal {
+                    .ok_or_else(|| SemanticCheckRefusal {
                         location: node.location().clone(),
                         cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(
                             InvalidDispatchDeclaration::TableOutOfRange {
@@ -2152,13 +2152,13 @@ enum DefinedFrame<'n> {
 impl<'n> filament_walk::Walk for DefinednessWalk<'_, '_, 'n> {
     type Node = DefinedNode<'n>;
     type Frame = DefinedFrame<'n>;
-    type Stop = CheckRefusal;
+    type Stop = SemanticCheckRefusal;
 
     fn enter(
         &mut self,
         node: DefinedNode<'n>,
         children: &mut filament_walk::Children<'_, DefinedNode<'n>>,
-    ) -> ControlFlow<CheckRefusal, DefinedFrame<'n>> {
+    ) -> ControlFlow<SemanticCheckRefusal, DefinedFrame<'n>> {
         match node {
             DefinedNode::Branch(node, facts) => {
                 self.definedness.branch(node, &facts, children);
@@ -2206,7 +2206,7 @@ impl<'n> filament_walk::Walk for DefinednessWalk<'_, '_, 'n> {
         }
     }
 
-    fn exit(&mut self, frame: DefinedFrame<'n>) -> ControlFlow<CheckRefusal> {
+    fn exit(&mut self, frame: DefinedFrame<'n>) -> ControlFlow<SemanticCheckRefusal> {
         match frame {
             DefinedFrame::Done => ControlFlow::Continue(()),
             DefinedFrame::Discharge(node, facts) => {

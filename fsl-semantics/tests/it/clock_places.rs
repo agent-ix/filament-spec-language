@@ -3295,7 +3295,7 @@ fn a_ref_names_a_clock_place_of_its_owner() {
     };
     // The comparison is the clause body's root, and the left `ref` its first
     // operand: the refusal is located at the `ref`.
-    let at_ref = |refusal: &fsl_semantics::check::CheckRefusal| {
+    let at_ref = |refusal: &fsl_semantics::check::SemanticCheckRefusal| {
         assert_eq!(refusal.location.path(), vec![0], "{refusal:?}");
     };
     let missing = refusal("ref(self.nothing)");

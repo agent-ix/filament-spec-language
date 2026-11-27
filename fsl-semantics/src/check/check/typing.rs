@@ -33,7 +33,7 @@ use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
-    CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
+    CheckCause, SemanticCheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
     KeyFault, StageLimitCause,
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
@@ -75,7 +75,7 @@ fn boolean<'r>() -> Want<'r> {
 fn seq_binder(
     (low, high): (Option<IntegerRange>, Option<IntegerRange>),
     location: &Location,
-) -> Result<(ValueType, Option<u64>), CheckRefusal> {
+) -> Result<(ValueType, Option<u64>), SemanticCheckRefusal> {
     let (Some((lower, _)), Some((_, high_upper))) = (low, high) else {
         return Ok((ValueType::Integer, None));
     };
@@ -111,7 +111,7 @@ fn population_operand(population: &super::NamedPopulation, location: &Location) 
 }
 
 /// `Int[low, high]`.
-fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueType, CheckRefusal> {
+fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueType, SemanticCheckRefusal> {
     IntegerInterval::new(low, high)
         .map(ValueType::Int)
         .map_err(|_| refuse(location, CheckCause::UnrepresentableBound))
@@ -121,9 +121,9 @@ fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueTyp
 /// "Resolution"): ambiguous, naming the alias, which the model selection and
 /// the enum both declare. Neither declaration is a position of the checked
 /// tree, so the one locus is the name.
-fn qualified_name_refusal(refusal: CheckRefusal, name: &NameForm) -> CheckRefusal {
+fn qualified_name_refusal(refusal: SemanticCheckRefusal, name: &NameForm) -> SemanticCheckRefusal {
     if name.is_qualified() && matches!(refusal.cause.as_ref(), CheckCause::MissingName(_)) {
-        CheckRefusal {
+        SemanticCheckRefusal {
             location: refusal.location,
             cause: Box::new(CheckCause::MissingQualifiedName(name.clone())),
         }
@@ -132,7 +132,7 @@ fn qualified_name_refusal(refusal: CheckRefusal, name: &NameForm) -> CheckRefusa
     }
 }
 
-fn ambiguous_alias(name: &str, location: &Location) -> CheckRefusal {
+fn ambiguous_alias(name: &str, location: &Location) -> SemanticCheckRefusal {
     let alias = name.split("::").next().unwrap_or(name);
     refuse(
         location,
@@ -145,7 +145,7 @@ fn ambiguous_alias(name: &str, location: &Location) -> CheckRefusal {
 
 /// `ambiguous_declaration`/`ambiguous-name` for a source population named
 /// like a binder or parameter in scope, at the use.
-fn ambiguous_source_population(name: &str, location: &Location) -> CheckRefusal {
+fn ambiguous_source_population(name: &str, location: &Location) -> SemanticCheckRefusal {
     refuse(
         location,
         CheckCause::AmbiguousName {
@@ -158,13 +158,13 @@ fn ambiguous_source_population(name: &str, location: &Location) -> CheckRefusal 
 /// `missing_declaration`/`missing-name` for a two-segment `M::P` name that
 /// names no population here, located at its second segment (FR-391
 /// "Resolution").
-fn missing_segment(name: &str, location: &Location) -> CheckRefusal {
+fn missing_segment(name: &str, location: &Location) -> SemanticCheckRefusal {
     missing_segment_at(name, location, None)
 }
 
 /// [`missing_segment`] for a name written at `span`, when its form records
 /// one (an empty span is a form not read from a source unit).
-fn missing_segment_at(name: &str, location: &Location, span: Option<Span>) -> CheckRefusal {
+fn missing_segment_at(name: &str, location: &Location, span: Option<Span>) -> SemanticCheckRefusal {
     let offset = name.rfind("::").map_or(0, |at| at + 2);
     refuse(
         location,
@@ -601,7 +601,7 @@ impl<'r> Callee<'r> {
         arguments: Vec<NodeId>,
         argument_types: Vec<ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         match self {
             Self::Value(application) => application.finish(arguments, argument_types, location),
             Self::Union(member) => Ok(member.finish(arguments, location)),
@@ -881,7 +881,7 @@ struct DispatchArgumentsFrame<'e, 'r> {
 /// order, is typed (FSpec FR-146 "Case result type"): the type every body
 /// shares, `Integer` when every body is `Integer` or an `Int[..]` type, and
 /// otherwise a refusal at the first body that has neither.
-fn case_result(result: Option<ValueType>, body: &Node) -> Result<ValueType, CheckRefusal> {
+fn case_result(result: Option<ValueType>, body: &Node) -> Result<ValueType, SemanticCheckRefusal> {
     match result {
         None => Ok(body.value_type.clone()),
         Some(result) if result == body.value_type => Ok(result),
@@ -893,7 +893,7 @@ fn case_result(result: Option<ValueType>, body: &Node) -> Result<ValueType, Chec
 }
 
 /// A broken invariant of the `case` frame, never a refusal of the input.
-fn case_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+fn case_fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
     refuse(
         location,
         CheckCause::InternalFault(Box::new(KeyFault::StageFault(
@@ -1129,7 +1129,7 @@ impl<'a> Typer<'a> {
         expression: &Expression,
         required: &ValueType,
         location: &Location,
-    ) -> Result<CheckedBody, CheckRefusal> {
+    ) -> Result<CheckedBody, SemanticCheckRefusal> {
         let root = self.run(Goal::Expect(
             expression.root(),
             Expected::Checked(Cow::Borrowed(required)),
@@ -1146,7 +1146,7 @@ impl<'a> Typer<'a> {
         expression: &Expression,
         target: &ValueType,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let source = self.run(Goal::Infer(expression.root(), None, location.clone()))?;
         self.convert(target, source, location)
     }
@@ -1164,7 +1164,7 @@ impl<'a> Typer<'a> {
         expression: &Expression,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<CheckedBody, CheckRefusal> {
+    ) -> Result<CheckedBody, SemanticCheckRefusal> {
         let root = self.run(Goal::Infer(
             expression.root(),
             hint.map(Cow::Borrowed),
@@ -1182,7 +1182,7 @@ impl<'a> Typer<'a> {
         expression: &Expression,
         unit_of: &ValueType,
         location: &Location,
-    ) -> Result<CheckedBody, CheckRefusal> {
+    ) -> Result<CheckedBody, SemanticCheckRefusal> {
         let root = self.run(Goal::Infer(expression.root(), None, location.clone()))?;
         let root = match (&root.value_type, unit_of) {
             (ValueType::Quantity(source), ValueType::Quantity(target))
@@ -1208,7 +1208,7 @@ impl<'a> Typer<'a> {
         root: fsl_forms::ExprId,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<CheckedBody, CheckRefusal> {
+    ) -> Result<CheckedBody, SemanticCheckRefusal> {
         let root = self.run(Goal::Infer(
             expression.at(root),
             hint.map(Cow::Borrowed),
@@ -1224,7 +1224,7 @@ impl<'a> Typer<'a> {
         &mut self,
         expression: ExprRef<'_>,
         location: &Location,
-    ) -> Result<Option<Node>, CheckRefusal> {
+    ) -> Result<Option<Node>, SemanticCheckRefusal> {
         let ExprNode::Field { operand, field, .. } = expression.node() else {
             return Ok(None);
         };
@@ -1247,7 +1247,7 @@ impl<'a> Typer<'a> {
 
     /// The loop: descend into the next goal, or hand the node just typed to
     /// the frame below; the node no frame waits on is the root's.
-    fn run<'e, 'r>(&mut self, goal: Goal<'e, 'r>) -> Result<Node, CheckRefusal>
+    fn run<'e, 'r>(&mut self, goal: Goal<'e, 'r>) -> Result<Node, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -1270,7 +1270,7 @@ impl<'a> Typer<'a> {
         &mut self,
         goal: Goal<'e, 'r>,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -1294,7 +1294,7 @@ impl<'a> Typer<'a> {
         expected: Expected<'r>,
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -1385,7 +1385,7 @@ impl<'a> Typer<'a> {
         (name, value, body): (&'e str, ExprRef<'e>, ExprRef<'e>),
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let value_location = location.child(0);
         let annotation = annotation
             .map(|form| self.resolve_type(form, &location))
@@ -1436,7 +1436,7 @@ impl<'a> Typer<'a> {
         &mut self,
         frame: Box<ClockRefFrame<'e>>,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let next = frame
             .path
             .iter()
@@ -1518,7 +1518,7 @@ impl<'a> Typer<'a> {
         hint: Option<Want<'r>>,
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -1530,7 +1530,7 @@ impl<'a> Typer<'a> {
             ),
             ExprNode::Integer(value) => {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, value) {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location,
                         cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
@@ -1568,7 +1568,7 @@ impl<'a> Typer<'a> {
                 let declared = self.type_named(&type_name.name, &location)?;
                 let Some(object_type) = self.source_scope().object_type_named(&type_name.name)
                 else {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location,
                         cause: Box::new(CheckCause::ReferenceLiteralTypeMismatch {
                             name: type_name.clone(),
@@ -1586,7 +1586,7 @@ impl<'a> Typer<'a> {
                         identity,
                     },
                     Err(filament_checked::construct::ReferenceLiteralError::EmptyIdentity) => {
-                        return Err(CheckRefusal {
+                        return Err(SemanticCheckRefusal {
                             location,
                             cause: Box::new(CheckCause::EmptyReferenceLiteralKey {
                                 span: *key_span,
@@ -1599,7 +1599,7 @@ impl<'a> Typer<'a> {
                         // `key.text()` is a Rust string, so this branch can
                         // only mean the checked-node constructor violated its
                         // own UTF-8 contract.
-                        return Err(CheckRefusal {
+                        return Err(SemanticCheckRefusal {
                             location,
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::StageFault(
@@ -1631,7 +1631,7 @@ impl<'a> Typer<'a> {
             } => self.decimal_literal(coefficient, *scale, hint.as_deref(), &location)?,
             ExprNode::Absent => self.absent_literal(hint.as_deref(), &location)?,
             ExprNode::Null => {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location,
                     cause: Box::new(CheckCause::NullExpression),
                 });
@@ -1648,7 +1648,7 @@ impl<'a> Typer<'a> {
                     .scope
                     .unit_named(self.source_owner.as_ref(), &quantity.unit.name)
                 else {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location,
                         cause: Box::new(if quantity.unit.is_qualified() {
                             CheckCause::MissingQualifiedName(quantity.unit.clone())
@@ -1730,7 +1730,7 @@ impl<'a> Typer<'a> {
                         .any(|known| known == &name.name) =>
             {
                 return Err(if self.named.is_some() {
-                    CheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
+                    SemanticCheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
                 } else {
                     missing_segment(&name.name, &location)
                 });
@@ -1770,7 +1770,7 @@ impl<'a> Typer<'a> {
             // A `hyper` clause's reads and labels have a meaning only inside
             // the clause; S2 builds them nowhere else.
             ExprNode::Indexed { .. } | ExprNode::StepLabel { .. } | ExprNode::Stutter => {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location,
                     cause: Box::new(CheckCause::Hyper(Box::new(
                         crate::check::hyper_clause::HyperCause::OutsideHyperClause,
@@ -1872,7 +1872,7 @@ impl<'a> Typer<'a> {
             }
             ExprNode::Power { base, exponent } => {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, exponent) {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location,
                         cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
@@ -1916,7 +1916,7 @@ impl<'a> Typer<'a> {
             ExprNode::Field { operand, .. }
                 if self.hyper.is_none() && self.unbound_step_label(expression.at(*operand)) =>
             {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location,
                     cause: Box::new(CheckCause::Hyper(Box::new(
                         crate::check::hyper_clause::HyperCause::OutsideHyperClause,
@@ -2681,7 +2681,7 @@ impl<'a> Typer<'a> {
         bits: u64,
         hint: Option<&ValueType>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         let rounding = match hint {
             Some(ValueType::Float(float)) if float.width() == width => float.rounding(),
             Some(_) => return Err(mismatch(location)),
@@ -2708,7 +2708,7 @@ impl<'a> Typer<'a> {
         hint: Option<Want<'r>>,
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -2865,7 +2865,7 @@ impl<'a> Typer<'a> {
         expression: ExprRef<'e>,
         peer: Option<Want<'r>>,
         location: Location,
-    ) -> Result<Goal<'e, 'r>, CheckRefusal> {
+    ) -> Result<Goal<'e, 'r>, SemanticCheckRefusal> {
         if let ExprNode::Convert { target, operand } = expression.node() {
             let operand = expression.at(*operand);
             let target = self.resolve_type(target, &location)?;
@@ -2902,7 +2902,7 @@ impl<'a> Typer<'a> {
         dividend_range: Option<&IntegerRange>,
         divisor_range: Option<&IntegerRange>,
         location: &Location,
-    ) -> Result<ValueType, CheckRefusal> {
+    ) -> Result<ValueType, SemanticCheckRefusal> {
         let result = super::modulo_interval::result_type(
             dividend,
             divisor,
@@ -2917,7 +2917,7 @@ impl<'a> Typer<'a> {
                         filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
                             .work(Integer::one()),
                     ) {
-                        return Err(CheckRefusal {
+                        return Err(SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::ResourceExhausted(Box::new(
                                 StageLimitCause {
@@ -2938,7 +2938,7 @@ impl<'a> Typer<'a> {
         match result {
             Ok(value_type) => Ok(value_type),
             Err(super::modulo_interval::ModuloRangeError::Refused(refusal)) => Err(refusal),
-            Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(CheckRefusal {
+            Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                     filament_semantic_value::catalog::InternalFault::new(
@@ -2961,7 +2961,7 @@ impl<'a> Typer<'a> {
         typed: Node,
         converted: Option<(ValueType, Location)>,
         operator: EqualityOperator,
-    ) -> Result<(TypedOperand, ValueType), CheckRefusal> {
+    ) -> Result<(TypedOperand, ValueType), SemanticCheckRefusal> {
         match converted {
             Some((target, location)) => {
                 if typed.value_type != target {
@@ -3076,7 +3076,7 @@ impl<'a> Typer<'a> {
     fn application<'e, 'r>(
         frame: Box<ApplicationFrame<'e, 'r>>,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let position = frame.typed.len();
         match frame.order.get(position).copied() {
             Some(index) => {
@@ -3131,7 +3131,7 @@ impl<'a> Typer<'a> {
     fn record_step<'e, 'r>(
         mut frame: Box<RecordFrame<'e, 'r>>,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let fields = frame.fields;
         while let Some((field, initializer)) = fields.get(frame.next) {
             let initializer = *initializer;
@@ -3219,7 +3219,7 @@ impl<'a> Typer<'a> {
         (source, body): (ExprRef<'e>, ExprRef<'e>),
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         // A sum with no written result type is a plan objective's
         // `Reach.steps.sum(s => e)`: its total is formed from the summand
         // once the summand is typed ([`step_sum_total`]).
@@ -3273,7 +3273,7 @@ impl<'a> Typer<'a> {
         &mut self,
         frame: Box<DispatchArgumentsFrame<'e, 'r>>,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let index = frame.typed.len();
         let operation = frame.operation;
         match (
@@ -3331,7 +3331,7 @@ impl<'a> Typer<'a> {
         frame: IndexFrame<'e>,
         source: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -3352,13 +3352,13 @@ impl<'a> Typer<'a> {
                             }
                         });
                 let Some(positions) = positions else {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         &location,
                         IllTypedCause::OperatorIneligible,
                     ));
                 };
                 let ExprNode::Integer(position) = index.node() else {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         &location,
                         IllTypedCause::OperatorIneligible,
                     ));
@@ -3369,7 +3369,7 @@ impl<'a> Typer<'a> {
                     .and_then(|position| self.scope.tuple_data_position(declaration, position));
                 let Some(position) = position.filter(|position| positions.get(*position).is_some())
                 else {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         &location,
                         IllTypedCause::OperatorIneligible,
                     ));
@@ -3407,7 +3407,7 @@ impl<'a> Typer<'a> {
                     CollectionKind::Sequence => filament_checked::node::IndexedKind::Sequence,
                     CollectionKind::OrderedSet => filament_checked::node::IndexedKind::OrderedSet,
                     _ => {
-                        return Err(CheckRefusal::ill_typed(
+                        return Err(SemanticCheckRefusal::ill_typed(
                             &location,
                             IllTypedCause::OperatorIneligible,
                         ));
@@ -3428,7 +3428,7 @@ impl<'a> Typer<'a> {
                     index_location,
                 )))
             }
-            _ => Err(CheckRefusal::ill_typed(
+            _ => Err(SemanticCheckRefusal::ill_typed(
                 &location,
                 IllTypedCause::OperatorIneligible,
             )),
@@ -3442,7 +3442,7 @@ impl<'a> Typer<'a> {
         frame: Frame<'e, 'r>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -3675,7 +3675,7 @@ impl<'a> Typer<'a> {
         frame: Box<IfFrame<'e, 'r>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let IfFrame {
             branches,
             location,
@@ -3752,7 +3752,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<MinMaxFrame<'e>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let Some(first) = frame.first.take() else {
             frame.first = Some(typed);
             let second = frame.second;
@@ -3792,7 +3792,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<LetFrame<'e, 'r>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         match frame.value.take() {
             None => {
                 let slot = self.bind_declared(
@@ -3850,7 +3850,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<CaseFrame<'e, 'r>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -3900,7 +3900,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<CaseFrame<'e, 'r>>,
         mut arms: Box<CaseArms<'r>>,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal>
     where
         'a: 'r,
     {
@@ -3941,7 +3941,7 @@ impl<'a> Typer<'a> {
             Branches::Expected(expected) => expected.into_type(),
             // Only a union with no member has no arm body to infer from.
             Branches::Inferred(_) => result.ok_or_else(|| {
-                CheckRefusal::ill_typed(&location, IllTypedCause::AmbiguousLiteral)
+                SemanticCheckRefusal::ill_typed(&location, IllTypedCause::AmbiguousLiteral)
             })?,
         };
         Ok(Step::Typed(node(
@@ -3997,7 +3997,7 @@ impl<'a> Typer<'a> {
         frame: Box<PeerFrame<'e, 'r>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let PeerFrame {
             form,
             right_first,
@@ -4251,7 +4251,7 @@ impl<'a> Typer<'a> {
         &mut self,
         left: TypedOperand,
         right: TypedOperand,
-    ) -> Result<(TypedOperand, TypedOperand), CheckRefusal> {
+    ) -> Result<(TypedOperand, TypedOperand), SemanticCheckRefusal> {
         let is_sum = |part: &TypedOperand| {
             part.node.value_type == ValueType::Integer
                 && matches!(part.node.kind, NodeKind::Arithmetic(..))
@@ -4308,7 +4308,7 @@ impl<'a> Typer<'a> {
         })
     }
 
-    fn accept_unary(&mut self, frame: UnaryFrame<'_>, operand: Node) -> Result<Node, CheckRefusal> {
+    fn accept_unary(&mut self, frame: UnaryFrame<'_>, operand: Node) -> Result<Node, SemanticCheckRefusal> {
         let UnaryFrame { form, location } = frame;
         match form {
             Unary::Negate(hint) => self.negate(operand, hint.as_deref(), &location),
@@ -4427,7 +4427,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<QueryFrame<'e>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         match frame.source.take() {
             None => {
                 let (slot, source_type) =
@@ -4462,7 +4462,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<AccumulateFrame<'e>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         match std::mem::replace(&mut frame.stage, AccumulateStage::Source) {
             AccumulateStage::Source => {
                 let (accumulator, binder, source_type) = self.bind_accumulation(
@@ -4536,7 +4536,7 @@ impl<'a> Typer<'a> {
         frame: AccumulateFrame<'_>,
         fold: Fold,
         identity: Option<Node>,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         if !fold.source_type.kind().is_ordered() && !fold.catalogued {
             let node = match frame.form {
                 Accumulation::Fold => IdentityNode::Fold,
@@ -4572,7 +4572,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<TallyFrame<'e>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         match frame.source.take() {
             None => {
                 let element = self.element_type(&typed)?;
@@ -4655,7 +4655,7 @@ impl<'a> Typer<'a> {
     /// A concrete population name: the objects of the population in the
     /// observed state, `Set<Reference<T>>` with the universe size left
     /// symbolic (FR-139).
-    fn population_objects(&self, name: &str, location: &Location) -> Result<Node, CheckRefusal> {
+    fn population_objects(&self, name: &str, location: &Location) -> Result<Node, SemanticCheckRefusal> {
         let population = self
             .population_named(name)
             .ok_or_else(|| refuse(location, CheckCause::MissingName(name.to_owned())))?;
@@ -4697,7 +4697,7 @@ impl<'a> Typer<'a> {
         expression: ExprRef<'_>,
         binder: Option<&str>,
         location: &Location,
-    ) -> Result<Option<super::NamedPopulation>, CheckRefusal> {
+    ) -> Result<Option<super::NamedPopulation>, SemanticCheckRefusal> {
         let (Some(named), ExprNode::Name(name)) = (&self.named, expression.node()) else {
             return Ok(None);
         };
@@ -4721,7 +4721,7 @@ impl<'a> Typer<'a> {
         &mut self,
         expression: ExprRef<'_>,
         location: &Location,
-    ) -> Result<Option<Node>, CheckRefusal> {
+    ) -> Result<Option<Node>, SemanticCheckRefusal> {
         let Some(population) = self.named_population(expression, None, location)? else {
             return Ok(None);
         };
@@ -4736,7 +4736,7 @@ impl<'a> Typer<'a> {
         expression: ExprRef<'_>,
         binder: &str,
         location: &Location,
-    ) -> Result<Option<Node>, CheckRefusal> {
+    ) -> Result<Option<Node>, SemanticCheckRefusal> {
         let Some(population) = self.named_population(expression, Some(binder), location)? else {
             return Ok(None);
         };
@@ -4750,7 +4750,7 @@ impl<'a> Typer<'a> {
         &mut self,
         population: &super::NamedPopulation,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         self.enter(location)?;
         let operand = population_operand(population, &location.child(0));
         self.all_instances(
@@ -4770,7 +4770,7 @@ impl<'a> Typer<'a> {
         (condition, body): (Option<ExprRef<'e>>, Option<ExprRef<'e>>),
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         // FR-139 in a refinement row; FR-391 in a population position;
         // anywhere else `M::P` names no population.
         let source = match (&self.populations, &self.named) {
@@ -4864,7 +4864,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<PopulationFrame<'e>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         match frame.awaiting {
             PopulationAwait::Condition => match frame.body {
                 Some(body) => {
@@ -4916,7 +4916,7 @@ impl<'a> Typer<'a> {
         condition: Option<Node>,
         body: Option<Node>,
         location: &Location,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         self.unbind(1);
         let truth = |location: &Location| {
             node(
@@ -4926,7 +4926,7 @@ impl<'a> Typer<'a> {
             )
         };
         let query = |typer: &mut Self, visit, source: Node, body: Node, value_type| {
-            Ok::<_, CheckRefusal>(node(
+            Ok::<_, SemanticCheckRefusal>(node(
                 NodeKind::Query {
                     visit,
                     slot,
@@ -5035,7 +5035,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<SeqFrame<'e>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         match std::mem::replace(&mut frame.stage, SeqStage::Low) {
             SeqStage::Low => {
                 if !is_integer(&typed.value_type) {
@@ -5117,7 +5117,7 @@ impl<'a> Typer<'a> {
         mut frame: Box<ContainsFrame<'e>>,
         typed: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+    ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         match frame.collection.take() {
             None => {
                 // `contains(m, k)` on a map tests keys only (FSpec FR-144 "Map

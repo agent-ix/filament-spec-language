@@ -26,7 +26,7 @@ use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::{Accumulation, BinaryOperator, BinderQuery, Expression, FunctionDeclaration};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CollectionLoss, CollectionProperty, Obligation, OperandText,
+    CheckCause, SemanticCheckRefusal, CollectionLoss, CollectionProperty, Obligation, OperandText,
     PackageDeclarations, ProvedInterval,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -197,7 +197,7 @@ fn check(
     package: &CheckedPackage,
     parameters: &[(&str, ValueType)],
     expression: &Expression,
-) -> Result<fsl_semantics::check::CheckedExpression, CheckRefusal> {
+) -> Result<fsl_semantics::check::CheckedExpression, SemanticCheckRefusal> {
     check_as(package, parameters, expression, None)
 }
 
@@ -208,7 +208,7 @@ fn check_as(
     parameters: &[(&str, ValueType)],
     expression: &Expression,
     expected: Option<&ValueType>,
-) -> Result<fsl_semantics::check::CheckedExpression, CheckRefusal> {
+) -> Result<fsl_semantics::check::CheckedExpression, SemanticCheckRefusal> {
     let parameters = parameters
         .iter()
         .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))
@@ -228,7 +228,7 @@ fn ill_typed(
     expression: &Expression,
 ) -> IllTypedCause {
     match check(package, parameters, expression).map(|_| ()) {
-        Err(CheckRefusal { cause, .. }) => match *cause {
+        Err(SemanticCheckRefusal { cause, .. }) => match *cause {
             CheckCause::IllTyped(cause) => cause,
             cause => panic!("an ill_typed refusal, not {cause:?}"),
         },
@@ -1129,7 +1129,7 @@ fn check_linked(
     package: &CheckedPackage,
     parameters: &[(&str, ValueType)],
     expression: &Expression,
-) -> Result<fsl_semantics::check::CheckedExpression, CheckRefusal> {
+) -> Result<fsl_semantics::check::CheckedExpression, SemanticCheckRefusal> {
     let parameters = parameters
         .iter()
         .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))

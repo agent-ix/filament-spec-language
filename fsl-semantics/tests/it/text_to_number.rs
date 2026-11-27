@@ -6,7 +6,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::{build_unit, BuiltinType, Expression, TypeForm};
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
-    ApplicationTerm, AssemblyRefusal, BodyTerm, CheckRefusal, CheckedGraph, LawRole, LeafTerm,
+    ApplicationTerm, AssemblyRefusal, BodyTerm, SemanticCheckRefusal, CheckedGraph, LawRole, LeafTerm,
     MemberTerm, OperationMode, Operator, PackageDeclarations, SemanticNode,
 };
 use fsl_semantics::model::intake::SelectedModels;
@@ -44,7 +44,7 @@ fn assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> 
     )
 }
 
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     assemble(declarations)
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
         .check(

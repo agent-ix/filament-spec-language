@@ -22,7 +22,7 @@ use std::marker::PhantomData;
 use std::ops::ControlFlow;
 
 use super::check::SourceScope;
-use super::refusal::{CheckCause, CheckRefusal};
+use super::refusal::{CheckCause, SemanticCheckRefusal};
 use filament_exact::{
     CardinalityBound, CarriedQuantityType, CollectionKind, CollectionType, DecimalType,
     EffectiveId, FloatType, IeeeWidth, IllTypedCause, Integer, IntegerInterval, MapType,
@@ -210,7 +210,7 @@ pub struct TypeFormError {
 
 impl TypeFormError {
     /// This error as a check refusal at `location`.
-    fn into_refusal(self, location: &Location) -> CheckRefusal {
+    fn into_refusal(self, location: &Location) -> SemanticCheckRefusal {
         let cause = match self.fault {
             TypeFormFault::MissingName(name) => CheckCause::MissingName(name),
             TypeFormFault::MissingQualifiedName(name) => CheckCause::MissingQualifiedName(name),
@@ -230,7 +230,7 @@ impl TypeFormError {
                 span: self.span,
             },
             TypeFormFault::UnitArithmetic(_) => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
+                return SemanticCheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
             }
             TypeFormFault::UnitIdentity(cause) => CheckCause::Identity(cause),
             TypeFormFault::Malformed
@@ -239,10 +239,10 @@ impl TypeFormError {
             | TypeFormFault::MalformedDecimal
             | TypeFormFault::EmptyTextBounds
             | TypeFormFault::EmptyCardinality => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch);
+                return SemanticCheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch);
             }
         };
-        CheckRefusal {
+        SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(cause),
         }
@@ -305,7 +305,7 @@ pub(crate) fn resolve_named_type(
     names: &impl TypeNames,
     name: &str,
     location: &Location,
-) -> Result<ValueType, CheckRefusal> {
+) -> Result<ValueType, SemanticCheckRefusal> {
     let span = Span { start: 0, end: 0 };
     let name = NameForm::new(name, span);
     let form = TypeForm::new(TypeFormHead::Name(name.clone()), span);
@@ -682,14 +682,14 @@ pub(crate) fn population_target(
     names: &impl TypeNames,
     form: &TypeForm,
     location: &Location,
-) -> Result<Option<EffectiveId>, CheckRefusal> {
+) -> Result<Option<EffectiveId>, SemanticCheckRefusal> {
     if !matches!(form.head, TypeFormHead::Population) {
         return Ok(None);
     }
     let argument = only_argument(form).map_err(|error| error.into_refusal(location))?;
     match &resolve_type_form(names, argument, location)? {
         ValueType::Reference(target) => Ok(Some(target.clone())),
-        _ => Err(CheckRefusal::ill_typed(
+        _ => Err(SemanticCheckRefusal::ill_typed(
             location,
             IllTypedCause::TypeMismatch,
         )),
@@ -881,7 +881,7 @@ pub(crate) fn resolve_type_form(
     names: &impl TypeNames,
     form: &TypeForm,
     location: &Location,
-) -> Result<ValueType, CheckRefusal> {
+) -> Result<ValueType, SemanticCheckRefusal> {
     resolve_form(names, form).map_err(|error| error.into_refusal(location))
 }
 
@@ -1027,11 +1027,11 @@ mod tests {
             .with_bounds(bounds.iter().map(|bound| (*bound).to_owned()).collect())
     }
 
-    fn resolve_in(scope: &Scope, form: &TypeForm) -> Result<ValueType, CheckRefusal> {
+    fn resolve_in(scope: &Scope, form: &TypeForm) -> Result<ValueType, SemanticCheckRefusal> {
         resolve_type_form(&scope.in_source(None), form, &root_location())
     }
 
-    fn resolve(form: &TypeForm) -> Result<ValueType, CheckRefusal> {
+    fn resolve(form: &TypeForm) -> Result<ValueType, SemanticCheckRefusal> {
         resolve_in(&empty_scope(), form)
     }
 

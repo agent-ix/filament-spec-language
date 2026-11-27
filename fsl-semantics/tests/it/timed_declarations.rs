@@ -659,7 +659,7 @@ fn overriding_document() -> Vec<u8> {
 fn tick_over(
     document: &[u8],
     operation: &str,
-) -> Result<Vec<fsl_semantics::check::ModelTimeSource>, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<Vec<fsl_semantics::check::ModelTimeSource>, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let body = format!("dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config tick {operation} period 1 ms unit ms;\n");
     admit_and_assemble_with_profiles(
         document,
@@ -775,7 +775,7 @@ const UNSELECTED_TIMED: &str = "time Config dense unit ms;\n\
 /// construct, its owning declaration, the selected header layers and the
 /// byte offset of its span, after checking its code and required facet.
 fn facet_refusals(
-    refusals: &[fsl_semantics::check::CheckRefusal],
+    refusals: &[fsl_semantics::check::SemanticCheckRefusal],
 ) -> Vec<(TimedConstruct, String, Vec<HeaderLayer>, usize)> {
     refusals
         .iter()
@@ -1025,7 +1025,7 @@ const SECONDS_AND_MILLISECONDS: &str =
 fn check_delays(
     timed: bool,
     declarations: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     check_delays_under(
         if timed {
             "time Config dense unit ms;\n"
@@ -1040,7 +1040,7 @@ fn check_delays(
 fn check_delays_under(
     time: &str,
     declarations: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let body = format!("{SECONDS_AND_MILLISECONDS}{time}{declarations}\n");
     admit_and_assemble_with_profiles(
         &document(),
@@ -1452,7 +1452,7 @@ fn check_selected(
     body: &str,
 ) -> (
     String,
-    Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>>,
+    Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>>,
 ) {
     let (text, assembled) = assemble_selected(packages, body);
     let checked = assembled
@@ -1532,7 +1532,7 @@ fn check_two(
     body: &str,
 ) -> (
     String,
-    Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>>,
+    Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>>,
 ) {
     check_selected(&[rpc(body), flow()], body)
 }

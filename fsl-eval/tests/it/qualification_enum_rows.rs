@@ -56,7 +56,7 @@ fn source_declarations(body: &str) -> PackageDeclarations {
     declarations
 }
 
-fn source_package(body: &str) -> Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>> {
+fn source_package(body: &str) -> Result<CheckedPackage, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     source_declarations(body)
         .check(
             CheckMode::Linked,

@@ -20,7 +20,7 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::ir::{NodeId, Slot};
-use super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::refusal::{CheckCause, SemanticCheckRefusal, KeyFault};
 
 /// Which of FSpec FR-146's exhaustiveness obligations a `case` failed, in
 /// FR-146's order.
@@ -199,13 +199,13 @@ impl<'a> UnionMember<'a> {
         &self,
         supplied: Option<usize>,
         location: &Location,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let admitted =
             supplied.map_or(self.payload.is_empty(), |count| count == self.payload.len());
         if admitted {
             Ok(())
         } else {
-            Err(CheckRefusal::ill_typed(
+            Err(SemanticCheckRefusal::ill_typed(
                 location,
                 filament_exact::IllTypedCause::TypeMismatch,
             ))
@@ -321,7 +321,7 @@ impl<'a> CaseBuilder<'a> {
     pub(crate) fn finish(
         self,
         case: &Location,
-    ) -> Result<(NodeId, NodeKey, Vec<CaseArm<NodeId>>), CheckRefusal> {
+    ) -> Result<(NodeId, NodeKey, Vec<CaseArm<NodeId>>), SemanticCheckRefusal> {
         let arm_at = |index: usize| case.child(1 + index);
         let mut failure = None;
         let mut seen = BTreeSet::new();
@@ -343,7 +343,7 @@ impl<'a> CaseBuilder<'a> {
             failure = Some((ExhaustivenessObligation::MissingArm, case.clone()));
         }
         if let Some((obligation, location)) = failure {
-            return Err(CheckRefusal {
+            return Err(SemanticCheckRefusal {
                 location,
                 cause: Box::new(CheckCause::SumCase(Box::new(
                     SumCaseCause::UnprovedExhaustiveness {
@@ -366,8 +366,8 @@ impl<'a> CaseBuilder<'a> {
 }
 
 /// A broken invariant of the builder, never a refusal of the input.
-fn fault(location: &Location, invariant: &'static str) -> CheckRefusal {
-    CheckRefusal {
+fn fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new("S3", invariant),

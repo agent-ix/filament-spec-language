@@ -12,7 +12,7 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    ApplicationTerm, BindingValue, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, I128Limit,
+    ApplicationTerm, BindingValue, BodyTerm, CheckCause, SemanticCheckRefusal, CheckedGraph, I128Limit,
     IntegerOutsideI128, IntegerSite, LawRole, LeafTerm, LiteralValue, MemberTerm, NodeTag,
     OperationMode, PackageDeclarations, SemanticNode,
 };
@@ -27,7 +27,7 @@ const U2: &str = "00112233-4455-6677-8899-aabbccddeefe";
 const MIN: &str = "170141183460469231731687303715884105728";
 const MAX: &str = "170141183460469231731687303715884105727";
 
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("{HEADER}{declarations}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "literals"),
@@ -72,7 +72,7 @@ fn literal_of(node: &SemanticNode) -> Option<(&'static str, String)> {
 }
 
 /// The one refusal of `declarations`.
-fn refused(declarations: &str) -> CheckRefusal {
+fn refused(declarations: &str) -> SemanticCheckRefusal {
     let mut refusals = check(declarations).expect_err("the unit does not check");
     assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
     refusals.remove(0)

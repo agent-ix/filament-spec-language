@@ -8,7 +8,7 @@
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind, PropertyForm};
 use fsl_semantics::check::{
-    AbstractionKey, AbstractionRefusal, AssemblyCause, CheckCause, CheckRefusal,
+    AbstractionKey, AbstractionRefusal, AssemblyCause, CheckCause, SemanticCheckRefusal,
     CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, ModelFamily,
     SlotBacking, SlotRole,
 };
@@ -64,7 +64,7 @@ const CASE_ONE: &str = "guarantee G of Eventually2 using A { \
 enum Failure {
     Syntax(Vec<fsl_cst::CompleteDiagnostic>),
     Assembly(fsl_semantics::check::AssemblyRefusal),
-    Check(Vec<CheckRefusal>),
+    Check(Vec<SemanticCheckRefusal>),
 }
 
 fn compile_with(unit: &str, documents: &[Value]) -> Result<CheckedPackage, Failure> {
@@ -122,7 +122,7 @@ fn refused(unit: &str, documents: &[Value]) -> GuaranteeRefusal {
     let Err(Failure::Check(refusals)) = compile_with(unit, documents) else {
         panic!("{unit}: a check refusal");
     };
-    let [CheckRefusal { cause, .. }] = &refusals[..] else {
+    let [SemanticCheckRefusal { cause, .. }] = &refusals[..] else {
         panic!("{unit}: one guarantee refusal: {refusals:?}");
     };
     let CheckCause::Abstraction(cause) = cause.as_ref() else {

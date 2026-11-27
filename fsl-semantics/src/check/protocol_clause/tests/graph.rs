@@ -11,7 +11,7 @@ use ix_trace_rs::trace;
 use super::{HEADER, assemble, assemble_with, checks, protocol_causes, refusals};
 use crate::check::protocol_clause::{CausalEdge, EdgeKind, Port, PortRef, ProtocolNodeId};
 use crate::check::refusal::{ArmFault, ObservationReason, ProtocolAnchorCause, SlotKind};
-use crate::check::{CheckRefusal, CheckedAwait, CheckedDeadline, CheckedGraph};
+use crate::check::{SemanticCheckRefusal, CheckedAwait, CheckedDeadline, CheckedGraph};
 
 /// A protocol `Flow` with roles `R` and `S` on `M::Actor`, a record type
 /// `Plain`, the `members` written before `run` and the `run` control.
@@ -75,7 +75,7 @@ fn located<'t>(text: &'t str, cause: &ProtocolAnchorCause) -> &'t str {
     &text[span.start..span.end]
 }
 
-fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
+fn catalog(refusal: &SemanticCheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
 }
 
@@ -176,7 +176,7 @@ fn three_nested_levels_check_with_their_paths() {
 }
 
 /// The one refusal of `source`, with its cause and the unit's text.
-fn only(source: &str) -> (String, CheckRefusal, ProtocolAnchorCause) {
+fn only(source: &str) -> (String, SemanticCheckRefusal, ProtocolAnchorCause) {
     let (text, found) = refusals(source);
     let [refusal] = found.as_slice() else {
         panic!("{source}: one refusal, got {found:?}");
@@ -526,7 +526,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
         )
         .expect_err("an await under no temporal profile refuses");
     // The protocol profile's emission refusal is not this check's subject.
-    let found: Vec<CheckRefusal> = found
+    let found: Vec<SemanticCheckRefusal> = found
         .into_iter()
         .filter(|refusal| {
             !matches!(

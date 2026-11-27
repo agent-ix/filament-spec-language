@@ -30,7 +30,7 @@ use filament_semantic_value::location::{
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
@@ -359,7 +359,7 @@ fn duplicate_function_name_is_refused_ambiguous_name() {
         &fsl_eval::value::S6aRewardEvaluator,
     );
     let refusals = result.expect_err("a duplicate name must be refused, not admitted");
-    assert!(refusals.iter().any(|refusal: &CheckRefusal| matches!(
+    assert!(refusals.iter().any(|refusal: &SemanticCheckRefusal| matches!(
         refusal.cause.as_ref(),
         CheckCause::AmbiguousName { name, .. } if name == "one"
     )));

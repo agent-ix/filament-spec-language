@@ -42,7 +42,7 @@ fn checked(
     body: &str,
 ) -> (
     String,
-    Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>>,
+    Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>>,
 ) {
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let unit = clocked_unit(body);

@@ -4,7 +4,7 @@
 use super::child_composite::fixture;
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::CheckRefusal;
+use fsl_semantics::check::SemanticCheckRefusal;
 
 fn emitted_compensation_unit() -> (Emission, Value, Read) {
     emitted_unit("", "true", "false").expect("unit checks")
@@ -56,11 +56,11 @@ fn emitted_unit(
     declarations: &str,
     guard: &str,
     retry: &str,
-) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
+) -> Result<(Emission, Value, Read), Vec<SemanticCheckRefusal>> {
     emitted_text(&unit_text(declarations, guard, retry))
 }
 
-fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
+fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<SemanticCheckRefusal>> {
     let graph = checked_graph(unit)?;
     let clock = filament_contract_model::ClockConfiguration::EventPosition {
         sequence_authority: "compensation-events".into(),
@@ -134,7 +134,7 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>
     Ok((emission, wire, read))
 }
 
-fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     let document =
         crate::emit::tests::wire_bytes(&fixture::document()).expect("fixture serializes");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();

@@ -21,7 +21,7 @@ use fsl_replay::{Certification, InconclusiveCause, PremiseOutcome};
 use fsl_route::request::RequestWriter;
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{
-    AdmittedImport, Capability, CheckRefusal, PackageDeclarations, SlotRole as SemRole,
+    AdmittedImport, Capability, SemanticCheckRefusal, PackageDeclarations, SlotRole as SemRole,
 };
 use fsl_semantics::library::LibraryName;
 use ix_trace_rs::trace;
@@ -179,7 +179,7 @@ fn compile(declaration: &str, dependencies: &[&Dependency]) -> Result<CheckedPac
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
         )
-        .map_err(|refusals: Vec<CheckRefusal>| Failure::Check(refusals))?;
+        .map_err(|refusals: Vec<SemanticCheckRefusal>| Failure::Check(refusals))?;
     Ok(CheckedPackage::link_with(
         graph,
         dependencies

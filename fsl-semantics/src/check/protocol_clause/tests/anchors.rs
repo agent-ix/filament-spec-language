@@ -9,7 +9,7 @@ use super::{
     anchors_at, declaration_id, handoff_protocol, protocol_causes, recovery_flow, refusals,
     resolve_protocol,
 };
-use crate::check::CheckRefusal;
+use crate::check::SemanticCheckRefusal;
 use crate::check::refusal::ProtocolAnchorCause;
 
 /// FR-113-AC-1 (TC-511): every anchor of the `RecoveryFlow` fixture
@@ -182,7 +182,7 @@ fn duplicate_applied_spans(text: &str) -> [usize; 2] {
 /// Every `Ambiguous` cause of `refusals` names `Applied` and lists its
 /// two loci in exactly `expected` order (FR-113-AC-4: "naming both in
 /// source order").
-fn assert_ambiguous_loci_order(refusals: &[CheckRefusal], expected: [usize; 2]) {
+fn assert_ambiguous_loci_order(refusals: &[SemanticCheckRefusal], expected: [usize; 2]) {
     for cause in protocol_causes(refusals) {
         match cause {
             ProtocolAnchorCause::Ambiguous { name, loci, .. } => {

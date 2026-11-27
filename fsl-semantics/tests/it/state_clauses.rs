@@ -24,7 +24,7 @@ use fsl_forms::StateClauseKind;
 use fsl_foundation::bound::DomainKey;
 use fsl_foundation::bound::DomainKind;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{AssemblyCause, AssemblyError, CheckCause, CheckRefusal, CheckedGraph};
+use fsl_semantics::check::{AssemblyCause, AssemblyError, CheckCause, SemanticCheckRefusal, CheckedGraph};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::clause_observation::Observation;
 use ix_trace_rs::trace;
@@ -78,12 +78,12 @@ fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<(Code, Option<
         })
 }
 
-/// Like [`check`], but keeps the raw [`CheckRefusal`] of a check-stage
+/// Like [`check`], but keeps the raw [`SemanticCheckRefusal`] of a check-stage
 /// refusal (never an assembly one -- callers use this only where the
 /// refusal it wants is `check`'s own: `CheckCause::UnanchoredResult`'s
 /// payload (FR-104-AC-2), or a refusal's own `location.path` (FR-096;
 /// empty at the checked declaration's root, non-empty at a subexpression).
-fn check_refusals(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check_refusals(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let declarations = admit_and_assemble_with_body(document, body)
         .unwrap_or_else(|refusal| panic!("assembly refused: {refusal:?}"));
     declarations.check(

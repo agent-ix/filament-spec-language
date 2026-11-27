@@ -25,7 +25,7 @@ use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::Expression;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedExpression, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedExpression, PackageDeclarations};
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
@@ -112,7 +112,7 @@ fn check(
     package: &CheckedPackage,
     static_type: &str,
     field: &str,
-) -> Result<CheckedExpression, CheckRefusal> {
+) -> Result<CheckedExpression, SemanticCheckRefusal> {
     package.graph().check_expression(
         vec![("r".to_owned(), ValueType::Reference(effective(static_type)))],
         &attribute(field),

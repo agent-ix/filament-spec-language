@@ -18,7 +18,7 @@ use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{SemanticCheckRefusal, PackageDeclarations};
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
@@ -36,7 +36,7 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: u64::MAX,
 };
 
-fn try_package(functions: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn try_package(functions: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{functions}"
@@ -67,7 +67,7 @@ fn try_package(functions: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
         .map(CheckedPackage::link)
 }
 
-fn refusals_of(functions: &str) -> Vec<CheckRefusal> {
+fn refusals_of(functions: &str) -> Vec<SemanticCheckRefusal> {
     match try_package(functions) {
         Err(refusals) => refusals,
         Ok(_) => panic!("the unit must be refused: {functions}"),

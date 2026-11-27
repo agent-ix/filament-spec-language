@@ -24,7 +24,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph,
+    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, SemanticCheckRefusal, CheckedGraph,
     CheckingLimitKind, Confidence, Event, GroupMember, LeafTerm, MemberTerm, Owner,
     PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
     ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator, SemanticNode, WeightOwner,
@@ -411,7 +411,7 @@ fn checked_timed_service(body: &str) -> CheckedGraph {
         .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
 }
 
-fn refusals_of(body: &str) -> Vec<CheckRefusal> {
+fn refusals_of(body: &str) -> Vec<SemanticCheckRefusal> {
     assemble(body)
         .check(
             CheckMode::Linked,

@@ -5,17 +5,17 @@ use filament_checked::node::IntegerDivisionOperator;
 use filament_exact::{DivisionProfile, Integer, NonZeroInteger};
 use filament_semantic_value::location::ExpressionLocation;
 
-use super::{CheckCause, CheckRefusal, refuse};
+use super::{CheckCause, SemanticCheckRefusal, refuse};
 use crate::check::ir::IntegerRange;
 
-type Charge<'a> = &'a mut dyn FnMut() -> Result<(), CheckRefusal>;
+type Charge<'a> = &'a mut dyn FnMut() -> Result<(), SemanticCheckRefusal>;
 
 fn quotient(
     a: &Integer,
     b: &Integer,
     law: DivisionProfile,
     at: &ExpressionLocation,
-) -> Result<Integer, CheckRefusal> {
+) -> Result<Integer, SemanticCheckRefusal> {
     let divisor =
         NonZeroInteger::try_from(b).map_err(|_| refuse(at, CheckCause::UnrepresentableBound))?;
     let (q, r) = match law {
@@ -42,7 +42,7 @@ fn euclidean(
     (lower, upper): &IntegerRange,
     charge: Charge<'_>,
     at: &ExpressionLocation,
-) -> Result<IntegerRange, CheckRefusal> {
+) -> Result<IntegerRange, SemanticCheckRefusal> {
     super::modulo_interval::exact_interval(a, b, lower, upper, charge).map_err(
         |error| match error {
             super::modulo_interval::ModuloRangeError::Refused(refusal) => refusal,
@@ -67,7 +67,7 @@ pub(super) fn infer(
     divisor: Option<IntegerRange>,
     charge: Charge<'_>,
     at: &ExpressionLocation,
-) -> Result<Option<IntegerRange>, CheckRefusal> {
+) -> Result<Option<IntegerRange>, SemanticCheckRefusal> {
     let zero = Integer::zero();
     let one = Integer::one();
     if dividend

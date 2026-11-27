@@ -39,7 +39,7 @@ use super::protocol_obligation::{
     CheckedBinder, Goal, model_state_reads, span_of, type_body, wraps,
 };
 use super::refusal::{
-    AliasKind, ChannelEnd, CheckCause, CheckRefusal, JoinFault, ProtocolAnchorCause,
+    AliasKind, ChannelEnd, CheckCause, SemanticCheckRefusal, JoinFault, ProtocolAnchorCause,
 };
 use super::state_clause::ClauseDeclarations;
 use super::type_form::resolve_form;
@@ -88,8 +88,8 @@ pub struct CheckedChannel {
     pub span: Span,
 }
 
-fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ProtocolAnchorCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // A protocol has no expression tree for a `Location` path to walk;
         // `region::DeclarationRegions::refusal_region` reads a
         // `ProtocolAnchor` cause's own span directly instead.
@@ -118,7 +118,7 @@ pub(super) fn check(
     models: &[super::lowering::AdmittedModel],
     declarations: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
-) -> Result<(Vec<CheckedChannel>, u64), Vec<CheckRefusal>> {
+) -> Result<(Vec<CheckedChannel>, u64), Vec<SemanticCheckRefusal>> {
     let scope = declarations.scope;
     let mut cx = cx.reborrow(scope);
     let mut keys = Keys {
@@ -126,7 +126,7 @@ pub(super) fn check(
         cx: &mut cx,
         nodes: declarations.nodes_used,
     };
-    let mut refusals: Vec<(Span, CheckRefusal)> = Vec::new();
+    let mut refusals: Vec<(Span, SemanticCheckRefusal)> = Vec::new();
     let roles: BTreeSet<&str> = protocol
         .roles
         .iter()
@@ -215,7 +215,7 @@ fn check_channel(
     roles: &BTreeSet<&str>,
     channel_models: ChannelModels<'_>,
     keys: &mut Keys<'_, '_, '_>,
-    refusals: &mut Vec<(Span, CheckRefusal)>,
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
 ) -> Option<CheckedChannel> {
     let ChannelModels {
         relationships,
@@ -338,7 +338,7 @@ fn check_channel_connection(
     roles: &[super::protocol_clause::CheckedRole],
     models: &[super::lowering::AdmittedModel],
     carries: Option<&ValueType>,
-    refusals: &mut Vec<(Span, CheckRefusal)>,
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
 ) -> Option<filament_checked::key::DeclarationKey> {
     let via = channel.via.as_ref()?;
     let Some(relationship) = relationships
@@ -473,7 +473,7 @@ fn check_fifo(
     (binder, key, key_text): (&ParameterForm, &ExpressionForm, &str),
     carries: Option<&ValueType>,
     keys: &mut Keys<'_, '_, '_>,
-    refusals: &mut Vec<(Span, CheckRefusal)>,
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
 ) -> Option<CheckedOrdering> {
     let name = channel.name.name.as_str();
     let binder_type = match resolve_form(
@@ -513,7 +513,7 @@ fn check_fifo(
     let site = protocol_location(protocol, ProtocolSite::ChannelKey(name));
     let body = match keys.type_key(key, &bound, Goal::Infer, &site) {
         Ok(body) => body,
-        Err(CheckRefusal { location, cause }) => {
+        Err(SemanticCheckRefusal { location, cause }) => {
             let span = span_of(key, &location);
             let wrapped = if wraps(&cause) && cause.cause().is_some() {
                 refusal(ProtocolAnchorCause::KeyClause {
@@ -524,7 +524,7 @@ fn check_fifo(
             } else {
                 // A reached limit, a cancellation or a fault keeps its own
                 // cause.
-                CheckRefusal { location, cause }
+                SemanticCheckRefusal { location, cause }
             };
             refusals.push((span, wrapped));
             return None;
@@ -607,7 +607,7 @@ impl Keys<'_, '_, '_> {
         bound: &[(String, ValueType)],
         goal: Goal<'_>,
         location: &Location,
-    ) -> Result<CheckedBody, CheckRefusal> {
+    ) -> Result<CheckedBody, SemanticCheckRefusal> {
         let mut nodes = self.nodes;
         let declarations = ClauseDeclarations {
             location,
@@ -628,7 +628,7 @@ impl Keys<'_, '_, '_> {
 fn check_messages(
     protocol: &ProtocolDeclarationForm,
     scope: &Scope,
-    refusals: &mut Vec<(Span, CheckRefusal)>,
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
 ) {
     for (index, declaration) in protocol.declarations.iter().enumerate() {
         let Some(via) = &declaration.channel else {
@@ -689,7 +689,7 @@ fn check_messages(
 /// the second, naming both.
 fn refuse_fifo_binder_clashes(
     protocol: &ProtocolDeclarationForm,
-    refusals: &mut Vec<(Span, CheckRefusal)>,
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
 ) {
     let readable: BTreeMap<&str, Span> = protocol
         .binders
@@ -724,7 +724,7 @@ fn refuse_fifo_binder_clashes(
 /// FR-218 "Channels": two channels of one name refuse at each declaration,
 /// naming both in source order. Channels and relationships have separate
 /// namespaces, so only channels are compared.
-fn refuse_duplicate_channels(channels: &[ChannelForm], refusals: &mut Vec<(Span, CheckRefusal)>) {
+fn refuse_duplicate_channels(channels: &[ChannelForm], refusals: &mut Vec<(Span, SemanticCheckRefusal)>) {
     let mut by_name: BTreeMap<&str, Vec<Span>> = BTreeMap::new();
     for channel in channels {
         by_name
@@ -755,7 +755,7 @@ fn refuse_duplicate_channels(channels: &[ChannelForm], refusals: &mut Vec<(Span,
 fn check_join(
     protocol: &ProtocolDeclarationForm,
     parallel: &ParallelForm,
-    refusals: &mut Vec<(Span, CheckRefusal)>,
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
 ) {
     // A join other than `all` leaves branches outstanding, so it must say
     // what becomes of them (FR-218-AC-40); this is independent of the list.
@@ -865,7 +865,7 @@ fn check_join(
 /// first.
 fn refuse_repeated_members(
     protocol: &ProtocolDeclarationForm,
-    refusals: &mut Vec<(Span, CheckRefusal)>,
+    refusals: &mut Vec<(Span, SemanticCheckRefusal)>,
 ) {
     let mut first_terminal = None;
     let mut first_scheduling = None;
@@ -904,7 +904,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::super::{
-        ChannelEnd, CheckCause, CheckRefusal, CheckedGraph, JoinFault, PackageDeclarations,
+        ChannelEnd, CheckCause, SemanticCheckRefusal, CheckedGraph, JoinFault, PackageDeclarations,
         ProtocolAnchorCause,
     };
     use super::CheckedChannel;
@@ -987,7 +987,7 @@ mod tests {
         (text, assembled)
     }
 
-    fn refusals(declarations: &str) -> (String, Vec<CheckRefusal>) {
+    fn refusals(declarations: &str) -> (String, Vec<SemanticCheckRefusal>) {
         let (text, assembled) = assemble(declarations);
         match assembled.check(
             CheckMode::Linked,
@@ -1010,7 +1010,7 @@ mod tests {
             .unwrap_or_else(|refusals| panic!("{declarations}: {refusals:?}"))
     }
 
-    fn causes(refusals: &[CheckRefusal]) -> Vec<&ProtocolAnchorCause> {
+    fn causes(refusals: &[SemanticCheckRefusal]) -> Vec<&ProtocolAnchorCause> {
         refusals
             .iter()
             .map(|refusal| match refusal.cause.as_ref() {

@@ -59,7 +59,7 @@ use crate::check::refinement::{
     RefinementCatalogNode, RefinementClassCatalog,
 };
 use crate::check::refusal::{
-    CheckCause, CheckRefusal, KeyFault, ProtocolConstruct, ProtocolReferenceCause,
+    CheckCause, SemanticCheckRefusal, KeyFault, ProtocolConstruct, ProtocolReferenceCause,
 };
 use crate::value::member::Member;
 
@@ -406,7 +406,7 @@ const fn loss_text(selector: LossSelector) -> &'static str {
 }
 
 /// `text` as an identifier, or the refusal that it is empty.
-fn identifier(text: &str, location: &Location) -> Result<Identifier, CheckRefusal> {
+fn identifier(text: &str, location: &Location) -> Result<Identifier, SemanticCheckRefusal> {
     Identifier::new(text.to_owned()).map_err(|_| {
         refuse(
             location,
@@ -428,7 +428,7 @@ fn empty_group() -> BindingValue {
 
 /// The refusal that `construct` of the protocol at `location` has no node
 /// written yet.
-fn not_emitted(construct: ProtocolConstruct, location: &Location) -> CheckRefusal {
+fn not_emitted(construct: ProtocolConstruct, location: &Location) -> SemanticCheckRefusal {
     refuse(
         location,
         CheckCause::ProtocolReference(Box::new(ProtocolReferenceCause::NotEmitted { construct })),
@@ -465,7 +465,7 @@ impl Lowering<'_> {
         &self,
         protocol: &ProtocolInput<'_>,
         location: &Location,
-    ) -> Result<Option<Vec<NodeKey>>, CheckRefusal> {
+    ) -> Result<Option<Vec<NodeKey>>, SemanticCheckRefusal> {
         let requirements = protocol.checked.requirements.iter();
         resolve_temporal_requirement_keys(
             requirements.map(|requirement| {
@@ -502,11 +502,11 @@ impl Lowering<'_> {
         index: usize,
         protocol: &ProtocolInput<'_>,
         cyclic: bool,
-    ) -> Result<Vec<CheckRefusal>, CheckRefusal> {
+    ) -> Result<Vec<SemanticCheckRefusal>, SemanticCheckRefusal> {
         let location = protocol.location();
         let law = match self.law(LawRole::ProtocolProfile, &location) {
             Ok(law) => law,
-            Err(CheckRefusal { cause, .. })
+            Err(SemanticCheckRefusal { cause, .. })
                 if matches!(cause.as_ref(), CheckCause::MissingSelection { .. }) =>
             {
                 self.set_protocol_key(index, ProtocolKey::Unselected);
@@ -595,7 +595,7 @@ impl Lowering<'_> {
         protocols: &[ProtocolInput<'_>],
         attempts: &[Vec<AttemptNodes>],
         compensations: &[Vec<CompensationNodes>],
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         for (compact_index, protocol) in protocols.iter().enumerate() {
             let source_index = protocol.source_index;
             if let Some(slot) = self.protocol_attempts.get_mut(source_index) {
@@ -686,7 +686,7 @@ impl Lowering<'_> {
         slot: usize,
         level: usize,
         location: &Location,
-    ) -> Result<Binder, CheckRefusal> {
+    ) -> Result<Binder, SemanticCheckRefusal> {
         let semantic_type = self.binder_type(&binder.value_type, None, location)?;
         let parameter = self.parameter(&binder.name, level, semantic_type.clone(), location)?;
         // The checked key `parameter` just appended names the protocol node
@@ -719,7 +719,7 @@ impl Lowering<'_> {
         declaration: Vec<Identifier>,
         owner_model: Option<NodeKey>,
         body: BodyTerm,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         require_admitted(
             self.protocol_member_ref(
                 location,
@@ -741,7 +741,7 @@ impl Lowering<'_> {
         declaration: Vec<Identifier>,
         owner_model: Option<NodeKey>,
         body: BodyTerm,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let key = self.insert_node(
             location,
             NodeContent {
@@ -765,7 +765,7 @@ impl Lowering<'_> {
         owner: Option<EffectiveId>,
         members: ProtocolClauseMembers<'_>,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let previous = self
             .active_protocol
             .replace(protocol.form.name.name.clone());
@@ -783,14 +783,14 @@ impl Lowering<'_> {
         owner: Option<EffectiveId>,
         members: ProtocolClauseMembers<'_>,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let slots = &protocol.checked.slots;
         let owner_model = owner
             .map(|owner| self.object_node(owner, location))
             .transpose()?;
         let boolean = self.type_node(&ValueType::Boolean, location)?;
-        let operation = |operator: &'static str| -> Result<Operation, CheckRefusal> {
+        let operation = |operator: &'static str| -> Result<Operation, SemanticCheckRefusal> {
             Ok(Operation {
                 laws: vec![law.clone()],
                 member: Some(Member::ProfileOperator {
@@ -1004,7 +1004,7 @@ impl Lowering<'_> {
         protocol: &ProtocolInput<'_>,
         over: Binder,
         trigger: Option<Binder>,
-    ) -> Result<Option<LeafTerm>, CheckRefusal> {
+    ) -> Result<Option<LeafTerm>, SemanticCheckRefusal> {
         let CheckedActivation::OnEach {
             guard: Some(guard),
             guard_slot_names,
@@ -1037,7 +1037,7 @@ impl Lowering<'_> {
         &mut self,
         protocol: &ProtocolInput<'_>,
         readable: &mut Vec<Binder>,
-    ) -> Result<TupleTerm, CheckRefusal> {
+    ) -> Result<TupleTerm, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let slots = &protocol.checked.slots;
         let declared_names: Vec<String> = slots
@@ -1092,7 +1092,7 @@ impl Lowering<'_> {
         operation: &Operation,
         readable: &[Binder],
         boolean: NodeKey,
-    ) -> Result<Vec<(String, NodeKey)>, CheckRefusal> {
+    ) -> Result<Vec<(String, NodeKey)>, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let mut roles = Vec::with_capacity(protocol.checked.roles.len());
         for (index, role) in protocol.checked.roles.iter().enumerate() {
@@ -1171,7 +1171,7 @@ impl Lowering<'_> {
         context: EffectiveId,
         readable: &[Binder],
         location: &Location,
-    ) -> Result<BindingValue, CheckRefusal> {
+    ) -> Result<BindingValue, SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let role = protocol.checked.roles.get(index).ok_or_else(unchecked)?;
         let replicated = protocol
@@ -1254,7 +1254,7 @@ impl Lowering<'_> {
         boolean: NodeKey,
         anchors: &[CompensationNodes],
         built: &BTreeMap<usize, NodeKey>,
-    ) -> Result<BTreeMap<usize, NodeKey>, CheckRefusal> {
+    ) -> Result<BTreeMap<usize, NodeKey>, SemanticCheckRefusal> {
         let count = protocol.checked.obligations.compensations.len();
         let mut keys = BTreeMap::new();
         for index in 0..count {
@@ -1288,7 +1288,7 @@ impl Lowering<'_> {
         boolean: NodeKey,
         anchors: &[CompensationNodes],
         index: usize,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let checked = protocol
             .checked
@@ -1614,7 +1614,7 @@ impl Lowering<'_> {
         levels: &BTreeMap<String, usize>,
         parameters: &mut BTreeMap<String, (NodeRef, NodeRef)>,
         location: &Location,
-    ) -> Result<(LeafTerm, NodeRef), CheckRefusal> {
+    ) -> Result<(LeafTerm, NodeRef), SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let (names, mut scope) = self.compensation_scope(entries, levels, parameters, location)?;
         let binder = scope.pop().ok_or_else(unchecked)?;
@@ -1633,7 +1633,7 @@ impl Lowering<'_> {
         levels: &BTreeMap<String, usize>,
         parameters: &mut BTreeMap<String, (NodeRef, NodeRef)>,
         location: &Location,
-    ) -> Result<(Vec<String>, Vec<Binder>), CheckRefusal> {
+    ) -> Result<(Vec<String>, Vec<Binder>), SemanticCheckRefusal> {
         let names = entries
             .iter()
             .map(|(name, _)| name.clone())
@@ -1693,7 +1693,7 @@ impl Lowering<'_> {
         &self,
         protocol: &ProtocolInput<'_>,
         indices: &[usize],
-    ) -> Result<Vec<(String, ValueType)>, CheckRefusal> {
+    ) -> Result<Vec<(String, ValueType)>, SemanticCheckRefusal> {
         indices
             .iter()
             .map(|&index| {
@@ -1714,7 +1714,7 @@ impl Lowering<'_> {
         checked: &CheckedCompensation,
         stage: CaptureStage,
         position: usize,
-    ) -> Result<Vec<(String, ValueType)>, CheckRefusal> {
+    ) -> Result<Vec<(String, ValueType)>, SemanticCheckRefusal> {
         let mut entries = Vec::new();
         match stage {
             CaptureStage::Registration => {
@@ -1767,7 +1767,7 @@ impl Lowering<'_> {
         roles: &[(String, NodeKey)],
         readable: &[Binder],
         boolean: NodeKey,
-    ) -> Result<ChannelNodes, CheckRefusal> {
+    ) -> Result<ChannelNodes, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let mut named = Vec::with_capacity(protocol.checked.channels.len());
         let mut channels = Vec::with_capacity(protocol.checked.channels.len());
@@ -1834,8 +1834,8 @@ impl Lowering<'_> {
         carries: NodeKey,
         readable: &[Binder],
         location: &Location,
-    ) -> Result<BindingValue, CheckRefusal> {
-        let kind = |this: &mut Self, text: &str| -> Result<GroupMember, CheckRefusal> {
+    ) -> Result<BindingValue, SemanticCheckRefusal> {
+        let kind = |this: &mut Self, text: &str| -> Result<GroupMember, SemanticCheckRefusal> {
             Ok(member("kind", this.text_literal(text, location)?))
         };
         match &channel.ordering {
@@ -1873,7 +1873,7 @@ impl Lowering<'_> {
         key: NodeKey,
         boolean: NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let capacity = match &channel.capacity {
             ChannelCapacity::Literal(value) => GroupTerm::new(vec![
                 member("kind", self.text_literal("literal", location)?),
@@ -1934,7 +1934,7 @@ impl Lowering<'_> {
         operation: &Operation,
         readable: &[Binder],
         boolean: NodeKey,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let checked = protocol.checked;
         let (finish, finish_name) = checked
@@ -1999,7 +1999,7 @@ impl Lowering<'_> {
         readable: &[Binder],
         trigger: Option<Binder>,
         boolean: NodeKey,
-    ) -> Result<Option<NodeRef>, CheckRefusal> {
+    ) -> Result<Option<NodeRef>, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let location = protocol_location(name, ProtocolSite::Terminal);
         let (mode, condition) = match &protocol.checked.slots.terminal {
@@ -2061,7 +2061,7 @@ impl Lowering<'_> {
         &mut self,
         node: CheckedNode<'_>,
         protocol: usize,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let target = self.protocol_target(protocol, node.location())?;
         let semantic_type = self.type_node(&ValueType::Boolean, node.location())?;
         let key = self.insert_node(
@@ -2090,7 +2090,7 @@ impl Lowering<'_> {
         &self,
         protocol: usize,
         location: &Location,
-    ) -> Result<NodeRef, CheckRefusal> {
+    ) -> Result<NodeRef, SemanticCheckRefusal> {
         match self.protocol_keys.get(protocol) {
             Some(ProtocolKey::Keyed(target)) => Ok(target.clone()),
             Some(ProtocolKey::NotEmitted(construct)) => Err(not_emitted(*construct, location)),
@@ -2116,7 +2116,7 @@ impl Lowering<'_> {
         &self,
         protocol: usize,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         require_admitted(self.protocol_target(protocol, location)?, location)
     }
 }
@@ -2126,7 +2126,7 @@ fn resolve_temporal_requirement_keys<'n>(
     temporal_keys: &BTreeMap<usize, NodeKey>,
     refused: &BTreeSet<usize>,
     location: &Location,
-) -> Result<Option<Vec<NodeKey>>, CheckRefusal> {
+) -> Result<Option<Vec<NodeKey>>, SemanticCheckRefusal> {
     let mut keys = Vec::new();
     let mut any_refused = false;
     for (requirement, name) in requirements {
@@ -2151,7 +2151,7 @@ impl Lowering<'_> {
         &mut self,
         catalog: &RefinementClassCatalog,
         location: &Location,
-    ) -> Result<Option<KeyedClassCatalog>, CheckRefusal> {
+    ) -> Result<Option<KeyedClassCatalog>, SemanticCheckRefusal> {
         let mut sides = [Vec::new(), Vec::new()];
         for (side, classes) in sides
             .iter_mut()
@@ -2184,7 +2184,7 @@ impl Lowering<'_> {
         &mut self,
         class: &RefinementCatalogClass,
         location: &Location,
-    ) -> Result<Option<KeyedCatalogClass>, CheckRefusal> {
+    ) -> Result<Option<KeyedCatalogClass>, SemanticCheckRefusal> {
         let dependency = match class.node() {
             Some(RefinementCatalogNode::Imported { package, .. }) => Some(package.clone()),
             _ => None,
@@ -2261,7 +2261,7 @@ impl Lowering<'_> {
                     self.generated_at(key.clone(), location);
                     Ok(key)
                 })
-                .collect::<Result<_, CheckRefusal>>()?
+                .collect::<Result<_, SemanticCheckRefusal>>()?
         };
         Ok(Some(KeyedCatalogClass::Declared {
             class: class.class().to_owned(),
@@ -2273,7 +2273,7 @@ impl Lowering<'_> {
 }
 
 /// A broken invariant of the checked class catalog.
-fn catalog_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+fn catalog_fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
     fault(
         location,
         KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
@@ -2304,7 +2304,7 @@ impl ProtocolMembers {
     pub(crate) fn into_admitted(
         self,
         location: &Location,
-    ) -> Result<AdmittedProtocolMembers, CheckRefusal> {
+    ) -> Result<AdmittedProtocolMembers, SemanticCheckRefusal> {
         let nodes = self
             .nodes
             .into_iter()
@@ -2364,7 +2364,7 @@ fn checked_slot_names<'n>(
     checked: &'n [String],
     stage: &[String],
     location: &Location,
-) -> Result<&'n [String], CheckRefusal> {
+) -> Result<&'n [String], SemanticCheckRefusal> {
     if checked.starts_with(stage) {
         Ok(checked)
     } else {

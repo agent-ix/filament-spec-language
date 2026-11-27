@@ -17,7 +17,7 @@ use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use crate::check::{
-    CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, PackageDeclarations,
+    CheckCause, SemanticCheckRefusal, CheckedGraph, CheckingLimitKind, PackageDeclarations,
 };
 
 mod fixture {
@@ -44,7 +44,7 @@ fn package(protocols: &[(&str, usize)]) -> String {
     text
 }
 
-fn check(text: &str, limits: CheckingLimits) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(text: &str, limits: CheckingLimits) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",

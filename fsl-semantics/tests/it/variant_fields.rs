@@ -14,7 +14,7 @@ use filament_semantic_value::declaration::CompositeShape;
 use fsl_forms::{build_unit, BinaryOperator, BinderQuery, Expression};
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    AssemblyLimits, CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations,
+    AssemblyLimits, CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations,
     VariantTypeDeclaration,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -726,7 +726,7 @@ impl Checked {
         parameters: &[(&str, &ValueType)],
         expression: &Expression,
         expected: Option<&ValueType>,
-    ) -> Result<ValueType, CheckRefusal> {
+    ) -> Result<ValueType, SemanticCheckRefusal> {
         self.graph
             .check_expression(
                 parameters
@@ -1644,7 +1644,7 @@ fn a_defect_in_a_nested_variant_value_is_refused_at_its_path() {
 // ---------------------------------------------------------------------------
 
 /// The refusals `declarations` is checked with.
-fn check_refusals(declarations: &str) -> Vec<CheckRefusal> {
+fn check_refusals(declarations: &str) -> Vec<SemanticCheckRefusal> {
     assemble_as("Config", declarations)
         .check(
             CheckMode::Linked,
@@ -1658,7 +1658,7 @@ fn check_refusals(declarations: &str) -> Vec<CheckRefusal> {
 /// Whether some refusal is `cause` in the body of `function` at child-index
 /// `path` from its root expression.
 fn refused_in_body(
-    refusals: &[CheckRefusal],
+    refusals: &[SemanticCheckRefusal],
     function: &str,
     path: &[usize],
     cause: &CheckCause,
@@ -2163,7 +2163,7 @@ fn odd_document() -> Value {
     ])
 }
 
-fn odd_refusals(declarations: &str) -> Vec<CheckRefusal> {
+fn odd_refusals(declarations: &str) -> Vec<SemanticCheckRefusal> {
     declarations_of(&odd_document(), "Config", declarations)
         .0
         .check(
@@ -2413,7 +2413,7 @@ fn payload_variant_document() -> Value {
 }
 
 /// The refusals `clause` is checked with over [`payload_variant_document`].
-fn describe_refusals(clause: &str) -> Vec<CheckRefusal> {
+fn describe_refusals(clause: &str) -> Vec<SemanticCheckRefusal> {
     let (declarations, _packages) = declarations_of(
         &payload_variant_document(),
         "Config",

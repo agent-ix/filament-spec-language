@@ -570,7 +570,7 @@ fn integer_division_zero_and_signed_minimum_remain_exact() {
     }
 }
 
-fn one_check_refusal(declarations: PackageDeclarations) -> fsl_semantics::check::CheckRefusal {
+fn one_check_refusal(declarations: PackageDeclarations) -> fsl_semantics::check::SemanticCheckRefusal {
     let mut refusals = declarations
         .check(
             CheckMode::Linked,

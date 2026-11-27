@@ -9,7 +9,7 @@ use fsl_forms::ProtocolDeclarationForm;
 use fsl_foundation::Span;
 
 use super::{BoundAttempt, refusal};
-use crate::check::refusal::{CheckRefusal, ProtocolAnchorCause};
+use crate::check::refusal::{SemanticCheckRefusal, ProtocolAnchorCause};
 use crate::check::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 
 /// FR-114 "Behavior": each `attempt`'s already-resolved operation
@@ -27,7 +27,7 @@ pub(super) fn bind_attempts(
     attempts: &[AttemptDeclaration],
     state_clauses: &[StateClauseDeclaration],
     types: &TypeEnvironment,
-) -> (Vec<BoundAttempt>, Vec<(Span, CheckRefusal)>) {
+) -> (Vec<BoundAttempt>, Vec<(Span, SemanticCheckRefusal)>) {
     let mut by_name: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (index, clause) in state_clauses.iter().enumerate() {
         by_name.entry(clause.name.as_str()).or_default().push(index);

@@ -15,7 +15,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{emit_checked, CheckedPackage, EmitLimits, EmitRefusal, ReadIdentityRows};
 use fsl_semantics::{
     check::{
-        CheckCause, CheckRefusal, PackageDeclarations, ProbabilisticCause, ProbabilisticFeature,
+        CheckCause, SemanticCheckRefusal, PackageDeclarations, ProbabilisticCause, ProbabilisticFeature,
     },
     model::{
         accounting::ModelNormalizationLimits,
@@ -31,7 +31,7 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     dimension Time; unit ms : Time = rational(1, 1);\n";
 
 /// `body` after [`HEADER`], with no selected domain package, through S3.
-fn check(body: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn check(body: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let source = format!("{HEADER}{body}");
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:source-probabilistic"),
@@ -601,7 +601,7 @@ fn a_workload_weighing_two_operations_of_one_name_is_refused_at_its_span() {
 
 /// `units`, each a source identity and its text, assembled as one package
 /// with no selected domain package, through S3.
-fn check_units(units: &[(&str, &str)]) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn check_units(units: &[(&str, &str)]) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     check_units_named("source-probabilistic", units)
 }
 
@@ -609,7 +609,7 @@ fn check_units(units: &[(&str, &str)]) -> Result<CheckedPackage, Vec<CheckRefusa
 fn check_units_named(
     package: &str,
     units: &[(&str, &str)],
-) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let units: Vec<_> = units
         .iter()
         .enumerate()
@@ -760,7 +760,7 @@ fn refused_cause(units: &[(&str, &str)]) -> ProbabilisticCause {
         Ok(_) => panic!("S3 admits a declaration on another unit's type"),
         Err(refusals) => refusals,
     };
-    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
         panic!("one probabilistic refusal: {refusals:?}");
     };
     let CheckCause::Probabilistic(cause) = cause.as_ref() else {

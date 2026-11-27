@@ -15,7 +15,7 @@ use filament_semantic_value::location::{
 use super::{Binder, Binders, Lowering};
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{BindingValue, BodyTerm, GroupTerm, LeafTerm, MemberTerm, NodeTag};
-use crate::check::refusal::CheckRefusal;
+use crate::check::refusal::SemanticCheckRefusal;
 use crate::check::{CheckedTerminalPredicate, TerminalDeclaration, TerminalMode};
 
 /// One place in a `terminal` declaration.
@@ -60,7 +60,7 @@ pub(crate) struct TerminalInput<'a> {
 impl Lowering<'_> {
     /// Lower and key the `terminal` declaration `input`, recording its one
     /// `claim` occurrence at the declaration. Returns the node's key.
-    pub(crate) fn terminal(&mut self, input: &TerminalInput<'_>) -> Result<NodeKey, CheckRefusal> {
+    pub(crate) fn terminal(&mut self, input: &TerminalInput<'_>) -> Result<NodeKey, SemanticCheckRefusal> {
         let claim_at = terminal_location(input.index, TerminalSite::Claim);
         let boolean = self.type_node(&ValueType::Boolean, &claim_at)?;
         self.record(boolean.clone(), OccurrenceRole::Type, claim_at.clone());
@@ -131,7 +131,7 @@ impl Lowering<'_> {
         alias: &str,
         package: &str,
         location: &Location,
-    ) -> Result<EffectiveId, CheckRefusal> {
+    ) -> Result<EffectiveId, SemanticCheckRefusal> {
         self.models
             .iter()
             .find(|model| model.alias() == Some(alias) && model.selection().identity == package)
@@ -152,7 +152,7 @@ impl Lowering<'_> {
         index: usize,
         object: EffectiveId,
         predicate: &CheckedTerminalPredicate,
-    ) -> Result<(BindingValue, NodeKey), CheckRefusal> {
+    ) -> Result<(BindingValue, NodeKey), SemanticCheckRefusal> {
         let claim_at = terminal_location(index, TerminalSite::Claim);
         let mut scope = Vec::new();
         if !predicate.parameters.is_empty() && predicate.body.reads_local(0) {

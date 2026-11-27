@@ -56,7 +56,7 @@ use super::protocol_clause::{
 };
 use super::protocol_obligation::{Goal, model_state_reads, span_of, type_named_body, wraps};
 use super::refusal::{
-    ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
+    ArmFault, CheckCause, SemanticCheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
     ShadowedDeclaration, SlotKind,
 };
 use super::state_clause::ClauseDeclarations;
@@ -299,7 +299,7 @@ pub(crate) enum Slots {
     /// Every slot checked, with the package's running node total.
     Checked(Box<CheckedSlots>, u64),
     /// Refusals, in source order.
-    Refused(Vec<CheckRefusal>),
+    Refused(Vec<SemanticCheckRefusal>),
     /// A binder's declared type did not resolve: `protocol_clause::content`
     /// refuses it, so there is nothing to add.
     Unresolved,
@@ -341,8 +341,8 @@ enum Eligibility {
     Never,
 }
 
-fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ProtocolAnchorCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // A protocol has no expression tree for a `Location` path to walk;
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span.
@@ -404,7 +404,7 @@ struct Checker<'c, 'a> {
     bound: Vec<(String, ValueType)>,
     nodes: u64,
     readers: Vec<BTreeSet<usize>>,
-    refusals: Vec<(Span, CheckRefusal)>,
+    refusals: Vec<(Span, SemanticCheckRefusal)>,
     /// The number of `C0` binders: the `over` input, the activation binder
     /// and the protocol captures, the first entries of `binders`.
     roots: usize,
@@ -628,7 +628,7 @@ impl Checker<'_, '_> {
         self.nodes = nodes;
         let (body, mut slot_names, formed_units) = match typed {
             Ok(named) => named,
-            Err(CheckRefusal { location, cause }) => {
+            Err(SemanticCheckRefusal { location, cause }) => {
                 let span = span_of(slot.form, &location);
                 if wraps(&cause) && cause.cause().is_some() {
                     self.refuse(ProtocolAnchorCause::SlotClause {
@@ -660,7 +660,7 @@ impl Checker<'_, '_> {
                     };
                     self.refusals.push((
                         span,
-                        CheckRefusal {
+                        SemanticCheckRefusal {
                             location,
                             cause: Box::new(cause),
                         },
@@ -668,7 +668,7 @@ impl Checker<'_, '_> {
                 } else {
                     // A reached limit, a cancellation or a fault keeps its
                     // own cause.
-                    self.refusals.push((span, CheckRefusal { location, cause }));
+                    self.refusals.push((span, SemanticCheckRefusal { location, cause }));
                 }
                 return None;
             }
@@ -1864,7 +1864,7 @@ pub(crate) fn check(
                 ) else {
                     checker.refusals.push((
                         repeat.name.span,
-                        CheckRefusal {
+                        SemanticCheckRefusal {
                             location: Location::root(Origin::Expression),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 super::refusal::KeyFault::StageFault(
@@ -2031,8 +2031,8 @@ fn work_limit(
     consumed: u64,
     span: Span,
     regions: &crate::check::DeclarationRegions,
-) -> CheckRefusal {
-    CheckRefusal {
+) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(super::limit_cause(
             &fsl_foundation::diagnostic::LimitExceeded::new(
@@ -2179,13 +2179,13 @@ fn partition(
     guards: &[&ExpressionForm],
     cx: &mut CheckContext<'_, Scope>,
     regions: &crate::check::DeclarationRegions,
-) -> Result<Option<ProtocolAnchorCause>, CheckRefusal> {
+) -> Result<Option<ProtocolAnchorCause>, SemanticCheckRefusal> {
     let atoms = atoms(&choice.visible, guards);
     let guard_atom_indices = guards
         .iter()
         .map(|guard| atom_indices(guard, &atoms))
         .collect::<Vec<_>>();
-    let too_large = |limit: u64, consumed: u64| CheckRefusal {
+    let too_large = |limit: u64, consumed: u64| SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(super::limit_cause(
             &fsl_foundation::diagnostic::LimitExceeded::new(
@@ -2214,7 +2214,7 @@ fn partition(
             // connective (`atoms`), so each guard has a value.
             let Some(value) = evaluate(guard, &guard_atom_indices[index], &valuation, &mut scratch)
             else {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: Location::root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         super::refusal::KeyFault::StageFault(

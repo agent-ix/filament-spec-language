@@ -42,7 +42,7 @@ use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKe
 use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
-use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
+use super::refusal::{CheckCause, SemanticCheckRefusal, Obligation, TemporalCause};
 use super::state_clause::{PopulationDomain, populations_overlapping};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
@@ -1289,14 +1289,14 @@ pub enum CheckedHyper {
 impl FamilyContract for HyperTraceFamily {
     type Form = HyperDeclaration;
     type Checked = CheckedHyper;
-    type Cause = CheckRefusal;
+    type Cause = SemanticCheckRefusal;
     type Declarations<'a> = HyperDeclarations<'a>;
     type Claim = TemporalClaim;
 
     fn check<'a>(
         form: &HyperDeclaration,
         cx: &mut CheckContext<'a, HyperDeclarations<'a>>,
-    ) -> CheckOutcome<CheckedHyper, CheckRefusal> {
+    ) -> CheckOutcome<CheckedHyper, SemanticCheckRefusal> {
         check_declaration(form, cx).map(Staged::new)
     }
 
@@ -1676,7 +1676,7 @@ enum Found {
     /// A value-typer refusal with its original declaration location.
     Typed(HyperCause, Location),
     /// A non-hyper refusal, such as a resource limit, retained as reported.
-    Raw(CheckRefusal, Span),
+    Raw(SemanticCheckRefusal, Span),
 }
 
 impl Found {
@@ -1689,7 +1689,7 @@ impl Found {
         }
     }
 
-    fn into_failure(self) -> StageFailure<CheckRefusal> {
+    fn into_failure(self) -> StageFailure<SemanticCheckRefusal> {
         let (cause, location) = match self {
             Self::Hyper(cause) => (
                 CheckCause::Hyper(Box::new(cause)),
@@ -1702,7 +1702,7 @@ impl Found {
             Self::Typed(cause, location) => (CheckCause::Hyper(Box::new(cause)), location),
             Self::Raw(refusal, _) => return StageFailure::Refused(refusal),
         };
-        StageFailure::Refused(CheckRefusal {
+        StageFailure::Refused(SemanticCheckRefusal {
             // Synthesized clause diagnostics carry their source span in the
             // cause; value-typer refusals retain their original declaration
             // location so package region lookup can resolve the source node.
@@ -1712,12 +1712,12 @@ impl Found {
     }
 }
 
-fn fault(invariant: &'static str) -> StageFailure<CheckRefusal> {
+fn fault(invariant: &'static str) -> StageFailure<SemanticCheckRefusal> {
     StageFailure::Fault(InternalFault::new(STAGE, invariant))
 }
 
 /// The earliest refusal of `found`, as a failure; `Ok` when there is none.
-fn earliest(found: Vec<Found>) -> Result<(), StageFailure<CheckRefusal>> {
+fn earliest(found: Vec<Found>) -> Result<(), StageFailure<SemanticCheckRefusal>> {
     match found.into_iter().min_by_key(Found::start) {
         Some(first) => Err(first.into_failure()),
         None => Ok(()),
@@ -1727,7 +1727,7 @@ fn earliest(found: Vec<Found>) -> Result<(), StageFailure<CheckRefusal>> {
 fn check_declaration<'a>(
     declaration: &HyperDeclaration,
     cx: &mut CheckContext<'a, HyperDeclarations<'a>>,
-) -> Result<CheckedHyper, StageFailure<CheckRefusal>> {
+) -> Result<CheckedHyper, StageFailure<SemanticCheckRefusal>> {
     let declarations = cx.declarations();
     *declarations.clause_source.borrow_mut() = declarations
         .temporal
@@ -1754,7 +1754,7 @@ fn check_finite(
     form: &HyperFiniteForm,
     declarations: &HyperDeclarations<'_>,
     cx: &mut CheckContext<'_, HyperDeclarations<'_>>,
-) -> Result<CheckedFiniteHyperClause, StageFailure<CheckRefusal>> {
+) -> Result<CheckedFiniteHyperClause, StageFailure<SemanticCheckRefusal>> {
     // A model alias on a finite trace quantifier is refused before checking
     // the selected profile, matching the hyper-clause refusal precedence.
     earliest(
@@ -1944,7 +1944,7 @@ fn check_behaviours<'a>(
     form: &HyperBehavioursForm,
     declarations: &HyperDeclarations<'a>,
     cx: &mut CheckContext<'a, HyperDeclarations<'a>>,
-) -> Result<CheckedHyperClause, StageFailure<CheckRefusal>> {
+) -> Result<CheckedHyperClause, StageFailure<SemanticCheckRefusal>> {
     let temporal = &declarations.temporal;
     let scope = temporal.scope;
     let clause_index = declarations.behaviours_checked.get();
@@ -2127,7 +2127,7 @@ fn check_behaviours<'a>(
     earliest(std::mem::take(&mut found))?;
     let predicates = |drafts: Vec<ConjunctDraft>,
                       lowered: Vec<lowering::ConjunctCondition>|
-     -> Result<Vec<CheckedStepPredicate>, StageFailure<CheckRefusal>> {
+     -> Result<Vec<CheckedStepPredicate>, StageFailure<SemanticCheckRefusal>> {
         if drafts.len() != lowered.len() {
             return Err(fault("conjuncts-lowered"));
         }
@@ -2244,7 +2244,7 @@ fn checked_quantifiers(
     form: &HyperBehavioursForm,
     declarations: &HyperDeclarations<'_>,
     found: &mut Vec<Found>,
-) -> Result<QuantifiersWithSpans, StageFailure<CheckRefusal>> {
+) -> Result<QuantifiersWithSpans, StageFailure<SemanticCheckRefusal>> {
     let mut checked = Vec::with_capacity(form.quantifiers.len());
     let mut spans = Vec::with_capacity(form.quantifiers.len());
     let mut seen: Vec<&str> = Vec::new();
@@ -2461,7 +2461,7 @@ fn root_span(spans: &ExpressionSpans) -> Span {
 /// Map a value-typer refusal to the source span it identifies and preserve
 /// the hyper clause's public refusal categories.
 fn body_refusal(
-    refusal: CheckRefusal,
+    refusal: SemanticCheckRefusal,
     expression: &Expression,
     spans: &ExpressionSpans,
     roots: &BTreeMap<String, EffectiveId>,
@@ -2484,7 +2484,7 @@ fn body_refusal(
 }
 
 fn body_refusal_at(
-    refusal: CheckRefusal,
+    refusal: SemanticCheckRefusal,
     mut span: Span,
     expression: &Expression,
     spans: &ExpressionSpans,
@@ -2938,7 +2938,7 @@ fn check_match(
     variables: &Variables<'_>,
     declarations: &HyperDeclarations<'_>,
     found: &mut Vec<Found>,
-) -> Result<(Vec<ConjunctDraft>, Vec<ConjunctDraft>), StageFailure<CheckRefusal>> {
+) -> Result<(Vec<ConjunctDraft>, Vec<ConjunctDraft>), StageFailure<SemanticCheckRefusal>> {
     let expression = &block.expression;
     let conjuncts = split_conjuncts(block);
     let mut parents: Vec<Option<ExprId>> = vec![None; expression.len()];
@@ -4095,7 +4095,7 @@ fn check_relation(
     form: &ModelRelationForm,
     declarations: &HyperDeclarations<'_>,
     cx: &mut CheckContext<'_, HyperDeclarations<'_>>,
-) -> Result<CheckedModelRelation, StageFailure<CheckRefusal>> {
+) -> Result<CheckedModelRelation, StageFailure<SemanticCheckRefusal>> {
     let temporal = &declarations.temporal;
     let scope = temporal.scope;
     let mut found: Vec<Found> = Vec::new();
@@ -4304,7 +4304,7 @@ fn relation_component_reads(
 #[cfg(any(test, feature = "test-support"))]
 pub fn check_hyper_clauses(
     package: &crate::check::PackageDeclarations,
-) -> Vec<Result<CheckedHyper, StageFailure<CheckRefusal>>> {
+) -> Vec<Result<CheckedHyper, StageFailure<SemanticCheckRefusal>>> {
     let complete_value = package
         .function_selections
         .values()

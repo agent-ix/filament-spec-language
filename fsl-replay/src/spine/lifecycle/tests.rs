@@ -4460,9 +4460,9 @@ fn a_reached_limit_is_a_limit_not_a_fault() {
 #[trace("TC-769", "FR-285-AC-3")]
 #[test]
 fn an_internal_invariant_failure_is_a_fault() {
-    use fsl_semantics::check::{CheckCause, CheckRefusal, KeyFault};
+    use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, KeyFault};
     let refusal = Box::new(CompileRefusal::Check {
-        refusals: vec![CheckRefusal {
+        refusals: vec![SemanticCheckRefusal {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
@@ -4486,7 +4486,7 @@ fn an_internal_invariant_failure_is_a_fault() {
 #[test]
 fn a_rebound_model_node_leaves_the_front_end_as_an_internal_failure_with_no_package() {
     use filament_checked::key::DeclarationKey;
-    use fsl_semantics::check::{CheckCause, CheckRefusal, CorrespondenceConflict, KeyFault};
+    use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CorrespondenceConflict, KeyFault};
     let node = filament_exact::NodeKey::new(
         "fixture",
         vec![filament_exact::PathSegment::Text("node".into())],
@@ -4498,7 +4498,7 @@ fn a_rebound_model_node_leaves_the_front_end_as_an_internal_failure_with_no_pack
         DeclarationKey::fixture("ix://test/orders/Order"),
     );
     let refusal = Box::new(CompileRefusal::Check {
-        refusals: vec![CheckRefusal {
+        refusals: vec![SemanticCheckRefusal {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
@@ -4717,9 +4717,9 @@ fn select_parses_kept_operation_clauses_and_refuses_text_that_does_not_parse() {
 
 /// A check refusal of the type invariant `Widget/Stable` carrying `cause`.
 fn type_invariant_check_refusal(cause: fsl_semantics::check::CheckCause) -> CompileRefusal {
-    use fsl_semantics::check::{CheckCause, CheckRefusal, TypeInvariantRefusal};
+    use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, TypeInvariantRefusal};
     CompileRefusal::Check {
-        refusals: vec![CheckRefusal {
+        refusals: vec![SemanticCheckRefusal {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),

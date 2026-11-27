@@ -3,7 +3,7 @@
 use super::{Definedness, End, Facts, Interval};
 use crate::check::ir::CheckedNode;
 use crate::check::numeric_conversion::{Class, classify};
-use crate::check::refusal::{CheckRefusal, Obligation, OperandText};
+use crate::check::refusal::{SemanticCheckRefusal, Obligation, OperandText};
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{
     ArithmeticOperator, DecimalType, Integer, IntegerInterval, NonZeroInteger, RationalDomain,
@@ -32,7 +32,7 @@ impl Definedness<'_> {
         node: CheckedNode<'_>,
         operand: CheckedNode<'_>,
         facts: &Facts,
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         if !matches!(
             classify(operand.value_type(), node.value_type()),
             Some(Class::RangeNarrowing | Class::RationalNarrowing)

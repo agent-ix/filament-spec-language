@@ -5,7 +5,7 @@ use filament_checked::node::NodeKind;
 use filament_exact::{Charge, ChargePoint, Integer, Meter, Value, ValueType};
 
 use super::{
-    CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, CheckingStage, Reward,
+    CheckCause, SemanticCheckRefusal, CheckedGraph, CheckingLimitKind, CheckingStage, Reward,
     RewardEvaluator, StageLimitCause,
 };
 
@@ -58,7 +58,7 @@ pub(super) fn check_reward_signs(
     evaluator: &dyn RewardEvaluator,
     meter: &mut Meter,
     work_limit: u64,
-) -> Result<(), Vec<CheckRefusal>> {
+) -> Result<(), Vec<SemanticCheckRefusal>> {
     for reward in graph.probabilistic_model().rewards() {
         check_reward(graph, reward, evaluator, meter, work_limit)?;
     }
@@ -71,7 +71,7 @@ fn check_reward(
     evaluator: &dyn RewardEvaluator,
     meter: &mut Meter,
     work_limit: u64,
-) -> Result<(), Vec<CheckRefusal>> {
+) -> Result<(), Vec<SemanticCheckRefusal>> {
     let parameter_count = reward.parameters().len();
     let mut read = vec![false; parameter_count];
     for node in reward.expression().descendants() {
@@ -123,7 +123,7 @@ fn check_reward(
             .charge(Charge::new(ChargePoint::DeclarationCheck).work(Integer::one()))
             .err();
         if let Some(denied) = denied {
-            let refusal = CheckRefusal {
+            let refusal = SemanticCheckRefusal {
                 location: reward.evaluation_location(),
                 cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
                     stage: CheckingStage::Typing,
@@ -146,7 +146,7 @@ fn check_reward(
             }
             Ok(_) => {}
             Err(failure) => {
-                return Err(vec![CheckRefusal {
+                return Err(vec![SemanticCheckRefusal {
                     location: reward.evaluation_location(),
                     cause: Box::new(CheckCause::RewardEvaluation(Box::new(failure))),
                 }]);
@@ -222,14 +222,14 @@ fn representative(ty: &ValueType) -> Value {
     }
 }
 
-fn negative_refusal(reward: &Reward, arguments: &[Value]) -> CheckRefusal {
+fn negative_refusal(reward: &Reward, arguments: &[Value]) -> SemanticCheckRefusal {
     let values = reward
         .parameters()
         .iter()
         .zip(arguments)
         .map(|((name, _), value)| (name.clone(), format!("{value:?}")))
         .collect();
-    CheckRefusal {
+    SemanticCheckRefusal {
         location: reward.evaluation_location(),
         cause: Box::new(CheckCause::Probabilistic(Box::new(
             super::ProbabilisticCause::NegativeReward {

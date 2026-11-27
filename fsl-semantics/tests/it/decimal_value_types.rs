@@ -11,7 +11,7 @@ use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput, UnitIntakeCause};
 use fsl_semantics::model::observation::{
@@ -48,7 +48,7 @@ fn check(document: &[u8], unit: &str) -> Checked {
     check_result(document, unit).unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
 }
 
-fn check_result(document: &[u8], unit: &str) -> Result<Checked, Vec<CheckRefusal>> {
+fn check_result(document: &[u8], unit: &str) -> Result<Checked, Vec<SemanticCheckRefusal>> {
     let packages = package_input([document]).expect("byte admission");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "decimal-value-types"),

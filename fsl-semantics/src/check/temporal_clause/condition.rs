@@ -26,7 +26,7 @@ use crate::check::facts::Definedness;
 use crate::check::ir::CheckedBody;
 use crate::check::lowering::{AggregatePart, TemporalSite, temporal_location};
 use crate::check::observation::Observations;
-use crate::check::refusal::{CheckCause, CheckRefusal};
+use crate::check::refusal::{CheckCause, SemanticCheckRefusal};
 use crate::check::state_clause::ClauseDeclarations;
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
@@ -144,7 +144,7 @@ pub(crate) fn check_conditions(
     checked: &CheckedTemporalClause,
     input: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, Scope>,
-) -> Result<(TypedConditions, u64), Vec<CheckRefusal>> {
+) -> Result<(TypedConditions, u64), Vec<SemanticCheckRefusal>> {
     let mut refused = Vec::new();
     match check_conditions_into(clause, form, checked, input, cx, &mut refused) {
         Ok(typed) if refused.is_empty() => Ok(typed),
@@ -164,8 +164,8 @@ fn check_conditions_into(
     checked: &CheckedTemporalClause,
     input: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, Scope>,
-    refused: &mut Vec<CheckRefusal>,
-) -> Result<(TypedConditions, u64), CheckRefusal> {
+    refused: &mut Vec<SemanticCheckRefusal>,
+) -> Result<(TypedConditions, u64), SemanticCheckRefusal> {
     let mut nodes = input.nodes_used;
     let mut conditions = TypedConditions::default();
     let named = crate::check::check::NamedScope::of(input.models, input.scope, input.unit);
@@ -270,7 +270,7 @@ fn check_conditions_into(
                 let value_refusal = value
                     .as_ref()
                     .is_some_and(|value| family(value.body.root().value_type()).is_none())
-                    .then(|| CheckRefusal {
+                    .then(|| SemanticCheckRefusal {
                         location: at(AggregatePart::Value),
                         cause: Box::new(CheckCause::IllTyped(
                             filament_exact::IllTypedCause::TypeMismatch,
@@ -363,7 +363,7 @@ fn check_conditions_into(
                     )),
                 };
                 if let Some(cause) = mismatch {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location: at(AggregatePart::Threshold),
                         cause: Box::new(cause),
                     });
@@ -394,7 +394,7 @@ pub(crate) fn guard_refusal(
     form: &fsl_forms::TemporalClauseForm,
     input: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, Scope>,
-) -> Option<CheckRefusal> {
+) -> Option<SemanticCheckRefusal> {
     let ActivationForm::Each {
         parameter,
         when: Some(when),
@@ -482,7 +482,7 @@ fn exact_fraction(
     threshold: &fsl_forms::ExpressionForm,
     ceiling: u64,
     location: &Location,
-) -> Result<Option<(fsl_forms::ExpressionForm, ValueType)>, CheckRefusal> {
+) -> Result<Option<(fsl_forms::ExpressionForm, ValueType)>, SemanticCheckRefusal> {
     use fsl_forms::{BinaryOperator, ExprNode};
     let expression = &threshold.expression;
     let root = expression.root();
@@ -553,7 +553,7 @@ fn type_condition(
     named: &crate::check::check::NamedScope,
     nodes: &mut u64,
     cx: &mut CheckContext<'_, Scope>,
-) -> Result<TypedCondition, CheckRefusal> {
+) -> Result<TypedCondition, SemanticCheckRefusal> {
     let location = location.clone();
     {
         let mut typer = Typer::new(
@@ -581,7 +581,7 @@ fn type_condition(
                 let body =
                     typer.infer(&condition.expression, Some(&ValueType::Boolean), &location)?;
                 if body.root().value_type() != &ValueType::Boolean {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location,
                         cause: Box::new(CheckCause::NonBooleanRoot),
                     });

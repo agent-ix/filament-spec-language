@@ -11,7 +11,7 @@ use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use crate::check::{
-    ArithmeticOp, CaptureIndex, CheckCause, CheckRefusal, CheckedFunctionRef, CheckedGraph,
+    ArithmeticOp, CaptureIndex, CheckCause, SemanticCheckRefusal, CheckedFunctionRef, CheckedGraph,
     CheckedHybridClaim, CheckedHybridModel, CompareOp, HybridActivation, HybridCause, HybridClock,
     HybridFormula, HybridHorizon, HybridInterval, HybridTerm, ModeIndex, PackageDeclarations,
     ResetConstraint, TemporalProfile, TransitionIndex, VariableClass, VariableIndex,
@@ -56,7 +56,7 @@ fn use_case() -> String {
     braking(INVARIANT, FLOW, TRANSITION, STOPPED_FLOW)
 }
 
-type Refusals = Vec<(CheckRefusal, Option<String>)>;
+type Refusals = Vec<(SemanticCheckRefusal, Option<String>)>;
 
 fn assemble(declarations: &str) -> (String, PackageDeclarations) {
     let text = format!("{HEADER}{declarations}");

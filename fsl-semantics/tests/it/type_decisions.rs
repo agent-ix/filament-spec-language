@@ -11,7 +11,7 @@ use fsl_forms::build_unit;
 use fsl_foundation::Span;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
-    ApplicationTerm, AssemblyRefusal, BodyTerm, CheckRefusal, CheckedGraph, LeafTerm, MemberTerm,
+    ApplicationTerm, AssemblyRefusal, BodyTerm, SemanticCheckRefusal, CheckedGraph, LeafTerm, MemberTerm,
     PackageDeclarations,
 };
 #[cfg(feature = "test-support")]
@@ -58,7 +58,7 @@ fn assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> 
 }
 
 /// S1 to S3 under `CheckMode::Linked`; S1 and S2 must accept the unit.
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     assemble(declarations)
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
         .check(
@@ -72,7 +72,7 @@ fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
 fn check_selected(
     declarations: &str,
     selected: SelectedModels,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = unit_text(declarations);
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "type-decisions"),
@@ -119,7 +119,7 @@ fn assert_assembly_refused(declarations: &str, code: Code, cause: &str) {
 }
 
 /// The one refusal of `declarations`, with its code and cause.
-fn assert_refused(declarations: &str, code: Code, cause: &str) -> CheckRefusal {
+fn assert_refused(declarations: &str, code: Code, cause: &str) -> SemanticCheckRefusal {
     let refusals = check(declarations).expect_err("the unit is refused");
     let [refusal] = refusals.as_slice() else {
         panic!("one typed refusal: {refusals:?}");

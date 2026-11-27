@@ -10,7 +10,7 @@ use filament_exact::{Integer, Rational, ValueType};
 use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AggregateTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode,
+    AggregateTerm, BodyTerm, CheckCause, SemanticCheckRefusal, CheckedGraph, CheckedNode,
     CheckingLimitKind, ClockOp, MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind,
     TimedModel,
 };
@@ -163,7 +163,7 @@ fn rpc(time: &str) -> String {
     )
 }
 
-pub(super) fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+pub(super) fn check(document: &[u8], body: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     admit_and_assemble_with_profiles(document, TEMPORAL, body)
         .expect("S2 builds every timed form")
         .with_unwritten_timed_members()
@@ -312,7 +312,7 @@ fn descendants(node: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {
 
 /// A second model alias `Other` of the unit, selecting a package that
 /// declares the population `jobs`: the unit text and its check.
-fn check_with_other(body: &str) -> (String, Result<CheckedGraph, Vec<CheckRefusal>>) {
+fn check_with_other(body: &str) -> (String, Result<CheckedGraph, Vec<SemanticCheckRefusal>>) {
     let config = rpc_document(&["x"]);
     // The `Call` package under another identity, with its population named
     // `jobs` and no clock, so that `Other` needs no time source.
@@ -385,7 +385,7 @@ fn check_with_other(body: &str) -> (String, Result<CheckedGraph, Vec<CheckRefusa
 /// The code, tag and located text of the one refusal of `checked`.
 fn located(
     unit: &str,
-    checked: Result<CheckedGraph, Vec<CheckRefusal>>,
+    checked: Result<CheckedGraph, Vec<SemanticCheckRefusal>>,
 ) -> (Code, &'static str, String) {
     let refusals = checked.expect_err("refused, so no TimedModel");
     let [refusal] = refusals.as_slice() else {
@@ -1572,7 +1572,7 @@ fn a_clock_reading_parameter_names_its_own_units_package() {
 fn check_units(
     units: &[(&str, &str)],
     documents: &[&[u8]],
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let texts: Vec<String> = units
         .iter()
         .map(|(_, declarations)| {

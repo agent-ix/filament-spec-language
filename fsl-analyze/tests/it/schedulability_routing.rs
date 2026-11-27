@@ -10,7 +10,7 @@ use fsl_foundation::Span;
 use fsl_route::request::items_from_requirements;
 use fsl_route::{CandidateOutcome, ProviderOrigin, Registry};
 use fsl_semantics::check::{
-    Capability, CheckRefusal, CheckedGraph, CheckedScheduleClaim, RequirementMap,
+    Capability, SemanticCheckRefusal, CheckedGraph, CheckedScheduleClaim, RequirementMap,
     RequirementRecord, ScheduleClaim, SchedulingPolicy,
 };
 use fsl_semantics::family::{ClaimExtent, Requirements};
@@ -88,7 +88,7 @@ struct World {
     provision: fsl_analyze::analyze::SourceProvision,
 }
 
-fn checked_graph(source: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn checked_graph(source: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no model documents");

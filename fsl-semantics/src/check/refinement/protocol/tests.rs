@@ -18,7 +18,7 @@ use ix_trace_rs::trace;
 use fsl_foundation::Span;
 
 use crate::check::{
-    AbstractSide, CheckCause, CheckRefusal, CheckedGraph, CheckedRefinement, LabelStep,
+    AbstractSide, CheckCause, SemanticCheckRefusal, CheckedGraph, CheckedRefinement, LabelStep,
     MemoryStepKind, PackageDeclarations, ProtocolStepKind, RefinementCatalogNode, RefinementCause,
     RefinementFairnessOrigin, RefinementRefusal, RefinementThreadTarget, RowClass, RowObservation,
     StepClass, StepLabel, UnsupportedFeature, observation,
@@ -168,7 +168,7 @@ fn header(protocol_profile: bool) -> String {
 /// A refusal with the text of the unit it is located at.
 #[derive(Debug)]
 struct Refused {
-    refusal: CheckRefusal,
+    refusal: SemanticCheckRefusal,
     at: String,
 }
 
@@ -2452,7 +2452,7 @@ fn effect_commit_and_cend_classes_are_catalogued() {
 
 /// `check_text` without the test opt-in that tolerates unwritten protocol
 /// constructs, so a protocol's clause key is as production resolves it.
-fn check_written(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check_written(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",

@@ -27,7 +27,7 @@ use crate::check::node_key::{
     BindingValue, BodyTerm, FrameDeletesScoped, FrameField, FrameModifies, FrameScope, GroupTerm,
     LeafTerm, MemberTerm, NodeRef, NodeTag, Operation, Operator,
 };
-use crate::check::refusal::{CheckCause, CheckRefusal, ExecutionPointRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, SemanticCheckRefusal, ExecutionPointRefusal, KeyFault};
 use crate::check::state_clause::{ClauseOperation, PopulationDomain};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::intake::member_identity_name;
@@ -259,7 +259,7 @@ impl Lowering<'_> {
     pub(crate) fn time_source_anchor(
         &mut self,
         anchor: &AnchorInput<'_>,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let binding = self.operation_anchor(anchor, None, anchor.location)?;
         self.record(
             binding.anchor.clone(),
@@ -275,7 +275,7 @@ impl Lowering<'_> {
     pub(crate) fn align_skip_anchor(
         &mut self,
         anchor: &AnchorInput<'_>,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         self.time_source_anchor(anchor)
     }
 
@@ -285,7 +285,7 @@ impl Lowering<'_> {
     pub(crate) fn state_clause(
         &mut self,
         clause: &StateClauseInput<'_>,
-    ) -> Result<LoweredClause, CheckRefusal> {
+    ) -> Result<LoweredClause, SemanticCheckRefusal> {
         let location = clause.location;
         if let Some(point) = &clause.execution_point {
             // The accepted point names an operation member, not the
@@ -293,7 +293,7 @@ impl Lowering<'_> {
             // reads in the clause body.
             let operation_name = clause.anchor.as_ref().map(|anchor| anchor.operation.name());
             check_execution_point(clause.kind, operation_name, point).map_err(|refusal| {
-                CheckRefusal {
+                SemanticCheckRefusal {
                     location: clause.name_location.clone(),
                     cause: Box::new(CheckCause::ExecutionPointBinding(refusal)),
                 }
@@ -407,7 +407,7 @@ impl Lowering<'_> {
     pub(crate) fn protocol_attempt(
         &mut self,
         input: &AttemptInput<'_>,
-    ) -> Result<LoweredAttempt, CheckRefusal> {
+    ) -> Result<LoweredAttempt, SemanticCheckRefusal> {
         let binding = self.operation_anchor(&input.anchor, None, input.location)?;
         self.record(
             binding.anchor.clone(),
@@ -452,7 +452,7 @@ impl Lowering<'_> {
         anchor: &AnchorInput<'_>,
         point: Option<&AcceptedPoint>,
         location: &Location,
-    ) -> Result<OperationBinding, CheckRefusal> {
+    ) -> Result<OperationBinding, SemanticCheckRefusal> {
         let (declaring, frame) = self.frame_node(anchor, location)?;
         let frame_origin = self.frame_occurrence(
             anchor.declaring.clone(),
@@ -509,7 +509,7 @@ impl Lowering<'_> {
         &mut self,
         anchor: &AnchorInput<'_>,
         location: &Location,
-    ) -> Result<(NodeKey, NodeKey), CheckRefusal> {
+    ) -> Result<(NodeKey, NodeKey), SemanticCheckRefusal> {
         let declaring = self.object_node(anchor.declaring.clone(), location)?;
         let effect = anchor.operation.effect();
         let mut modifies =
@@ -581,7 +581,7 @@ impl Lowering<'_> {
     pub(crate) fn register_frame_occurrences(
         &mut self,
         operations: &[AnchorInput<'_>],
-    ) -> Result<(), CheckRefusal> {
+    ) -> Result<(), SemanticCheckRefusal> {
         let mut distinct: BTreeMap<(EffectiveId, String), &AnchorInput<'_>> = BTreeMap::new();
         for anchor in operations {
             distinct
@@ -613,7 +613,7 @@ impl Lowering<'_> {
         &mut self,
         entry: &DeclarationKey,
         location: &Location,
-    ) -> Result<(NodeKey, Option<String>), CheckRefusal> {
+    ) -> Result<(NodeKey, Option<String>), SemanticCheckRefusal> {
         let (_, model) = self.model_owner(entry, location)?;
         match model.record(entry) {
             Some(DomainPackageRecord::Relationship(_)) => {
@@ -631,7 +631,7 @@ impl Lowering<'_> {
         &mut self,
         field: &DeclarationKey,
         location: &Location,
-    ) -> Result<(NodeKey, String), CheckRefusal> {
+    ) -> Result<(NodeKey, String), SemanticCheckRefusal> {
         let (_, model) = self.model_owner(field, location)?;
         let Some(DomainPackageRecord::FieldMember(member)) = model.record(field) else {
             return Err(fault(location, KeyFault::UnnamedRecordKind(field.clone())));
@@ -650,7 +650,7 @@ impl Lowering<'_> {
         &mut self,
         objects: &[DeclarationKey],
         location: &Location,
-    ) -> Result<Vec<NodeKey>, CheckRefusal> {
+    ) -> Result<Vec<NodeKey>, SemanticCheckRefusal> {
         let mut nodes = Vec::with_capacity(objects.len());
         for object in objects {
             nodes.push(self.model_node(object, location)?);

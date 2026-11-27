@@ -19,7 +19,7 @@ use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    AssemblyCause, CheckCause, CheckRefusal, CheckingLimitKind, DecimalLiteralLimits,
+    AssemblyCause, CheckCause, SemanticCheckRefusal, CheckingLimitKind, DecimalLiteralLimits,
     PackageDeclarations,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -52,7 +52,7 @@ fn limits(integer_bits: u64, decimal_digits: u64, scale_expansion: u64, work: u6
     }
 }
 
-fn compile(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn compile(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     compile_limited(declarations, DecimalLiteralLimits::default())
 }
 
@@ -60,7 +60,7 @@ fn compile(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
 fn compile_limited(
     declarations: &str,
     limits: DecimalLiteralLimits,
-) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{declarations}"

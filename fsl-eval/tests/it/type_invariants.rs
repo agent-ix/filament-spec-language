@@ -21,7 +21,7 @@ use fsl_eval::value::{
     ValuePathSubject,
 };
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::admit_unit;
 use fsl_semantics::model::normalize::{normalize_with_meter, EffectiveView, NormalizeOutcome};
@@ -200,7 +200,7 @@ fn a_type_level_clause_is_an_invariant_a_guard_or_unevaluated() {
 /// What compiling a K2-derived document through the driver's steps gives.
 enum Compiled {
     Checked(Box<CheckedGraph>),
-    Refused(Vec<CheckRefusal>),
+    Refused(Vec<SemanticCheckRefusal>),
     /// The parser refused the text of the clause, at the member.
     Unparsed(DeclarationKey, MemberPath),
 }
@@ -277,7 +277,7 @@ fn clauses_member(position: usize) -> MemberPath {
 }
 
 /// The one refusal of `compiled`, with the code and cause it reports.
-fn sole_refusal(compiled: Compiled) -> CheckRefusal {
+fn sole_refusal(compiled: Compiled) -> SemanticCheckRefusal {
     let Compiled::Refused(mut refusals) = compiled else {
         panic!("the compile must refuse");
     };
@@ -286,7 +286,7 @@ fn sole_refusal(compiled: Compiled) -> CheckRefusal {
 }
 
 fn assert_refused(
-    refusal: &CheckRefusal,
+    refusal: &SemanticCheckRefusal,
     code: &'static str,
     cause: &'static str,
     clause: &str,

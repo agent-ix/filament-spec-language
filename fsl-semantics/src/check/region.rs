@@ -27,7 +27,7 @@ use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::source_map::SourceMap;
 use ix_trace_rs::implements;
 
-use super::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use super::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -305,7 +305,7 @@ impl DeclarationRegions {
     /// The regions of the declarations a check refusal relates, in source
     /// order (FSpec FR-272's `related`): both workloads of a repeated
     /// workload name (FR-185); none for every other refusal.
-    pub fn related_regions(&self, refusal: &CheckRefusal) -> Vec<SourceRegion> {
+    pub fn related_regions(&self, refusal: &SemanticCheckRefusal) -> Vec<SourceRegion> {
         let related = match refusal.cause.as_ref() {
             CheckCause::Probabilistic(cause) => cause.related().to_vec(),
             CheckCause::StateGraph(cause) => cause.related(),
@@ -323,7 +323,7 @@ impl DeclarationRegions {
     /// (FR-113, FR-326, FR-381) carries its own span directly, since a protocol has no
     /// expression tree for a `Location` path to walk; every other refusal
     /// is located by its `location`.
-    pub fn refusal_region(&self, refusal: &CheckRefusal) -> Option<SourceRegion> {
+    pub fn refusal_region(&self, refusal: &SemanticCheckRefusal) -> Option<SourceRegion> {
         match refusal.cause.as_ref() {
             CheckCause::LayerEquality {
                 span: Some(span), ..
@@ -1135,7 +1135,7 @@ mod tests {
     }
 
     /// FR-096 (SR-745 FND-003): each of node count, input bytes and work
-    /// budget is a `CheckRefusal` with code `stage_limit_exceeded`, carrying
+    /// budget is a `SemanticCheckRefusal` with code `stage_limit_exceeded`, carrying
     /// its kind, bound and counter, located at a specific source text. Input
     /// bytes and the declaration's own work charge are the family's
     /// per-declaration stage-entry checks

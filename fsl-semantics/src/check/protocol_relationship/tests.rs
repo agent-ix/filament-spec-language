@@ -14,7 +14,7 @@ use ix_trace_rs::trace;
 use crate::check::refusal::{
     ProtocolAnchorCause, ProtocolConstruct, ProtocolReferenceCause, RelatedEnd,
 };
-use crate::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use crate::check::{CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
 use crate::model::domain_package::{
     ComponentRecord, DomainPackageRecord, EndpointRecord, FieldMemberRecord, Multiplicity,
     NativeValueType, ObjectTypeRecord, PortDirection, RecordValueTypeRecord, RelationshipDirection,
@@ -195,7 +195,7 @@ fn connection_protocol(channel: &str) -> String {
     )
 }
 
-fn check_connection_protocol(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check_connection_protocol(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
@@ -362,7 +362,7 @@ fn pipeline(members: &str, related: &str) -> String {
     )
 }
 
-fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",

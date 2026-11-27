@@ -802,7 +802,7 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
             let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
                 panic!("the negative reward is a checking refusal: {refusal:?}");
             };
-            let [fsl_semantics::check::CheckRefusal { cause, .. }] = refusals.as_slice() else {
+            let [fsl_semantics::check::SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
                 panic!("one negative-reward refusal: {refusals:?}");
             };
             let fsl_semantics::check::CheckCause::Probabilistic(cause) = cause.as_ref() else {

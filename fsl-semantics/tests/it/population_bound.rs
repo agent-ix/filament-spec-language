@@ -8,7 +8,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations,
+    AssemblyCause, AssemblyRefusal, CheckCause, SemanticCheckRefusal, CheckedGraph, PackageDeclarations,
     TypeFormFault,
 };
 use fsl_semantics::family::ClaimExtent;
@@ -70,7 +70,7 @@ fn assembly_refusal(extra: &[(&str, &str)], declarations: &str) -> (String, Asse
 fn check_with(
     extra: &[(&str, &str)],
     declarations: &str,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let (_, assembled) = unit(extra, declarations);
     assembled.expect("the unit assembles").check(
         CheckMode::Linked,

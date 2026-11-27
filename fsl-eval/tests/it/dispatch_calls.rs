@@ -43,7 +43,7 @@ use fsl_semantics::check::{
     OperationClauses,
 };
 use fsl_semantics::check::{
-    AdmittedModel, CheckCause, CheckRefusal, DispatchCandidate, DispatchFunctionRole,
+    AdmittedModel, CheckCause, SemanticCheckRefusal, DispatchCandidate, DispatchFunctionRole,
     DispatchOperation, DispatchTable, InvalidDispatchDeclaration, ModelClause, PackageDeclarations,
     StateClauseDeclaration,
 };
@@ -76,7 +76,7 @@ const SCALAR_UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: u64::MAX,
 };
 
-fn assert_state_model_ill_typed(refusal: &CheckRefusal, expected: IllTypedCause, raw: &str) {
+fn assert_state_model_ill_typed(refusal: &SemanticCheckRefusal, expected: IllTypedCause, raw: &str) {
     let CheckCause::StateModel(owner) = &*refusal.cause else {
         panic!("StateModel ownership: {refusal:?}");
     };
@@ -876,7 +876,7 @@ fn synthesized_dispatch_candidate_is_not_callable_by_name() {
     assert!(
         refusals
             .iter()
-            .any(|refusal: &CheckRefusal| refusal.cause.as_ref()
+            .any(|refusal: &SemanticCheckRefusal| refusal.cause.as_ref()
                 == &CheckCause::MissingName("candidate.body".to_owned())),
         "expected a MissingName(\"candidate.body\") refusal, got {refusals:?}"
     );
@@ -1017,7 +1017,7 @@ fn dispatch_candidate_with_an_out_of_range_body_index_is_refused_invalid_dispatc
         )
         .expect_err("an out-of-range candidate body index must be refused");
     assert!(
-        refusals.iter().any(|refusal: &CheckRefusal| matches!(
+        refusals.iter().any(|refusal: &SemanticCheckRefusal| matches!(
             refusal.cause.as_ref(),
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
@@ -1053,7 +1053,7 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
         )
         .expect_err("a candidate/operation arity mismatch must be refused");
     assert!(
-        refusals.iter().any(|refusal: &CheckRefusal| matches!(
+        refusals.iter().any(|refusal: &SemanticCheckRefusal| matches!(
             refusal.cause.as_ref(),
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
@@ -1627,7 +1627,7 @@ fn d08_a_cycle_through_a_dispatch_edge_is_refused_definition_cycle() {
         .expect_err("a dispatch-edge cycle must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| {
+        .find(|refusal: &&SemanticCheckRefusal| {
             matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
         })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
@@ -1780,7 +1780,7 @@ fn d08_bridge_self_recursive_precondition_is_refused_definition_cycle() {
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| {
+        .find(|refusal: &&SemanticCheckRefusal| {
             matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
         })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
@@ -1825,7 +1825,7 @@ fn d08_bridge_ancestor_cycle_survives_a_sibling_combinator() {
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| {
+        .find(|refusal: &&SemanticCheckRefusal| {
             matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
         })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
@@ -3238,7 +3238,7 @@ fn run_money_call(
     argument: impl Fn(
         &[filament_exact::NodeKey; 3],
     ) -> (filament_exact::NodeKey, Vec<(&'static str, i64)>),
-) -> Result<Evaluation, CheckRefusal> {
+) -> Result<Evaluation, SemanticCheckRefusal> {
     let bridge = money_bridge(root_at_b);
     let site_type = if root_at_b {
         bridge.b_type.clone()
@@ -3434,7 +3434,7 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     assert!(
         matches!(
             linked.as_slice(),
-            [CheckRefusal { cause, .. }] if matches!(
+            [SemanticCheckRefusal { cause, .. }] if matches!(
                 cause.as_ref(),
                 CheckCause::InvalidDispatchDeclaration(detail) if matches!(
                     **detail,
@@ -3451,7 +3451,7 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     assert!(
         matches!(
             linked.as_slice(),
-            [CheckRefusal { cause, .. }] if matches!(
+            [SemanticCheckRefusal { cause, .. }] if matches!(
                 cause.as_ref(),
                 CheckCause::InvalidDispatchDeclaration(detail) if matches!(
                     **detail,

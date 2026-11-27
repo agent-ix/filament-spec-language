@@ -4273,7 +4273,7 @@ fn history_population_and_seq_rows_emit() {
 }
 
 /// The refusals of `unit` over `documents`, which must not check.
-fn history_refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<fsl_semantics::check::CheckRefusal> {
+fn history_refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<fsl_semantics::check::SemanticCheckRefusal> {
     let packages =
         fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)

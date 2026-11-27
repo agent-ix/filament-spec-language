@@ -11,7 +11,7 @@ use ix_trace_rs::trace;
 
 use super::{CheckedRequirement, UnitDeclarations, check};
 use crate::check::refusal::ProtocolAnchorCause;
-use crate::check::{CheckCause, CheckRefusal, PackageDeclarations};
+use crate::check::{CheckCause, SemanticCheckRefusal, PackageDeclarations};
 
 mod fixture {
     use crate as semantics;
@@ -100,7 +100,7 @@ fn assemble_under(header: &str, declarations: &str) -> (String, PackageDeclarati
 fn requirements(
     declarations: &str,
     name: &str,
-) -> Result<Vec<CheckedRequirement>, Vec<CheckRefusal>> {
+) -> Result<Vec<CheckedRequirement>, Vec<SemanticCheckRefusal>> {
     let (_, assembled) = assemble(declarations);
     let index = assembled
         .protocols
@@ -118,7 +118,7 @@ fn requirements(
 
 /// The protocol refusals the whole check of `declarations` gives, with the
 /// unit's text.
-fn protocol_refusals(declarations: &str) -> (String, Vec<(ProtocolAnchorCause, CheckRefusal)>) {
+fn protocol_refusals(declarations: &str) -> (String, Vec<(ProtocolAnchorCause, SemanticCheckRefusal)>) {
     let (text, assembled) = assemble(declarations);
     let refusals = assembled
         .check(

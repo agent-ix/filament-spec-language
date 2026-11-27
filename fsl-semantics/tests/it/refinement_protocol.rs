@@ -16,7 +16,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::Code;
 use fsl_semantics::check::{
-    AbstractSide, CheckCause, CheckRefusal, CheckedGraph, CheckedRefinement, RefinementCatalogNode,
+    AbstractSide, CheckCause, SemanticCheckRefusal, CheckedGraph, CheckedRefinement, RefinementCatalogNode,
     RefinementCause, RefinementSupport, StepTarget,
 };
 use ix_trace_rs::trace;
@@ -81,7 +81,7 @@ fn cas_refines_counter() -> String {
 /// source region (a defect of the internal list has none).
 #[derive(Debug)]
 struct Found {
-    refusal: CheckRefusal,
+    refusal: SemanticCheckRefusal,
     at: Option<String>,
 }
 

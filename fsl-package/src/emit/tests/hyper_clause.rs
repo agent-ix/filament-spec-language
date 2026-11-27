@@ -7,7 +7,7 @@
 //! operation is `attemptUpdate`.
 
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckingLimitKind, MatchPart, TemporalCause};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, CheckingLimitKind, MatchPart, TemporalCause};
 
 use super::admission_corpus::config_version_unit;
 use super::*;
@@ -283,7 +283,7 @@ fn a_finite_hyperproperty_names_its_own_profile_not_the_first_lock_selection() {
 }
 
 /// The refusals of `unit`'s check.
-fn refusals(unit: &str) -> Vec<fsl_semantics::check::CheckRefusal> {
+fn refusals(unit: &str) -> Vec<fsl_semantics::check::SemanticCheckRefusal> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
@@ -1541,7 +1541,7 @@ fn hyper_clock_rows_are_trace_keyed_and_reader_rejects_an_unknown_trace() {
 }
 
 /// The refusals of the world, with the unit text.
-fn refused(profile: &str, aliases: &[&str], declarations: &str) -> (String, Vec<CheckRefusal>) {
+fn refused(profile: &str, aliases: &[&str], declarations: &str) -> (String, Vec<SemanticCheckRefusal>) {
     let (text, documents) = world_unit(profile, aliases, declarations);
     let refusals = assemble_with_models(text.as_bytes(), &packages_of(&documents))
         .expect("the unit assembles")
@@ -1577,8 +1577,8 @@ fn admitted(built: &Built) -> std::sync::Arc<filament_contract_model::CheckedPac
 }
 
 /// The text a not-emitted refusal's span covers in `text`.
-fn not_emitted_text<'t>(text: &'t str, refusals: &[CheckRefusal]) -> &'t str {
-    let [CheckRefusal { cause, .. }] = refusals else {
+fn not_emitted_text<'t>(text: &'t str, refusals: &[SemanticCheckRefusal]) -> &'t str {
+    let [SemanticCheckRefusal { cause, .. }] = refusals else {
         panic!("one temporal refusal: {refusals:?}");
     };
     let CheckCause::Temporal(cause) = cause.as_ref() else {

@@ -3177,7 +3177,7 @@ pub enum CheckCause {
         cause: &'static str,
         /// The type-environment ceiling that was reached, when the cause is
         /// a reached limit; `None` for every other type admission refusal. Boxed to
-        /// keep `CheckCause`, and so `CheckRefusal`, small.
+        /// keep `CheckCause`, and so `SemanticCheckRefusal`, small.
         limit: Option<Box<fsl_foundation::diagnostic::LimitExceeded>>,
     },
     /// FR-910 / FSpec FR-746: the package has no declaration that produces a
@@ -3392,7 +3392,7 @@ pub enum CheckCause {
     /// `stage_limit_exceeded`/`<kind>-exceeded`: a declared
     /// checking limit was reached at this node. Boxed: `actual`'s `u128`
     /// would otherwise make every `CheckCause` pay for this one variant's
-    /// widest field (clippy `result_large_err` on `CheckRefusal`), the same
+    /// widest field (clippy `result_large_err` on `SemanticCheckRefusal`), the same
     /// reason `InternalFault` below is boxed.
     ResourceExhausted(Box<StageLimitCause>),
     /// An IEEE conversion or arithmetic in a package with no admitted IEEE
@@ -3447,7 +3447,7 @@ pub enum CheckCause {
     /// tag rather than minting a new one. Boxed: this was already
     /// `CheckCause`'s widest variant at 56 bytes; adding `ResourceExhausted`'s
     /// `StageLimitCause` payload cost `CheckCause` its niche-packed
-    /// discriminant, so `CheckRefusal` crossed clippy's `result_large_err`
+    /// discriminant, so `SemanticCheckRefusal` crossed clippy's `result_large_err`
     /// threshold. Boxing this pre-existing variant (not `ResourceExhausted`,
     /// already boxed) is the fix, same precedent as `InternalFault` below.
     InvalidDispatchDeclaration(Box<InvalidDispatchDeclaration>),
@@ -4210,7 +4210,7 @@ pub struct IdentityObserving {
 /// filament:canonical
 #[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]
 #[error("{} at {location:?}: {cause:?}", cause.rendered_code())]
-pub struct CheckRefusal {
+pub struct SemanticCheckRefusal {
     /// Where the refusal originates.
     pub location: Location,
     /// The typed cause.
@@ -4241,10 +4241,10 @@ pub struct ProtocolCheckRefusal {
     /// The span of the protocol declaration's name.
     pub declaration_span: Span,
     /// Every typed refusal attributed to this declaration, in check order.
-    pub refusals: Vec<CheckRefusal>,
+    pub refusals: Vec<SemanticCheckRefusal>,
 }
 
-impl CheckRefusal {
+impl SemanticCheckRefusal {
     pub(crate) fn from_type_check(
         location: &Location,
         failure: filament_semantic_value::declaration::TypeCheckError,
@@ -4315,7 +4315,7 @@ mod tests {
             actual: Box::new(actual.clone()),
         };
         let location = ExpressionLocation::at(Origin::Expression, &[2, 4]);
-        let refusal = super::CheckRefusal {
+        let refusal = super::SemanticCheckRefusal {
             location,
             cause: Box::new(cause),
         };
@@ -4328,7 +4328,7 @@ mod tests {
                 refusal.location
             )
         );
-        let equivalent = super::CheckRefusal {
+        let equivalent = super::SemanticCheckRefusal {
             location: refusal.location.clone(),
             cause: Box::new(CheckCause::ReferenceLiteralTypeMismatch {
                 name,

@@ -9,7 +9,7 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_semantics::check::{CheckCause, CheckRefusal};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
@@ -49,7 +49,7 @@ fn selecting(declarations: &str) -> String {
 }
 
 /// The refusals the spine-model unit `text` checks to.
-fn refusals(text: &str) -> Vec<CheckRefusal> {
+fn refusals(text: &str) -> Vec<SemanticCheckRefusal> {
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
     assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")

@@ -10,7 +10,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedGraph, Obligation, PackageDeclarations,
+    CheckCause, SemanticCheckRefusal, CheckedGraph, Obligation, PackageDeclarations,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
@@ -34,7 +34,7 @@ fn check(
     headers: &str,
     declarations: &str,
     mode: CheckMode,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{headers}{declarations}\n"
@@ -97,7 +97,7 @@ fn division_by_zero() -> String {
     )
 }
 
-fn only_nonzero(refusals: &[CheckRefusal]) {
+fn only_nonzero(refusals: &[SemanticCheckRefusal]) {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(
         matches!(

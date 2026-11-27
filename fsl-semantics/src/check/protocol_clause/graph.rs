@@ -22,7 +22,7 @@ use super::refusal;
 use super::types::{
     CausalEdge, CheckedControl, CheckedControlTree, EdgeKind, Port, PortRef, ProtocolNodeId,
 };
-use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault, ProtocolAnchorCause};
+use crate::check::refusal::{CheckCause, SemanticCheckRefusal, KeyFault, ProtocolAnchorCause};
 
 /// What [`compile`] builds: the control tree and its edge relation.
 pub(super) struct Compiled {
@@ -55,10 +55,10 @@ fn is_leaf(kind: ProtocolNodeKind) -> bool {
     }
 }
 
-fn fault(invariant: &'static str) -> Vec<(Span, CheckRefusal)> {
+fn fault(invariant: &'static str) -> Vec<(Span, SemanticCheckRefusal)> {
     vec![(
         Span { start: 0, end: 0 },
-        CheckRefusal {
+        SemanticCheckRefusal {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
@@ -283,7 +283,7 @@ pub(super) fn compile(
     protocol: &ProtocolDeclarationForm,
     resolved: &[ProtocolNodeId],
     _profile: Option<&str>,
-) -> Result<Compiled, Vec<(Span, CheckRefusal)>> {
+) -> Result<Compiled, Vec<(Span, SemanticCheckRefusal)>> {
     let mut roots = protocol
         .declarations
         .iter()
@@ -492,7 +492,7 @@ fn cycles(
     protocol: &ProtocolDeclarationForm,
     tree: &CheckedControlTree,
     edges: &[CausalEdge],
-) -> Vec<(Span, CheckRefusal)> {
+) -> Vec<(Span, SemanticCheckRefusal)> {
     let graph = PortGraph::new(tree, edges, |edge| edge.kind != EdgeKind::RepeatBack);
     let position: BTreeMap<ProtocolNodeId, usize> = tree
         .controls
@@ -534,7 +534,7 @@ pub(super) fn progress(
     tree: &CheckedControlTree,
     profile: Option<&str>,
     nested_false_feasible: &BTreeMap<ProtocolNodeId, bool>,
-) -> Vec<(Span, CheckRefusal)> {
+) -> Vec<(Span, SemanticCheckRefusal)> {
     // Children follow their parent in tree order, so a reverse walk sees
     // every child before its parent.
     let mut steps: BTreeMap<ProtocolNodeId, bool> = BTreeMap::new();

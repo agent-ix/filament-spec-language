@@ -1131,7 +1131,7 @@ pub enum ProtocolEmissionResult {
         /// The span of the declaration's name.
         declaration_span: fsl_foundation::Span,
         /// The first typed refusal attributed to this declaration.
-        refusal: fsl_semantics::check::CheckRefusal,
+        refusal: fsl_semantics::check::SemanticCheckRefusal,
     },
     /// The protocol could not finish within its shared checking budget.
     Incomplete {
@@ -1150,7 +1150,7 @@ pub enum ProtocolEmissionAggregate {
     /// At least one protocol was refused; no package is admitted.
     Refused {
         /// The first refused protocol's primary record.
-        primary: fsl_semantics::check::CheckRefusal,
+        primary: fsl_semantics::check::SemanticCheckRefusal,
     },
     /// No protocol was refused, but at least one is incomplete.
     Incomplete {
@@ -1185,7 +1185,7 @@ impl ProtocolEmission {
 
     /// One primary diagnostic for each refused protocol, in declaration
     /// order (FR-383 diagnostics rule).
-    pub fn diagnostics(&self) -> impl Iterator<Item = &fsl_semantics::check::CheckRefusal> + '_ {
+    pub fn diagnostics(&self) -> impl Iterator<Item = &fsl_semantics::check::SemanticCheckRefusal> + '_ {
         self.results.iter().filter_map(|result| match result {
             ProtocolEmissionResult::Emitted { .. } => None,
             ProtocolEmissionResult::Refused { refusal, .. } => Some(refusal),

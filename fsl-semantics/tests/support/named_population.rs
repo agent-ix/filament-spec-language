@@ -17,7 +17,7 @@ use filament_exact::{Integer, Meter, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_semantics::check::{
-    CheckRefusal, CheckedGraph, PackageDeclarations, Reward, RewardEvaluationFailure,
+    SemanticCheckRefusal, CheckedGraph, PackageDeclarations, Reward, RewardEvaluationFailure,
     RewardEvaluator,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -193,7 +193,7 @@ pub struct Refused {
     /// The text at its region.
     pub at: String,
     /// The refusal, when S3 made it.
-    pub refusal: Option<CheckRefusal>,
+    pub refusal: Option<SemanticCheckRefusal>,
 }
 
 /// The checked unit and the packages it was checked against.

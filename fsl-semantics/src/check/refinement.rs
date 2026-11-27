@@ -81,7 +81,7 @@ use super::lowering::AdmittedModel;
 use super::observation::Observations;
 use super::profile::TemporalProfile;
 use super::protocol_clause::ProtocolNodeId;
-use super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::refusal::{CheckCause, SemanticCheckRefusal, KeyFault};
 use super::state_clause::{observation_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
@@ -2107,12 +2107,12 @@ impl<'a> Side<'a> {
 /// The refusals found in one declaration, in the order they were found.
 struct Findings {
     refinement: String,
-    refusals: Vec<CheckRefusal>,
+    refusals: Vec<SemanticCheckRefusal>,
 }
 
 impl Findings {
     fn refuse(&mut self, span: Span, cause: RefinementCause) {
-        self.refusals.push(CheckRefusal {
+        self.refusals.push(SemanticCheckRefusal {
             location: Location::root(Origin::Expression),
             cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                 refinement: self.refinement.clone(),
@@ -2151,7 +2151,7 @@ impl Findings {
     }
 
     fn fault(&mut self, invariant: &'static str) {
-        self.refusals.push(CheckRefusal {
+        self.refusals.push(SemanticCheckRefusal {
             location: Location::root(Origin::Expression),
             cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                 InternalFault::new("check.refinement", invariant),
@@ -2478,7 +2478,7 @@ pub(crate) enum RefinementCheck<'f> {
     /// (FR-136 "Order of the checks").
     Protocol(Box<ProtocolRefinement<'f>>),
     /// Every refusal of the declaration.
-    Refused(Vec<CheckRefusal>),
+    Refused(Vec<SemanticCheckRefusal>),
 }
 
 /// Checks the refinement `declaration` against the unit's models and the
@@ -2641,7 +2641,7 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         Ok(catalog) => catalog,
         Err(fault) => {
             return (
-                RefinementCheck::Refused(vec![CheckRefusal {
+                RefinementCheck::Refused(vec![SemanticCheckRefusal {
                     location: Location::root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                         fault,
@@ -3696,7 +3696,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                         } else {
                             component_path(field, &component)
                         };
-                        return Err(CheckRefusal {
+                        return Err(SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                                 refinement: self.findings.refinement.clone(),
@@ -3710,7 +3710,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 // Lifting leaves an unmapped reference as declared, so an
                 // expression over a shared object type would conform to it.
                 Some((required, _)) if !references_mapped(&self.lifting, required) => {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         &location,
                         IllTypedCause::TypeMismatch,
                     ));
@@ -3733,10 +3733,10 @@ impl<'c, 'a> Checker<'c, 'a> {
                 )
                 .map_err(|cause| match cause {
                     Some(cause) => refuse_with(&location, cause),
-                    None => CheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch),
+                    None => SemanticCheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch),
                 })?,
             };
-            Ok::<_, CheckRefusal>((body, typer.slots(), typer.slot_names().to_vec(), uses))
+            Ok::<_, SemanticCheckRefusal>((body, typer.slots(), typer.slot_names().to_vec(), uses))
         })();
         match typed {
             Ok((body, slots, slot_names, uses)) => {
@@ -4386,8 +4386,8 @@ struct RowContext {
     range_agnostic: bool,
 }
 
-fn refuse_with(location: &Location, cause: CheckCause) -> CheckRefusal {
-    CheckRefusal {
+fn refuse_with(location: &Location, cause: CheckCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(cause),
     }
@@ -4595,8 +4595,8 @@ fn relaxed_conforms(types: &TypeEnvironment, actual: &ValueType, required: &Valu
 /// The refusal for a `refinement` declaration that checks but that no S4
 /// emission writes yet (FR-135): refused rather than compiled with an
 /// identity equal to the same package without it.
-pub(crate) fn not_emitted(name: String, span: Span) -> CheckRefusal {
-    CheckRefusal {
+pub(crate) fn not_emitted(name: String, span: Span) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::RefinementNotEmitted { name, span }),
     }

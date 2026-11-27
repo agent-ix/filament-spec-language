@@ -659,7 +659,7 @@ mod checked {
     use fsl_forms::{BinaryOperator, BinderQuery, Expression, TypeForm};
     use fsl_package::CheckedPackage;
     use fsl_semantics::check::{
-        CheckCause, CheckRefusal, CheckedExpression, EnumBinding, PackageDeclarations,
+        CheckCause, SemanticCheckRefusal, CheckedExpression, EnumBinding, PackageDeclarations,
     };
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use fsl_semantics::value::enumeration::{
@@ -704,7 +704,7 @@ mod checked {
         package: &CheckedPackage,
         parameters: &[(&str, ValueType)],
         expression: &Expression,
-    ) -> Result<CheckedExpression, CheckRefusal> {
+    ) -> Result<CheckedExpression, SemanticCheckRefusal> {
         package.graph().check_expression(
             parameters
                 .iter()
@@ -723,7 +723,7 @@ mod checked {
         expression: &Expression,
     ) -> IllTypedCause {
         match check(package, parameters, expression).map(|_| ()) {
-            Err(CheckRefusal { cause, .. }) => match *cause {
+            Err(SemanticCheckRefusal { cause, .. }) => match *cause {
                 CheckCause::IllTyped(cause) => cause,
                 cause => panic!("an ill_typed refusal, not {cause:?}"),
             },

@@ -67,7 +67,7 @@ use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_proptest_policy as prop;
 use fsl_proptest_policy::value::VALUE_HEADER;
-use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{SemanticCheckRefusal, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 use proptest::prelude::{any, BoxedStrategy, Just, Strategy};
@@ -457,7 +457,7 @@ fn unit(
 /// Why a source did not compile: before the checker, or by its refusals.
 enum Failure {
     Front(String),
-    Refused(Vec<CheckRefusal>),
+    Refused(Vec<SemanticCheckRefusal>),
 }
 
 impl Failure {

@@ -27,7 +27,7 @@ use fsl_foundation::Span;
 
 use super::check::Scope;
 use super::lowering::AdmittedModel;
-use super::refusal::{CheckCause, CheckRefusal, ProtocolAnchorCause};
+use super::refusal::{CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
 use crate::model::domain_package::DomainPackageRecord;
 use filament_checked::key::DeclarationKey;
 
@@ -60,8 +60,8 @@ pub struct CheckedConnection {
     pub interfaces: [filament_exact::EffectiveId; 2],
 }
 
-fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ProtocolAnchorCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span.
         location: Location::root(Origin::Expression),
@@ -109,7 +109,7 @@ pub(crate) fn check(
     protocol: &ProtocolDeclarationForm,
     models: &[AdmittedModel],
     scope: &Scope,
-) -> Result<Vec<CheckedRelationship>, Vec<(Span, CheckRefusal)>> {
+) -> Result<Vec<CheckedRelationship>, Vec<(Span, SemanticCheckRefusal)>> {
     let mut refusals = Vec::new();
     let mut by_name: BTreeMap<&str, Vec<Span>> = BTreeMap::new();
     for relationship in &protocol.relationships {
@@ -200,7 +200,7 @@ pub(crate) fn check(
             Some(ConnectionCheckOutcome::Incomplete(denial)) => {
                 refusals.push((
                     target.span,
-                    CheckRefusal {
+                    SemanticCheckRefusal {
                         location: Location::root(Origin::Expression),
                         cause: Box::new(CheckCause::ModelIncomplete(denial)),
                     },

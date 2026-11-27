@@ -28,7 +28,7 @@ use super::{
 use crate::check::Scope;
 use crate::check::probabilistic::{ExactFault, exact_value};
 use crate::check::profile::TemporalProfile;
-use crate::check::refusal::{CheckRefusal, CheckingLimitKind};
+use crate::check::refusal::{SemanticCheckRefusal, CheckingLimitKind};
 use crate::check::time_units::TimeUnits;
 
 /// A hybrid claim as the assembler hands it to the check: the `temporal`
@@ -67,7 +67,7 @@ pub(in crate::check) struct ClaimsChecked {
     /// The claims that checked clean, in source order.
     pub(in crate::check) claims: Vec<CheckedHybridClaim>,
     /// Every refusal, in source order.
-    pub(in crate::check) refusals: Vec<CheckRefusal>,
+    pub(in crate::check) refusals: Vec<SemanticCheckRefusal>,
 }
 
 /// Check each claim. A claim over a model that did not check clean is

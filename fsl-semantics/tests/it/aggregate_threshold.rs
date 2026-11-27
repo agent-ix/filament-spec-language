@@ -4,7 +4,7 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{SemanticCheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
@@ -14,7 +14,7 @@ fn check_in(
     header: &str,
     declarations: &str,
     mode: CheckMode,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{header}{declarations}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "w17"),
@@ -46,7 +46,7 @@ fn assert_refused_with(
     declarations: &str,
     code: Code,
     cause: Option<&str>,
-) -> CheckRefusal {
+) -> SemanticCheckRefusal {
     let refusals =
         check_in(header, declarations, CheckMode::Linked).expect_err("the unit is refused");
     let first = refusals.first().expect("a refusal").clone();

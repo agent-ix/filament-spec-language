@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 use super::facts::{ArgumentShape, CallSite, EdgeKind};
 use super::ir::{CheckedNode, Slot};
-use super::refusal::{CheckCause, CheckRefusal, MeasureObligation};
+use super::refusal::{CheckCause, SemanticCheckRefusal, MeasureObligation};
 use filament_exact::ValueType;
 use filament_semantic_value::location::ExpressionLocation as Location;
 
@@ -332,7 +332,7 @@ fn recursive_components(members: &[TerminationSubject<'_>]) -> Components {
 }
 
 /// Check every recursive component, in first-declaration order.
-pub(crate) fn check(members: &[TerminationSubject<'_>]) -> Vec<CheckRefusal> {
+pub(crate) fn check(members: &[TerminationSubject<'_>]) -> Vec<SemanticCheckRefusal> {
     check_components(members, &recursive_components(members))
 }
 
@@ -342,7 +342,7 @@ pub(crate) fn check(members: &[TerminationSubject<'_>]) -> Vec<CheckRefusal> {
 fn check_components(
     members: &[TerminationSubject<'_>],
     components: &Components,
-) -> Vec<CheckRefusal> {
+) -> Vec<SemanticCheckRefusal> {
     let mut parent: Vec<Option<usize>> = vec![None; members.len()];
     let mut refusals = Vec::new();
     for component in components.iter() {
@@ -366,7 +366,7 @@ fn check_components(
 fn dispatch_cycle_refusal(
     members: &[TerminationSubject<'_>],
     component: &Component,
-) -> Option<CheckRefusal> {
+) -> Option<SemanticCheckRefusal> {
     let mut located: Vec<((usize, usize), Location)> = component
         .members
         .iter()
@@ -397,7 +397,7 @@ fn dispatch_cycle_refusal(
             ))
         })
         .collect();
-    Some(CheckRefusal {
+    Some(SemanticCheckRefusal {
         location,
         cause: Box::new(CheckCause::DefinitionCycle { edges: named_edges }),
     })
@@ -462,13 +462,13 @@ fn check_component(
     members: &[TerminationSubject<'_>],
     component: &Component<'_>,
     parent: &mut [Option<usize>],
-) -> Result<(), CheckRefusal> {
+) -> Result<(), SemanticCheckRefusal> {
     let Err((caller, edge, obligation)) = component_obligations(members, component) else {
         return Ok(());
     };
     let mut cycle: Vec<usize> = vec![caller];
     cycle.extend(path(members, component, parent, edge.callee, caller));
-    Err(CheckRefusal {
+    Err(SemanticCheckRefusal {
         location: edge.location.clone(),
         cause: Box::new(CheckCause::UnprovedDecrease {
             cycle: cycle
@@ -662,7 +662,7 @@ mod tests {
 
     /// `check` as it was before Tarjan's components: the oracle partition, then the
     /// same per-component obligations.
-    fn closure_check(members: &[TerminationSubject<'_>]) -> Vec<CheckRefusal> {
+    fn closure_check(members: &[TerminationSubject<'_>]) -> Vec<SemanticCheckRefusal> {
         check_components(
             members,
             &Components::new(closure_components(members), members.len()),

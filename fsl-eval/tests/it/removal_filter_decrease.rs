@@ -9,7 +9,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, CheckRefusal, MeasureObligation, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, MeasureObligation, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
@@ -27,7 +27,7 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 /// Checks a unit of `declarations` under the complete value profile.
-fn check(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -85,7 +85,7 @@ fn refused(declarations: &str) -> MeasureObligation {
         Err(refusals) => refusals,
     };
     match refusals.as_slice() {
-        [CheckRefusal { cause, .. }] => match cause.as_ref() {
+        [SemanticCheckRefusal { cause, .. }] => match cause.as_ref() {
             CheckCause::UnprovedDecrease { obligation, .. } => *obligation,
             cause => panic!("{declarations}: one unproved-decrease, not {cause:?}"),
         },

@@ -100,7 +100,7 @@ use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
 use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
 use fsl_semantics::check::{
-    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
+    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, SemanticCheckRefusal,
     CorrespondenceConflict, KeyFault, Obligation, OperandText, PackageDeclarations,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
@@ -199,11 +199,11 @@ enum ProtocolFailure {
         region: Option<SourceRegion>,
     },
     Check {
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         region: Option<SourceRegion>,
     },
     CheckDiagnostics {
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         regions: Vec<Option<SourceRegion>>,
     },
 }
@@ -845,11 +845,11 @@ impl ParsedUnitSource {
 /// Give an unproved range refusal the exact source spelling of its arithmetic
 /// node for the diagnostic message (FR-577).
 fn name_operand(
-    refusals: &mut [CheckRefusal],
+    refusals: &mut [SemanticCheckRefusal],
     region: Option<&SourceRegion>,
     sources: &[ParsedUnitSource],
 ) {
-    let (Some(CheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region) else {
+    let (Some(SemanticCheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region) else {
         return;
     };
     let CheckCause::Unproved(Obligation::Range {

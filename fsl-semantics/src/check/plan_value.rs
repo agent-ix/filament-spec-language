@@ -28,7 +28,7 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::check::{EnumBinding, NamedScope};
-use super::{CheckCause, CheckRefusal, Scope};
+use super::{CheckCause, SemanticCheckRefusal, Scope};
 use crate::value::enumeration::{
     AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,
 };
@@ -126,8 +126,8 @@ impl CheckedPlan {
     }
 }
 
-fn unsupported(location: &Location) -> CheckRefusal {
-    CheckRefusal {
+fn unsupported(location: &Location) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::UnsupportedFeature {
             loci: vec![location.clone()],
@@ -205,7 +205,7 @@ pub(crate) fn declare(
     source: &fsl_foundation::source::provenance::RawSourceRef,
     package_name: &str,
     location: &Location,
-) -> Result<CheckedPlan, CheckRefusal> {
+) -> Result<CheckedPlan, SemanticCheckRefusal> {
     let types = scope.types();
     let synthesis = form.name.name.as_str();
     let alias = form
@@ -336,7 +336,7 @@ pub(crate) fn declare(
                 arguments_seen.get(parameter)
             {
                 if first_type != value_type || *first_optional != optional {
-                    return Err(CheckRefusal {
+                    return Err(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::PlanUnsupported {
                             form: format!(
@@ -388,7 +388,7 @@ pub(crate) fn declare(
                             original: origin.clone(),
                         }))
                     });
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::PlanUnboundedParameter {
                         operation: name.clone(),
@@ -410,7 +410,7 @@ pub(crate) fn declare(
                 None
             };
             if let Some(reason) = reason {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::PlanUnsupported {
                         form: reason,
@@ -420,7 +420,7 @@ pub(crate) fn declare(
             }
         }
         if !operation.effect().creates.is_empty() {
-            return Err(CheckRefusal {
+            return Err(SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::PlanUnsupported {
                     form: format!(
@@ -470,7 +470,7 @@ pub(crate) fn declare(
                     vec![ValueType::Reference(ty.clone())],
                 ))
             })
-            .collect::<Result<Vec<_>, CheckRefusal>>()?;
+            .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?;
         composites.push(CompositeDeclaration::new(
             handle.clone(),
             format!("{synthesis}::receiver"),

@@ -286,7 +286,7 @@ fn try_world_of(
     profiles: &str,
     unit_body: &str,
     objects: Json,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages = package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\

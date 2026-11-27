@@ -20,7 +20,7 @@
 //! cannot produce.
 
 use fsl_cst::{
-    CstElement, CstNode, LosslessCst, ParsedSource, Production, Recovery, TokenClass, TokenKind,
+    CstElement, CstNode, FormsSource, LosslessCst, Production, Recovery, TokenClass, TokenKind,
 };
 use fsl_foundation::selection::SourceSelections;
 use fsl_foundation::{Code, Span};
@@ -462,7 +462,7 @@ pub enum FormsCause {
     /// all.").
     RecoveringCst,
     /// The source carries a diagnostic and no recovery (for example a
-    /// profile refusal added by `ParsedSource::prepend_diagnostic`). Holds
+    /// profile refusal added by `FormsSource::prepend_diagnostic`). Holds
     /// the first diagnostic's code.
     DiagnosedSource(Code),
     /// A declaration's leading token has no entry in the dispatch table.
@@ -561,7 +561,7 @@ pub(crate) struct Construct<'c> {
 /// admitted input), or refuse with its cause (ADR-011 §2.3 E2: "No. A form
 /// is built from a complete CST or not at all."). S2 takes no limit set
 /// (FR-257): S1's limits bound what it builds.
-pub fn build_unit(parsed: &ParsedSource) -> Result<ParsedUnit, FormsRefusal> {
+pub fn build_unit(parsed: &FormsSource) -> Result<ParsedUnit, FormsRefusal> {
     if !parsed.cst().recoveries().is_empty() {
         return Err(recovering(parsed.cst()));
     }
@@ -593,7 +593,7 @@ pub fn build_unit(parsed: &ParsedSource) -> Result<ParsedUnit, FormsRefusal> {
 /// protocol declarations. A diagnostic/recovery outside one delimited
 /// protocol remains a unit-level S2 refusal.
 pub fn build_unit_with_protocol_results(
-    parsed: &ParsedSource,
+    parsed: &FormsSource,
 ) -> Result<(ParsedUnit, Vec<ProtocolFormsRefusal>), FormsRefusal> {
     let cst = parsed.cst();
     let protocol_nodes: Vec<_> = cst

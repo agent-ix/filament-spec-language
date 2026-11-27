@@ -3493,7 +3493,7 @@ fn a_window_aggregate_event_does_not_check() {
     });
     let refusal = checked.err().expect("the unit does not check");
     let refusal = refusal.downcast_ref::<String>().expect("a message");
-    assert!(refusal.contains("CheckRefusal"), "{refusal}");
+    assert!(refusal.contains("SemanticCheckRefusal"), "{refusal}");
     assert!(refusal.contains("aggregate-term-typed"), "{refusal}");
 }
 

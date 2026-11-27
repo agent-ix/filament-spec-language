@@ -21,7 +21,7 @@ use super::{
     HybridModelIndex, HybridTerm, InitialEntry, ModeIndex, ResetConstraint, VariableClass,
     VariableIndex,
 };
-use crate::check::refusal::{CheckCause, CheckRefusal, CheckingStage, StageLimitCause};
+use crate::check::refusal::{CheckCause, SemanticCheckRefusal, CheckingStage, StageLimitCause};
 
 /// A `hybrid` declaration as the assembler hands it to the check: its form,
 /// and the profile selection its `using` alias resolved to.
@@ -40,7 +40,7 @@ pub(in crate::check) struct HybridChecked {
     /// Each clean model's position by declared name, for the claims over it.
     pub(in crate::check) index: BTreeMap<String, HybridModelIndex>,
     /// Every refusal, in source order.
-    pub(in crate::check) refusals: Vec<CheckRefusal>,
+    pub(in crate::check) refusals: Vec<SemanticCheckRefusal>,
 }
 
 /// Check each declaration. A declaration that refuses produces no model, so
@@ -94,11 +94,11 @@ pub(in crate::check) fn check_models(
 }
 
 /// The refusal `stop` stands for.
-pub(super) fn into_refusal(stop: Stop) -> CheckRefusal {
+pub(super) fn into_refusal(stop: Stop) -> SemanticCheckRefusal {
     refusal(stop)
 }
 
-fn refusal(stop: Stop) -> CheckRefusal {
+fn refusal(stop: Stop) -> SemanticCheckRefusal {
     let cause = match stop {
         Stop::Cause(cause) => CheckCause::Hybrid(Box::new(cause)),
         Stop::Limit {
@@ -113,7 +113,7 @@ fn refusal(stop: Stop) -> CheckRefusal {
             region: None,
         })),
     };
-    CheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(cause),
     }

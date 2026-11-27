@@ -33,7 +33,7 @@ use crate::check::check::{HyperTyping, NamedScope, Scope, StateContext, Typer, b
 use crate::check::facts::Definedness;
 use crate::check::ir::{CheckedBody, CheckedNode};
 use crate::check::observation::Observations;
-use crate::check::refusal::{CheckCause, CheckRefusal};
+use crate::check::refusal::{CheckCause, SemanticCheckRefusal};
 use crate::check::{AdmittedModel, DispatchTable, Signatures};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
@@ -296,7 +296,7 @@ impl AtomSlots {
 
 /// A refusal of a condition, with the span of the expression it is at.
 pub(crate) struct Refused {
-    pub(crate) refusal: Box<CheckRefusal>,
+    pub(crate) refusal: Box<SemanticCheckRefusal>,
     pub(crate) span: Span,
 }
 
@@ -356,7 +356,7 @@ fn typer<'a>(
     bound: &[(String, ValueType)],
     hyper: HyperTyping,
     location: &Location,
-) -> Result<Typer<'a>, CheckRefusal> {
+) -> Result<Typer<'a>, SemanticCheckRefusal> {
     let named = NamedScope::of(typing.models, typing.scope, typing.unit.as_ref());
     let mut typer = Typer::new(
         typing.scope,
@@ -396,7 +396,7 @@ pub(crate) fn lower_atom<'a>(
     first_trace: &dyn Fn(&str) -> Option<usize>,
     (expression, locate): (&Expression, Locate<'_>),
 ) -> Result<AtomCondition, Refused> {
-    let refused = |refusal: CheckRefusal| Refused {
+    let refused = |refusal: SemanticCheckRefusal| Refused {
         span: locate(&refusal.location),
         refusal: Box::new(refusal),
     };
@@ -451,7 +451,7 @@ pub(crate) fn lower_atom<'a>(
         .infer(&respelled, Some(&ValueType::Boolean), location)
         .map_err(refused)?;
     if body.root().value_type() != &ValueType::Boolean {
-        return Err(refused(CheckRefusal {
+        return Err(refused(SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(CheckCause::NonBooleanRoot),
         }));
@@ -476,7 +476,7 @@ pub(crate) fn lower_atom<'a>(
             }
             None => {
                 return Err(Refused {
-                    refusal: Box::new(CheckRefusal {
+                    refusal: Box::new(SemanticCheckRefusal {
                         location: read.clone(),
                         cause: Box::new(CheckCause::Hyper(Box::new(
                             super::HyperCause::UnindexedRead { span: locate(read) },
@@ -539,9 +539,9 @@ pub(crate) fn lower_conjunct<'a>(
     (slots, labels): (&[StepRead], BTreeMap<String, String>),
     (expression, locate): (&Expression, Locate<'_>),
 ) -> Result<ConjunctCondition, Refused> {
-    let refused = |refusal: CheckRefusal| Refused {
+    let refused = |refusal: SemanticCheckRefusal| Refused {
         span: locate(&refusal.location),
-        refusal: Box::new(CheckRefusal {
+        refusal: Box::new(SemanticCheckRefusal {
             location: location.clone(),
             cause: refusal.cause,
         }),
@@ -566,7 +566,7 @@ pub(crate) fn lower_conjunct<'a>(
         .infer_subtree(expression, root, Some(&ValueType::Boolean), location)
         .map_err(refused)?;
     if body.root().value_type() != &ValueType::Boolean {
-        return Err(refused(CheckRefusal {
+        return Err(refused(SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(CheckCause::NonBooleanRoot),
         }));

@@ -46,7 +46,7 @@ use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedExpression, Obligation, PackageDeclarations,
+    CheckCause, SemanticCheckRefusal, CheckedExpression, Obligation, PackageDeclarations,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::enumeration::{
@@ -2285,7 +2285,7 @@ fn check_in(
     expression: &Expression,
     expected: Option<&ValueType>,
     mode: CheckMode,
-) -> Result<CheckedExpression, CheckRefusal> {
+) -> Result<CheckedExpression, SemanticCheckRefusal> {
     let parameters = parameters
         .iter()
         .map(|(name, value_type)| ((*name).to_owned(), value_type.clone()))
@@ -2300,7 +2300,7 @@ fn check_in(
 }
 
 /// The cause of a checking refusal.
-fn refused(result: Result<CheckedExpression, CheckRefusal>) -> CheckCause {
+fn refused(result: Result<CheckedExpression, SemanticCheckRefusal>) -> CheckCause {
     match result {
         Err(refusal) => *refusal.cause,
         Ok(_) => panic!("a checking refusal"),

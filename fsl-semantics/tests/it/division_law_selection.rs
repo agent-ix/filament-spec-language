@@ -8,7 +8,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Obligation, PackageDeclarations,
+    CheckCause, SemanticCheckRefusal, CheckedGraph, CheckingLimitKind, Obligation, PackageDeclarations,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
@@ -110,7 +110,7 @@ fn check(
     headers: &str,
     declarations: &str,
     mode: CheckMode,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     assemble(headers, declarations)
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal}"))
         .check(
@@ -121,7 +121,7 @@ fn check(
 }
 
 /// `(code, cause)` of each refusal.
-fn pairs(refusals: &[CheckRefusal]) -> Vec<(String, Option<&'static str>)> {
+fn pairs(refusals: &[SemanticCheckRefusal]) -> Vec<(String, Option<&'static str>)> {
     refusals
         .iter()
         .map(|refusal| {
@@ -133,7 +133,7 @@ fn pairs(refusals: &[CheckRefusal]) -> Vec<(String, Option<&'static str>)> {
         .collect()
 }
 
-fn only_nonzero(refusals: &[CheckRefusal]) {
+fn only_nonzero(refusals: &[SemanticCheckRefusal]) {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(
         matches!(
@@ -412,7 +412,7 @@ fn div_and_rem_carry_their_interval_and_nonzero_obligation_under_each_law() {
 }
 
 /// `true` when `refusals` is one `unproved-range` refusal.
-fn only_range(refusals: &[CheckRefusal]) -> bool {
+fn only_range(refusals: &[SemanticCheckRefusal]) -> bool {
     refusals.len() == 1
         && matches!(
             refusals[0].cause.as_ref(),

@@ -83,7 +83,7 @@ use super::Scope;
 use super::check::SourceScope;
 use super::lowering::AdmittedModel;
 use super::profile::TemporalProfile;
-use super::refusal::{CheckCause, CheckRefusal, TemporalCause, TimeUnitCause};
+use super::refusal::{CheckCause, SemanticCheckRefusal, TemporalCause, TimeUnitCause};
 use super::state_clause::{PopulationDomain, populations_overlapping};
 use crate::check::Capability;
 use crate::family::requirements::{ClaimExtent, Requirements, UnsupportedItem};
@@ -1075,14 +1075,14 @@ impl CheckedTemporalClause {
 impl FamilyContract for TemporalTraceFamily {
     type Form = TemporalDeclaration;
     type Checked = CheckedTemporalClause;
-    type Cause = CheckRefusal;
+    type Cause = SemanticCheckRefusal;
     type Declarations<'a> = TemporalDeclarations<'a>;
     type Claim = TemporalClaim;
 
     fn check<'a>(
         form: &TemporalDeclaration,
         cx: &mut CheckContext<'a, TemporalDeclarations<'a>>,
-    ) -> CheckOutcome<CheckedTemporalClause, CheckRefusal> {
+    ) -> CheckOutcome<CheckedTemporalClause, SemanticCheckRefusal> {
         check_clause(form, cx.declarations()).map(Staged::new)
     }
 
@@ -1091,12 +1091,12 @@ impl FamilyContract for TemporalTraceFamily {
     }
 }
 
-fn refuse(cause: TemporalCause) -> StageFailure<CheckRefusal> {
+fn refuse(cause: TemporalCause) -> StageFailure<SemanticCheckRefusal> {
     StageFailure::Refused(refusal(cause))
 }
 
-fn refusal(cause: TemporalCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: TemporalCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // A clause has no expression tree for a `Location` path to walk;
         // `region::DeclarationRegions::refusal_region` reads a `Temporal`
         // cause's own span directly, so this `Location` is never resolved.
@@ -1105,7 +1105,7 @@ fn refusal(cause: TemporalCause) -> CheckRefusal {
     }
 }
 
-fn fault(invariant: &'static str) -> StageFailure<CheckRefusal> {
+fn fault(invariant: &'static str) -> StageFailure<SemanticCheckRefusal> {
     StageFailure::Fault(InternalFault::new(STAGE, invariant))
 }
 
@@ -1196,7 +1196,7 @@ pub(crate) fn checked_operators(
     formula: &TemporalFormulaForm,
     reading: &IntervalReading<'_>,
     refusals: &mut Vec<TemporalCause>,
-) -> Result<(Vec<CheckedOperator>, Vec<Span>), StageFailure<CheckRefusal>> {
+) -> Result<(Vec<CheckedOperator>, Vec<Span>), StageFailure<SemanticCheckRefusal>> {
     let bounded = matches!(reading, IntervalReading::Steps { bounded: true });
     let mut operators = Vec::new();
     let mut punctual = Vec::new();
@@ -1313,7 +1313,7 @@ fn aggregate_duration_bound(
     quantity: &fsl_forms::QuantityForm,
     target: &super::time_units::TimeScale,
     declarations: &TemporalDeclarations<'_>,
-) -> Result<Rational, StageFailure<CheckRefusal>> {
+) -> Result<Rational, StageFailure<SemanticCheckRefusal>> {
     let ceiling = declarations.timed.rational_bits;
     let magnitude = super::probabilistic::exact_value(&quantity.magnitude, ceiling).map_err(
         |fault| match fault {
@@ -1353,7 +1353,7 @@ fn aggregate_duration_bound(
 /// that does not convert to the window's unit, is not a duration of the
 /// clause's clock and refuses `ill_typed`/`unit-mismatch` at the bound's
 /// unit; an unknown unit stays a missing name.
-fn window_bound_refusal(cause: TimeUnitCause, span: Span) -> StageFailure<CheckRefusal> {
+fn window_bound_refusal(cause: TimeUnitCause, span: Span) -> StageFailure<SemanticCheckRefusal> {
     match cause {
         TimeUnitCause::NotTimeDimension { .. } | TimeUnitCause::OtherTimeDimension { .. } => {
             refuse(TemporalCause::AggregateWindowKindMismatch { span })
@@ -1372,7 +1372,7 @@ pub(crate) fn located(
     limit: LimitExceeded,
     declarations: &TemporalDeclarations<'_>,
     span: Span,
-) -> StageFailure<CheckRefusal> {
+) -> StageFailure<SemanticCheckRefusal> {
     let region = super::region::region(declarations.source, declarations.embedding, span);
     StageFailure::Limit(limit.at(region.map(Locus::Region)))
 }
@@ -1413,7 +1413,7 @@ pub(crate) fn clause_profile(
 fn check_clause(
     declaration: &TemporalDeclaration,
     declarations: &TemporalDeclarations<'_>,
-) -> Result<CheckedTemporalClause, StageFailure<CheckRefusal>> {
+) -> Result<CheckedTemporalClause, StageFailure<SemanticCheckRefusal>> {
     let form = &declaration.form;
     let profile =
         clause_profile(declarations.selections, &form.profile, declaration.span).map_err(refuse)?;
@@ -2313,7 +2313,7 @@ fn in_safety_fragment_with_provision<P: PropertyProvision>(
 pub(crate) fn build_formula(
     form: &TemporalFormulaForm,
     intervals: &BTreeMap<TemporalNodeId, Option<CheckedInterval>>,
-) -> Result<CheckedFormula, StageFailure<CheckRefusal>> {
+) -> Result<CheckedFormula, StageFailure<SemanticCheckRefusal>> {
     let node = |id: &TemporalNodeId| FormulaNodeId(id.index());
     let mut nodes = Vec::with_capacity(form.nodes().len());
     for (id, written) in form.iter() {
@@ -2550,7 +2550,7 @@ fn greatest_reach(
 fn formula_horizon(
     declaration: &TemporalDeclaration,
     declarations: &TemporalDeclarations<'_>,
-) -> Result<u64, StageFailure<CheckRefusal>> {
+) -> Result<u64, StageFailure<SemanticCheckRefusal>> {
     horizon(&declaration.form.formula).map_err(|fault| match fault {
         HorizonFault::Overflow { span, deepest, own } => {
             let limit = LimitExceeded::new(
@@ -2567,7 +2567,7 @@ fn formula_horizon(
 /// Whether `refusal` of the clause `form` is located after its `on each`
 /// activation's binder, in the guard or the body, so that the guard is checked
 /// first (FR-337 "`on each` activation at S3").
-pub(crate) fn refuses_after_activation(form: &TemporalClauseForm, refusal: &CheckRefusal) -> bool {
+pub(crate) fn refuses_after_activation(form: &TemporalClauseForm, refusal: &SemanticCheckRefusal) -> bool {
     let ActivationForm::Each { parameter, .. } = &form.activation else {
         return false;
     };
@@ -2602,7 +2602,7 @@ impl CheckedTemporalClause {
 #[cfg(any(test, feature = "test-support"))]
 pub fn check_clauses(
     package: &crate::check::PackageDeclarations,
-) -> Vec<Result<CheckedTemporalClause, StageFailure<CheckRefusal>>> {
+) -> Vec<Result<CheckedTemporalClause, StageFailure<SemanticCheckRefusal>>> {
     let scope = Scope::new(
         package.types.clone(),
         package.operations.clone(),

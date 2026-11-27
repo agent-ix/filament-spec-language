@@ -18,7 +18,7 @@ use fsl_foundation::Span;
 
 use super::footprint::{FootprintRefusal, SymbolicFootprint, SymbolicLocation};
 use super::protocol_clause::{BoundAttempt, CheckedControlTree, CheckedProtocol, ProtocolNodeId};
-use super::refusal::{CheckCause, CheckRefusal, ProtocolAnchorCause};
+use super::refusal::{CheckCause, SemanticCheckRefusal, ProtocolAnchorCause};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -94,8 +94,8 @@ pub struct CheckedMemory {
     pub accesses: Vec<CheckedAccess>,
 }
 
-fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ProtocolAnchorCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
@@ -134,7 +134,7 @@ fn ancestors(
 pub(crate) fn check_models(
     protocol: &ProtocolDeclarationForm,
     tree: &CheckedControlTree,
-) -> Result<CheckedMemory, Vec<(Span, CheckRefusal)>> {
+) -> Result<CheckedMemory, Vec<(Span, SemanticCheckRefusal)>> {
     let parent = parent_map(tree);
     let parallels: BTreeMap<ProtocolNodeId, &fsl_forms::ParallelForm> = protocol
         .parallels
@@ -148,7 +148,7 @@ pub(crate) fn check_models(
             .rfind(|above| parallels.contains_key(above))
     };
 
-    let mut refusals: Vec<(Span, CheckRefusal)> = Vec::new();
+    let mut refusals: Vec<(Span, SemanticCheckRefusal)> = Vec::new();
     let mut memory = CheckedMemory::default();
     for form in &protocol.parallels {
         let node = ProtocolNodeId(form.declaration);
@@ -322,7 +322,7 @@ pub(crate) fn classify(
     checked: &CheckedProtocol,
     bound: &[BoundAttempt],
     footprint_of: impl Fn(&BoundAttempt) -> Result<SymbolicFootprint, FootprintRefusal>,
-) -> Result<Vec<CheckedAccess>, Vec<(Span, CheckRefusal)>> {
+) -> Result<Vec<CheckedAccess>, Vec<(Span, SemanticCheckRefusal)>> {
     let parent = parent_map(&checked.controls);
     let model_of: BTreeMap<ProtocolNodeId, MemoryModelName> = checked
         .memory
@@ -331,7 +331,7 @@ pub(crate) fn classify(
         .map(|parallel| (parallel.node, parallel.memory))
         .collect();
 
-    let mut refusals: Vec<(Span, CheckRefusal)> = Vec::new();
+    let mut refusals: Vec<(Span, SemanticCheckRefusal)> = Vec::new();
     let mut accesses = Vec::new();
     for form in &protocol.attempts {
         if form.recommendation {

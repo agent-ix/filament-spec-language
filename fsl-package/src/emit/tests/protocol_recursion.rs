@@ -80,7 +80,7 @@ fn checked_with_limits(
 fn check_result(
     text: &str,
     limits: CheckingLimits,
-) -> Result<(fsl_semantics::check::CheckedGraph, String), Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<(fsl_semantics::check::CheckedGraph, String), Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT])
         .expect("the spine model document admits");
     let identity = package_identity(SPINE_MODEL_DOCUMENT);

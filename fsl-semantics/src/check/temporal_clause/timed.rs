@@ -44,7 +44,7 @@ use super::{
 };
 use crate::check::lowering::AdmittedModel;
 use crate::check::probabilistic::{ExactFault, exact_value};
-use crate::check::refusal::{CheckRefusal, ClockSelectionFault, TemporalCause, TimeUnitCause};
+use crate::check::refusal::{SemanticCheckRefusal, ClockSelectionFault, TemporalCause, TimeUnitCause};
 use crate::check::time_units::TimeScale;
 
 /// The clock role that binds `model-time` (ADR-026 CB-1).
@@ -499,7 +499,7 @@ fn configuration_kind(clock: &ClockConfiguration) -> &'static str {
 /// exact value).
 pub(crate) enum IntervalFailure {
     Cause(TemporalCause),
-    Stop(StageFailure<CheckRefusal>),
+    Stop(StageFailure<SemanticCheckRefusal>),
 }
 
 impl TimedReader<'_> {
