@@ -26,9 +26,9 @@ pub use clock_rows::{row_clock_step, InvariantReading, RowClockStep};
 pub use failure::{
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
     AssumptionTarget, CandidateStep, ObservationField, ObservationLabel, PairedAssumptionPath,
-    PairedAssumptionStep, ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolTrace,
-    RefinementFailure, StepRejection, StepResult, StepVerdict, Taken, TerminalSuccessDirection,
-    Undetermined,
+    PairedAssumptionStep, ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolPathNode,
+    ProtocolPathRef, ProtocolTrace, RefinementFailure, StepRejection, StepResult, StepVerdict,
+    Taken, TerminalSuccessDirection, Undetermined,
 };
 pub use history::{initial_history, step_history, HistoryValues};
 pub use liveness::{

@@ -320,6 +320,20 @@ impl AbstractClass {
             Taken::ProtocolTraces(traces) => traces
                 .iter()
                 .any(|trace| self.is_taken_along(&trace.transitions)),
+            Taken::ProtocolPathRefs(paths) => paths.iter().any(|path| {
+                let mut current = path.tail.as_deref();
+                while let Some(node) = current {
+                    if node
+                        .transition
+                        .applied_application()
+                        .is_some_and(|transition| self.covers(transition))
+                    {
+                        return true;
+                    }
+                    current = node.previous.as_deref();
+                }
+                self.is_taken_along(&path.seed.transitions)
+            }),
         }
     }
 

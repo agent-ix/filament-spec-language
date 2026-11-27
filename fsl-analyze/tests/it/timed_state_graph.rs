@@ -929,8 +929,7 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
     let limits = fsl_analyze::analyze::AnalyzeLimits::published(
         fsl_analyze::analyze::DeadlineSupply::Unbounded,
     );
-    let (document, _) =
-        settle_over_base_with(claim, item, limits, false).expect("a settled run");
+    let (document, _) = settle_over_base_with(claim, item, limits, false).expect("a settled run");
     document["items"][0].clone()
 }
 
@@ -1080,8 +1079,13 @@ fn the_library_refuses_a_timed_item_limit_the_caller_also_set() {
     caller_only
         .engines
         .set(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5);
-    settle_over_base_with(BASE_POSSIBLE, json!({"claim": "AnyBase"}), caller_only, true)
-        .expect("a caller bound alone settles");
+    settle_over_base_with(
+        BASE_POSSIBLE,
+        json!({"claim": "AnyBase"}),
+        caller_only,
+        true,
+    )
+    .expect("a caller bound alone settles");
 }
 
 const BASE_POSSIBLE: &str = "possible AnyBase using v over (c: Base) { true }\n";

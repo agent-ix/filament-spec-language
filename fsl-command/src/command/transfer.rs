@@ -368,7 +368,7 @@ impl Transfer<'_> {
         Ok(RunResult {
             exit_code,
             value: NativeResult::analyze_document(json!({
-                "format": "native-run-result/2",
+                "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
                 "refinement_transfer": {
                     "refinement": refinement_value,
                     "transfers": transfers,

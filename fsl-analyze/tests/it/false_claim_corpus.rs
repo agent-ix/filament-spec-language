@@ -143,7 +143,7 @@ fn qsl_923_reference_refutes_the_never_set_output_lasso() {
     assert!(!fsl_definitional_reference::evaluate_boolean(
         graph,
         atom.body(),
-        &[receiver.clone()],
+        std::slice::from_ref(&receiver),
         lasso.initial(),
         lasso.initial(),
     )

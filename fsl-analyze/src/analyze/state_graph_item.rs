@@ -50,8 +50,8 @@ use crate::model_check::{
     check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    certificate_item, decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
-    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
+    certificate_item, explore_timed_state_graph, TimedStateGraphDecision, ZoneCheckLimit,
+    ZoneCheckRefusal, ZoneStop,
 };
 
 /// The property form of a checked claim.
@@ -664,6 +664,8 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     )
 }
 
+type DigitalPredicateValues = (Vec<bool>, Vec<(usize, fsl_replay::GraphUndefined)>);
+
 /// EN-6's timed state-graph route. The zone certificate is checked by the
 /// qualified core before this result is reported; a refutation is accepted
 /// only when that checker re-derives the form's failed condition.
@@ -676,7 +678,7 @@ fn digital_predicate_values(
     role: PredicateRole,
     over: Option<&ObjectReference>,
     cancel: &Cancel,
-) -> Result<(Vec<bool>, Vec<(usize, fsl_replay::GraphUndefined)>), ()> {
+) -> Result<DigitalPredicateValues, ()> {
     if predicate.is_constant_true() {
         return Ok((vec![true; nodes.len()], Vec::new()));
     }
@@ -1309,6 +1311,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             Err(refusal) => return stopped(refusal, read, cancel),
         };
         let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
+        let undefined_decision = matches!(decision, TimedStateGraphDecision::Undefined { .. });
         let form = certificate_form(read.claim.form());
         let ef_nodes = match &decision {
             TimedStateGraphDecision::Holds { ef_nodes, .. }
@@ -1366,7 +1369,13 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                         | CertificateRule::PredicateUndefined
                 )
         );
-        if (held && !accepted) || (!held && !refuted) {
+        // ADR-018 UE-6: an undefined model-side expression at a reachable
+        // state refutes the item as an undefined claim. The zone certificate
+        // for that state is accepted, not rejected, so an `Undefined` decision
+        // is let through with an accepted certificate and its evidence reaches
+        // replay, which reproduces the undefined reading; only a decision that
+        // neither holds nor refutes by a rejected certificate is broken.
+        if (held && !accepted) || (!held && !refuted && !(undefined_decision && accepted)) {
             return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
         let evidence = match timed_evidence(&timed, &graph, read.claim, decision, instance.clone())
