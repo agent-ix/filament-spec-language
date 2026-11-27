@@ -39,7 +39,6 @@ fn graph(claim: &str, name: &str, limits: ModelCheckLimits) {
     let world = config_kernel_world_over(GRAPH_GUARD, claim, &["a"], &[vec![0]]);
     let result = run(world.request(&["a"], vec![world.item(name)], limits));
     let outcome = &result.items[0][0].outcome;
-    println!("OBSERVED: {}", short(outcome));
     assert!(
         matches!(outcome, StateGraphOutcome::Undefined { .. }),
         "expected Undefined (UE-6, RU-5): {}",
@@ -102,7 +101,6 @@ fn liveness(formula: &str, atom: fn(i64) -> Option<bool>) {
         CheckMode::Kernel,
     );
     let outcome = fixture.decide(atom).expect("checked");
-    println!("OBSERVED: {}", short(&outcome));
     assert!(
         matches!(&outcome, ModelCheckOutcome::Violated { counterexample, .. }
             if matches!(counterexample.kind, CounterexampleKind::UndefinedEvaluation(_))),
@@ -163,7 +161,6 @@ fn bounded(profile: &str, formula: &str, atom: fn(i64) -> Option<bool>) {
         &Cancel::new(),
     )
     .expect("checked");
-    println!("OBSERVED: {}", short(&outcome));
     assert!(
         matches!(&outcome, ModelCheckOutcome::Violated { counterexample, .. }
             if matches!(counterexample.kind, CounterexampleKind::UndefinedEvaluation(_))),
@@ -214,7 +211,6 @@ fn probe_checker_component_certificate_past_the_guard() {
         &Cancel::new(),
     )
     .expect("checked");
-    println!("OBSERVED: {}", short(&checked));
     assert!(
         !matches!(checked, fsl_replay::TemporalCertificateCheck::Accepted),
         "expected a rejection (UE-6): {}",
@@ -256,7 +252,6 @@ fn probe_checker_closure_certificate_past_the_guard() {
         &Cancel::new(),
     )
     .expect("checked");
-    println!("OBSERVED: {}", short(&checked));
     assert!(
         !matches!(checked, fsl_replay::TemporalCertificateCheck::Accepted),
         "expected a rejection (UE-6): {}",
@@ -299,7 +294,6 @@ fn temporal(formula: &str) -> String {
 
 fn zone_refutes(outcome: &crate::zone_search::Outcome) {
     let text = format!("{outcome:?}");
-    let head: String = text.chars().take(80).collect();
     let kind = match outcome {
         crate::zone_search::Outcome::Violated { counterexample, .. } => format!(
             "kind={:?} prefix={}",
@@ -308,7 +302,6 @@ fn zone_refutes(outcome: &crate::zone_search::Outcome) {
         ),
         _ => String::new(),
     };
-    println!("OBSERVED: {head} {kind:.200}");
     assert!(
         text.starts_with("Violated") && kind.contains("UndefinedEvaluation"),
         "expected an undefined evaluation (UE-6): {}",
@@ -367,12 +360,28 @@ fn probe_digital_safety() {
         &Cancel::new(),
     )
     .map(|outcome| outcome.outcome);
-    println!("OBSERVED: {}", short(&outcome));
     assert!(
         matches!(&outcome, Ok(ModelCheckOutcome::Violated { counterexample, .. })
             if matches!(counterexample.kind, CounterexampleKind::UndefinedEvaluation(_))),
         "expected an undefined evaluation (UE-6): {}",
         short(&outcome)
+    );
+}
+
+/// The digital state-graph route builds no graph past a step guard with no
+/// value: it stops with the typed undefined-guard limit, which the item
+/// settles `incomplete` (unresolved dynamics), never `Failed`.
+#[trace("TC-710", "FR-239-AC-11")]
+#[test]
+fn probe_digital_state_graph_stops_at_an_undefined_guard() {
+    let world = timed(&temporal("always holds(c.phase <= 3)"));
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("a timed subject");
+    let found = fsl_replay::explore_digital_state_graph(&timed, u64::MAX, u64::MAX, &Cancel::new());
+    assert!(
+        matches!(found, Err(fsl_replay::DigitalGraphLimit::UndefinedGuard)),
+        "expected the undefined-guard limit: {:?}",
+        found.as_ref().err()
     );
 }
 
@@ -418,7 +427,6 @@ fn derived(name: Option<&str>) {
         &Cancel::new(),
     )
     .expect("checked");
-    println!("OBSERVED: {}", short(&outcome));
     assert!(
         matches!(&outcome, ModelCheckOutcome::Violated { counterexample, .. }
             if matches!(counterexample.kind, CounterexampleKind::UndefinedEvaluation(_))),
@@ -438,6 +446,7 @@ fn probe_invariant_item() {
 }
 
 /// Control: the timed fixture's guard really has no value after `go`.
+#[trace("TC-710", "FR-239-AC-11")]
 #[test]
 fn probe_timed_fixture_control() {
     use fsl_eval::simulation::TransitionSystem;
@@ -452,10 +461,6 @@ fn probe_timed_fixture_control() {
         .expect("go");
     let second = system.successors(&next).expect("expands");
     let findings = format!("{:?}", second.findings);
-    println!(
-        "OBSERVED: successors={} findings={findings:.300}",
-        second.successors.len()
-    );
     assert!(findings.contains("ContractUndetermined"), "{findings}");
 }
 
@@ -478,7 +483,6 @@ fn probe_zone_refutation_settles_refuted_after_replay() {
             })
         },
     );
-    println!("OBSERVED: {}", short(&record.value));
     assert_eq!(record.value, TerminalValue::Refuted);
 }
 
@@ -511,7 +515,6 @@ fn probe_digital_refutation_replays() {
         panic!("a violation: {}", short(&outcome));
     };
     let settlement = crate::zone_replay::replay(&world, &counterexample).expect("replays");
-    println!("OBSERVED: {}", short(&settlement));
     assert!(crate::zone_replay::reproduced(&settlement));
 }
 
@@ -525,9 +528,19 @@ fn probe_zone_liveness_under_fairness_is_not_holds() {
         "fair weak M::Call::go; eventually holds(c.phase = 0)",
     ));
     let outcome = crate::zone_search::claim(&world, ZoneCheckLimits::default(), &Cancel::new());
-    let text = format!("{outcome:?}");
-    println!("OBSERVED: {}", &text[..text.len().min(120)]);
-    assert!(!text.starts_with("Holds"), "expected not Holds (UE-6)");
+    // Never `Holds` or `HoldsReduced`: `Undecided` until the refutation
+    // through a fair time-divergent behaviour lands, and then `Violated`
+    // with a formula or undefined-evaluation kind, never a deadlock.
+    assert!(
+        match &outcome {
+            crate::zone_search::Outcome::Undecided { .. } => true,
+            crate::zone_search::Outcome::Violated { counterexample, .. } =>
+                !matches!(counterexample.kind, CounterexampleKind::Deadlock),
+            _ => false,
+        },
+        "expected Undecided or Violated, never Holds (UE-3, UE-6): {}",
+        short(&outcome)
+    );
 }
 
 /// FR-245-AC-13: a certificate for the same subject with `bad`'s guard
@@ -547,7 +560,6 @@ fn probe_checker_rejects_bad_state_at_an_undefined_guard() {
     let verdict =
         crate::zone_search::check(&undefined, &certificate, CertificateCheckLimits::default())
             .expect("the check runs");
-    println!("OBSERVED: {}", short(&verdict));
     assert!(
         matches!(&verdict, ZoneCertificateVerdict::Rejected(rejection)
             if rejection.rule == CertificateRule::BadState),

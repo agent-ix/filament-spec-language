@@ -204,24 +204,42 @@ pub enum Admission {
     /// subject's dense runs; the caller establishes that and otherwise reads
     /// [`RegionCause::TimeLock`].
     DigitalIfNoTimeLock,
+    /// Strictness is the claim's only cause, but the table would read it
+    /// [`Admission::DigitalIfNoTimeLock`]: the refined grid walk decides it
+    /// where no time-lock is reachable, and otherwise
+    /// [`RegionCause::TimeLock`] is read.
+    StrictIfNoTimeLock,
     /// Clock regions decide it.
     Region(RegionCause),
 }
 
 /// The row of [`EN5_DIGITAL`] that admits `conditions`, or why none does.
+/// Strictness is read last: it takes the grid walk only when every other
+/// condition of the table admits the claim, and any other cause takes its own
+/// outcome first.
 #[implements("FSpec-FR-421-AC-8", "FR-921-AC-5")]
 pub fn en5_admission(conditions: RouteConditions) -> Admission {
+    let open = closed_admission(conditions);
+    if conditions.closed {
+        return open;
+    }
+    match open {
+        Admission::Digital => Admission::Region(RegionCause::Strict),
+        Admission::DigitalIfNoTimeLock => Admission::StrictIfNoTimeLock,
+        Admission::StrictIfNoTimeLock | Admission::Region(_) => open,
+    }
+}
+
+/// [`en5_admission`] of the claim read as closed.
+fn closed_admission(conditions: RouteConditions) -> Admission {
     let RouteConditions {
-        closed,
+        closed: _,
         delays,
         fairness,
         form,
         read_from,
         takes_event_maximum,
     } = conditions;
-    if !closed {
-        return Admission::Region(RegionCause::Strict);
-    }
     if delays == DelayClass::Mixed {
         return Admission::Region(RegionCause::MixedDelays);
     }
@@ -289,7 +307,7 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    use Admission::{Digital, DigitalIfNoTimeLock, Region};
+    use Admission::{Digital, DigitalIfNoTimeLock, Region, StrictIfNoTimeLock};
     use ClaimForm as F;
     use ReadFrom::{Later, Origin};
 
@@ -404,6 +422,64 @@ mod tests {
             };
             assert_eq!(en5_admission(top), maximum, "maximum {form:?} {from:?}");
         }
+    }
+
+    /// A strict claim takes the grid walk only when strictness is its sole
+    /// cause: every other cause of the table (mixed delays, fairness, a form
+    /// or a later position the table does not admit, the time-lock) takes its
+    /// own outcome first.
+    #[trace("FSpec-FR-421-AC-10", "FSpec-FR-421-AC-13")]
+    #[test]
+    fn strictness_is_read_after_every_other_cause() {
+        let strict = |conditions: RouteConditions| RouteConditions {
+            closed: false,
+            ..conditions
+        };
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Given, F::DeadlineEvent, Origin))),
+            Region(RegionCause::Strict)
+        );
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Free, F::Reachability, Origin))),
+            StrictIfNoTimeLock
+        );
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Mixed, F::Reachability, Origin))),
+            Region(RegionCause::MixedDelays)
+        );
+        for delays in [DelayClass::Given, DelayClass::Free] {
+            assert_eq!(
+                en5_admission(strict(RouteConditions {
+                    fairness: true,
+                    ..closed(delays, F::Reachability, Origin)
+                })),
+                Region(RegionCause::Fairness)
+            );
+        }
+        assert_eq!(
+            en5_admission(strict(closed(
+                DelayClass::Given,
+                F::UnweightedTimeFraction,
+                Origin
+            ))),
+            Region(RegionCause::UnweightedTimeFraction)
+        );
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Given, F::OtherFormula, Origin))),
+            Region(RegionCause::OtherFormula)
+        );
+        assert_eq!(
+            en5_admission(strict(closed(
+                DelayClass::Free,
+                F::DelayWeightedFraction,
+                Origin
+            ))),
+            Region(RegionCause::DelayWeightedFraction)
+        );
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Free, F::DeadlineEvent, Later))),
+            Region(RegionCause::LaterPosition)
+        );
     }
 
     /// Closedness, the delay class and fairness leave digital clocks for

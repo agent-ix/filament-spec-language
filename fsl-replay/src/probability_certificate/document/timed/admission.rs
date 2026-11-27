@@ -54,7 +54,10 @@ pub(super) fn certificate_route(
         Admission::DigitalIfNoTimeLock if !time_lock_reachable(system, timed, limits, cancel)? => {
             Ok(TimedProbabilityRoute::Digital)
         }
-        Admission::DigitalIfNoTimeLock | Admission::Region(_) => {
+        Admission::StrictIfNoTimeLock if !time_lock_reachable(system, timed, limits, cancel)? => {
+            Ok(TimedProbabilityRoute::Region)
+        }
+        Admission::DigitalIfNoTimeLock | Admission::StrictIfNoTimeLock | Admission::Region(_) => {
             Err(ProbabilityDocumentError::ObjectiveMismatch)
         }
     }

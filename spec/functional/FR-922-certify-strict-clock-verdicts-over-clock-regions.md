@@ -75,11 +75,15 @@ unsound, and the checker rejects a certificate that states it.
   `row_3444_two_clock_regions_bounded_minimum_routes` and
   `row_3444_two_clock_regions_bounded_maximum_routes` (FR-922-AC-4 subject A)
   and the strict time-lock row `row_3468_time_lock_strict_routes` with its
-  closed twin `row_3468_time_lock_closed_routes` (a locked run is read as
-  FSpec FR-416 "How claims read a time-lock" states, ADR-038 RL-7). A strict
-  claim for which a row of these kinds fails SHALL settle `incomplete`
-  (`unresolved-dynamics`) until the region MDP is built, never a verdict from
-  the grid walk.
+  closed twin `row_3468_time_lock_closed_early_routes` (a locked run is read
+  as FSpec FR-416 "How claims read a time-lock" states, ADR-038 RL-7). The
+  closed twin `row_3468_time_lock_closed_later_routes` waits on the region
+  MDP (QSL-3495) and is ignored until then; its live companion
+  `row_3468_time_lock_closed_later_settles_incomplete` pins the interim
+  outcome. The interim's stated limit: the grid walk is not checked against
+  the dense oracle for a claim outside these rows, and a wrong verdict there
+  is a defect of the interim, closed by the region MDP of QSL-3495 (After
+  alpha).
 - The checker SHALL refuse `ObjectiveMismatch` for a digital document over a
   claim the region route decides (FR-204 Admission "Route"), and for a region
   document over a claim the digital route decides.

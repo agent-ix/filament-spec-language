@@ -369,10 +369,14 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 },
             ));
         }
-        // No graph past an undefined step guard; the state-graph route's
-        // refutation of it (ADR-018 UE-6) is its own ticket's.
+        // No graph past an undefined step guard: the run stops incomplete
+        // with no verdict, unresolved dynamics, as a graph the engine does not
+        // build. The state-graph route's refutation of it (ADR-018 UE-6) is
+        // its own ticket's.
         Err(fsl_replay::DigitalGraphLimit::UndefinedGuard) => {
-            return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+            return EngineReport::Refused(Refusal::Incomplete(
+                fsl_replay::IncompleteCause::UnresolvedDynamics,
+            ));
         }
         Err(fsl_replay::DigitalGraphLimit::Cancelled) => match cancel.cause() {
             Some(source) => {
