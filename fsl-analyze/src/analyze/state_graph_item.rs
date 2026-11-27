@@ -535,7 +535,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 Some(GraphEvidence::Undefined {
                     stem,
                     undefined: reading,
-                    over: instance.clone(),
+                    over: instance.iter().cloned().collect(),
                 })
             }
         };
