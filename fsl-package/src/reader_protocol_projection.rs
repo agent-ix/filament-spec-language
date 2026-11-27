@@ -3755,7 +3755,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let field = declaration
                 .attributes()
                 .iter()
-                .find(|field| field.name() == field_name)
+                .find(|field| field.name() == field_name.as_ref())
                 .ok_or_else(|| fault("reader-source-object-field-is-direct"))?;
             let child = self.project_argument(id, operand_term, context, locals)?;
             return Ok((
