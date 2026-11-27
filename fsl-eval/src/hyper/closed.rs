@@ -723,6 +723,11 @@ pub fn read_closed_undefined(
         ClosedVerdict::Holds | ClosedVerdict::Violated { .. } => {}
     }
     let clause = inputs.clause;
+    // FR-183 states no replay of a contract conjunction read on a projected
+    // tuple, so an `align skip` clause leaves its contracts unread here, for
+    // the producer and the replay alike (one reader, so they agree): the
+    // producer returns `Undecided(UndecidedSuccessor)` and the replay refuses
+    // an undefined counterexample of such a clause as `HyperProjected`.
     if !clause.align_skip().is_empty() {
         return ClosedRead::Unread;
     }

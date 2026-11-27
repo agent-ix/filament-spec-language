@@ -94,12 +94,16 @@ pub(crate) enum Vault {
     /// [`Self::Busy`] whose `step` leaks as [`Self::Leaky`] does:
     /// `l = (i + h) mod 2`.
     BusyLeaky,
+    /// [`Self::Busy`] whose `step` also requires `quotient(1 - self.l + self.h)
+    /// >= 0`, which has no value at `(h, l) = (0, 1)` (needs the `quotient`
+    /// function of a Kernel world).
+    BusyUndefined,
 }
 
 impl Vault {
     /// Whether the vault has the `busy` field and the `mix` operation.
     fn busy(self) -> bool {
-        matches!(self, Self::Busy | Self::BusyLeaky)
+        matches!(self, Self::Busy | Self::BusyLeaky | Self::BusyUndefined)
     }
 
     fn contracts(self, reset: bool) -> String {
@@ -118,6 +122,13 @@ impl Vault {
             Self::Busy => {
                 "pre Idle using v on V::Vault::step { self.busy = 0 }\n\
                  post Step using v on V::Vault::step { self.l = i and self.busy = self.h }\n\
+                 pre Busy using v on V::Vault::mix { self.busy = 1 }\n\
+                 post Mixed using v on V::Vault::mix { self.busy = 0 }\n"
+            }
+            Self::BusyUndefined => {
+                "pre Idle using v on V::Vault::step { self.busy = 0 }\n\
+                 pre Guard using v on V::Vault::step { quotient(1 - self.l + self.h) >= 0 }\n\
+                 post Step using v on V::Vault::step { ((i = self.h and self.l = 0) or (i != self.h and self.l = 1)) and self.busy = self.h }\n\
                  pre Busy using v on V::Vault::mix { self.busy = 1 }\n\
                  post Mixed using v on V::Vault::mix { self.busy = 0 }\n"
             }

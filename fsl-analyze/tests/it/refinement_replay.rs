@@ -1390,3 +1390,45 @@ fn an_undefined_contract_replays_and_settles_refuted() {
         assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
     }
 }
+
+/// ADR-018 UE-6, ADR-020 RE-5: a step row `any` expands the abstract
+/// candidates itself (`decide_step`), and an abstract guard with no value at
+/// a candidate refutes there. The failure replays and the item settles
+/// `refuted`.
+#[trace("FR-142-AC-9")]
+#[test]
+fn an_undefined_abstract_guard_under_an_any_row_replays_and_settles_refuted() {
+    let contracts = "pre AbsGuard using v on Spec::Counter::inc { q(1 - self.value) >= 0 }\n\
+                     post AbsPost using v on Spec::Counter::inc { true }\n";
+    let refinement = mutated(
+        &cas_refines_counter(),
+        "step Impl::Counter::commitA -> Spec::Counter::inc(self);",
+        "step Impl::Counter::commitA -> any;",
+    );
+    let world = World::with_mode(
+        Variant::CAS,
+        &format!("{UE6_FUNCTION}{contracts}{refinement}"),
+        CheckMode::Kernel,
+    );
+    let subject = cas(&world);
+    let outcome = check(&subject);
+    let payload = counterexample(outcome.clone());
+    let Some(RefinementFailure::UndefinedContract { clause, position }) =
+        payload.refinement.clone()
+    else {
+        panic!("an undefined contract: {:?}", payload.refinement);
+    };
+    assert_eq!(clause, "AbsGuard");
+    let settlement = replay(&subject, &payload).expect("replays");
+    assert!(
+        matches!(
+            &settlement,
+            RefinementTraceSettlement::Reproduced {
+                failure: RefinementFailure::UndefinedContract { position: at, .. },
+                ..
+            } if *at == position
+        ),
+        "{settlement:?}"
+    );
+    assert_eq!(settle(&subject, &outcome).value, TerminalValue::Refuted);
+}

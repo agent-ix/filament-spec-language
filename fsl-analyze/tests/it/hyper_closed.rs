@@ -462,3 +462,33 @@ fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skippe
         assert!(text.contains("wrong-role-mapping"), "{alias:?}: {text}");
     }
 }
+
+/// An `align skip` clause reads the executions through their projection
+/// (FR-178), and FR-183 states no replay for a contract conjunction read on a
+/// projected tuple. The producer and the replay read one function,
+/// `read_closed_undefined`, which leaves the contract of an `align skip`
+/// clause unread; so a guard with no value at a reached state refutes
+/// nothing and the item stays `Undecided(UndecidedSuccessor)`, never `Holds`.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn an_undefined_guard_of_an_align_skip_clause_stays_undecided() {
+    let world = World::busy_with_kernel_function(
+        Vault::BusyUndefined,
+        &crate::hyper_projected_support::IDLE,
+        &aligned("always [0, 2] holds(v.l @ a = v.l @ b)"),
+        "function quotient using v(x: Integer): Integer pure { 1 div x }\n",
+    );
+    let outcome = world
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("the run is not refused");
+    assert!(
+        matches!(
+            outcome,
+            HyperOutcome::Undecided {
+                cause: fsl_replay::UndecidedCause::UndecidedSuccessor,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+}
