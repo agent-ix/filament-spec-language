@@ -2406,7 +2406,14 @@ impl<'r, S: LiveSubject> Run<'r, S> {
     }
 
     /// Decide the bindings in canonical order and settle the run.
-    #[implements("FR-126-AC-14", "FR-126-AC-15", "FR-156-AC-1", "FR-160-AC-6")]
+    #[implements(
+        "FR-126-AC-1",
+        "FR-126-AC-14",
+        "FR-126-AC-15",
+        "FR-156-AC-1",
+        "FR-158-AC-2",
+        "FR-160-AC-6"
+    )]
     fn decide(&self, mut totals: Totals) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         let mut explored = Vec::with_capacity(self.bindings.len());
         let mut cut = false;
@@ -2502,14 +2509,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                             Finding::HorizonCut
                                 | Finding::BoundLimited
                                 | Finding::MessagesBoundLimited
-                                | Finding::ConstraintBoundary
                                 | Finding::InstanceBoundLimited
                         )
                     })
                 })
                 && self.dead_limited.borrow().is_empty()
                 && self.dead_message_limited.borrow().is_empty()
-                && self.dead_constrained.borrow().is_empty()
                 && totals.instance_limited.is_empty()
                 && !ignored_fairness_lasso;
             explored.push(run);
