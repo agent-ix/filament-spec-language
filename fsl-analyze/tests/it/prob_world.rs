@@ -103,6 +103,20 @@ impl Model {
     /// The unit that selects this model as `M` and the model's domain
     /// package document, as a compile request reads them from files.
     pub(crate) fn unit_and_document(&self) -> (String, Vec<u8>) {
+        self.unit_and_document_with_frames(false, false)
+    }
+
+    /// The same unit with receiver-scoped operation frames and an explicitly
+    /// non-symmetric population, for multi-object probabilistic fixtures.
+    pub(crate) fn unit_and_receiver_scoped_document(&self) -> (String, Vec<u8>) {
+        self.unit_and_document_with_frames(false, true)
+    }
+
+    fn unit_and_document_with_frames(
+        &self,
+        symmetric: bool,
+        receiver_scoped: bool,
+    ) -> (String, Vec<u8>) {
         let unit = format!(
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
              profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -110,7 +124,7 @@ impl Model {
              model M = \"{}\";\n{}\n",
             self.package, self.body
         );
-        (unit, self.document(false))
+        (unit, self.document_with_frames(symmetric, receiver_scoped))
     }
 
     /// The identity of `suffix` in this package.
@@ -199,6 +213,10 @@ impl Model {
 
     /// The domain package document.
     pub(crate) fn document(&self, symmetric: bool) -> Vec<u8> {
+        self.document_with_frames(symmetric, symmetric)
+    }
+
+    fn document_with_frames(&self, symmetric: bool, receiver_scoped: bool) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),
@@ -235,7 +253,7 @@ impl Model {
             "object_type",
             json!({
                 "supertypes": [], "fields": fields,
-                "operations": self.operations.iter().map(|operation| self.operation(operation, symmetric))
+                "operations": self.operations.iter().map(|operation| self.operation(operation, receiver_scoped))
                     .collect::<Vec<_>>(),
                 "relationships": [],
             }),
