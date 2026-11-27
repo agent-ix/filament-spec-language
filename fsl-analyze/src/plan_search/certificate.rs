@@ -918,7 +918,8 @@ mod tests {
         let unit = b"language \"ix:native\" edition \"1-draft\";\n\
             profile v = \"filament.value.complete/v1\";\n\
             model M = \"example/plan-counter\";\n\
-            pre CanDivide using v on M::Counter::inc { self.value / (self.value - 1) > 0 }\n";
+            function q using v(x: Integer): Integer pure { 6 mod x }\n\
+            pre CanDivide using v on M::Counter::inc { q(self.value - 1) > 0 }\n";
         let parsed = fsl_cst::parse(
             SourceIdentity::new("agent-ix", "qsl3561"),
             "qsl3561.native",
