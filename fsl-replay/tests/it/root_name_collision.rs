@@ -541,6 +541,7 @@ fn library_selecting(
     Arc::new(read(&bytes, supplied).expect("the library admits on its own read"))
 }
 
+/// `outcome` refuses `invalid_package`/`definition-cycle` at `pointer`.
 fn assert_cycle(
     outcome: Result<CheckedPackageV2, fsl_package::PackageAdmissionRefusal>,
     pointer: &str,
