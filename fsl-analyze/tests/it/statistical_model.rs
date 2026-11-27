@@ -3845,6 +3845,14 @@ fn on_each_timed_world(keys: &[&str]) -> crate::timed_world::World {
 
 /// The record the FR-280 provider entry settles `Probe` with.
 fn served(world: &crate::timed_world::World) -> fsl_replay::statistical::StatisticalRecord {
+    served_over(world, world.request())
+}
+
+/// [`served`] over `simulation`, the world's request or a variant of it.
+fn served_over(
+    world: &crate::timed_world::World,
+    simulation: fsl_eval::simulation::model::ModelSimulationRequest<'_>,
+) -> fsl_replay::statistical::StatisticalRecord {
     let claim = world
         .package
         .graph()
@@ -3855,7 +3863,7 @@ fn served(world: &crate::timed_world::World) -> fsl_replay::statistical::Statist
         StatisticalRequest {
             workers: 1,
             subject: ModelSubject {
-                simulation: world.request(),
+                simulation,
                 proof_bounds: Vec::new(),
             },
             claim,
@@ -3900,6 +3908,21 @@ fn the_provider_entry_settles_an_on_each_claim_over_no_instance() {
     assert_eq!(
         record.value,
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
+    );
+}
+
+/// FSpec FR-361-AC-16 and FR-125 "Instancing": over a subject with no initial
+/// state the same entry settles `no-initial-state`, not `no-instance`.
+#[trace("TC-3241", "FR-875-AC-1")]
+#[test]
+fn the_provider_entry_settles_an_on_each_claim_over_no_initial_state() {
+    let world = on_each_timed_world(&["c"]);
+    let mut simulation = world.request();
+    simulation.initial = Vec::new();
+    let record = served_over(&world, simulation);
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInitialState)
     );
 }
 

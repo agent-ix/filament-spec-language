@@ -98,7 +98,7 @@ pub(super) fn build<'s, 'a>(
                 return Err(fault("over-is-an-object-type"));
             };
             system
-                .instances(&over.value_type)
+                .claim_bindings(&over.value_type)
                 .map_err(ProductRefusal::NotSimulated)?
                 .into_iter()
                 .map(|instance| {

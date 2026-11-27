@@ -246,7 +246,7 @@ fn build_configured(
                 return Err(fault("over-is-an-object-type").into());
             };
             system
-                .instances(&over.value_type)
+                .claim_bindings(&over.value_type)
                 .map_err(ProductRefusal::NotSimulated)?
                 .into_iter()
                 .map(|instance| {

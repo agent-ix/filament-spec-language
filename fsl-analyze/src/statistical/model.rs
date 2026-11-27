@@ -125,8 +125,9 @@ fn read_on_each(
         Err(failure) => return OnEachRead::Admission(Box::new(failure)),
     };
     match fsl_replay::on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
-        Ok(false) => OnEachRead::NoInstance,
-        Ok(true) => OnEachRead::Unimplemented,
+        Ok(fsl_replay::OnEachInstances::NoInitialState) => OnEachRead::NoInitialState,
+        Ok(fsl_replay::OnEachInstances::NoInstance) => OnEachRead::NoInstance,
+        Ok(fsl_replay::OnEachInstances::Some) => OnEachRead::Unimplemented,
         Err(error) => OnEachRead::Document(error),
     }
 }
@@ -419,12 +420,16 @@ fn bindings(
     let ValueType::Reference(object) = &over.value_type else {
         return Err(fault("over-is-an-object-type"));
     };
-    let instances = system
-        .instances(&over.value_type)
-        .map_err(|refusal| match refusal {
-            NotSimulated::RequiresBound(bound) => StatisticalRefusal::RequiresBound(bound),
-            _ => fault("over-instances-classify"),
-        })?;
+    // FR-125 "Instancing": the one derivation, `claim_instances`.
+    let instances = match system.claim_instances(&over.value_type) {
+        Ok(instances) => instances.as_slice().to_vec(),
+        Err(fsl_eval::simulation::model::NoClaimInstances::NotSimulated(NotSimulated::RequiresBound(bound))) => {
+            return Err(StatisticalRefusal::RequiresBound(bound))
+        }
+        Err(fsl_eval::simulation::model::NoClaimInstances::NotSimulated(_)) => return Err(fault("over-instances-classify")),
+        Err(fsl_eval::simulation::model::NoClaimInstances::NoInitialState) => return Err(StatisticalRefusal::NoTest),
+        Err(fsl_eval::simulation::model::NoClaimInstances::NoInstance) => return Err(StatisticalRefusal::NoInstance),
+    };
     instances
         .into_iter()
         .map(|instance| {

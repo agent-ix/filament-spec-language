@@ -721,6 +721,9 @@ pub enum StatisticalOutcome {
 /// found when statistical evidence was requested. No sample is drawn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OnEachRead {
+    /// The subject has no initial state: the item settles `no-initial-state`,
+    /// before `no-instance` (FR-125 "Instancing").
+    NoInitialState,
     /// The instance set is empty: the item settles `no-instance`.
     NoInstance,
     /// The set is not empty. FR-875 admits only exact evidence, so the item is
@@ -789,6 +792,10 @@ pub enum StatisticalRefusal {
     /// binding) pair.
     #[error("the request has no test to run")]
     NoTest,
+    /// The claim's `over` type has no instance over a subject that has an
+    /// initial state (FR-125 "Instancing"): the item settles `no-instance`.
+    #[error("the claim has no instance")]
+    NoInstance,
     /// More tests than a test index (`u32`) counts.
     #[error("{count} tests exceed the test-index range")]
     TooManyTests {

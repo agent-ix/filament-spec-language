@@ -539,7 +539,7 @@ pub use probability_certificate::{
     ExactProbabilityAcceptance, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
     ExactProbabilityGraphError, ExactProbabilityValue, LongRunOptimization, LongRunPolicyChoice,
     LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument, MeasurePayoffKind,
-    MeasureProbabilityDocument, OnEachOutcome, ProbabilisticCounterexample,
+    MeasureProbabilityDocument, OnEachInstances, OnEachOutcome, ProbabilisticCounterexample,
     ProbabilisticSchedulerChoice, ProbabilityBoundSide, ProbabilityCertificateDocument,
     ProbabilityCertificateLocus, ProbabilityCertificatePart, ProbabilityCertificateRejection,
     ProbabilityCertificateRule, ProbabilityDocumentError, ProbabilityDocumentIoLimits,

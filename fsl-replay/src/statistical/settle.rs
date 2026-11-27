@@ -313,6 +313,9 @@ pub fn settle_statistical_refusal(
         StatisticalRefusal::NoTest => StatisticalRecord::of(TerminalValue::Inconclusive(
             InconclusiveCause::NoInitialState,
         )),
+        StatisticalRefusal::NoInstance => {
+            StatisticalRecord::of(TerminalValue::Inconclusive(InconclusiveCause::NoInstance))
+        }
         StatisticalRefusal::Internal(fault) => StatisticalRecord::failed(fault.catalog_code()),
     })
 }
@@ -333,6 +336,9 @@ fn settle_on_each(read: &OnEachRead) -> Result<StatisticalRecord, UnsettledRefus
         }))
     };
     Ok(match read {
+        OnEachRead::NoInitialState => StatisticalRecord::of(TerminalValue::Inconclusive(
+            InconclusiveCause::NoInitialState,
+        )),
         OnEachRead::NoInstance => {
             StatisticalRecord::of(TerminalValue::Inconclusive(InconclusiveCause::NoInstance))
         }
