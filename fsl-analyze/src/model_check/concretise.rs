@@ -46,7 +46,7 @@ mod tests {
     #[trace("FR-161-AC-5")]
     #[test]
     fn lift_charges_two_work_units_per_edge() {
-        let document = crate::counter::document(false);
+        let document = crate::counter::symmetric_document();
         let package = crate::counter::package_with_mode(
             &document,
             crate::counter::CONTRACT,
