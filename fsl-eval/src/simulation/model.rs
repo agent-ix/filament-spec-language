@@ -1140,6 +1140,23 @@ fn admitted_types(
     Ok((admitted, conflicting_identity))
 }
 
+impl crate::simulation::ConflictingIdentity {
+    /// The typed admission refusal of this conflict (FR-125-AC-9): the key and
+    /// both types.
+    #[must_use]
+    pub fn admission_failure(&self) -> AdmissionFailure {
+        refused(
+            Code::InvalidRuntimeInput,
+            "conflicting-identity",
+            &[
+                ("key", self.key.clone()),
+                ("first_type", self.first_type.clone()),
+                ("second_type", self.second_type.clone()),
+            ],
+        )
+    }
+}
+
 fn refused(code: Code, cause: &'static str, fields: &[(&'static str, String)]) -> AdmissionFailure {
     AdmissionFailure::Refused(Box::new(record(code, cause, fields)))
 }
