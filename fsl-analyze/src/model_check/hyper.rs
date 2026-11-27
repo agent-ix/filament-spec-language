@@ -1861,6 +1861,7 @@ impl<'a> Run<'_, 'a> {
     /// whose letter is undefined, or whose expansion found an undefined
     /// `μ_U` or contract, ends the run; failing that, a refused one leaves it
     /// undecided. The finding comes with the depth it was at.
+    #[implements("FR-177-AC-7")]
     fn first_phase(
         &self,
         run: &Explored<'_, '_>,
