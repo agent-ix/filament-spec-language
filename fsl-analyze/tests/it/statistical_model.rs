@@ -2717,9 +2717,9 @@ const UP_DOWN_CONFIDENCE: &str = "with alpha 0.1, beta 0.1, indifference 0.05";
 /// `>= 1/5` is accepted and `>= 1/3` rejected, with coverage `asymptotic`.
 #[trace(
     "FSpec-TC-374",
-    "FSpec-FR-420-AC-9",
+    "FSpec-FR-420-AC-14-AC-9",
     "FSpec-FR-408-AC-20",
-    "FSpec-FR-420-AC-10"
+    "FSpec-FR-420-AC-14-AC-10"
 )]
 #[test]
 fn a_delay_weighted_long_run_fraction_weighs_each_cycle_by_its_delays() {
@@ -2785,7 +2785,7 @@ fn a_delay_weighted_long_run_fraction_weighs_each_cycle_by_its_delays() {
 /// state and ties with `q`; when `p` goes first its post state equals the
 /// initial key with `q` pending, and a cut there would give one-step
 /// cycles. Every cycle is `q, r` or `p, q, r`: at least two steps.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-10")]
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-14-AC-10")]
 #[test]
 fn a_return_with_a_tied_step_pending_cuts_no_cycle() {
     let claims = format!(
@@ -2825,7 +2825,7 @@ fn a_return_with_a_tied_step_pending_cuts_no_cycle() {
 
 /// FSpec FR-420-AC-11: a time-locked state reached by a delay-weighted
 /// long-run behaviour settles `unsupported`, `time-locked-sample{state}`.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11", "FSpec-FR-420-AC-7")]
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-14-AC-11", "FSpec-FR-420-AC-7")]
 #[test]
 fn a_time_locked_long_run_behaviour_is_unsupported() {
     let claims = format!(
@@ -2864,7 +2864,7 @@ fn a_time_locked_long_run_behaviour_is_unsupported() {
 /// clock, so every cycle contains the full `A`, `B`, `Z` run: at least three
 /// positions. A model whose steps never reset the clock never returns to the
 /// initial key and stops at `max_cycle_steps`.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-10", "FSpec-FR-408-AC-20")]
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-14-AC-10", "FSpec-FR-408-AC-20")]
 #[test]
 fn only_a_return_with_every_clock_at_its_initial_value_cuts_a_cycle() {
     let loop_model = |reset: &str| {
@@ -2944,7 +2944,7 @@ fn only_a_return_with_every_clock_at_its_initial_value_cuts_a_cycle() {
 /// behaviour that terminates has long-run fraction 1 or 0, the estimate is the
 /// mean of those limits over Okamoto's `N` behaviours, `>= 1/4` is accepted
 /// and `>= 3/4` rejected.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11")]
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-14-AC-11")]
 #[test]
 fn a_terminating_delay_weighted_behaviour_takes_the_limit_of_its_idle_tail() {
     let claims = format!(
@@ -2991,7 +2991,7 @@ fn a_terminating_delay_weighted_behaviour_takes_the_limit_of_its_idle_tail() {
 /// FSpec FR-420-AC-11: a cycle of total delay 0 adds nothing to the
 /// denominator, and a run whose every cycle has total delay 0 takes the
 /// unweighted fraction over positions.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11")]
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-14-AC-11")]
 #[test]
 fn a_run_of_zero_delay_cycles_takes_the_unweighted_fraction() {
     let claims = format!(
@@ -3500,7 +3500,7 @@ fn a_window_aggregate_event_does_not_check() {
 /// FSpec FR-420 idle-tail semantics decide every completion here: after send
 /// at 2 ms, phase is 1, so each eventuality for phase = 0 is false, including
 /// the wider [3 ms, 9 ms] interval.
-#[trace("FSpec-FR-420")]
+#[trace("FSpec-FR-420-AC-14")]
 #[test]
 fn six_interval_bounds_inside_a_dense_idle_tail_settle_rejected() {
     let five = concat!(
