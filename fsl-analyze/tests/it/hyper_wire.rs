@@ -435,6 +435,7 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
     let document = run.document();
     assert_eq!(run.exit, 21, "{document}");
     let hp4 = run.item(0);
+    assert_eq!(hp4["record"]["result"], "unsupported", "{document}");
     assert_eq!(label(&hp4), "unsupported", "{document}");
     assert_eq!(
         hp4["record"]["diagnostic"]["cause"],
