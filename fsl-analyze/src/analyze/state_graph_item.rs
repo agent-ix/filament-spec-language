@@ -50,8 +50,8 @@ use crate::model_check::{
     check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    certificate_item, decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
-    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
+    certificate_item, explore_timed_state_graph, TimedStateGraphDecision, ZoneCheckLimit,
+    ZoneCheckRefusal, ZoneStop,
 };
 
 /// The property form of a checked claim.

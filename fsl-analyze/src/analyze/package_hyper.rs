@@ -247,6 +247,7 @@ impl<'a> PackageHyperSubject<'a> {
     }
 
     #[implements("FR-940-AC-17")]
+    #[allow(clippy::too_many_arguments)]
     fn single_existential(
         &self,
         certificate: &fsl_replay::PackageHyperClosureRequest<'_>,
