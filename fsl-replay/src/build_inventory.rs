@@ -79,6 +79,7 @@ impl BuildInventory {
 /// Read the editions, profiles, families, features and providers this build
 /// admits. All compiler-owned tables are read directly; no files, environment
 /// variables or clocks are consulted.
+#[ix_trace_rs::string_edge]
 pub fn build_inventory(registry: &fsl_route::Registry) -> BuildInventory {
     use fsl_semantics::value::HeaderLayer;
 

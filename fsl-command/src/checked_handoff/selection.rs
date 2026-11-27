@@ -378,6 +378,7 @@ impl Selection {
 
     /// The sidecar of `compiled` under `request`, from the in-process checked
     /// unit. `bytes` only joins each node to its wire id.
+    #[ix_trace_rs::string_edge]
     pub(super) fn derive(
         compiled: &Compiled,
         request: &Request,
@@ -883,6 +884,7 @@ fn has_binding(members: &[CheckedTerm], name: &str) -> bool {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn check_await(row: &AwaitRow, package: &CheckedPackageV2) -> Result<(), SelectionRefusal> {
     let refused = |axis| SelectionRefusal {
         axis,

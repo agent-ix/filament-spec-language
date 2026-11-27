@@ -30,8 +30,8 @@ use fsl_forms::{Accumulation, BinaryOperator, Expression, FunctionDeclaration, T
 use fsl_foundation::selection::ProfileSelection;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, CheckingStage, MeasureObligation,
-    Obligation, PackageDeclarations, ProvedInterval, StageLimitCause,
+    CheckCause, CheckedGraph, CheckingLimitKind, CheckingStage, MeasureObligation, Obligation,
+    PackageDeclarations, ProvedInterval, SemanticCheckRefusal, StageLimitCause,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -201,7 +201,7 @@ fn declarations(
     }
 }
 
-fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     declarations(TypeEnvironment::default(), functions).check(
         CheckMode::Linked,
         CheckingLimits::default(),
@@ -211,7 +211,9 @@ fn check(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<CheckR
 
 /// The quotient fixture uses integer operands with a Rational result; `/`
 /// therefore needs the complete value profile on that function.
-fn check_quotient(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check_quotient(
+    functions: Vec<FunctionDeclaration>,
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let mut package = declarations(TypeEnvironment::default(), functions);
     let index = package
         .functions
@@ -235,7 +237,7 @@ fn check_quotient(functions: Vec<FunctionDeclaration>) -> Result<CheckedGraph, V
 }
 
 /// The single refusal of a package check.
-fn refusal(result: Result<CheckedGraph, Vec<CheckRefusal>>) -> CheckRefusal {
+fn refusal(result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>) -> SemanticCheckRefusal {
     match result {
         Err(mut refusals) if refusals.len() == 1 => refusals.remove(0),
         Err(refusals) => panic!("one refusal, not {refusals:?}"),
@@ -244,7 +246,7 @@ fn refusal(result: Result<CheckedGraph, Vec<CheckRefusal>>) -> CheckRefusal {
 }
 
 fn unproved_decrease(
-    result: Result<CheckedGraph, Vec<CheckRefusal>>,
+    result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>,
 ) -> (Vec<String>, MeasureObligation) {
     let refusal = refusal(result);
     assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
@@ -440,7 +442,7 @@ fn zero_quotient() -> Expression {
     Expression::rational(integer(0), integer(1))
 }
 
-fn unproved(result: Result<CheckedGraph, Vec<CheckRefusal>>) -> (Obligation, &'static str) {
+fn unproved(result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>) -> (Obligation, &'static str) {
     let refusal = refusal(result);
     assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
     let cause = refusal.cause.cause().unwrap();

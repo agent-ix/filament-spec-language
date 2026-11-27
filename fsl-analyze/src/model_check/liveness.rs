@@ -100,19 +100,19 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
+    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{
-    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
+use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
+use fsl_eval::simulation::protocol::{
+    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
+    ProtocolTransition,
+};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
-use fsl_eval::simulation::protocol::{
-    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
-    protocol_constraints,
-};
 use fsl_eval::simulation::{
     Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint,
     InitialStateRefusal, Limit, Limits, OfferedReductions, Outcome, Permutation, SubjectSystem,
@@ -122,11 +122,11 @@ use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::budget::{Budget, BudgetStop};
 use fsl_foundation::{IdentityLimits, Setting};
 use fsl_replay::{
-    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
-    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
-    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
-    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
-    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
+    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
+    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
+    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
+    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
+    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use ix_trace_rs::implements;
@@ -135,11 +135,11 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    Admitted, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES, ModelCheckRefusal, ModelCheckRequest,
-    atom_refusal, not_simulated, precheck, refuse_capture_read,
+    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
+    ModelCheckRequest, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{FairModel, fairness_constraints, tree_path};
+use super::fair_walk::{fairness_constraints, tree_path, FairModel};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainConfig,
     RetainHooks, RetainedEdge, RetainedGraph,
@@ -1246,7 +1246,7 @@ mod prefetch_window_tests {
 
 #[cfg(test)]
 mod cache_budget_tests {
-    use super::{ByteCache, PropertyKey, StateKey, cache_product_key, cache_successor_keys};
+    use super::{cache_product_key, cache_successor_keys, ByteCache, PropertyKey, StateKey};
 
     #[test]
     fn byte_cache_evicts_and_releases_charged_bytes() {
@@ -1290,11 +1290,9 @@ mod cache_budget_tests {
         cache_product_key(&mut product_cache, first_key.clone(), first_value);
         cache_product_key(&mut product_cache, second_key.clone(), first_value);
         assert!(product_cache.get(&first_key).is_none());
-        assert!(
-            product_cache
-                .get(&second_key)
-                .is_some_and(|value| value.as_ref() == first_value)
-        );
+        assert!(product_cache
+            .get(&second_key)
+            .is_some_and(|value| value.as_ref() == first_value));
         assert!(product_cache.used_bytes() <= charged);
 
         let root = StateKey::from_canonical_bytes(b"root".to_vec());
@@ -1795,12 +1793,12 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
 #[cfg(test)]
 mod key_encoding_tests {
-    use super::{PropertyKey, canonical_api};
+    use super::{canonical_api, PropertyKey};
     use crate::model_check::product::ProductKey;
     use fsl_eval::automaton::GbaBuilder;
     use fsl_foundation::IdentityLimits;
     use ix_trace_rs::trace;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     #[trace("TC-453", "FR-101-AC-2")]
     #[test]
@@ -2406,9 +2404,16 @@ impl<'r, S: LiveSubject> Run<'r, S> {
     }
 
     /// Decide the bindings in canonical order and settle the run.
-    #[implements("FR-126-AC-14", "FR-126-AC-15", "FR-156-AC-1", "FR-160-AC-6")]
+    #[implements(
+        "FR-126-AC-14",
+        "FR-126-AC-15",
+        "FR-156-AC-1",
+        "FR-160-AC-6",
+        "FR-161-AC-5"
+    )]
     fn decide(&self, mut totals: Totals) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         let mut explored = Vec::with_capacity(self.bindings.len());
+        let mut reduced_refutation: Option<Box<TemporalCounterexample<Tr<S>>>> = None;
         let mut cut = false;
         let mut ignored_fairness_lasso = false;
         for binding in self.bindings {
@@ -2474,11 +2479,21 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     .any(|state| state.findings.contains(&Finding::HorizonCut));
             match self.second_phase(&run)? {
                 Second::Lasso(counterexample) => {
-                    let stats = totals.stats();
-                    return Ok(ModelCheckOutcome::Violated {
-                        counterexample,
-                        stats,
-                    });
+                    if run.binding.applied.is_none() {
+                        return Ok(ModelCheckOutcome::Violated {
+                            counterexample,
+                            stats: totals.stats(),
+                        });
+                    }
+                    if reduced_refutation.is_none() {
+                        reduced_refutation = Some(counterexample);
+                    }
+                    // Each reduced binding has its own product. Keep the
+                    // first lasso, then charge its concrete steps before the
+                    // next binding uses the shared transition budget.
+                    self.charge_lifted(&mut totals);
+                    explored.push(run);
+                    continue;
                 }
                 Second::IgnoringConstraints => ignored_fairness_lasso = true,
                 Second::Cancelled(source) => {
@@ -2502,14 +2517,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                             Finding::HorizonCut
                                 | Finding::BoundLimited
                                 | Finding::MessagesBoundLimited
-                                | Finding::ConstraintBoundary
                                 | Finding::InstanceBoundLimited
                         )
                     })
                 })
                 && self.dead_limited.borrow().is_empty()
                 && self.dead_message_limited.borrow().is_empty()
-                && self.dead_constrained.borrow().is_empty()
                 && totals.instance_limited.is_empty()
                 && !ignored_fairness_lasso;
             explored.push(run);
@@ -2582,6 +2595,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     bound,
                     states: widen(totals.instance_limited.len()),
                 },
+                stats: totals.stats(),
+            });
+        }
+        if let Some(counterexample) = reduced_refutation {
+            return Ok(ModelCheckOutcome::Violated {
+                counterexample,
                 stats: totals.stats(),
             });
         }

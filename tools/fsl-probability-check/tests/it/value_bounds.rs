@@ -8,11 +8,11 @@
 //! emits for the same model, with the values the criterion names.
 
 use super::bounded::{
-    DOMAIN, document, model_source, mutate, replace_source_and_rebind, request_with,
-    requests_offering, requests_with_mode, run,
+    document, model_source, mutate, replace_source_and_rebind, request_with, requests_offering,
+    requests_with_mode, run, DOMAIN,
 };
 use super::certificate_kinds::likely;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use filament_exact::{Integer, Rational};
 use fsl_analyze::analyze::Settlement;
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
@@ -21,7 +21,7 @@ use fsl_replay::{
     TerminalValue,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub(crate) mod mutation;
 
@@ -752,8 +752,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
     assert_eq!(code, 2, "{output}");
     assert_eq!(output["status"], "refused", "{output}");
     assert_eq!(
-        output["reason"],
-        "invalid_runtime_input: probability certificate objective mismatch",
+        output["reason"], "invalid_runtime_input: probability certificate objective mismatch",
         "{output}"
     );
 

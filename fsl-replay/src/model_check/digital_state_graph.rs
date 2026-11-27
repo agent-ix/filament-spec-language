@@ -10,9 +10,9 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
-use ix_trace_rs::implements;
 
 /// A limit that stopped integer-clock graph expansion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,13 +145,15 @@ pub fn explore_digital_state_graph(
             }
             Err(stop) => return Err(limit_from_stop(stop, max_states)),
         };
-        if !graph.undefined.iter().any(|undefined| undefined.node == from) {
+        if !graph
+            .undefined
+            .iter()
+            .any(|undefined| undefined.node == from)
+        {
             let system = timed.system();
             if let Ok(expansion) = system.successors(state.discrete()) {
-                if let Ok(fsl_eval::simulation::model::TerminalClass::Undefined {
-                    model,
-                    cause,
-                }) = system.terminal_class(state.discrete(), !expansion.successors.is_empty())
+                if let Ok(fsl_eval::simulation::model::TerminalClass::Undefined { model, cause }) =
+                    system.terminal_class(state.discrete(), !expansion.successors.is_empty())
                 {
                     graph.undefined.push(DigitalGraphUndefined {
                         node: from,

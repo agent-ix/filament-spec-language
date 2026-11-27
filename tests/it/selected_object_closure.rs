@@ -3,8 +3,8 @@
 
 use filament_contract_model::{
     CheckedNodeOwner, CheckedOccurrenceRole, CheckedOperationEffect, CheckedOperationEffectOrigin,
-    CheckedPackageV2, ExactTypeProjectionErrorCode,
-    SelectedExactIdentities, SelectedExactIdentity, SelectedTypeDeclarations,
+    CheckedPackageV2, ExactTypeProjectionErrorCode, SelectedExactIdentities, SelectedExactIdentity,
+    SelectedTypeDeclarations,
 };
 use filament_exact::{Presence, ValueType};
 use fsl_command::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
@@ -357,7 +357,7 @@ fn selected_object_closure_refuses_a_model_reference_whose_object_witness_is_abs
         fixture.rows.fields().iter().cloned(),
         &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
     )
-        .expect("the checked package remains valid when one identity witness is omitted");
+    .expect("the checked package remains valid when one identity witness is omitted");
     let refusal = fixture
         .package
         .project_selected_type_declarations(

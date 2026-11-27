@@ -88,6 +88,7 @@ pub(super) fn settle_call(
     let documents = DocumentProvision::new();
     let subject = SubjectSelection::default_over(&documents);
     let run = AnalyzeRun {
+        selections: &[],
         package,
         binding: subject.binding(packages, &documents),
         provision,

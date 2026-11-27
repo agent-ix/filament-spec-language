@@ -286,7 +286,7 @@ fn try_world_of(
     profiles: &str,
     unit_body: &str,
     objects: Json,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages = package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -660,41 +660,6 @@ fn stochastic_rpc_exposes_checked_delay_windows() {
     assert!(timed_sample.steps.iter().all(|step| step.delay.is_some()));
     assert!(!timed_sample.steps.is_empty());
     assert!(timed_sample.stamp <= exact(3, 1));
-    let sample_at = fsl_eval::simulation::ChoicePoint {
-        seed: 7,
-        trace: 0,
-        step: 0,
-        choice: 0,
-    };
-    assert_eq!(
-        fsl_eval::simulation::model::replay_timed_sample(
-            &timed,
-            behaviour.last().state(),
-            workload,
-            sample_at,
-            8,
-            &exact(3, 1),
-            100,
-            &timed_sample,
-        )
-        .expect("replay timed sample"),
-        fsl_eval::simulation::model::TimedSampleReplay::Reproduced
-    );
-    let mut altered = timed_sample.clone();
-    altered.steps[0].delay = Some(exact(0, 1));
-    assert!(matches!(
-        fsl_eval::simulation::model::replay_timed_sample(
-            &timed,
-            behaviour.last().state(),
-            workload,
-            sample_at,
-            8,
-            &exact(3, 1),
-            100,
-            &altered,
-        ),
-        Ok(fsl_eval::simulation::model::TimedSampleReplay::Disagrees(_))
-    ));
 
     let mut replied = TimedBehaviour::new(timed.initial().remove(0));
     let send = transition(&timed, &replied, "send");
@@ -7915,14 +7880,19 @@ fn clock_record_protocol<'w>(
 #[test]
 fn a_protocol_event_record_ranges_a_clock_reference_over_the_declared_places() {
     use fsl_eval::simulation::protocol::{check_protocol_bounds, Capacities, StepKind};
-    let world = clock_record_world(
-        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
-    );
+    let world =
+        clock_record_world(serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"));
     let model = system(&world);
     let protocol = world.package.graph().protocol("Gate").expect("protocol");
     let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
-    check_protocol_bounds(&model, protocol, &capacities, &world.package, BOUND_POSITIONS)
-        .expect("a bounded universe's Clock-reference record has a finite domain");
+    check_protocol_bounds(
+        &model,
+        protocol,
+        &capacities,
+        &world.package,
+        BOUND_POSITIONS,
+    )
+    .expect("a bounded universe's Clock-reference record has a finite domain");
 
     let system = clock_record_protocol(&world, true).expect("the protocol subject builds");
     let reachable = system
@@ -7943,16 +7913,22 @@ fn a_protocol_event_record_ranges_a_clock_reference_over_the_declared_places() {
     assert!(
         matches!(
             clock_record_protocol(&world, false),
-            Err(fsl_eval::simulation::protocol::ProtocolRefusal::Unsupported(
-                fsl_eval::simulation::protocol::Unsupported::UnenumerableRecord
-            ))
+            Err(
+                fsl_eval::simulation::protocol::ProtocolRefusal::Unsupported(
+                    fsl_eval::simulation::protocol::Unsupported::UnenumerableRecord
+                )
+            )
         ),
         "no declaration authority refuses the record"
     );
 
     let unbounded = clock_record_world(unbounded_clock_reference_document());
     let model = self::system(&unbounded);
-    let protocol = unbounded.package.graph().protocol("Gate").expect("protocol");
+    let protocol = unbounded
+        .package
+        .graph()
+        .protocol("Gate")
+        .expect("protocol");
     let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
     assert!(
         check_protocol_bounds(

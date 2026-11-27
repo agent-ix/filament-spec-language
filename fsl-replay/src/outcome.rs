@@ -95,7 +95,7 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 }
 
 /// The document's `format` member.
-pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
+pub const OUTCOME_FORMAT: &str = fsl_foundation::wire_format::WireFormat::Outcome.as_str();
 /// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
 pub const OUTCOME_SCHEMA_1: &str = include_str!("../schemas/filament-outcome-1.schema.json");
 
@@ -1736,10 +1736,7 @@ impl OutcomeItem {
 }
 
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
-    serde_json::json!({
-        "numerator": value.numerator().to_string(),
-        "denominator": value.denominator().to_string(),
-    })
+    crate::shared_wire::RationalObject::value(value)
 }
 
 fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json::Value {
@@ -3661,6 +3658,7 @@ fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeL
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn package_artifact_pointer(pointer: &str) -> String {
     match pointer.strip_prefix("/package") {
         Some("") => String::new(),

@@ -445,7 +445,8 @@ fn compile_without_the_selected_model_carries_the_model_selection() {
     assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
     assert_eq!(diagnostic["selection"], "model", "{diagnostic}");
     assert_eq!(diagnostic["hint"], hint, "{diagnostic}");
-    let Err(error) = fsl_command::command::compile_outcome_with_overrides(&path, &RequestOverrides::default())
+    let Err(error) =
+        fsl_command::command::compile_outcome_with_overrides(&path, &RequestOverrides::default())
     else {
         panic!("the compile is refused");
     };

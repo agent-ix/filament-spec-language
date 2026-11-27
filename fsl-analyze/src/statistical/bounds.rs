@@ -6,6 +6,7 @@
 
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::catalog::InternalFault;
+pub(crate) use fsl_eval::simulation::bounds::{ln, Bounds};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 
@@ -23,19 +24,8 @@ const QUANTILE_BITS: u64 = 65;
 const QUANTILE_CEILING: i64 = 16;
 
 const DIVISOR: InternalFault = InternalFault::new("statistical-bounds", "nonzero-divisor");
-const LOG_ARGUMENT: InternalFault =
-    InternalFault::new("statistical-bounds", "positive-log-argument");
 const ROOT_ARGUMENT: InternalFault =
     InternalFault::new("statistical-bounds", "non-negative-root-argument");
-
-/// A lower and an upper bound on one real number.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Bounds {
-    /// At most the true value.
-    pub(crate) lower: Rational,
-    /// At least the true value.
-    pub(crate) upper: Rational,
-}
 
 /// Why the normal quantile has no bound EN-4 can use.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,11 +64,6 @@ fn epsilon(bits: u64) -> Rational {
     int(1).divided_by_power_of_two(bits)
 }
 
-/// `value · 2^shift`.
-fn times_power_of_two(value: &Rational, shift: u64) -> Rational {
-    value.mul(&Rational::from_integer(Integer::one().shifted_left(shift)))
-}
-
 /// The least integer at or above `value`.
 pub(crate) fn ceil(value: &Rational) -> Integer {
     Integer::from_big(
@@ -87,85 +72,6 @@ pub(crate) fn ceil(value: &Rational) -> Integer {
             .as_big()
             .div_ceil(value.denominator().as_big()),
     )
-}
-
-/// `atanh(u) = Σ u^(2n+1) / (2n + 1)` for `0 <= u < 1`, summed until the
-/// geometric tail bound `u^(2n+3) / ((2n + 3)(1 − u²))` is below
-/// `2^-bits`: the partial sum is the lower bound and the partial sum plus
-/// the tail bound the upper.
-fn atanh(u: &Rational, bits: u64) -> Result<Bounds, InternalFault> {
-    let square = u.mul(u);
-    let complement = int(1).sub(&square);
-    let limit = epsilon(bits);
-    let mut power = u.clone();
-    let mut sum = int(0);
-    let mut index: i64 = 0;
-    loop {
-        sum = sum.add(&quotient(&power, &int(2 * index + 1))?);
-        let next = power.mul(&square);
-        let tail = quotient(&next, &int(2 * index + 3).mul(&complement))?;
-        if tail < limit {
-            return Ok(Bounds {
-                upper: sum.add(&tail),
-                lower: sum,
-            });
-        }
-        power = next;
-        index += 1;
-    }
-}
-
-/// `ln 2 = 2 · atanh(1/3)`, its tail below `2^-bits`.
-fn ln_two(bits: u64) -> Result<Bounds, InternalFault> {
-    let third = quotient(&int(1), &int(3))?;
-    let half = atanh(&third, bits)?;
-    Ok(Bounds {
-        lower: half.lower.mul(&int(2)),
-        upper: half.upper.mul(&int(2)),
-    })
-}
-
-/// Bounds on `ln x` for a rational `x > 0`: `x = 2^k · y` with
-/// `1 <= y < 2`, and `ln x = k · ln 2 + 2 · atanh((y − 1) / (y + 1))`.
-/// `ln 2`'s tail is taken below `2^-(71 + bits(|k|))`, so `k · ln 2` adds at
-/// most `2^-70` to the width whatever `k` is, and the bound stays within
-/// `2^-64`.
-pub(crate) fn ln(x: &Rational) -> Result<Bounds, InternalFault> {
-    if *x <= int(0) {
-        return Err(LOG_ARGUMENT);
-    }
-    // `x / 2^k` for the signed `k`: a bit-length difference, so its
-    // magnitude fits in `u64`.
-    let scale = |exponent: i128| -> Result<Rational, InternalFault> {
-        let shift = u64::try_from(exponent.unsigned_abs()).map_err(|_| LOG_ARGUMENT)?;
-        Ok(if exponent >= 0 {
-            x.divided_by_power_of_two(shift)
-        } else {
-            times_power_of_two(x, shift)
-        })
-    };
-    let numerator_bits = i128::from(x.numerator().as_big().bits());
-    let denominator_bits = i128::from(x.denominator().as_big().bits());
-    let mut exponent = numerator_bits - denominator_bits;
-    let mut mantissa = scale(exponent)?;
-    if mantissa < int(1) {
-        exponent -= 1;
-        mantissa = scale(exponent)?;
-    }
-    let u = quotient(&mantissa.sub(&int(1)), &mantissa.add(&int(1)))?;
-    let series = atanh(&u, TAIL_BITS)?;
-    let exponent_bits = u64::from(128 - exponent.unsigned_abs().leading_zeros());
-    let two = ln_two(TAIL_BITS + 1 + exponent_bits)?;
-    let k = big(BigInt::from(exponent));
-    let (k_lower, k_upper) = if exponent >= 0 {
-        (k.mul(&two.lower), k.mul(&two.upper))
-    } else {
-        (k.mul(&two.upper), k.mul(&two.lower))
-    };
-    Ok(Bounds {
-        lower: k_lower.add(&series.lower.mul(&int(2))),
-        upper: k_upper.add(&series.upper.mul(&int(2))),
-    })
 }
 
 /// Bounds on `√x` for a rational `x >= 0`: the integer square root of
@@ -410,28 +316,6 @@ mod tests {
     }
 
     #[test]
-    fn ln_100_brackets_its_true_value_within_two_to_the_minus_64() {
-        // ln 100 = 4.60517018598809136803598290936872841520220297725754…
-        let lower = decimal("460517018598809136803598290936872841520", 38);
-        let upper = decimal("460517018598809136803598290936872841521", 38);
-        within(&ln(&int(100)).expect("ln 100"), &lower, &upper);
-    }
-
-    #[test]
-    fn ln_of_a_fraction_below_one_is_negative_and_bracketed() {
-        // ln(3/4) = -0.28768207245178092743921900599382743150350971089776…
-        let x = quotient(&int(3), &int(4)).expect("3/4");
-        let lower = decimal("-287682072451780927439219005993827431504", 39);
-        let upper = decimal("-287682072451780927439219005993827431503", 39);
-        within(&ln(&x).expect("ln 3/4"), &lower, &upper);
-    }
-
-    #[test]
-    fn ln_of_zero_is_an_internal_fault() {
-        assert_eq!(ln(&int(0)), Err(LOG_ARGUMENT));
-    }
-
-    #[test]
     fn sqrt_bounds_bracket_an_irrational_root() {
         // √2 = 1.41421356237309504880168872420969807856967187537694…
         let lower = decimal("141421356237309504880168872420969807856", 38);
@@ -474,20 +358,6 @@ mod tests {
                 "the upper end is not within 2^-64"
             );
         }
-    }
-
-    /// `ln(2^-40) = −40 ln 2`, bracketed within `2^-64` although the binary
-    /// exponent is large.
-    #[test]
-    fn ln_of_a_large_binary_exponent_stays_within_two_to_the_minus_64() {
-        // 40 ln 2 = 27.7258872223978123766892848583270627230200053744…
-        let lower = decimal("-277258872223978123766892848583270627231", 37);
-        let upper = decimal("-277258872223978123766892848583270627230", 37);
-        let x = int(1).divided_by_power_of_two(40);
-        within(&ln(&x).expect("ln 2^-40"), &lower, &upper);
-        let big = Rational::from_integer(Integer::one().shifted_left(200));
-        let width = ln(&big).expect("ln 2^200");
-        assert!(width.upper.sub(&width.lower) < epsilon(64));
     }
 
     /// `1 − Φ(16) ≈ 2^-190`: a `δ` below it is refused, not searched.

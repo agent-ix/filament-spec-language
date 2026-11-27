@@ -157,6 +157,35 @@ fn a_hyper_subject_that_intends_every_terminal_state_adds_no_deadlock_item() {
     }
 }
 
+/// FR-940-AC-16/17/18: the package form preserves a single existential
+/// quantifier after the source and handoff sources are removed.
+#[trace("FR-940-AC-16", "FR-940-AC-17", "FR-940-AC-18", "FR-173-AC-1")]
+#[test]
+fn a_single_existential_package_hyper_claim_matches_source_without_source() {
+    let body = "hyper Possible using t0 over behaviours (c: M::Counter) \
+        exists trace b of M { eventually holds(c.value @ b = 3) }";
+    let (source, package) = on_both_routes(
+        "package-hyper-single-existential",
+        body,
+        json!([{"claim": "Possible"}]),
+    );
+    let right = package.document();
+    assert_eq!(source.exit, package.exit, "{right}");
+    assert_eq!(
+        package.item(0)["record"],
+        source.item(0)["record"],
+        "{right}"
+    );
+    assert!(
+        !right.to_string().contains("hyper-quantifier-form"),
+        "{right}"
+    );
+    assert!(
+        !right.to_string().contains("not-yet-implemented"),
+        "{right}"
+    );
+}
+
 // Both evaluator ports read every pair of reachable Counter values. Equal
 // verdicts alone would miss evaluator-family and slot-root charging defects.
 fn check_universal_atoms_and_certificate<'a>(
@@ -322,6 +351,7 @@ fn check_universal_atoms_and_certificate<'a>(
             max_depth: None,
             meter: UNLIMITED,
             reductions: fsl_route::reductions::Reductions::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

@@ -53,6 +53,25 @@ pub enum ProtocolCandidate {
 pub struct AbstractProtocolSystem<'a> {
     inner: ProtocolSystemKind<'a>,
     required_temporal_fairness: Vec<RequiredTemporalFairness>,
+    replay_transitions: ReplayTransitions,
+}
+
+/// The total protocol-closure transition allowance of one replay, and what
+/// its checks have used so far. A system nobody bounded charges nothing
+/// against `u64::MAX`.
+#[derive(Debug)]
+struct ReplayTransitions {
+    max: std::cell::Cell<u64>,
+    consumed: std::cell::Cell<u64>,
+}
+
+impl Default for ReplayTransitions {
+    fn default() -> Self {
+        Self {
+            max: std::cell::Cell::new(u64::MAX),
+            consumed: std::cell::Cell::new(0),
+        }
+    }
 }
 
 enum ProtocolSystemKind<'a> {
@@ -122,7 +141,30 @@ impl<'a> AbstractProtocolSystem<'a> {
         Ok(Self {
             inner,
             required_temporal_fairness,
+            replay_transitions: ReplayTransitions::default(),
         })
+    }
+
+    /// Bound the protocol closures one replay runs over this system to
+    /// `max_transitions` in total, counting from none consumed (FR-255-AC-30).
+    pub fn bound_replay_transitions(&self, max_transitions: u64) {
+        self.replay_transitions.max.set(max_transitions);
+        self.replay_transitions.consumed.set(0);
+    }
+
+    /// The total transition allowance of the replay and what it has used.
+    #[must_use]
+    pub fn replay_transitions(&self) -> (u64, u64) {
+        (
+            self.replay_transitions.max.get(),
+            self.replay_transitions.consumed.get(),
+        )
+    }
+
+    /// Record `expanded` more transitions as used by the replay.
+    pub(super) fn charge_replay_transitions(&self, expanded: u64) {
+        let used = &self.replay_transitions.consumed;
+        used.set(used.get().saturating_add(expanded));
     }
 
     /// The abstract model shared with the ordinary refinement mapper.

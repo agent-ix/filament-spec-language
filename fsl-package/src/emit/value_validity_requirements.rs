@@ -16,9 +16,9 @@ use fsl_semantics::check::{Capability, CheckedGraph, NodeTag, RequirementRecord}
 use fsl_semantics::family::ClaimExtent;
 
 use super::{
-    EmitRefusal, GRAPH_V2, OmissionCause, OmittedNode, admitted_key, body_reference_targets,
-    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_literal,
-    encoding, node_id, push_scalar_type, source_artifact,
+    admitted_key, body_reference_targets, checked_literal_json, checked_occurrence,
+    claim_aggregate, claim_binding, claim_literal, encoding, node_id, push_scalar_type,
+    source_artifact, EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
 };
 
 mod frames;

@@ -199,6 +199,7 @@ impl<'p> Reader<'p> {
         Some(self.node(&binder).ok()?.semantic_type.clone())
     }
 
+    #[ix_trace_rs::string_edge]
     fn walk(
         &mut self,
         id: &CheckedNodeId,

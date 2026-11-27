@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! First-hit cyclic reward documents checked without analyzer linkage.
 use super::bounded::{
-    check_kernel_document, document, key, mutate, replace_kernel_source_and_rebind,
-    request_with, run,
+    check_kernel_document, document, key, mutate, replace_kernel_source_and_rebind, request_with,
+    run,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;

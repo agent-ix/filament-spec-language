@@ -182,7 +182,6 @@ fn row_3446_two_step_clauses_hand() {
 
 #[trace("FR-243-AC-5")]
 #[test]
-#[ignore = "QSL-3446: en-1 proves clauses it must decline as not digitisable"]
 fn row_3446_empty_window_clauses_routes() {
     // The rule each of `EMPTY` breaks and the operator that breaks it (FR-243
     // "Behavior"): the whole formula, or the inner `eventually`.
@@ -321,14 +320,13 @@ fn trap_route(row: &str, one_guard: &str, claim: &str, route: &str, expected: Ex
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 proves a false always possible over a partly trapped zone"]
+#[trace("FR-852-AC-32")]
 fn row_3478_always_possible_never_one_zones() {
     trap_zones("3478-possible-never-zones", NEVER, POSSIBLE);
 }
 
 #[trace("FR-243-AC-6")]
 #[test]
-#[ignore = "QSL-3446: en-1 decides an always possible item it must decline"]
 fn row_3478_always_possible_never_one_digital() {
     trap_digital(
         "3478-possible-never-digital",
@@ -339,14 +337,13 @@ fn row_3478_always_possible_never_one_digital() {
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 proves a false always possible over a partly trapped zone"]
+#[trace("FR-852-AC-32")]
 fn row_3446_always_possible_one_at_one_zones() {
     trap_zones("3446-possible-at-one-zones", AT_ONE, POSSIBLE);
 }
 
 #[trace("FR-243-AC-6")]
 #[test]
-#[ignore = "QSL-3446: en-1 proves a false always possible it must decline"]
 fn row_3446_always_possible_one_at_one_digital() {
     trap_digital(
         "3446-possible-at-one-digital",
@@ -357,27 +354,25 @@ fn row_3446_always_possible_one_at_one_digital() {
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 proves a false unique path over a partly trapped zone"]
+#[trace("FR-852-AC-32")]
 fn row_3478_unique_path_never_one_zones() {
     trap_zones("3478-unique-never-zones", NEVER, UNIQUE);
 }
 
 #[trace("FR-243-AC-6")]
 #[test]
-#[ignore = "QSL-3446: en-1 decides a unique path item it must decline"]
 fn row_3478_unique_path_never_one_digital() {
     trap_digital("3478-unique-never-digital", NEVER, UNIQUE, "unique-path");
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 settles unique path failed with established-invariant-broken"]
+#[trace("FR-852-AC-32")]
 fn row_3446_unique_path_one_at_one_zones() {
     trap_zones("3446-unique-at-one-zones", AT_ONE, UNIQUE);
 }
 
 #[trace("FR-243-AC-6")]
 #[test]
-#[ignore = "QSL-3446: en-1 proves a false unique path it must decline"]
 fn row_3446_unique_path_one_at_one_digital() {
     trap_digital("3446-unique-at-one-digital", AT_ONE, UNIQUE, "unique-path");
 }

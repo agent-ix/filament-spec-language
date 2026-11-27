@@ -8,7 +8,7 @@ use super::{
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
-const FORMAT: &str = "native-run-items/1";
+const FORMAT: &str = fsl_foundation::wire_format::WireFormat::RunItems.as_str();
 
 enum ItemExecution {
     Run(Box<Result<RunResult>>),
@@ -40,6 +40,7 @@ struct PreparedValueInvariants {
     request: fsl_replay::spine::ValueInvariantsBatchRequest,
 }
 
+#[ix_trace_rs::string_edge]
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
@@ -406,8 +407,15 @@ pub(super) fn run_bytes(
                     if let (Some(parameter), Some(object)) =
                         (population_parameters.get(&index), object.as_ref())
                     {
-                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { arguments, .. } = &mut request.selection else {
-                            return Err(refused("function", "an expanded function has canonical arguments"));
+                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction {
+                            arguments,
+                            ..
+                        } = &mut request.selection
+                        else {
+                            return Err(refused(
+                                "function",
+                                "an expanded function has canonical arguments",
+                            ));
                         };
                         bind_population_wire_argument(arguments, parameter, object)?;
                     }
@@ -723,6 +731,7 @@ pub(super) fn run_bytes(
 
 /// Prepare FR-652's actual no-clause item without applying function-selection
 /// roles to its snapshot. FR-106 owns current/pre/post admission for this item.
+#[ix_trace_rs::string_edge]
 fn prepare_value_invariants(
     directory: &Path,
     bytes: &[u8],
@@ -967,6 +976,7 @@ fn value_invariant_items(
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn contains_each(value: &Value) -> bool {
     match value {
         Value::Object(object) => object
@@ -977,6 +987,7 @@ fn contains_each(value: &Value) -> bool {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn each_count(value: &Value) -> usize {
     match value {
         Value::Object(object) => object
@@ -996,6 +1007,7 @@ fn find_selector(value: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+#[ix_trace_rs::string_edge]
 fn find_selector_for<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     match kind {
         "clause" => find_selector(value),
@@ -1023,6 +1035,7 @@ fn find_selector_for<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn selector_observation<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     match kind {
         "clause" => value.get("observation").and_then(Value::as_str),
@@ -1071,6 +1084,7 @@ fn selector_observation<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn set_selector_reference(kind: &str, value: &mut Value, reference: Value) -> Result<()> {
     if kind == "clause" {
         return set_clause_self(value, reference);
@@ -1178,7 +1192,7 @@ fn refused(member: &str, reason: impl Into<String>) -> RunCause {
 
 fn population_refusal(population: &str) -> Value {
     json!({
-        "format": "native-run-result/2",
+        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": {
             "category": "refusal",
             "refusal": {
@@ -1238,7 +1252,8 @@ fn whole_request_failure(cause: &RunCause) -> bool {
 }
 
 fn is_compile_refusal(value: &Value) -> bool {
-    value.get("format").and_then(Value::as_str) == Some("native-run-result/2")
+    value.get("format").and_then(Value::as_str)
+        == Some(fsl_foundation::wire_format::WireFormat::RunResult.as_str())
         && value
             .get("disposition")
             .and_then(|disposition| disposition.get("stage"))
@@ -1267,6 +1282,7 @@ fn category_for_exit(exit_code: u8) -> &'static str {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn invariant_result(
     category: &str,
     stage: &str,
@@ -1288,7 +1304,7 @@ fn invariant_result(
     }
     let settled = truth.is_some();
     json!({
-        "format": "native-run-result/2",
+        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": disposition,
         "usage": {
             "admission": {

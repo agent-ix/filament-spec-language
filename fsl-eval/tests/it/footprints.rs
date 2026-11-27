@@ -1026,7 +1026,11 @@ fn gates_subject_with_spares(spare_type: Json) -> Subject {
                     ],
                 ),
             ],
-            &[("cells", "Cell"), ("gates", "Gate"), ("spares", "SpareCell")],
+            &[
+                ("cells", "Cell"),
+                ("gates", "Gate"),
+                ("spares", "SpareCell"),
+            ],
         ),
         &[
             "post Disarmed using v on M::Gate::disarm { not self.armed }",

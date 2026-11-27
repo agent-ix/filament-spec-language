@@ -33,8 +33,8 @@ use std::sync::Arc;
 
 use filament_exact::{EffectiveId, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::UndefinedReason;
-use filament_semantic_value::model_transition::ModelTransition;
 use filament_semantic_value::location::ExpressionLocation;
+use filament_semantic_value::model_transition::ModelTransition;
 use ix_trace_rs::implements;
 
 use fsl_semantics::check::{
@@ -60,9 +60,9 @@ mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
-    advance_timed, replay_timed_sample, sample_timed, sample_timed_race, TimedAdvance, TimedRace,
+    advance_timed, sample_timed, sample_timed_from, sample_timed_race, TimedAdvance, TimedRace,
     TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
+    TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.
@@ -1620,9 +1620,12 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             PredicateReading::True => Ok(true),
             PredicateReading::False => Ok(false),
             PredicateReading::Undefined { cause, .. } if absent(&cause) => Ok(false),
-            PredicateReading::Undefined { cause, location } => {
-                Err(TimedStop::undecided_at(site(), object.cloned(), cause, location))
-            }
+            PredicateReading::Undefined { cause, location } => Err(TimedStop::undecided_at(
+                site(),
+                object.cloned(),
+                cause,
+                location,
+            )),
             PredicateReading::Refused(_) => {
                 Err(TimedStop::undecided(site(), object.cloned(), None))
             }

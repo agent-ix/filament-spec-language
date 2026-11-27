@@ -2,11 +2,11 @@
 //! Explicit conversion classes use declared bounds; guards prove obligations.
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
-fn check(source: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(source: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{source}");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "narrowing"),

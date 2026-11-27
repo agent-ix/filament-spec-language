@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Candidate production for the independently checked DTMC long-run profile.
 
-use super::candidate::{CandidateBudget, rational_bytes, sort, values};
+use super::candidate::{rational_bytes, sort, values, CandidateBudget};
 use super::*;
 use crate::exact_probabilistic::{
-    BudgetedProductError, LongRunResult, ProductKind, build_retaining_monitor_in_scope,
-    build_retaining_monitor_with_budget_in_scope, decide_long_run_workload,
+    build_retaining_monitor_in_scope, build_retaining_monitor_with_budget_in_scope,
+    decide_long_run_workload, BudgetedProductError, LongRunResult, ProductKind,
 };
 use fsl_replay::{
-    LongRunProbabilityComponent, ProbabilityDocumentIoLimits,
     long_run_probability_certificate_document_with_work_scope,
     read_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document_with_work_scope,
     write_long_run_probability_certificate, write_weighted_long_run_probability_certificate,
+    LongRunProbabilityComponent, ProbabilityDocumentIoLimits,
 };
 use ix_trace_rs::implements;
 
 #[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
+#[implements("FR-199-AC-3")]
+#[implements("FR-199-AC-4")]
+#[implements("FR-199-AC-5")]
+#[implements("FR-199-AC-6")]
 pub(super) fn run(
     mut request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -29,7 +33,12 @@ pub(super) fn run(
     };
     let weight = match weight {
         Some(fsl_semantics::check::Weighting::Reward(name)) => Some(name),
-        Some(fsl_semantics::check::Weighting::Delay) => return not_yet(),
+        Some(fsl_semantics::check::Weighting::Delay) => {
+            // QSL-3580 owns timed Delay weighting and its certificate path.
+            // `not_yet` yields typed Unsupported(NOT_YET) from EN-5; keep it
+            // until that route is implemented.
+            return not_yet();
+        }
         None => None,
     };
     if !matches!(
@@ -42,8 +51,9 @@ pub(super) fn run(
         return not_yet();
     }
     let every = matches!(claim.scheduler, ProbScheduler::Every);
-    if every && weight.is_some() {
-        // Per-action weights are not part of the MDP long-run profile yet.
+    if every && weight.is_some() && !claim.fairness.is_empty() {
+        // FR-199 covers weighted MECs; weighted fair MECs have a separate
+        // objective and are outside this route.
         return not_yet();
     }
     let simulation = request.subject.simulation.clone();
@@ -413,14 +423,15 @@ struct EveryScheduler<'a> {
 /// fair-end-component solver. A violated bound is refuted by a deterministic
 /// stationary scheduler, written with the long-run evidence of the chain it
 /// induces and settled only after FR-202 replay reproduces it (FR-412-AC-27).
+#[implements("FR-199-AC-6")]
 fn every_scheduler(
     request: EveryScheduler<'_>,
     candidate: &mut CandidateBudget<'_>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        FairProductError, LongRunResult, ProbStateId, ProductAction, decide_fair_long_run_mdp,
-        decide_long_run_mdp, deterministic_policy_is_fair, induced_chain, policy_action,
+        decide_fair_long_run_mdp, decide_long_run_mdp, deterministic_policy_is_fair, induced_chain,
+        policy_action, FairProductError, LongRunResult, ProbStateId, ProductAction,
     };
     let EveryScheduler {
         system,
@@ -447,8 +458,15 @@ fn every_scheduler(
         UnboundedError::MissingReward => not_yet(),
         other => unbounded_failure(other, limits, subject),
     };
+    let weight = match &claim.form {
+        ProbForm::LongRunFraction {
+            weight: Some(fsl_semantics::check::Weighting::Reward(name)),
+            ..
+        } => Some(name.as_str()),
+        _ => None,
+    };
     let (values, policy, solution, fair_witness) = if claim.fairness.is_empty() {
-        match decide_long_run_mdp(product, predicate, None, objective, limits, cancel) {
+        match decide_long_run_mdp(product, predicate, weight, objective, limits, cancel) {
             Ok(solution) => (
                 solution.values.clone(),
                 solution.policy.clone(),
@@ -516,19 +534,35 @@ fn every_scheduler(
             Ok(components) => components,
             Err(error) => return document_failure(error, subject),
         };
-        let bytes = long_run_probability_certificate_document_with_work_scope(
-            system,
-            claims,
-            item,
-            certificate.values.clone(),
-            components,
-            document_limits,
-            cancel,
-            Some(candidate.work_scope()),
-        )
-        .and_then(|document| {
-            write_long_run_probability_certificate(&document, document_limits, cancel)
-        });
+        let bytes = if weight.is_some() {
+            weighted_long_run_probability_certificate_document_with_work_scope(
+                system,
+                claims,
+                item,
+                certificate.values.clone(),
+                components,
+                document_limits,
+                cancel,
+                Some(candidate.work_scope()),
+            )
+            .and_then(|document| {
+                write_weighted_long_run_probability_certificate(&document, document_limits, cancel)
+            })
+        } else {
+            long_run_probability_certificate_document_with_work_scope(
+                system,
+                claims,
+                item,
+                certificate.values.clone(),
+                components,
+                document_limits,
+                cancel,
+                Some(candidate.work_scope()),
+            )
+            .and_then(|document| {
+                write_long_run_probability_certificate(&document, document_limits, cancel)
+            })
+        };
         let checked = bytes.and_then(|bytes| {
             fsl_replay::check_probability_certificate_document_as_with_work_scope(
                 system,
@@ -574,7 +608,7 @@ fn every_scheduler(
     }
     let chain = induced_chain(product, &policy);
     let solved = match crate::exact_probabilistic::decide_long_run_workload(
-        &chain, predicate, None, limits, cancel,
+        &chain, predicate, weight, limits, cancel,
     ) {
         Ok(solved) => solved,
         Err(error) => return stopped(error),
@@ -696,23 +730,43 @@ fn every_scheduler(
         ));
     }
     scheduler.sort_by(|a, b| a.0.cmp(&b.0));
-    let subsystem = long_run_probability_certificate_document_with_work_scope(
-        system,
-        claims,
-        item,
-        rows,
-        components,
-        document_limits,
-        cancel,
-        Some(candidate.work_scope()),
-    )
-    .and_then(|document| {
-        fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
-            &document,
+    let subsystem = if weight.is_some() {
+        weighted_long_run_probability_certificate_document_with_work_scope(
+            system,
+            claims,
+            item,
+            rows,
+            components,
             document_limits,
             cancel,
+            Some(candidate.work_scope()),
         )
-    });
+        .and_then(|document| {
+            fsl_replay::ProbabilitySubsystemCertificate::from_weighted_long_run(
+                &document,
+                document_limits,
+                cancel,
+            )
+        })
+    } else {
+        long_run_probability_certificate_document_with_work_scope(
+            system,
+            claims,
+            item,
+            rows,
+            components,
+            document_limits,
+            cancel,
+            Some(candidate.work_scope()),
+        )
+        .and_then(|document| {
+            fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
+                &document,
+                document_limits,
+                cancel,
+            )
+        })
+    };
     let subsystem = match subsystem {
         Ok(subsystem) => subsystem,
         Err(error) => return document_failure(error, subject),
@@ -767,8 +821,8 @@ fn fair_randomized_refutation(
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        ActionChoice, ProductAction as AnalyzerAction, decide_long_run_workload,
-        induced_fair_randomized_chain, policy_action,
+        decide_long_run_workload, induced_fair_randomized_chain, policy_action, ActionChoice,
+        ProductAction as AnalyzerAction,
     };
     let chain = match induced_fair_randomized_chain(product, &fair_witness.policy) {
         Ok(chain) => chain,
@@ -927,14 +981,7 @@ fn fair_randomized_refutation(
         tamper(&mut witness);
     }
     finish_replay(
-        replay_witness_with_work_scope(
-            system,
-            item,
-            &witness,
-            limits,
-            cancel,
-            budget.work_scope(),
-        ),
+        replay_witness_with_work_scope(system, item, &witness, limits, cancel, budget.work_scope()),
         claim,
         system,
         &witness,
@@ -1007,7 +1054,7 @@ fn components(
     policy: Option<(&ModelSystem<'_>, ComponentPolicy<'_>)>,
     budget: &mut CandidateBudget<'_>,
 ) -> Result<Vec<LongRunProbabilityComponent>, ProbabilityDocumentError> {
-    use crate::exact_probabilistic::{ProductAction, policy_action};
+    use crate::exact_probabilistic::{policy_action, ProductAction};
     if solution.components.len() != solution.gain_bias.len() {
         return Err(ProbabilityDocumentError::Malformed);
     }
