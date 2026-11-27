@@ -789,6 +789,10 @@ pub enum StatisticalRefusal {
     /// binding) pair.
     #[error("the request has no test to run")]
     NoTest,
+    /// The subject has an initial state but the claim's `over` type has no
+    /// admitted instance (FR-125 `NoInstance`).
+    #[error("the claim has no admitted instance")]
+    NoInstance,
     /// More tests than a test index (`u32`) counts.
     #[error("{count} tests exceed the test-index range")]
     TooManyTests {

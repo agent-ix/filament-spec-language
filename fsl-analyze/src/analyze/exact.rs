@@ -48,7 +48,7 @@ use fsl_semantics::check::{
 use ix_trace_rs::implements;
 use num_bigint::BigInt;
 
-use super::items::{admission, BROKEN, NOT_YET};
+use super::items::{admission, instance_stop, InstanceStop, BROKEN, NOT_YET};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
@@ -1383,6 +1383,27 @@ pub(super) fn run_package_exact(request: ProductRequest<'_>, cancel: &Cancel) ->
     run(request, cancel, None, None)
 }
 
+/// The report of an `over` claim with no admitted instance, by the one
+/// mapping of [`ModelSystem::claim_instances`] (`instance_stop`); `None` when
+/// the claim has instances, has no `over`, or the subject does not admit (the
+/// route's own admission then reports it).
+#[implements("FR-203-AC-20", "FR-203-AC-34")]
+fn instancing_stop(request: &ProductRequest<'_>, cancel: &Cancel) -> Option<EngineReport> {
+    let over = request.claim.over.as_ref()?;
+    let system = ModelSystem::new_with_cancel(request.subject.simulation.clone(), cancel).ok()?;
+    let failure = system.claim_instances(&over.value_type).err()?;
+    Some(match instance_stop(failure) {
+        InstanceStop::Inconclusive(InconclusiveCause::NoInstance) => {
+            EngineReport::Exact(Box::new(ExactReport::NoInstance))
+        }
+        InstanceStop::Inconclusive(InconclusiveCause::NoInitialState) => {
+            EngineReport::Exact(Box::new(ExactReport::NoInitialState))
+        }
+        InstanceStop::Inconclusive(_) => broken(),
+        InstanceStop::Refused(refusal) => EngineReport::Refused(refusal),
+    })
+}
+
 #[implements(
     "FR-203-AC-29",
     "FR-203-AC-30",
@@ -1403,6 +1424,11 @@ fn run(
         fsl_semantics::check::ClaimActivation::Each { .. }
     ) {
         return instances::run(request, cancel, tamper_witness);
+    }
+    // FR-125 instancing precedes every form check and `Plan::of`, so a claim
+    // with no instance settles by its cause whatever its form.
+    if let Some(report) = instancing_stop(&request, cancel) {
+        return report;
     }
     if matches!(
         &request.claim.form,

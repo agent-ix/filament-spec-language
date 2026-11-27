@@ -1658,7 +1658,6 @@ fn exact_binds_the_one_admitted_key() {
 
 #[trace("TC-3241", "FR-203-AC-34")]
 #[test]
-#[ignore = "QSL-3514: exact settles unsupported over no instance instead of no-instance (FR-203-AC-34)"]
 fn exact_reports_no_instance() {
     check_probabilistic(
         Probabilistic::Exact,
@@ -1668,7 +1667,6 @@ fn exact_reports_no_instance() {
 
 #[trace("TC-3241", "FR-203-AC-20")]
 #[test]
-#[ignore = "QSL-3514: exact settles unsupported over an empty initial list (FR-203-AC-20)"]
 fn exact_names_no_initial_state() {
     check_probabilistic(
         Probabilistic::Exact,
@@ -1717,7 +1715,6 @@ fn statistical_names_a_missing_universe_before_a_conflict() {
 
 #[trace("TC-520", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
 #[test]
-#[ignore = "QSL-3514: statistical reports no-initial-state over an initial state with no instance (FR-125-AC-7)"]
 fn statistical_reports_no_instance() {
     check_probabilistic(
         Probabilistic::Statistical,
@@ -1796,14 +1793,12 @@ fn smt_temporal_refuses_in_its_table_order() {
 
 #[trace("TC-900", "FR-315-AC-62")]
 #[test]
-#[ignore = "QSL-3514: SMT refuses object-lifecycle before no-instance (FR-315-AC-62)"]
 fn smt_temporal_refuses_no_instance_before_object_lifecycle() {
     check_smt_temporal(&[(ONLY_UNADMITTED, Some("NoInstance"))]);
 }
 
 #[trace("TC-900", "FR-315-AC-62")]
 #[test]
-#[ignore = "QSL-3514: SMT refuses no-initial-state before requires-bound (FR-315-AC-62)"]
 fn smt_temporal_refuses_requires_bound_before_no_initial_state() {
     check_smt_temporal(&[(NO_UNIVERSE, Some("RequiresBound"))]);
 }
