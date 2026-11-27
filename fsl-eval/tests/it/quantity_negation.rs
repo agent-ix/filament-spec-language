@@ -10,7 +10,7 @@ use filament_exact::{
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, CheckRefusal, Obligation};
+use fsl_semantics::check::{CheckCause, Obligation, SemanticCheckRefusal};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
@@ -34,13 +34,13 @@ fn units_and(functions: &str) -> String {
 
 /// The one refusal `functions` check with. The unit is refused whole, so no
 /// package, checked graph or node exists, and checking runs under no charge.
-fn refusal(functions: &str) -> CheckRefusal {
+fn refusal(functions: &str) -> SemanticCheckRefusal {
     let mut refusals = package_with(&units_and(functions)).expect_err("the unit refuses");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     refusals.remove(0)
 }
 
-fn assert_at(refusal: &CheckRefusal, path: &[usize]) {
+fn assert_at(refusal: &SemanticCheckRefusal, path: &[usize]) {
     assert_eq!(
         refusal.location,
         Location::at(refusal.location.origin.clone(), path),

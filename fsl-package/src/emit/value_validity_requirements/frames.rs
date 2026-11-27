@@ -264,6 +264,7 @@ impl<'a> Walk<'a> {
 
     /// Walk the body rooted at `root`: the terminal frame of every
     /// application occurrence, keyed by node position and occurrence.
+    #[ix_trace_rs::string_edge]
     fn owner(
         &mut self,
         root_owner: usize,
@@ -411,6 +412,7 @@ impl<'a> Walk<'a> {
 
 /// The function owners with a body in FR-322's package-wide walk order:
 /// declaration source position, then node id.
+#[ix_trace_rs::string_edge]
 pub(super) fn owner_order(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],

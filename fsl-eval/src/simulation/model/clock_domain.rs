@@ -7,18 +7,16 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use filament_exact::{
-    ClockPlaceReference, FieldValue, NodeKey, ObjectReference, Value, ValueType,
-};
+use filament_exact::{ClockPlaceReference, FieldValue, NodeKey, ObjectReference, Value, ValueType};
 use fsl_semantics::model::clock_reference::identity::{
     Decimal, PathEntry, PlaceIdentity, SlotIndex,
 };
 use fsl_semantics::model::clock_reference::{encode_identity, is_clock_type};
 
-use super::ModelSystem;
 use super::domain::{
-    ClockSelectorMaxima, Domain, clock_reference_as_object, clock_reference_paths,
+    clock_reference_as_object, clock_reference_paths, ClockSelectorMaxima, Domain,
 };
+use super::ModelSystem;
 
 /// Why a `Reference<Clock>` domain cannot be enumerated. None of these is an
 /// empty domain: a caller never ranges a hidden field or parameter over fewer
@@ -411,10 +409,10 @@ fn product(ranges: &[(Decimal, u64)]) -> Vec<Vec<SlotIndex>> {
 }
 #[cfg(test)]
 mod tests {
-    use filament_exact::{MapType, OptionValue, Value, ValueType, from_admitted_map};
+    use filament_exact::{from_admitted_map, MapType, OptionValue, Value, ValueType};
     use ix_trace_rs::trace;
 
-    use super::{ClockDomainRefusal, collect_clock_references};
+    use super::{collect_clock_references, ClockDomainRefusal};
 
     /// Repeated seed references are still charged during traversal, so a
     /// duplicate-heavy input cannot evade the candidate work bound.

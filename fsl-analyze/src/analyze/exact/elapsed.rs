@@ -221,7 +221,7 @@ struct Refutation<'a> {
 }
 
 fn refute(request: Refutation<'_>) -> EngineReport {
-    use crate::exact_probabilistic::{WitnessError, WitnessScope, produce_quantile_witness};
+    use crate::exact_probabilistic::{produce_quantile_witness, WitnessError, WitnessScope};
     let Refutation {
         system,
         claim,

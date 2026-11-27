@@ -873,8 +873,8 @@ mod tests {
                 })
             );
         }
-        assert!(
-            plan.step(
+        assert!(plan
+            .step(
                 control,
                 amount.as_ref(),
                 &[true, false],
@@ -882,8 +882,7 @@ mod tests {
                 &[],
                 &mut meter
             )
-            .is_err()
-        );
+            .is_err());
     }
 
     #[trace("TC-631", "FR-196-AC-7", "FR-196-AC-11")]

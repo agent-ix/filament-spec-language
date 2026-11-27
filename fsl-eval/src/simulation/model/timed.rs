@@ -33,8 +33,8 @@ use std::sync::Arc;
 
 use filament_exact::{EffectiveId, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::UndefinedReason;
-use filament_semantic_value::model_transition::ModelTransition;
 use filament_semantic_value::location::ExpressionLocation;
+use filament_semantic_value::model_transition::ModelTransition;
 use ix_trace_rs::implements;
 
 use fsl_semantics::check::{
@@ -1624,9 +1624,12 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             PredicateReading::True => Ok(true),
             PredicateReading::False => Ok(false),
             PredicateReading::Undefined { cause, .. } if absent(&cause) => Ok(false),
-            PredicateReading::Undefined { cause, location } => {
-                Err(TimedStop::undecided_at(site(), object.cloned(), cause, location))
-            }
+            PredicateReading::Undefined { cause, location } => Err(TimedStop::undecided_at(
+                site(),
+                object.cloned(),
+                cause,
+                location,
+            )),
             PredicateReading::Refused(_) => {
                 Err(TimedStop::undecided(site(), object.cloned(), None))
             }

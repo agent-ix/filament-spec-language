@@ -85,7 +85,9 @@ pub enum TimedStateGraphDecision {
     "FR-852-AC-25",
     "FR-852-AC-26",
     "FR-852-AC-27",
-    "FR-852-AC-1", "FR-852-AC-2", "FR-852-AC-3"
+    "FR-852-AC-1",
+    "FR-852-AC-2",
+    "FR-852-AC-3"
 )]
 pub fn decide_timed_state_graph(
     timed: &TimedSystem<'_, '_>,
@@ -271,21 +273,26 @@ fn prefer_undefined(
         let Some(state) = graph.nodes.get(entry.node).map(|node| &node.state) else {
             continue;
         };
-        let Ok((_, state_key)) = system.state_key(state, fsl_foundation::IdentityLimits::default()) else {
+        let Ok((_, state_key)) = system.state_key(state, fsl_foundation::IdentityLimits::default())
+        else {
             continue;
         };
-        candidates.push((entry.node, fsl_replay::GraphUndefined {
-            predicate: None,
-            transition: entry.reading.transition.clone(),
-            state_key,
-            locus: entry.reading.location.clone(),
-            cause,
-        }));
+        candidates.push((
+            entry.node,
+            fsl_replay::GraphUndefined {
+                predicate: None,
+                transition: entry.reading.transition.clone(),
+                state_key,
+                locus: entry.reading.location.clone(),
+                cause,
+            },
+        ));
     }
     let Some((node, reading)) = candidates.into_iter().min_by_key(|(node, _)| *node) else {
         return decision;
     };
-    if matches!(&decision, TimedStateGraphDecision::Refuted { node: refuted, .. } if *refuted < node) {
+    if matches!(&decision, TimedStateGraphDecision::Refuted { node: refuted, .. } if *refuted < node)
+    {
         return decision;
     }
     TimedStateGraphDecision::Undefined {
@@ -328,13 +335,16 @@ fn predicate(
             let (_, state_key) = system
                 .state_key(state, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| ZoneCheckRefusal::Fault("state-graph-key"))?;
-            undefined.push((index, fsl_replay::GraphUndefined {
-                predicate: Some(role),
-                transition: None,
-                state_key,
-                locus: location.clone(),
-                cause: cause.clone(),
-            }));
+            undefined.push((
+                index,
+                fsl_replay::GraphUndefined {
+                    predicate: Some(role),
+                    transition: None,
+                    state_key,
+                    locus: location.clone(),
+                    cause: cause.clone(),
+                },
+            ));
             Ok(false)
         }
         [PredicateReading::Refused(_)] => Err(ZoneCheckRefusal::Fault("state-graph-predicate")),

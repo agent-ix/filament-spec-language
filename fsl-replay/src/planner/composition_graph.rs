@@ -5,7 +5,7 @@ use filament_contract_model::{
     NativeJoinBudget, NativeJoinChargeKind, NativeJoinLocus, NativeJoinLocusSource,
 };
 use fsl_foundation::source::provenance::SourceRegion;
-use fsl_semantics::check::{CompositionGraphRefusal, composition_components};
+use fsl_semantics::check::{composition_components, CompositionGraphRefusal};
 
 /// An authenticated edge between declared guarantees, in rely-then-depends order.
 pub(super) struct CompositionEdge<'a> {

@@ -963,12 +963,10 @@ fn command_intake_is_a_non_core_leaf_consumer() {
         .find(|package| package.name == "fsl-command")
         .expect("the command owner is a workspace package");
     assert!(command.normal.iter().any(|name| name == "fsl-replay"));
-    assert!(
-        !command
-            .normal
-            .iter()
-            .any(|name| name == "filament-spec-language")
-    );
+    assert!(!command
+        .normal
+        .iter()
+        .any(|name| name == "filament-spec-language"));
     for core in QUALIFIED_CORE_CRATES {
         let package = packages
             .iter()

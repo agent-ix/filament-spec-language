@@ -38,8 +38,8 @@ use fsl_replay::{
     ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel, TemporalCounterexample,
 };
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedProtocolTarget, PackageDeclarations, ProtocolAnchorCause,
-    TemporalCause,
+    CheckCause, CheckedProtocolTarget, PackageDeclarations, ProtocolAnchorCause,
+    SemanticCheckRefusal, TemporalCause,
 };
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -549,7 +549,7 @@ fn a_safety_verdict_is_the_same_with_and_without_the_scheduler() {
 }
 
 /// The S3 refusal of the unit `body`, which must not check.
-pub(crate) fn check_refusal(body: &str) -> CheckRefusal {
+pub(crate) fn check_refusal(body: &str) -> SemanticCheckRefusal {
     let document = document();
     let text = unit_text(body);
     let packages = package_input([document.as_slice()]).unwrap();
@@ -591,7 +591,7 @@ pub(crate) fn check_refusal(body: &str) -> CheckRefusal {
 }
 
 /// The temporal cause of `refusal`.
-pub(crate) fn temporal(refusal: &CheckRefusal) -> &TemporalCause {
+pub(crate) fn temporal(refusal: &SemanticCheckRefusal) -> &TemporalCause {
     match &*refusal.cause {
         CheckCause::Temporal(cause) => cause,
         other => panic!("{other:?}"),

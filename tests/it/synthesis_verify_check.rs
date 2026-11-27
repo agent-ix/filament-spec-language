@@ -8,7 +8,7 @@
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, PackageDeclarations, SemanticCheckRefusal};
 use ix_trace_rs::trace;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -20,7 +20,7 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 
 /// The S3 refusals of a unit holding `HEADER` and `declarations`, or the
 /// S1/S2 refusal that stopped it earlier, rendered by `Debug`.
-fn check(declarations: &str) -> Result<Vec<CheckRefusal>, String> {
+fn check(declarations: &str) -> Result<Vec<SemanticCheckRefusal>, String> {
     let document = crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes();
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let text = format!("{HEADER}{declarations}\n");
@@ -57,15 +57,15 @@ fn check(declarations: &str) -> Result<Vec<CheckRefusal>, String> {
     )
 }
 
-fn codes(refusals: &[CheckRefusal]) -> Vec<Option<CatalogCode>> {
+fn codes(refusals: &[SemanticCheckRefusal]) -> Vec<Option<CatalogCode>> {
     refusals
         .iter()
         .map(|refusal| refusal.cause.catalog_code())
         .collect()
 }
 
-fn assert_missing_name_span(refusals: &[CheckRefusal], source: &str, name: &str) {
-    let [CheckRefusal { cause, .. }] = refusals else {
+fn assert_missing_name_span(refusals: &[SemanticCheckRefusal], source: &str, name: &str) {
+    let [SemanticCheckRefusal { cause, .. }] = refusals else {
         panic!("expected one missing-name refusal: {refusals:?}");
     };
     let CheckCause::MissingQualifiedName(missing) = cause.as_ref() else {
@@ -99,7 +99,7 @@ fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
         ))],
         "{refusals:?}"
     );
-    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
         panic!("expected a located unbounded-domain refusal: {refusals:?}");
     };
     let fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { span, .. } = cause.as_ref()
@@ -121,7 +121,7 @@ fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
         ))],
         "{refusals:?}"
     );
-    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
         panic!("expected a located unbounded-domain refusal: {refusals:?}");
     };
     let fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span } =
@@ -163,7 +163,7 @@ fn composite_synthesis_domains_name_the_first_unbounded_component() {
             ))],
             "{refusals:?}"
         );
-        let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        let [SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
             panic!("expected one unbounded-domain refusal: {refusals:?}");
         };
         let fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span } =
@@ -211,7 +211,7 @@ fn a_plan_dependency_cycle_refuses_definition_cycle() {
         ))],
         "{refusals:?}"
     );
-    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
         panic!("the cycle refusal retains its edges: {refusals:?}");
     };
     let CheckCause::DefinitionCycle { edges } = cause.as_ref() else {
@@ -268,7 +268,7 @@ fn plan_step_name_and_method_refusals() {
         ))],
         "{duplicate:?}"
     );
-    let [CheckRefusal { cause, .. }] = duplicate.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = duplicate.as_slice() else {
         panic!("the duplicate refusal retains both spans: {duplicate:?}");
     };
     let CheckCause::DuplicateVerificationStep { first, second, .. } = cause.as_ref() else {
@@ -392,7 +392,7 @@ fn plan_reference_bound_and_method_applicability_refusals() {
         ))],
         "{zero_bound:?}"
     );
-    let [CheckRefusal { cause, .. }] = zero_bound.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = zero_bound.as_slice() else {
         panic!("the bound refusal retains its span: {zero_bound:?}");
     };
     let CheckCause::VerificationPlanBoundZero { span } = cause.as_ref() else {
@@ -420,7 +420,7 @@ fn plan_reference_bound_and_method_applicability_refusals() {
         ))],
         "{inapplicable:?}"
     );
-    let [CheckRefusal { cause, .. }] = inapplicable.as_slice() else {
+    let [SemanticCheckRefusal { cause, .. }] = inapplicable.as_slice() else {
         panic!("the inapplicable-method refusal retains its span: {inapplicable:?}");
     };
     let CheckCause::VerificationPlanInapplicableMethod { span, .. } = cause.as_ref() else {

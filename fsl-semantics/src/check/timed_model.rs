@@ -27,7 +27,7 @@
 //! one object type the model's populations range over.
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,15 +48,15 @@ pub use self::collection_write::{CollectionWrite, Written};
 use super::assemble::TimedDeclaration;
 use super::check::NamedScope;
 use super::ir::{CheckedBody, CheckedNode};
-use super::lowering::{AdmittedModel, CollectionShape, PlaceStep, strictly_below};
+use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
 use super::refusal::TimedConstruct;
 use super::refusal::{
-    CheckCause, CheckRefusal, ExcludedClauseForm, TemporalCause, TimedOmission,
+    CheckCause, ExcludedClauseForm, SemanticCheckRefusal, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
-    ClauseDeclarations, ClauseOperation, ClauseView, PopulationDomain, StateClauseDeclaration,
-    check_clause, check_clause_named, population_of,
+    check_clause, check_clause_named, population_of, ClauseDeclarations, ClauseOperation,
+    ClauseView, PopulationDomain, StateClauseDeclaration,
 };
 use super::state_graph_claim::StatePredicate;
 use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
@@ -1939,8 +1939,8 @@ pub(crate) struct Inputs<'a> {
 }
 
 /// `cause`, located by the span it carries.
-fn refusal(cause: CheckCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: CheckCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: filament_semantic_value::location::ExpressionLocation::root(
             filament_semantic_value::location::ExpressionOwner::Expression,
         ),
@@ -3435,7 +3435,11 @@ fn part_predicate(
                 | DataLiteral::Presence(_)
                 | DataLiteral::ElementPresence(..) => return None,
             };
-            if positive { Some(cut) } else { cut.negated() }
+            if positive {
+                Some(cut)
+            } else {
+                cut.negated()
+            }
         })
         .collect::<Option<Vec<_>>>()?;
     ExpressionForm::conjunction(operands)
@@ -4833,11 +4837,11 @@ pub(crate) fn prepare(
     inputs: &Inputs<'_>,
     state_clauses: &mut [StateClauseDeclaration],
     meter: &mut Meter,
-) -> Result<TimedDrafts, CheckRefusal> {
+) -> Result<TimedDrafts, SemanticCheckRefusal> {
     // FR-146 over the clock-reading declarations, which have no function
     // node for the value checker's measure check to reach (FR-091-AC-30).
     if let Some((cycle, name)) = reading::unmeasured_cycle(inputs.clock_reading) {
-        return Err(CheckRefusal {
+        return Err(SemanticCheckRefusal {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::TypeDeclaration {
                     name: clock_reading_site(name),
@@ -5401,7 +5405,7 @@ fn element_type(
     context: &EffectiveId,
     path: &[String],
     span: Span,
-) -> Result<ValueType, CheckRefusal> {
+) -> Result<ValueType, SemanticCheckRefusal> {
     let not_checked = || {
         refusal(CheckCause::TimedNotChecked {
             construct: TimedConstruct::Clock,
@@ -5444,7 +5448,7 @@ fn typed(
     form: &ExpressionForm,
     checking: &Checking<'_, '_>,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
-) -> Result<(CheckedTimedPredicate, u64), CheckRefusal> {
+) -> Result<(CheckedTimedPredicate, u64), SemanticCheckRefusal> {
     typed_in(view, form, checking.declarations, cx, None)
 }
 
@@ -5456,7 +5460,7 @@ fn typed_in(
     declarations: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
     named: Option<NamedScope>,
-) -> Result<(CheckedTimedPredicate, u64), CheckRefusal> {
+) -> Result<(CheckedTimedPredicate, u64), SemanticCheckRefusal> {
     let reborrowed = &mut cx.reborrow(declarations.scope);
     let typed = match named {
         Some(named) => check_clause_named(view, declarations, reborrowed, named),
@@ -5504,7 +5508,7 @@ fn typed_alternative(
     named: &NamedScope,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
     nodes_used: &mut u64,
-) -> Result<StateAlternative, CheckRefusal> {
+) -> Result<StateAlternative, SemanticCheckRefusal> {
     typed_alternative_in(
         alternative,
         source_owner,
@@ -5526,7 +5530,7 @@ fn typed_alternative_in(
     named: &NamedScope,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
     nodes_used: &mut u64,
-) -> Result<StateAlternative, CheckRefusal> {
+) -> Result<StateAlternative, SemanticCheckRefusal> {
     let (predicate, used) = typed_in(
         &state_view(
             &alternative.predicate,
@@ -5589,7 +5593,7 @@ fn check_part(
     declarations: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
     nodes_used: &mut u64,
-) -> Result<ConvexPart, CheckRefusal> {
+) -> Result<ConvexPart, SemanticCheckRefusal> {
     let mut clock_binders = Vec::new();
     for binding in part.clocks.iter().filter_map(ClockConstraint::binding) {
         if !clock_binders.contains(binding) {
@@ -5603,7 +5607,7 @@ fn check_part(
             let element = element_type(checking, &clause.context, &binding.path, *span)?;
             Ok((binding.name.clone(), element))
         })
-        .collect::<Result<Vec<_>, CheckRefusal>>()?;
+        .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?;
     let data = match &part.data {
         None => None,
         Some(form) => {
@@ -5648,10 +5652,10 @@ fn check_part(
                         nodes_used,
                     )
                 })
-                .collect::<Result<Vec<_>, CheckRefusal>>()?;
+                .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?;
             Ok(QuantifiedFamily { path, each, parts })
         })
-        .collect::<Result<Vec<_>, CheckRefusal>>()?;
+        .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?;
     Ok(ConvexPart {
         data,
         presences: part.presences,
@@ -5673,7 +5677,7 @@ pub(crate) fn check(
     drafts: TimedDrafts,
     checking: &Checking<'_, '_>,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
-) -> Result<(Vec<TimedModel>, u64), CheckRefusal> {
+) -> Result<(Vec<TimedModel>, u64), SemanticCheckRefusal> {
     let mut nodes_used = checking.declarations.nodes_used;
     let mut models = Vec::with_capacity(drafts.models.len());
     for draft in drafts.models {
@@ -5755,7 +5759,7 @@ pub(crate) fn check(
                             &mut nodes_used,
                         )
                     })
-                    .collect::<Result<Vec<_>, CheckRefusal>>()?
+                    .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?
             } else {
                 let mut typed = Vec::with_capacity(invariant.alternatives.len());
                 for (at, alternative) in invariant.alternatives.into_iter().enumerate() {
@@ -5979,7 +5983,7 @@ pub(crate) fn check(
 /// emission writes yet (FR-230): refused at the member rather than
 /// compiled and silently missing from the package's identity. `None` when
 /// S4 writes the whole model.
-pub(crate) fn not_emitted(model: &TimedModel) -> Option<CheckRefusal> {
+pub(crate) fn not_emitted(model: &TimedModel) -> Option<SemanticCheckRefusal> {
     let (omission, span) = model.unwritten()?;
     let model = model.model.clone();
     Some(refusal(timed(match omission {
@@ -5994,7 +5998,7 @@ pub(crate) fn not_emitted(model: &TimedModel) -> Option<CheckRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use fsl_forms::{ExpressionForm, ExpressionSpans, parse_clause_text};
+    use fsl_forms::{parse_clause_text, ExpressionForm, ExpressionSpans};
     use ix_trace_rs::trace;
 
     use super::DataLiteral;

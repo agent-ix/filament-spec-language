@@ -7,13 +7,13 @@ use filament_semantic_value::location::{
 };
 use fsl_foundation::Code;
 use fsl_replay::spine::CompileRefusal;
-use fsl_semantics::check::{CheckCause, CheckRefusal};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal};
 use ix_trace_rs::trace;
 
 #[trace("FR-360-AC-5")]
 #[test]
 fn undeclared_variant_case_message_names_its_owner_and_case() {
-    let refusal = CheckRefusal {
+    let refusal = SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::UndeclaredVariantCase {
             owner: "OrderStatus".to_owned(),

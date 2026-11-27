@@ -188,9 +188,9 @@ impl Limits {
 
 /// An admitted or recovering source parse, without exposing its CST type.
 #[derive(Clone, Debug)]
-pub struct ParsedSource(fsl_cst::ParsedSource);
+pub struct FormsSource(fsl_cst::ParsedSource);
 
-impl ParsedSource {
+impl FormsSource {
     /// The exact source bytes and identity.
     pub fn source(&self) -> &Source {
         self.0.source()
@@ -267,9 +267,9 @@ pub fn parse(
     path: impl Into<String>,
     bytes: &[u8],
     limits: Limits,
-) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+) -> Result<FormsSource, Box<CompleteDiagnostic>> {
     fsl_cst::parse(identity, path, bytes, limits.inner)
-        .map(ParsedSource)
+        .map(FormsSource)
         .map_err(|diagnostic| Box::new(CompleteDiagnostic::from_layer_one(*diagnostic)))
 }
 
@@ -277,9 +277,9 @@ pub fn parse(
 pub fn parse_source(
     source: Source,
     limits: Limits,
-) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+) -> Result<FormsSource, Box<CompleteDiagnostic>> {
     fsl_cst::parse_source(source, limits.inner)
-        .map(ParsedSource)
+        .map(FormsSource)
         .map_err(|diagnostic| Box::new(CompleteDiagnostic::from_layer_one(*diagnostic)))
 }
 

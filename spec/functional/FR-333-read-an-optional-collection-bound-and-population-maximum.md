@@ -45,7 +45,7 @@ never chose.
 - S2 `TypeForm`s whose `bounds` list is empty when the source writes no
   bound.
 - The resolved kernel `ValueType`.
-- A `CheckRefusal` with a span on refusal.
+- A `SemanticCheckRefusal` with a span on refusal.
 
 ## Behavior
 

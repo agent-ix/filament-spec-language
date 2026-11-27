@@ -101,7 +101,7 @@ impl ModelForm {
 
     /// Check this form nested `levels` times under `limits` on a
     /// [`STACK`]-byte thread.
-    fn check(self, levels: usize, limits: CheckingLimits) -> Result<(), Vec<CheckRefusal>> {
+    fn check(self, levels: usize, limits: CheckingLimits) -> Result<(), Vec<SemanticCheckRefusal>> {
         std::thread::Builder::new()
             .stack_size(STACK)
             .spawn(move || {

@@ -6,12 +6,12 @@
 use filament_exact::Value;
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::catalog::UndefinedReason;
-use fsl_eval::simulation::model::{PackageModelInput, operation_identity_text};
+use fsl_eval::simulation::model::{operation_identity_text, PackageModelInput};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::ObjectKey;
 use fsl_replay::{
-    ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef, PackageRefinement,
-    RefinementPosition, StepArgument, StepVerdict, Taken, Undetermined, check_step, map_state,
+    check_step, map_state, ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef,
+    PackageRefinement, RefinementPosition, StepArgument, StepVerdict, Taken, Undetermined,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -19,8 +19,8 @@ use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::trace;
 
 use crate::ring_world::{
-    MapWorld, QUEUE, RING, RingSpec, RingWorld, UNLIMITED, Variant, custom_state, key,
-    ring_is_queue, ring_state, twin_refinement,
+    custom_state, key, ring_is_queue, ring_state, twin_refinement, MapWorld, RingSpec, RingWorld,
+    Variant, QUEUE, RING, UNLIMITED,
 };
 
 const ITEMS_ROW: &str = "items = seq(i in 0 .. self.size - 1: only(s in R::slots where s.ring = self and s.index + 0 = (self.head + i) mod 2: s.value));";

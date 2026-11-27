@@ -1374,6 +1374,7 @@ fn identity_of(wire: WireIdentity) -> Result<ObligationIdentity, ProbabilityDocu
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn decode(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,

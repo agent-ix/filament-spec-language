@@ -5434,6 +5434,7 @@ pub(in crate::probability_certificate) fn is_timed_witness_claim(
 /// decides which clock a value belongs to. `None` for a region key, a key
 /// that names a clock twice or not at all, or a value that is not a whole
 /// number of ticks.
+#[ix_trace_rs::string_edge]
 pub fn digital_key_clocks(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,

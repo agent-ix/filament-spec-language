@@ -10,7 +10,7 @@ use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
-use fsl_semantics::check::{CheckCause, CheckRefusal};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRef, PackageDimensionRecord, PackageUnitRecord,
@@ -73,14 +73,14 @@ fn package() -> CheckedPackage {
     package_with(FUNCTIONS).expect("the quantity unit checks")
 }
 
-pub(super) fn package_with(functions: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+pub(super) fn package_with(functions: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     package_with_aliases(functions, |_| {})
 }
 
 fn package_with_aliases(
     functions: &str,
     configure: impl FnOnce(&mut PackageDeclarations),
-) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{functions}"

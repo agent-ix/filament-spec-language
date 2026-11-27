@@ -14,8 +14,8 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::FieldRef;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AmbiguousMember, CheckCause, CheckRefusal, CheckedGraph, CheckedNode, MemberCandidate,
-    PackageDeclarations,
+    AmbiguousMember, CheckCause, CheckedGraph, CheckedNode, MemberCandidate, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -250,7 +250,11 @@ fn package(links: &[Link]) -> DomainPackage {
 
 /// Compile fixture N with `links` and check
 /// `invariant I using v on M::<owner> at current { <body> }`.
-fn compile(links: &[Link], owner: &str, body: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn compile(
+    links: &[Link],
+    owner: &str,
+    body: &str,
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     check_invariant(package(links), owner, body)
 }
 
@@ -260,7 +264,7 @@ pub(crate) fn check_invariant(
     package: DomainPackage,
     owner: &str,
     body: &str,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     check_declarations(
         package,
         &format!("invariant I using v on M::{owner} at current {{ {body} }}"),
@@ -271,7 +275,7 @@ pub(crate) fn check_invariant(
 pub(crate) fn check_declarations(
     package: DomainPackage,
     declarations: &str,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let identity = package.model_selection.identity.clone();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -397,7 +401,7 @@ fn assert_refused(
     code: Code,
     cause: &str,
     path: Vec<usize>,
-) -> CheckRefusal {
+) -> SemanticCheckRefusal {
     assert_refusal(
         compile(links, owner, body),
         &format!("{body} on M::{owner}"),
@@ -409,12 +413,12 @@ fn assert_refused(
 
 /// `result` is one `StateModel` refusal with `code`, `cause` and `path`.
 pub(crate) fn assert_refusal(
-    result: Result<CheckedGraph, Vec<CheckRefusal>>,
+    result: Result<CheckedGraph, Vec<SemanticCheckRefusal>>,
     body: &str,
     code: Code,
     cause: &str,
     path: Vec<usize>,
-) -> CheckRefusal {
+) -> SemanticCheckRefusal {
     let Err(mut refusals) = result else {
         panic!("{body} is refused")
     };
@@ -438,7 +442,7 @@ pub(crate) fn assert_refusal(
     refusal
 }
 
-pub(crate) fn candidates(refusal: &CheckRefusal) -> (&str, &[MemberCandidate]) {
+pub(crate) fn candidates(refusal: &SemanticCheckRefusal) -> (&str, &[MemberCandidate]) {
     let CheckCause::StateModel(model) = &*refusal.cause else {
         panic!("a StateModel refusal: {refusal:?}");
     };

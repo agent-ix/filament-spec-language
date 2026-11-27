@@ -15,8 +15,8 @@ use filament_contract_model::{
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{
-    AtomSlot, BinaryTemporal, PackageFormulaNode, PackageHyperForm, PackageHyperParameter,
-    HyperForm, PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
+    AtomSlot, BinaryTemporal, HyperForm, PackageFormulaNode, PackageHyperForm,
+    PackageHyperParameter, PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
 };
 use ix_trace_rs::implements;
 
@@ -141,6 +141,7 @@ fn field(bytes: &[u8], at: &mut usize) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[ix_trace_rs::string_edge]
 fn slot(name: &str) -> Option<(String, String)> {
     let bytes = name.strip_prefix("slot_s")?.as_bytes();
     let mut at = 0;

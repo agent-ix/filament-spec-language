@@ -92,6 +92,7 @@ impl Schedule {
         Self::from_identity_bytes(&transition)
     }
 
+    #[ix_trace_rs::string_edge]
     fn from_identity_bytes(bytes: &[u8]) -> Result<Self, ProductActionError> {
         let transition = read_document(bytes).ok_or(ProductActionError::Schedule)?;
         let Node::Object(members) = transition.root().node() else {
@@ -124,6 +125,7 @@ impl Schedule {
     ///
     /// # Errors
     /// A malformed transition identity or a refused canonical encoding.
+    #[ix_trace_rs::string_edge]
     pub fn read_transition(bytes: &[u8], limits: Limits) -> Result<Self, ProductActionError> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]

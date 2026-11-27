@@ -3,11 +3,11 @@
 //! The helpers below are shared by every submodule.
 
 use filament_semantic_value::checking::CheckMode;
-use fsl_forms::{AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind, build_unit};
+use fsl_forms::{build_unit, AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind};
 use fsl_foundation::SourceIdentity;
 
 use super::super::{
-    CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations, Scope, Signatures,
+    CheckCause, CheckedGraph, PackageDeclarations, Scope, SemanticCheckRefusal, Signatures,
 };
 use super::{CheckedProtocol, ProtocolNodeId};
 use crate::check::refusal::ProtocolAnchorCause;
@@ -18,7 +18,7 @@ mod attempt_fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_attempt.rs");
 }
-use attempt_fixture::{HEADER, m_actor_model};
+use attempt_fixture::{m_actor_model, HEADER};
 
 mod anchors;
 mod attempts;
@@ -92,7 +92,7 @@ fn empty_scope_and_signatures() -> (Scope, Signatures) {
 /// [`super::check`]'s own result, for [`resolve_protocol`]'s return type
 /// (clippy's `type_complexity`: three levels of nesting is easier read
 /// as one name than inline).
-type CheckResult = Result<(CheckedProtocol, Vec<super::BoundAttempt>), Vec<CheckRefusal>>;
+type CheckResult = Result<(CheckedProtocol, Vec<super::BoundAttempt>), Vec<SemanticCheckRefusal>>;
 
 fn resolve_protocol(declarations: &str) -> (String, ProtocolDeclarationForm, CheckResult) {
     let (text, assembled) = assemble(declarations);
@@ -122,9 +122,9 @@ fn resolve_protocol(declarations: &str) -> (String, ProtocolDeclarationForm, Che
 /// except an emission refusal (`NotEmitted`), which belongs to the lowering
 /// stage. These tests read the protocol check under the selected protocol
 /// profile, whose lowering is not their subject.
-fn check_refusals(declarations: &str) -> (String, Result<CheckedGraph, Vec<CheckRefusal>>) {
+fn check_refusals(declarations: &str) -> (String, Result<CheckedGraph, Vec<SemanticCheckRefusal>>) {
     let (text, assembled) = assemble(declarations);
-    let not_emission = |refusal: &CheckRefusal| {
+    let not_emission = |refusal: &SemanticCheckRefusal| {
         !matches!(
                     refusal.cause.as_ref(),
         CheckCause::ProtocolReference(cause)
@@ -137,7 +137,7 @@ fn check_refusals(declarations: &str) -> (String, Result<CheckedGraph, Vec<Check
         &crate::check::test_support::ZeroRewardEvaluator,
     ) {
         Ok(graph) => {
-            let refusals: Vec<CheckRefusal> = graph
+            let refusals: Vec<SemanticCheckRefusal> = graph
                 .protocol_refusals()
                 .iter()
                 .flat_map(|result| result.refusals.iter().cloned())
@@ -156,7 +156,7 @@ fn check_refusals(declarations: &str) -> (String, Result<CheckedGraph, Vec<Check
 
 /// The full `PackageDeclarations::check` pipeline over `declarations`,
 /// expecting it to refuse.
-fn refusals(declarations: &str) -> (String, Vec<CheckRefusal>) {
+fn refusals(declarations: &str) -> (String, Vec<SemanticCheckRefusal>) {
     match check_refusals(declarations) {
         (text, Err(refusals)) => (text, refusals),
         (_, Ok(_)) => panic!("{declarations}: checking refuses"),
@@ -196,14 +196,14 @@ fn assembly_errors(declarations: &str) -> Vec<crate::check::AssemblyError> {
 }
 
 /// The one refusal `declarations` checks to, expecting exactly one.
-fn only_cause(declarations: &str) -> (CheckRefusal, ProtocolAnchorCause) {
+fn only_cause(declarations: &str) -> (SemanticCheckRefusal, ProtocolAnchorCause) {
     let (_, found) = refusals(declarations);
     assert_eq!(found.len(), 1, "{declarations}: {found:?}");
     let cause = protocol_causes(&found)[0].clone();
     (found[0].clone(), cause)
 }
 
-fn protocol_causes(refusals: &[CheckRefusal]) -> Vec<&ProtocolAnchorCause> {
+fn protocol_causes(refusals: &[SemanticCheckRefusal]) -> Vec<&ProtocolAnchorCause> {
     refusals
         .iter()
         .map(|refusal| match refusal.cause.as_ref() {

@@ -59,7 +59,7 @@ fn dimension_key(preimage: &Value) -> NodeKey {
 
 fn check_quantity_scale_source(
     functions: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use fsl_semantics::check::PackageDeclarations;
 

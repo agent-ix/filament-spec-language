@@ -1421,8 +1421,8 @@ pub(super) fn initial_model_key(
 #[cfg(test)]
 mod tests {
     use filament_exact::{
-        CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp, UnitId, Uuid,
-        ValueType, from_admitted,
+        from_admitted, CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp,
+        UnitId, Uuid, ValueType,
     };
     use ix_trace_rs::trace;
 
@@ -1636,7 +1636,7 @@ mod tests {
     /// with the nullary member `none` and the member `tagged(Tag)` (`33…`),
     /// and the values `Tag { sku }`, `Pair(true, -3)` and `none`.
     pub(super) fn declared() -> (TypeEnvironment, impl Fn(i64) -> Value, Value, Value) {
-        use filament_exact::{Presence, UnionMember, UnionValue, from_admitted_slots};
+        use filament_exact::{from_admitted_slots, Presence, UnionMember, UnionValue};
         use filament_semantic_value::declaration::{
             CompositeDeclaration, FieldDeclaration, UnionMemberDeclaration,
         };
