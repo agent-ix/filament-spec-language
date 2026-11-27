@@ -107,28 +107,28 @@ pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(feature = "test-support")]
-static NODE_ID_REWRITE_CANDIDATE_CHECKS: AtomicUsize = AtomicUsize::new(0);
+static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "test-support")]
-static READ_INDEX_REWRITE_CANDIDATE_CHECKS: AtomicUsize = AtomicUsize::new(0);
+static READ_INDEX_REWRITE_WORK_UNITS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(feature = "test-support")]
-pub(crate) fn reset_node_id_rewrite_candidate_checks() {
-    NODE_ID_REWRITE_CANDIDATE_CHECKS.store(0, Ordering::Relaxed);
+pub(crate) fn reset_node_id_rewrite_slot_visits() {
+    NODE_ID_REWRITE_SLOT_VISITS.store(0, Ordering::Relaxed);
 }
 
 #[cfg(feature = "test-support")]
-pub(crate) fn node_id_rewrite_candidate_checks() -> usize {
-    NODE_ID_REWRITE_CANDIDATE_CHECKS.load(Ordering::Relaxed)
+pub(crate) fn node_id_rewrite_slot_visits() -> usize {
+    NODE_ID_REWRITE_SLOT_VISITS.load(Ordering::Relaxed)
 }
 
 #[cfg(feature = "test-support")]
-pub(crate) fn reset_read_index_rewrite_candidate_checks() {
-    READ_INDEX_REWRITE_CANDIDATE_CHECKS.store(0, Ordering::Relaxed);
+pub(crate) fn reset_read_index_rewrite_work_units() {
+    READ_INDEX_REWRITE_WORK_UNITS.store(0, Ordering::Relaxed);
 }
 
 #[cfg(feature = "test-support")]
-pub(crate) fn read_index_rewrite_candidate_checks() -> usize {
-    READ_INDEX_REWRITE_CANDIDATE_CHECKS.load(Ordering::Relaxed)
+pub(crate) fn read_index_rewrite_work_units() -> usize {
+    READ_INDEX_REWRITE_WORK_UNITS.load(Ordering::Relaxed)
 }
 
 /// The diagnostics catalog the package's (empty) diagnostics are qualified
@@ -11152,14 +11152,14 @@ pub fn write_operand_slots(
         } else {
             node.map_node_ids(|id| {
                 #[cfg(feature = "test-support")]
-                NODE_ID_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+                NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
                 changes.get(id).cloned()
             });
         }
         #[cfg(not(test))]
         node.map_node_ids(|id| {
             #[cfg(feature = "test-support")]
-            NODE_ID_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+            NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
             changes.get(id).cloned()
         });
         rows.push(row);
@@ -11428,6 +11428,7 @@ fn write_index_segments(
 /// every wire id each node reaches is replaced, in that node, by the
 /// structural id of the node it names, so the emitter's identity work
 /// compares structural keys.
+#[implements("FR-869-AC-10")]
 fn read_index_segments(
     ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
@@ -11439,6 +11440,8 @@ fn read_index_segments(
         fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .map_err(|_| EmitRefusal::SourceMapInvariant)?;
     let structural = |id: &CheckedNodeId| {
+        #[cfg(feature = "test-support")]
+        READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + id.path.len(), Ordering::Relaxed);
         graph
             .key(id)
             .map(|key| node_id(ids, &key))
@@ -11448,7 +11451,7 @@ fn read_index_segments(
         let mut invalid_index = false;
         node.map_node_ids(|id| {
             #[cfg(feature = "test-support")]
-            READ_INDEX_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+            READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + id.path.len(), Ordering::Relaxed);
             if invalid_index || !holds_segment(id, is_index) {
                 return None;
             }
@@ -11465,6 +11468,8 @@ fn read_index_segments(
         }
     }
     for entry in source_map.iter_mut() {
+        #[cfg(feature = "test-support")]
+        READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + entry.node_id.path.len(), Ordering::Relaxed);
         if holds_segment(&entry.node_id, is_index) {
             entry.node_id = structural(&entry.node_id)?;
         }

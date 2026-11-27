@@ -8,6 +8,7 @@ use ix_trace_rs::trace;
 
 const NESTED: usize = 1_000;
 const FLAT_TERMS: usize = 10_000;
+const SEQUENCE_VALUES: usize = 100_000;
 
 fn nested_source() -> String {
     format!(
@@ -70,12 +71,30 @@ fn flat_source() -> String {
     )
 }
 
+fn sequence_source() -> String {
+    let values = (0..SEQUENCE_VALUES)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function allValues using v(): Sequence<Integer>[0, {SEQUENCE_VALUES}] pure {{ sequence[{values}] }}\n"
+    )
+}
+
 fn checked_package(source_text: &str) -> CheckedPackage {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-3570-package"),
         "unit.native",
         source_text.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_cst::Limits {
+            source_bytes: 1 << 28,
+            tokens: 2_000_000,
+            nodes: 2_000_000,
+            work_units: 1 << 30,
+            diagnostics: 100,
+        },
     )
     .expect("S1 reads the source");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
@@ -88,7 +107,7 @@ fn checked_package(source_text: &str) -> CheckedPackage {
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("source model selections admit");
-    let declarations = PackageDeclarations::assemble(
+    let mut declarations = PackageDeclarations::assemble(
         parsed.source().reference().clone(),
         "qsl-3570".to_owned(),
         unit,
@@ -102,7 +121,9 @@ fn checked_package(source_text: &str) -> CheckedPackage {
     let graph = declarations
         .check(
             CheckMode::Linked,
-            CheckingLimits::default(),
+            CheckingLimits::new(2_000_000)
+                .with_input_bytes(1 << 40)
+                .with_work_budget(1 << 40),
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
@@ -128,7 +149,7 @@ fn i2_reads_the_thousand_nested_expression_package_at_its_exact_byte_bound() {
     let identity =
         fsl_semantics::library::LibraryName::new("qsl-3570").expect("a library identity");
 
-    let mut limits = V2ReadLimits::bounded(1 << 24);
+    let mut limits = V2ReadLimits::bounded(1 << 32);
     limits.artifact_bytes = package_bytes.len();
     limits.nodes = node_count as u64;
     let read =
@@ -140,9 +161,10 @@ fn i2_reads_the_thousand_nested_expression_package_at_its_exact_byte_bound() {
     assert_eq!(read.effective_limits().nodes, node_count as u64);
 
     limits.artifact_bytes = package_bytes.len() - 1;
-    let refusal = fsl_package::read_evaluation_package(&package, identity, &domain, limits, emit)
-        .err()
-        .expect("I2 refuses one byte below the artifact length");
+    let refusal =
+        fsl_package::read_evaluation_package(&package, identity.clone(), &domain, limits, emit)
+            .err()
+            .expect("I2 refuses one byte below the artifact length");
     let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
         panic!("expected the typed I2 reader limit, got {refusal:?}");
     };
@@ -155,9 +177,10 @@ fn i2_reads_the_thousand_nested_expression_package_at_its_exact_byte_bound() {
 
     limits.artifact_bytes = package_bytes.len();
     limits.nodes = (node_count - 1) as u64;
-    let refusal = fsl_package::read_evaluation_package(&package, identity, &domain, limits, emit)
-        .err()
-        .expect("I2 refuses one node below the graph's node count");
+    let refusal =
+        fsl_package::read_evaluation_package(&package, identity.clone(), &domain, limits, emit)
+            .err()
+            .expect("I2 refuses one node below the graph's node count");
     let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
         panic!("expected the typed I2 node limit, got {refusal:?}");
     };
@@ -205,9 +228,10 @@ fn i2_reads_one_thousand_enum_declarations_at_its_counted_boundaries() {
     assert_eq!(read.canonical_bytes(), package_bytes);
 
     limits.nodes = (node_count - 1) as u64;
-    let refusal = fsl_package::read_evaluation_package(&package, identity, &domain, limits, emit)
-        .err()
-        .expect("I2 refuses one node below the enum package count");
+    let refusal =
+        fsl_package::read_evaluation_package(&package, identity.clone(), &domain, limits, emit)
+            .err()
+            .expect("I2 refuses one node below the enum package count");
     let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
         panic!("expected the typed I2 node limit, got {refusal:?}");
     };
@@ -388,4 +412,89 @@ fn i2_reads_both_thousand_link_packages_at_their_counted_boundaries() {
     assert_eq!(limit.setting(), fsl_foundation::Setting::I2Nodes);
     assert_eq!(limit.configured_bound(), (redefinition_nodes - 1) as u64);
     assert_eq!(limit.actual(), redefinition_nodes as u128);
+}
+
+/// I2 reads the complete 100,000-value artifact at its exact byte and node
+/// counts, preserves the checked package identity and ordered wire bytes, and
+/// names each independent reader limit one unit under.
+#[trace("TC-3242", "FR-264-AC-14")]
+#[test]
+fn i2_reads_one_hundred_thousand_ordered_values_at_exact_byte_and_node_bounds() {
+    let package = checked_package(&sequence_source());
+    let emit = EmitLimits::new(1 << 32);
+    let emission = fsl_package::emit_checked(&package, emit).expect("the package emits");
+    let bytes = emission.package().bytes();
+    let wire: serde_json::Value = serde_json::from_slice(bytes).expect("package JSON");
+    let node_count = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes")
+        .len();
+    let edge_count = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes")
+        .iter()
+        .map(|node| {
+            node["dependencies"]
+                .as_array()
+                .expect("node dependencies")
+                .len()
+        })
+        .sum::<usize>();
+    assert_eq!(wire["name"], "qsl-3570");
+    assert!(
+        bytes
+            .windows(b"99999".len())
+            .any(|window| window == b"99999"),
+        "the final ordered collection value is carried in the checked artifact"
+    );
+
+    let domain = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the empty model closure admits");
+    let identity =
+        fsl_semantics::library::LibraryName::new("qsl-3570").expect("a library identity");
+    let mut limits = V2ReadLimits::bounded(1 << 32);
+    limits.artifact_bytes = bytes.len();
+    limits.nodes = node_count as u64;
+    limits.edges = edge_count as u64;
+    limits.occurrences = 1 << 40;
+    limits.diagnostics = 1 << 20;
+    limits.work = 1 << 40;
+    limits.storage = 1 << 40;
+    let read =
+        fsl_package::read_evaluation_package(&package, identity.clone(), &domain, limits, emit)
+            .expect("I2 reads all 100,000 ordered values at exact byte and node counts");
+    assert_eq!(read.admitted().name(), "qsl-3570");
+    assert_eq!(read.canonical_bytes(), bytes);
+    assert_eq!(read.effective_limits().artifact_bytes, bytes.len());
+    assert_eq!(read.effective_limits().nodes, node_count as u64);
+
+    limits.nodes = (node_count - 1) as u64;
+    let refusal =
+        fsl_package::read_evaluation_package(&package, identity.clone(), &domain, limits, emit)
+            .err()
+            .expect("one node under the graph count is refused");
+    let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
+        panic!("expected the typed I2 node limit, got {refusal:?}");
+    };
+    let fsl_foundation::diagnostic::StageFailure::Limit(limit) = *refusal else {
+        panic!("expected StageFailure::Limit, got {refusal:?}");
+    };
+    assert_eq!(limit.setting(), fsl_foundation::Setting::I2Nodes);
+    assert_eq!(limit.configured_bound(), (node_count - 1) as u64);
+    assert_eq!(limit.actual(), node_count as u128);
+
+    limits.nodes = node_count as u64;
+    limits.artifact_bytes = bytes.len() - 1;
+    let refusal = fsl_package::read_evaluation_package(&package, identity, &domain, limits, emit)
+        .err()
+        .expect("one byte under the encoded artifact length is refused");
+    let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
+        panic!("expected the typed I2 byte limit, got {refusal:?}");
+    };
+    let fsl_foundation::diagnostic::StageFailure::Limit(limit) = *refusal else {
+        panic!("expected StageFailure::Limit, got {refusal:?}");
+    };
+    assert_eq!(limit.setting(), fsl_foundation::Setting::I2InputBytes);
+    assert_eq!(limit.configured_bound(), (bytes.len() - 1) as u64);
+    assert_eq!(limit.actual(), bytes.len() as u128);
 }

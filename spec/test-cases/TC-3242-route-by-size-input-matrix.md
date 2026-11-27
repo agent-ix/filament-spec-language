@@ -24,7 +24,7 @@ The test matrix has five rows and five route columns. The inheritance/redefiniti
 row has two fixture variants in every route cell: inheritance and operation
 redefinition. No row or route is excluded.
 
-Scope: FR-869-AC-5..9, FR-277-AC-8..12, FR-264-AC-10..14,
+Scope: FR-869-AC-5..10, FR-277-AC-8..12, FR-264-AC-10..14,
 FR-620-AC-12..16 and FR-862-AC-4..8. FR-259-AC-3 / TC-729 remains adjacent
 domain-package JSON intake evidence; it is not the checked-package I2 reader
 cell. FR-264-AC-5 remains the separate 100,000-deep I2 malformed-wire case.
@@ -67,13 +67,26 @@ counter's owning typed outcome.
 
 Use focused filters in the existing route test modules:
 
-- `fsl-command/tests/it/size_route_matrix.rs` for compile and check/lower;
+- `fsl-command/tests/it/size_route_matrix.rs` for compile;
 - `fsl-package/tests/it/size_route_matrix.rs` for I2 read;
 - `fsl-analyze/tests/it/size_route_matrix.rs` for native analyze;
-- `fsl-replay/tests/it/size_route_matrix.rs` for native replay.
+- `fsl-replay/tests/it/size_route_matrix.rs` for public check/lower;
+- `fsl-command/tests/it/replay_size_matrix.rs` for native replay through `command::run`.
 
 Tag each added test with its cell's FR acceptance criterion. The 1,000-level
 replay-array test remains tagged with FR-862-AC-4.
+
+For the compile rewrite complexity criterion FR-869-AC-10, the 10,000-value
+fixture asserts at most 6 node-ID slot visits per value during operand-slot
+emission. Inverse read-index rewrite work counts one unit per ID-slot visit,
+per full path-length inspection allowance for an ID predicate or
+structural-key lookup, and per structural-key lookup; the 12,000-value fixture
+asserts at most 48 such units per value, including source-map and node-held
+IDs. The measured post-fix work is 504,344 units for 12,000 values (42.03
+per value), while the recorded pre-fix repeated scan used 432,168,038 units.
+This 48-unit bound admits the linear post-fix result and rejects that recorded
+quadratic baseline by more than 700 times. These counters are test-support
+instrumentation, not caller-visible stage counters.
 
 ## Expected Results
 

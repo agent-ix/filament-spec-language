@@ -273,24 +273,25 @@ pub use emit::{checked_node_id_of, emit_checked_with_fault};
 #[cfg(all(feature = "std", feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support {
-    /// Reset the number of node-ID candidate checks in operand-slot emission.
-    pub fn reset_node_id_rewrite_candidate_checks() {
-        crate::emit::reset_node_id_rewrite_candidate_checks();
+    /// Reset the number of node-ID slots visited during operand-slot emission.
+    pub fn reset_node_id_rewrite_slot_visits() {
+        crate::emit::reset_node_id_rewrite_slot_visits();
     }
 
-    /// The number of actual node-ID candidates compared during operand-slot emission.
-    pub fn node_id_rewrite_candidate_checks() -> usize {
-        crate::emit::node_id_rewrite_candidate_checks()
+    /// The number of node-ID slots visited during operand-slot emission.
+    pub fn node_id_rewrite_slot_visits() -> usize {
+        crate::emit::node_id_rewrite_slot_visits()
     }
 
-    /// Reset the number of node-ID candidate comparisons during index reading.
-    pub fn reset_read_index_rewrite_candidate_checks() {
-        crate::emit::reset_read_index_rewrite_candidate_checks();
+    /// Reset the read-index rewrite work-unit counter.
+    pub fn reset_read_index_rewrite_work_units() {
+        crate::emit::reset_read_index_rewrite_work_units();
     }
 
-    /// The number of node-ID candidate comparisons during index reading.
-    pub fn read_index_rewrite_candidate_checks() -> usize {
-        crate::emit::read_index_rewrite_candidate_checks()
+    /// Read-index rewrite units: ID-slot visits, full path-length inspection
+    /// allowances, and structural-key lookups.
+    pub fn read_index_rewrite_work_units() -> usize {
+        crate::emit::read_index_rewrite_work_units()
     }
 }
 

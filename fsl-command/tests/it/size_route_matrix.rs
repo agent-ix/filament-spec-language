@@ -885,9 +885,8 @@ fn compile_admits_one_hundred_thousand_sequence_values_when_model_limit_is_raise
     assert!(!outcome.package_bytes().is_empty());
 }
 
-/// The 10,000-value accepted compile must rewrite node IDs with a bounded
-/// number of candidate checks (QSL-3570, FR-869-AC-9 / TC-3242).
-#[trace("TC-3242", "FR-869-AC-9")]
+/// The accepted 10,000-value compile keeps operand-slot rewrite visits linear.
+#[trace("TC-3242", "FR-869-AC-6", "FR-869-AC-10")]
 #[test]
 fn compile_has_bounded_operand_rewrite_candidates_at_ten_thousand() {
     const N: usize = 10_000;
@@ -930,24 +929,24 @@ fn compile_has_bounded_operand_rewrite_candidates_at_ten_thousand() {
         ..RequestOverrides::default()
     };
 
-    fsl_package::test_support::reset_node_id_rewrite_candidate_checks();
+    fsl_package::test_support::reset_node_id_rewrite_slot_visits();
     let outcome =
         command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
             .expect("the 10,000-value sequence compiles with the raised independent limits");
     assert!(!outcome.package_bytes().is_empty());
 
-    let checks = fsl_package::test_support::node_id_rewrite_candidate_checks();
+    let slot_visits = fsl_package::test_support::node_id_rewrite_slot_visits();
     assert!(
-        checks <= 60_000,
-        "10,000-value operand rewrite used {checks} candidate checks; expected at most 60,000"
+        slot_visits <= 60_000,
+        "10,000-value operand rewrite visited {slot_visits} ID slots; expected at most 60,000"
     );
 }
 
-/// The inverse checked-package index rewrite must perform a linear number of
-/// candidate comparisons for a large ordered collection.
-#[trace("TC-3242", "FR-869-AC-9")]
+/// The inverse checked-package index rewrite uses bounded work for an ordered
+/// 12,000-value collection, counting slot visits, path segments and lookups.
+#[trace("TC-3242", "FR-869-AC-10")]
 #[test]
-fn compile_has_bounded_read_index_rewrite_candidates_at_twelve_thousand() {
+fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
     const N: usize = 12_000;
     let directory = tempfile::tempdir().expect("collection workspace");
     let values = (0..N)
@@ -988,15 +987,15 @@ fn compile_has_bounded_read_index_rewrite_candidates_at_twelve_thousand() {
         ..RequestOverrides::default()
     };
 
-    fsl_package::test_support::reset_read_index_rewrite_candidate_checks();
+    fsl_package::test_support::reset_read_index_rewrite_work_units();
     let outcome =
         command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
             .expect("the 12,000-value sequence compiles with the raised independent limits");
     assert!(!outcome.package_bytes().is_empty());
 
-    let checks = fsl_package::test_support::read_index_rewrite_candidate_checks();
+    let work_units = fsl_package::test_support::read_index_rewrite_work_units();
     assert!(
-        checks <= 72_000,
-        "12,000-value read-index rewrite used {checks} candidate comparisons; expected at most 72,000"
+        work_units <= 12_000 * 48,
+        "12,000-value read-index rewrite used {work_units} work units; expected at most 48 per value"
     );
 }
