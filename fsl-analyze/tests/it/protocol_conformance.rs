@@ -574,12 +574,14 @@ fn closure_premises_carry_their_componentwise_identity() {
     }
 }
 
-/// FR-896: the behaviour route runs the closure check alone, so a
-/// requirement it never evaluates is not `satisfied`, and the item is not
-/// `proved`, though the protocol itself closes.
+/// FR-896-AC-11: the behaviour route runs the closure check alone, so a
+/// requirement it never evaluates stays `pending`, not `satisfied`. The
+/// order fixture's `Order` channel is `exactly-once-premise`, so under the
+/// default policy the protocol, which closes, settles `proved`,
+/// `uncertified`; the requirement is not a reason to refuse the proof.
 #[trace("TC-2532", "FR-896-AC-11")]
 #[test]
-fn a_requirement_no_check_evaluates_is_not_reported_satisfied() {
+fn a_requirement_no_check_evaluates_stays_pending_beside_an_uncertified_proof() {
     let unit = format!(
         "temporal Never using t0 over (k: M::Core) clock \"model-steps\" on origin \
          {{ always holds(false) }}\n{}",
@@ -593,15 +595,15 @@ fn a_requirement_no_check_evaluates_is_not_reported_satisfied() {
     let item = analyze(&litmus_request(
         &ws,
         &unit,
-        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}],
-            "require_certified": true}),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
     ))
     .item(0);
     let requirement = obligations(&item)
         .into_iter()
         .find(|entry| entry["obligation"]["kind"] == "requirement")
         .unwrap_or_else(|| panic!("a requirement obligation: {item}"));
-    assert_ne!(requirement["verdict"], "satisfied", "{item}");
-    assert_ne!(label(&item), "proved", "{item}");
-    assert_ne!(item["global"]["label"], "proved", "{item}");
+    assert_eq!(requirement["verdict"], "pending", "{item}");
+    assert_eq!(item["record"]["certification"], "uncertified", "{item}");
+    assert_eq!(item["global"]["label"], "proved", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
 }
