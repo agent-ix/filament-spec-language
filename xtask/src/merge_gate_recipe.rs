@@ -4862,4 +4862,19 @@ mod tests {
             "{error}"
         );
     }
+
+    #[test]
+    #[trace("NFR-142-AC-8")]
+    fn repository_declares_xtask_cargo_alias() {
+        let config: toml::Value =
+            toml::from_str(include_str!("../../.cargo/config.toml")).expect("valid Cargo config");
+        assert!(
+            config
+                .get("alias")
+                .and_then(|aliases| aliases.get("xtask"))
+                .and_then(toml::Value::as_str)
+                == Some("run --locked -p xtask --"),
+            "a fresh checkout must expose `cargo xtask`"
+        );
+    }
 }
