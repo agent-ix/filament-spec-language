@@ -1159,13 +1159,11 @@ fn row_3468_time_lock_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3468: en-5 refutes always at a time lock, whose value is 1"]
 fn row_3468_time_lock_closed_routes() {
     assert_routes(&time_lock("self.x <= 1 ms"));
 }
 
 #[test]
-#[ignore = "QSL-3468: en-5 refutes always at a time lock, whose value is 1"]
 fn row_3468_time_lock_strict_routes() {
     assert_routes(&time_lock("self.x < 1 ms"));
 }
