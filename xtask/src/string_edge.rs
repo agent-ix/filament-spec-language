@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 /// `fsl-eval` (ADR-011 §7.3 X-8), `fsl-route` (ADR-011 §7.3 X-9),
 /// `fsl-replay` (ADR-011 §7.3 X-10 -- each extracted §6.1 layer crate adds its
 /// own entry here the same way), `fsl-analyze` (ADR-011 §7.3 X-12),
+/// `fsl-definitional-reference` (the dev-only semantic oracle),
 /// `fsl-inspect` (the typed inspection CLI), `fsl-jit` (the JIT backend),
 /// `fsl-bench` (the benchmark harness), `fsl-proptest-policy` (shared property
 /// test policy) and `fsl-string-edge` (the scanner scans itself), the other
@@ -44,12 +45,14 @@ pub(crate) fn crate_roots() -> Vec<PathBuf> {
         "fsl-route/src",
         "fsl-replay/src",
         "fsl-analyze/src",
+        "fsl-definitional-reference/src",
         "fsl-hybrid-reference/src",
         "fsl-inspect/src",
         "fsl-jit/src",
         "fsl-bench/src",
         "fsl-conformance/src",
         "fsl-proptest-policy/src",
+        "fsl-certificate-mutation/src",
         "fsl-string-edge/src",
         "tests/fixtures/checked-closure-consumer/src",
         "tests/fixtures/hyper-query-consumer/src",

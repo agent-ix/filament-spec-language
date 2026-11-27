@@ -179,10 +179,16 @@ pub(crate) fn unit_text(body: &str) -> String {
 /// The native unit selecting `document`, the domain package `identity`, as
 /// `M`, with `body` after the header.
 pub(crate) fn unit_text_in(identity: &str, body: &str) -> String {
+    unit_text_with_profiles(identity, "", body)
+}
+
+/// [`unit_text_in`]'s unit with `profiles`, further header lines, declared
+/// after its own.
+pub(crate) fn unit_text_with_profiles(identity: &str, profiles: &str, body: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
-         profile t0 = \"filament.temporal.infinite-trace/v1\";\n\
+         profile t0 = \"filament.temporal.infinite-trace/v1\";\n{profiles}\
          model M = \"{identity}\";\n\
          function Noop using v(): Boolean pure {{ true }}\n{body}"
     )

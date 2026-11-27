@@ -112,7 +112,7 @@ fn an_initial_boundary_never_becomes_a_deadlock_or_a_safety_stutter() {
     }
 }
 
-#[trace("FR-158-AC-2", "FR-158-AC-3")]
+#[trace("FR-126-AC-1", "FR-158-AC-2", "FR-158-AC-3")]
 #[test]
 fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
     let world = constrained_count(&[

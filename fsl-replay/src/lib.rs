@@ -80,6 +80,7 @@ pub use model_check::digital_state_graph::{
 };
 pub use task_transition::{TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity};
 mod monitor_plan;
+mod not_digitisable;
 mod object_environment;
 pub mod outcome;
 
@@ -455,6 +456,7 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
+pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,

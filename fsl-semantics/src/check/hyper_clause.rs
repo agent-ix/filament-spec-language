@@ -370,6 +370,18 @@ impl HyperForm {
             | Self::ProjectionAligned => None,
         }
     }
+
+    /// Classify package-read quantifier facts with the same HP-4 rule used by
+    /// source checking. Each pair is the quantifier kind and whether that
+    /// quantifier has a non-empty fairness set.
+    #[implements("FR-173-AC-5")]
+    pub fn classify_package_facts(
+        quantifiers: &[(QuantifierKind, bool)],
+        aligned: bool,
+        safety: bool,
+    ) -> Self {
+        classify_facts(quantifiers, aligned, safety)
+    }
 }
 
 /// Which rule of ADR-023 section 3 places a clause in HP-4.
@@ -642,13 +654,17 @@ impl CheckedHyperClause {
     /// # Errors
     /// Refuses an unsupported profile, malformed arena, unknown alias or
     /// inconsistent atom slot; it never constructs a partial checked clause.
+    #[implements("FR-173-AC-3")]
     pub fn of_package_form(
         form: PackageHyperForm,
         types: &filament_semantic_value::declaration::TypeEnvironment,
         position_limit: u64,
     ) -> Result<Self, super::PackageClauseRefusal> {
         use super::PackageClauseRefusal::{Domains, Shape};
-        if form.profile != TemporalProfile::InfiniteTrace {
+        if !matches!(
+            form.profile,
+            TemporalProfile::InfiniteTrace | TemporalProfile::EventPositionFalseExtension
+        ) {
             return Err(super::PackageClauseRefusal::Profile(form.profile));
         }
         if form.subject_models.len() != form.aliases.len()
@@ -3328,21 +3344,54 @@ fn checked_align_skip(
 /// The form of a clause over `behaviours` under infinite-trace (ADR-023 section
 /// 3, in the order FR-173 states).
 fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> HyperForm {
-    let exists = |quantifier: &&CheckedQuantifier| quantifier.kind == QuantifierKind::Exists;
+    classify_facts(quantifiers, aligned, safety)
+}
+
+trait QuantifierFacts {
+    fn kind(&self) -> QuantifierKind;
+    fn has_fairness(&self) -> bool;
+}
+
+impl QuantifierFacts for CheckedQuantifier {
+    fn kind(&self) -> QuantifierKind {
+        self.kind
+    }
+
+    fn has_fairness(&self) -> bool {
+        !self.fairness.is_empty()
+    }
+}
+
+impl QuantifierFacts for (QuantifierKind, bool) {
+    fn kind(&self) -> QuantifierKind {
+        self.0
+    }
+
+    fn has_fairness(&self) -> bool {
+        self.1
+    }
+}
+
+fn classify_facts<Q: QuantifierFacts>(
+    quantifiers: &[Q],
+    aligned: bool,
+    safety: bool,
+) -> HyperForm {
     let any_exists = quantifiers
         .iter()
-        .any(|quantifier| quantifier.kind == QuantifierKind::Exists);
-    if let [only] = quantifiers {
-        if only.kind == QuantifierKind::Exists && !aligned {
-            return HyperForm::SingleExistential;
-        }
+        .any(|quantifier| quantifier.kind() == QuantifierKind::Exists);
+    if quantifiers.len() == 1
+        && quantifiers[0].kind() == QuantifierKind::Exists
+        && !aligned
+    {
+        return HyperForm::SingleExistential;
     }
     let first_exists = quantifiers
         .iter()
-        .position(|quantifier| quantifier.kind == QuantifierKind::Exists);
+        .position(|quantifier| quantifier.kind() == QuantifierKind::Exists);
     let last_forall = quantifiers
         .iter()
-        .rposition(|quantifier| quantifier.kind == QuantifierKind::Forall);
+        .rposition(|quantifier| quantifier.kind() == QuantifierKind::Forall);
     if first_exists
         .zip(last_forall)
         .is_some_and(|(exists, forall)| exists < forall)
@@ -3353,8 +3402,9 @@ fn classify(quantifiers: &[CheckedQuantifier], aligned: bool, safety: bool) -> H
     }
     let existential_fairness = quantifiers
         .iter()
-        .filter(exists)
-        .any(|quantifier| !quantifier.fairness.is_empty());
+        .any(|quantifier| {
+            quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness()
+        });
     if any_exists && quantifiers.len() >= 2 && (!safety || existential_fairness) {
         return HyperForm::Other {
             reason: HyperUnsupported::ExistentialOutsideSafety,

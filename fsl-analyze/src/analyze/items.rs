@@ -408,12 +408,6 @@ pub fn statistical_item<'a>(
         Mode::Unbounded,
         en4::BACKEND_ID,
         move |cancel| {
-            if matches!(
-                request.claim.activation,
-                fsl_semantics::check::ClaimActivation::Each { .. }
-            ) {
-                return super::exact::statistical_on_each(request.subject, request.claim, cancel);
-            }
             let simulation = &request.subject.simulation;
             let expansion = simulation.expansion;
             let meter = simulation.meter;
@@ -425,6 +419,15 @@ pub fn statistical_item<'a>(
                         meter: &meter,
                     },
                 ))),
+                Err(fsl_replay::statistical::StatisticalRefusal::OnEach(read)) => {
+                    super::exact::statistical_on_each(
+                        *read,
+                        SubjectLimits {
+                            expansion,
+                            meter: &meter,
+                        },
+                    )
+                }
                 Err(refusal) => statistical_refusal(&refusal),
             }
         },

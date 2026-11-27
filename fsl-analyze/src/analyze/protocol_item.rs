@@ -51,7 +51,7 @@ const DEADLOCK_TRANSCRIPT: &str = "<<<assertion|model_check|deadlock|>>>";
 /// population's declaration key is the universe's when the request supplied
 /// one, else the key its identity spells.
 #[ix_trace_rs::string_edge]
-pub(super) fn over_instance(
+pub(crate) fn over_instance(
     binding: &SubjectBinding<'_>,
     over: &(String, String),
 ) -> ModelInstance {
@@ -94,7 +94,7 @@ fn simulation<'a>(
     }
 }
 
-pub(super) fn subject_of<'a>(
+pub(crate) fn subject_of<'a>(
     input: &ModelCheckInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: &AnalyzeLimits,

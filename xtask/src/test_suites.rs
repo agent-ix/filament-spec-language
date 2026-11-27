@@ -246,6 +246,11 @@ const WORKSPACE_EMPTY: &[EmptySuite] = &[
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
+        source: "fsl-certificate-mutation/src/lib.rs",
+        kind: SuiteKind::Doctests,
+        reason: NO_DOC_EXAMPLE,
+    },
+    EmptySuite {
         source: "fsl-bench/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,

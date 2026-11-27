@@ -1834,7 +1834,7 @@ fn requirement_items(
     fsl_route::request::items_from_requirements(package.graph().requirements(), registry, named)
 }
 
-#[implements("FR-940-AC-10")]
+#[implements("FR-940-AC-10", "FR-173-AC-3", "FR-896-AC-8", "FR-896-AC-9", "FR-896-AC-10")]
 fn resolve_one(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -1995,6 +1995,7 @@ fn resolve_one(
         kind,
         Capability::LocalProjection | Capability::Realizability
     );
+    let protocol_global_kind = kind == Capability::GlobalConformance;
     let record = own.iter().find(|record| record.kind() == kind);
     if selection.probabilistic.is_some() && kind != Capability::ProbabilisticSatisfaction {
         return invalid_value(index, name, "probabilistic");
@@ -2136,25 +2137,38 @@ fn resolve_one(
     );
     // FR-173: no provider advertises an HP-4 form, so its item reaches the
     // negotiator with no candidate.
-    let candidates = package
+    let candidates = match package
         .graph()
         .hyper_clauses()
         .iter()
         .find(|clause| clause.assembled_occurrence() == Some(&claim))
-        .and_then(|clause| clause.form())
-        .filter(|form| {
-            kind == Capability::TemporalSatisfaction && form.unsupported_reason().is_some()
-        })
-        .map_or(candidates, |form| {
-            fsl_route::request::requirement_candidates(
+        .filter(|_| kind == Capability::TemporalSatisfaction)
+    {
+        Some(clause)
+            if clause.profile() != fsl_semantics::check::TemporalProfile::InfiniteTrace
+                && clause.form().is_none() =>
+        {
+            // FR-173-AC-3 / FR-182 V-8: a profile with no decided form
+            // has no engine route, just like an explicitly classified HP-4
+            // form.
+            CandidateOutcome::Candidates(fsl_route::CandidateSet::none(kind, named.as_ref()))
+        }
+        Some(clause) => match clause
+            .form()
+            .filter(|form| form.unsupported_reason().is_some())
+        {
+            Some(form) => fsl_route::request::requirement_candidates(
                 &fsl_semantics::family::Requirements::hyper_form(
                     fsl_semantics::family::ClaimExtent::Bounded,
                     form,
                 ),
                 registry,
                 named.as_ref(),
-            )
-        });
+            ),
+            None => candidates,
+        },
+        None => candidates,
+    };
     let temporal = selection.temporal.clone().unwrap_or_default();
     let protocol_analysis = if protocol_analysis_kind {
         match protocol_analysis_selection(index, name, selection, kind, projection_role.clone()) {
@@ -2168,7 +2182,11 @@ fn resolve_one(
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if protocol_deadlock || protocol_temporal_deadlock || protocol_analysis_kind {
+    let protocol = if protocol_deadlock
+        || protocol_temporal_deadlock
+        || protocol_analysis_kind
+        || protocol_global_kind
+    {
         let owner = package.graph().protocols().iter().find(|protocol| {
             package
                 .graph()
@@ -2183,6 +2201,8 @@ fn resolve_one(
                     None => return invalid_value(index, name, "capacities"),
                 }
             }
+            // FR-896-AC-10: the deadlock-freedom item declines without a subject.protocol.
+            (Some(_), None) if protocol_global_kind && !protocol_deadlock => None,
             (Some(_), _) if protocol_analysis_kind => {
                 return invalid_member(index, name, "temporal.subject.protocol");
             }

@@ -2154,6 +2154,65 @@ fn node_verdicts_in(prefix: &Value, node: &str) -> Vec<String> {
         .collect()
 }
 
+/// The verdict and cause of each control obligation for `node` in `prefix`.
+fn control_results_in(prefix: &Value, node: &str) -> Vec<(String, Option<String>)> {
+    prefix["obligations"]
+        .as_array()
+        .expect("obligations")
+        .iter()
+        .filter(|entry| {
+            entry["obligation"]["kind"] == "control" && entry["obligation"]["node"] == node
+        })
+        .map(|entry| {
+            (
+                entry["verdict"]
+                    .as_str()
+                    .expect("control verdict")
+                    .to_owned(),
+                entry["cause"].as_str().map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
+/// Assert that the source assessor's batch and incremental results agree with
+/// the analyzer's incremental item, including every obligation prefix.
+fn assert_source_assessment_pair(source: &str, recording: &Value, item: &Value) {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, assess_recording_incrementally,
+    };
+
+    let package = package_of(source);
+    let bytes = recording.to_string();
+    let incremental = assess_recording_incrementally(&package, bytes.as_bytes())
+        .expect("source incremental assessment");
+    let batch = assess_recording(&package, bytes.as_bytes()).expect("source batch assessment");
+    assert_eq!(incremental.last(), Some(&batch));
+    let item_prefixes = item["prefixes"]
+        .as_array()
+        .expect("incremental item prefixes");
+    assert_eq!(item_prefixes.len(), incremental.len());
+    for (assessment, prefix) in incremental.iter().zip(item_prefixes) {
+        let mut obligations =
+            serde_json::to_value(&assessment.obligations).expect("prefix obligations");
+        for obligation in obligations.as_array_mut().expect("serialized obligations") {
+            obligation
+                .as_object_mut()
+                .expect("serialized obligation object")
+                .insert("basis".to_owned(), json!("recording"));
+        }
+        assert_eq!(obligations, prefix["obligations"]);
+    }
+    let mut obligations = serde_json::to_value(&batch.obligations).expect("batch obligations");
+    for obligation in obligations.as_array_mut().expect("serialized obligations") {
+        obligation
+            .as_object_mut()
+            .expect("serialized obligation object")
+            .insert("basis".to_owned(), json!("recording"));
+    }
+    assert_eq!(obligations, item["obligations"]);
+}
+
 /// An open incremental assessment of `observations` over [`cancel_in_repeat_protocol`]:
 /// `Buyer`'s observations at `buyer` in order, `Seller`'s at `seller`, and
 /// the correlations `(send, receive)`.
@@ -2345,6 +2404,24 @@ fn nested_cancel_item(
     seller: &[usize],
     correlations: &[(usize, usize)],
 ) -> Value {
+    let recording = nested_cancel_recording(observations, buyer, seller, correlations);
+    replay_with(
+        name,
+        source,
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+/// The open causal recording used by [`nested_cancel_item`].
+fn nested_cancel_recording(
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
     let mut recording = repeat_recording(
         observations,
         json!(seller),
@@ -2357,14 +2434,7 @@ fn nested_cancel_item(
         ),
     );
     recording["closure"] = json!({"state": "open", "premises": []});
-    replay_with(
-        name,
-        source,
-        &recording,
-        json!({"file": "recording.json", "identity": recording_identity()}),
-        assessed_item("incremental"),
-    )
-    .item(0)
+    recording
 }
 
 /// FR-895-AC-39 (TC-2531): a cancelling `parallel` in an inner `repeat` in an
@@ -2632,9 +2702,9 @@ fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
 /// iteration. With a `choice` taking `a` and then `b` before the inner
 /// `repeat` of the cancelling `parallel` and no `P`, the recording `a`, `A`,
 /// `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`,
-/// `yes` leaves the second iteration's `L` and `R` `satisfied` in batch, as
-/// under `outstanding continue`.
-#[trace("TC-2531", "FR-895-AC-42")]
+/// `yes` leaves both iterations' `L` and `R` `satisfied` in batch and every
+/// prefix, as under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-42", "FSpec-FR-059-AC-4")]
 #[test]
 fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
     let step = |path: &str| {
@@ -2672,16 +2742,256 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
             &[5, 6, 12, 13],
             &[(4, 5), (11, 12)],
         );
-        // Only the second iteration is asserted: QSL-3009 makes the first
-        // iteration's `L` and `R` violated, whatever the join policy.
+        let recording = nested_cancel_recording(
+            Value::Array(all.clone()),
+            &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+            &[5, 6, 12, 13],
+            &[(4, 5), (11, 12)],
+        );
+        assert_source_assessment_pair(&source, &recording, &item);
+        let prefixes = item["prefixes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("prefixes: {item}"));
+        assert_eq!(prefixes.len(), 14, "{outstanding}: {item}");
+        for (prefix_index, prefix) in prefixes.iter().enumerate() {
+            for node in [NESTED_LEFT, NESTED_RIGHT] {
+                let expected_count = all[..=prefix_index]
+                    .iter()
+                    .filter(|observation| observation["node"] == node)
+                    .count();
+                let verdicts = node_verdicts_in(prefix, node);
+                assert_eq!(
+                    verdicts.len(),
+                    expected_count,
+                    "{outstanding} {node}: {prefix}"
+                );
+                assert!(
+                    verdicts.iter().all(|verdict| verdict == "satisfied"),
+                    "{outstanding} {node}: {prefix}"
+                );
+            }
+        }
         for node in [NESTED_LEFT, NESTED_RIGHT] {
+            let verdicts = node_verdicts_in(&item, node);
+            let expected_count = all
+                .iter()
+                .filter(|observation| observation["node"] == node)
+                .count();
             assert_eq!(
-                node_verdicts_in(&item, node).get(1).map(String::as_str),
-                Some("satisfied"),
+                verdicts.len(),
+                expected_count,
+                "{outstanding} {node}: {item}"
+            );
+            assert!(
+                verdicts.iter().all(|verdict| verdict == "satisfied"),
                 "{outstanding} {node}: {item}"
             );
         }
+        let order: Vec<usize> = (0..14).collect();
+        assert_every_verdict_only_advances(prefixes, &order);
+        assert_eq!(prefixes[13]["obligations"], item["obligations"], "{item}");
     }
+}
+
+/// FR-895-AC-42 (TC-2531): an unobserved choice before a nested repeat remains
+/// an undecided predecessor when no main-sequence step identifies the outer
+/// iteration. Open history leaves the step pending; closed history violates
+/// its enabledness.
+#[trace("TC-2531", "FR-895-AC-42", "FSpec-FR-059-AC-4")]
+#[test]
+fn an_unobserved_choice_predecessor_stays_undecided_open_and_closed() {
+    let source = nested_repeat_cancel_protocol(
+        "choice Pick by Buyer visible () { case a when { true } sequence CA { event A by Buyer as (a: Ack) { true }; } case b when { false } sequence CB { event B by Buyer as (b: Ack) { true }; } } ",
+    );
+    let observation = loop_event("Inner::IBody::Both::left::Left::L");
+
+    for (name, closure, expected_verdict, expected_cause) in [
+        ("open", "open", "pending", None),
+        ("closed", "closed", "violated", Some("unexpected")),
+    ] {
+        let mut recording = repeat_recording(
+            json!([observation.clone()]),
+            json!([]),
+            json!([0]),
+            json!([]),
+        );
+        let mut premises = recording["closure"]["premises"]
+            .as_array()
+            .expect("recording premises")
+            .clone();
+        premises.extend([
+            json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Inner::IBody::Both::left"}),
+            json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Inner::IBody::Both::right"}),
+        ]);
+        recording["closure"] = if closure == "open" {
+            json!({"state": "open", "premises": premises})
+        } else {
+            premises.extend([
+                json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Pick::a"}),
+                json!({"kind": "branch", "node": "Flow::Main::Loop::Body::Pick::b"}),
+            ]);
+            json!({"state": "closed", "premises": premises})
+        };
+        let item = replay_with(
+            &format!("unobserved-choice-predecessor-{name}"),
+            &source,
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item("incremental"),
+        )
+        .item(0);
+        let prefixes = item["prefixes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("prefixes: {item}"));
+        assert_eq!(prefixes.len(), 1, "{item}");
+        assert_eq!(prefixes[0]["obligations"], item["obligations"], "{item}");
+        let obligation = prefixes[0]["obligations"]
+            .as_array()
+            .expect("obligations")
+            .iter()
+            .find(|entry| {
+                entry["obligation"]["kind"] == "enabledness"
+                    && entry["obligation"]["node"] == NESTED_LEFT
+            })
+            .unwrap_or_else(|| panic!("enabledness for {NESTED_LEFT}: {item}"));
+        assert_eq!(obligation["verdict"], expected_verdict, "{item}");
+        assert_eq!(obligation["cause"].as_str(), expected_cause, "{item}");
+    }
+}
+
+/// FR-895-AC-45 (TC-2531): repeat control counts belong to each repeat
+/// invocation. An outer repeat may execute twice while its inner repeat runs
+/// once per outer iteration. Without a counter fixing the outer iteration,
+/// the inner repeat is never falsely reported duplicated; when `L` runs
+/// twice in one known outer iteration, the second `L` is the over-limit
+/// witness.
+#[trace("TC-2531", "FR-895-AC-45", "FSpec-FR-059-AC-4")]
+#[test]
+fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
+    let source = repeat_protocol().replace(
+        "sequence Body {",
+        "sequence Body { event P by Buyer as (p: Ack) { true }; repeat Inner by Buyer visible () max 1 while { true } sequence IBody { event L by Buyer as (l: Ack) { true }; } exhausted sequence IOut { }",
+    );
+    let outer = "Flow::Main::Loop";
+    let inner = "Flow::Main::Loop::Body::Inner";
+    let step = |path: &str| loop_event(path);
+    let nested_item = |name: &str, observations: Value| {
+        let count = observations.as_array().expect("observations").len();
+        let recording = repeat_recording(
+            observations,
+            json!([]),
+            json!((0..count).collect::<Vec<_>>()),
+            json!([]),
+        );
+        let item = replay_with(
+            name,
+            &source,
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item("incremental"),
+        )
+        .item(0);
+        (item, recording)
+    };
+
+    let (legitimate, recording) = nested_item(
+        "replay-repeat-controls-nested-within-max",
+        json!([
+            step("P"),
+            step("Inner::IBody::L"),
+            step("P"),
+            step("Inner::IBody::L")
+        ]),
+    );
+    assert_source_assessment_pair(&source, &recording, &legitimate);
+    let prefixes = legitimate["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 4, "{legitimate}");
+    for prefix in prefixes {
+        for node in [outer, inner] {
+            let results = control_results_in(prefix, node);
+            assert_eq!(results.len(), 1, "{node}: {prefix}");
+            assert!(
+                results
+                    .iter()
+                    .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
+                "{node}: {prefix}"
+            );
+        }
+    }
+    for node in [outer, inner] {
+        assert_eq!(
+            control_results_in(&legitimate, node),
+            [("satisfied".to_owned(), None)],
+            "{node}: {legitimate}"
+        );
+    }
+    let order: Vec<usize> = (0..4).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(
+        prefixes[3]["obligations"], legitimate["obligations"],
+        "{legitimate}"
+    );
+
+    let (undetermined, recording) = nested_item(
+        "replay-repeat-controls-outer-iteration-undetermined",
+        json!([step("Inner::IBody::L"), step("Inner::IBody::L")]),
+    );
+    assert_source_assessment_pair(&source, &recording, &undetermined);
+    let prefixes = undetermined["prefixes"].as_array().expect("prefixes");
+    for prefix in prefixes {
+        let results = control_results_in(prefix, inner);
+        assert_eq!(results.len(), 1, "{inner}: {prefix}");
+        assert!(
+            results
+                .iter()
+                .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
+            "{inner}: {prefix}"
+        );
+    }
+    let undetermined_results = control_results_in(&undetermined, inner);
+    assert_eq!(undetermined_results.len(), 1, "{undetermined}");
+    assert!(
+        undetermined_results
+            .iter()
+            .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
+        "{undetermined}"
+    );
+    assert_eq!(
+        prefixes[1]["obligations"], undetermined["obligations"],
+        "{undetermined}"
+    );
+
+    let (over_limit, recording) = nested_item(
+        "replay-repeat-controls-inner-over-max",
+        json!([step("P"), step("Inner::IBody::L"), step("Inner::IBody::L")]),
+    );
+    assert_source_assessment_pair(&source, &recording, &over_limit);
+    let prefixes = over_limit["prefixes"].as_array().expect("prefixes");
+    for prefix in &prefixes[..2] {
+        let results = control_results_in(prefix, inner);
+        assert_eq!(results.len(), 1, "{inner}: {prefix}");
+        assert!(
+            results
+                .iter()
+                .all(|(verdict, _)| matches!(verdict.as_str(), "pending" | "satisfied")),
+            "{inner}: {prefix}"
+        );
+    }
+    assert_eq!(
+        control_results_in(&prefixes[2], inner),
+        [("violated".to_owned(), Some("duplicated".to_owned()))],
+        "{inner}: {}",
+        prefixes[2]
+    );
+    assert_eq!(
+        control_results_in(&over_limit, inner),
+        [("violated".to_owned(), Some("duplicated".to_owned()))],
+        "{over_limit}"
+    );
+    assert_eq!(
+        prefixes[2]["obligations"], over_limit["obligations"],
+        "{over_limit}"
+    );
 }
 
 /// [`cancel_in_repeat_protocol`] with `extra` after `P` in the loop body.

@@ -260,6 +260,11 @@ pub struct ProtocolTraceSubject {
 /// Why [`replay_model_trace`] settled no result (FR-128).
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ModelTraceRefusal {
+    /// FSL FR-243: an `always possible` or `unique path` claim replayed under
+    /// digital-clock timing, whose integer-clock graph does not visit every
+    /// timed state either form quantifies over.
+    #[error("invalid_runtime_input/invalid-value: digital-clock replay does not preserve this claim ({0:?})")]
+    NotDigitisable(crate::NotDigitisable),
     /// The counterexample names an authored clause, and the recompiled
     /// package holds no temporal clause node (FR-337).
     #[error("stale_dependency/content-mismatch: the recompiled package holds no temporal clause node {clause_node}")]
@@ -669,6 +674,7 @@ impl ModelTraceRefusal {
             | Self::HyperUnfair { .. }
             | Self::UnfairProtocolLasso { .. }
             | Self::UnknownFairnessOperation { .. }
+            | Self::NotDigitisable(_)
             | Self::TraceAlphabet { .. } => Code::InvalidRuntimeInput,
         }
     }
@@ -724,6 +730,7 @@ impl ModelTraceRefusal {
             | Self::HyperUnfair { .. }
             | Self::UnfairProtocolLasso { .. }
             | Self::UnknownFairnessOperation { .. }
+            | Self::NotDigitisable(_)
             | Self::TraceAlphabet { .. } => "invalid-value",
         }
     }

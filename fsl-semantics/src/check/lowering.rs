@@ -112,7 +112,7 @@ pub use model::{
     clock_field_member_type, collection_kind, model_root_key, AdmittedModel, CollectionShape,
     ForeignView, ModelClause, PlaceRow, PlaceStep, SelectedModelEnumDeclaration,
     SelectedModelEnumMember, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
-    SelectedOperationMember, SourceClockEntry, SourceClockMembers,
+    SelectedOperationMember, SourceClockEntry, SourceClockMembers, source_object_owner_chain,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{

@@ -41,11 +41,11 @@ mod finite_hyper_item;
 mod hybrid_item;
 mod hybrid_process;
 mod hyper_route;
-mod instance_records;
+pub(crate) mod instance_records;
 mod invariant_item;
 mod items;
 mod package_hyper;
-mod protocol_item;
+pub(crate) mod protocol_item;
 mod reduction_item;
 mod refinement_item;
 pub(crate) mod request;
@@ -3559,7 +3559,7 @@ fn settle(
             settled
         }
         EngineReport::GlobalConformance(report) => AnalyzeRecord {
-            protocol_conformance: Some(report.output),
+            protocol_conformance: report.output,
             protocol_conformance_counterexample: report.counterexample,
             ..record(terminal(report.terminal), None)
         },
