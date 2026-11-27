@@ -1968,7 +1968,7 @@ fn the_populations_a_guard_names_join_the_clauses() {
 /// FR-125-AC-17: an absent `x` remains a guard when forwarded through a let
 /// alias and unchanged helper returns, while a helper that reads its argument
 /// as a field still produces `absent-key`.
-#[trace("TC-520", "FR-125-AC-17", "FR-361-AC-16")]
+#[trace("TC-520", "FR-125-AC-17", "FSpec-TC-294", "FSpec-FR-361-AC-16")]
 #[test]
 fn absent_key_guard_provenance_flows_through_let_aliases_and_helpers() {
     let world = world(
