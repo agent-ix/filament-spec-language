@@ -895,33 +895,14 @@ fn a_quiescent_state_keeps_its_steps_so_a_false_infinity_is_rejected() {
     let never = quiescent_send("holds(false) >= 100 ms");
     let control = document(&settle(&never, "MeanTime"));
     let claim_100 = quiescent_send("holds(c.late) >= 100 ms");
-    // The claim identity embeds the target expression: take the `until`
-    // operand of `holds(c.late)` from a finite proof over the same model and
-    // put it in the donor's identity, so only the quiescent rule can reject.
-    let mut forged = control.clone();
-    let finite = retx(
-        GUARD,
-        true,
-        "",
-        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(c.late) >= 1 ms }\n",
-    );
-    let donor = document(&settle(&finite, "MeanTime"));
-    let until = |identity: &Value| -> usize {
-        identity["node_id"]["path"]
-            .as_array()
-            .expect("identity path")
-            .iter()
-            .position(|part| part == "until")
-            .expect("an until operand")
-            + 1
-    };
-    let operand = donor["identity"]["node_id"]["path"][until(&donor["identity"])].clone();
-    let at = until(&forged["identity"]);
-    forged["identity"]["node_id"]["path"][at] = operand;
-    assert_eq!(
-        rejected_rule(&claim_100, "MeanTime", &forged),
-        ProbabilityCertificateRule::Malformed
-    );
+    // The producer's finite certificate for the reachable target, stripped of
+    // its values and ranking: a value-free document claims the infinity the
+    // checker's own graph denies, with the claim's own identity and objective.
+    let record = settle_tampered(&claim_100, "MeanTime", |certificate| {
+        certificate.values.clear();
+        certificate.ranking.clear();
+    });
+    assert_eq!(rejected_item_rule(&record), CertificateRule::Malformed);
 
     assert_eq!(control["values"], json!([]));
     assert!(matches!(
