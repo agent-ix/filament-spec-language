@@ -315,7 +315,7 @@ fn assert_stage_limit(refusal: &ReplayRefusal, setting: Setting, bound: u64) {
     assert_eq!(refusal.code(), Code::StageLimitExceeded, "{refusal:?}");
     let limit = stage.limit().expect("the refusal carries its limit");
     assert_eq!(limit.setting(), setting);
-    assert_eq!(limit.limit(), bound);
+    assert_eq!(limit.configured_bound(), bound);
 }
 
 /// A denied native-join charge of the handoff supply settles as
