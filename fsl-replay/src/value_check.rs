@@ -123,6 +123,12 @@ pub enum ParameterDomain {
     Unsupported(UnsupportedDomain),
 }
 
+/// The published default for `max_cases` (FSpec FR-483): the function-body
+/// evaluations one assignment may spend when a caller names no case budget
+/// (`evaluate` and `replay`). `fsl-analyze`'s value-validity descriptor
+/// publishes the same value.
+pub const DEFAULT_MAX_CASES: u64 = 1_048_576;
+
 /// One parameter of the claim's function.
 #[derive(Clone, Debug)]
 pub struct TargetParameter {
@@ -592,7 +598,7 @@ impl<'p> ValueTarget<'p> {
         assignment: &[Value],
         cancel: &Cancel,
     ) -> Result<Verdict, InternalFault> {
-        self.evaluate_with_case_budget(assignment, cancel, u64::MAX)
+        self.evaluate_with_case_budget(assignment, cancel, DEFAULT_MAX_CASES)
             .map(|(verdict, _)| verdict)
     }
 
@@ -811,7 +817,7 @@ impl<'p> ValueTarget<'p> {
         expected: &Violation,
         cancel: &Cancel,
     ) -> Result<Option<ReproducedViolation>, InternalFault> {
-        self.replay_with_case_budget(assignment, expected, cancel, u64::MAX)
+        self.replay_with_case_budget(assignment, expected, cancel, DEFAULT_MAX_CASES)
             .map(|(reproduced, _, _)| reproduced)
     }
 
