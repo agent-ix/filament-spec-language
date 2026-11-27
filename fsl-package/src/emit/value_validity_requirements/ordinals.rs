@@ -67,6 +67,9 @@ struct NodeMapping {
 #[derive(Default)]
 pub(in crate::emit) struct Renumbering {
     by_node: HashMap<NodeKey, Mapping>,
+    /// The synthetic occurrences of a node: the old ordinal of the use each
+    /// copies and its new ordinal.
+    synthetic: HashMap<NodeKey, Vec<(u64, u64)>>,
 }
 
 impl Renumbering {
@@ -95,7 +98,7 @@ impl Renumbering {
         data: &mut filament_contract_model::CheckedTermDataV2,
     ) {
         let by_id = self.by_id(ids);
-        relabel_term_data_inner(&by_id, &Synthetics::new(), data);
+        relabel_term_data_inner(&by_id, &self.synthetics(ids), data);
     }
 
     /// Relabel the equality rows to the final owner-walk occurrence ordinals.
@@ -110,9 +113,19 @@ impl Renumbering {
             producers,
             facts,
             &self.by_id(ids),
-            &Synthetics::new(),
+            &self.synthetics(ids),
             source_map,
         );
+    }
+
+    fn synthetics(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> Synthetics {
+        let mut by_id = Synthetics::new();
+        for (key, copies) in &self.synthetic {
+            if let Some(id) = ids.get(key) {
+                by_id.insert(id.clone(), copies.clone());
+            }
+        }
+        by_id
     }
 
     fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
@@ -347,6 +360,16 @@ pub(in crate::emit) fn renumber(
             continue;
         }
         renumbering.by_node.insert(key.clone(), mapping.clone());
+        let copies: Vec<(u64, u64)> = slots
+            .iter()
+            .filter_map(|slot| match *slot {
+                Slot::Synthetic { from, ordinal } => Some((from, ordinal)),
+                Slot::Source { .. } => None,
+            })
+            .collect();
+        if !copies.is_empty() {
+            renumbering.synthetic.insert(key.clone(), copies);
+        }
         changed.insert(position, NodeMapping { slots });
     }
     apply(nodes, source_map, &changed)?;
