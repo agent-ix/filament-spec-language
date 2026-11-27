@@ -9,6 +9,7 @@ use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
 };
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, read_weighted_long_run_probability_certificate,
@@ -22,8 +23,181 @@ use ix_trace_rs::trace;
 fn ratio(n: i64, d: i64) -> Rational {
     Rational::new(Integer::from(n), Integer::from(d)).unwrap()
 }
+
+/// FR-199-AC-6: Reward weights affect the MEC optimum, and the checker
+/// independently validates each weighted policy certificate.
+#[trace("TC-2177", "FR-199-AC-6")]
+#[test]
+fn every_scheduler_reward_weighting_checks_minimum_and_maximum_mec_values() {
+    use fsl_replay::LongRunOptimization;
+
+    let world = World::new(&prob_world::avail2(
+        "reward cost on Server::tick = 1;\n\
+         reward cost on Server::repair_fast = 1;\n\
+         reward cost on Server::repair_slow = 3;\n\
+         probabilistic Minimum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.up) weighted by cost >= rational(1000,1003) }\n\
+         probabilistic Maximum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.up) weighted by cost <= rational(1800,1801) }\n",
+    ));
+
+    for (name, optimization, value) in [
+        ("Minimum", LongRunOptimization::Minimum, ratio(1000, 1003)),
+        ("Maximum", LongRunOptimization::Maximum, ratio(1800, 1801)),
+    ] {
+        let bytes = produce(&world, name);
+        let document =
+            read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new())
+                .expect("the every-scheduler result carries weighted MEC evidence");
+        assert_eq!(document.certificate.optimization, optimization, "{name}");
+        assert_eq!(document.certificate.components.len(), 1, "{name}");
+        assert_eq!(document.certificate.components[0].value, value, "{name}");
+        assert!(accepted(&world, name, &document), "{name}");
+    }
+}
+
+/// A zero-weight accepting recurrence remains an available scheduler
+/// alternative even when the same MEC contains a positive-weight rejecting
+/// recurrence.
+#[trace("TC-2177", "FR-199-AC-6")]
+#[test]
+fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
+    assert_forged_mixed_zero_weight_maximum_rejected(false);
+}
+
+/// A zero-weight accepting recurrence is still checked when the forged
+/// selected policy sends its state transiently to a weighted rejecting class.
+#[trace("TC-2177", "FR-199-AC-6")]
+#[test]
+fn checker_rejects_weighted_maximum_with_transient_zero_weight_accepting_state() {
+    assert_forged_mixed_zero_weight_maximum_rejected(true);
+}
+
+fn assert_forged_mixed_zero_weight_maximum_rejected(transient_at_a: bool) {
+    use fsl_replay::{LongRunOptimization, LongRunPolicyChoice, ProductAction, Schedule};
+
+    let package = "test/weighted-longrun-mixed-zero-mec";
+    let world = World::new(&Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: Vec::new(),
+        fields: vec![("at_a", prob_world::BOOLEAN.to_owned())],
+        operations: vec![
+            Operation { name: "stay_a", parameters: vec![], modifies: vec![], deletes: false },
+            Operation { name: "to_b", parameters: vec![], modifies: vec!["at_a"], deletes: false },
+            Operation { name: "to_a", parameters: vec![], modifies: vec!["at_a"], deletes: false },
+            Operation { name: "stay_b", parameters: vec![], modifies: vec![], deletes: false },
+        ],
+        body: "pre AtA using v on M::Server::stay_a { self.at_a }\n\
+                pre ToB using v on M::Server::to_b { self.at_a }\n\
+                post AtB using v on M::Server::to_b { self.at_a = false }\n\
+                pre ToA using v on M::Server::to_a { not self.at_a }\n\
+                post AtAAgain using v on M::Server::to_a { self.at_a = true }\n\
+                pre AtBStay using v on M::Server::stay_b { not self.at_a }\n\
+                reward cost on Server::stay_a = 0;\n\
+                reward cost on Server::to_b = 0;\n\
+                reward cost on Server::to_a = 0;\n\
+                reward cost on Server::stay_b = 1;\n\
+                probabilistic Maximum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.at_a) weighted by cost <= rational(999,1000) }\n\
+                probabilistic Minimum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(true) weighted by cost >= rational(999,1000) }\n".to_owned(),
+        initial: serde_json::json!({"at_a":{"boolean":true}}),
+    });
+    let bytes = produce(&world, "Minimum");
+    let mut forged =
+        read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new())
+            .expect("analyzer supplies a structurally valid weighted certificate");
+    assert_eq!(
+        forged.certificate.optimization,
+        LongRunOptimization::Minimum
+    );
+    forged.certificate.optimization = LongRunOptimization::Maximum;
+    forged.certificate.identity =
+        fsl_replay::probabilistic_claim_identity(world.claim("Maximum")).unwrap();
+    assert_eq!(forged.certificate.components.len(), 1);
+
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let target_shell = fsl_replay::weighted_long_run_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &forged.certificate.identity,
+        vec![],
+        vec![],
+        limits(),
+        &Cancel::new(),
+    )
+    .expect("the maximum claim has a checked weighted objective");
+    forged.certificate.predicate_states = target_shell.certificate.predicate_states;
+    let a_key = forged.certificate.predicate_states[0].clone();
+    let state_a = system.initial().remove(0);
+    let actions_a = system
+        .actions_with_cancel(&state_a, &Cancel::new())
+        .unwrap()
+        .unwrap();
+    let action_a = actions_a
+        .iter()
+        .find(|action| action.identity.operation.contains("stay_a"))
+        .unwrap();
+    let action_to_b = actions_a
+        .iter()
+        .find(|action| action.identity.operation.contains("to_b"))
+        .unwrap();
+    let state_b = action_to_b.draws[0].successors[0].1.clone();
+    let actions_b = system
+        .actions_with_cancel(&state_b, &Cancel::new())
+        .unwrap()
+        .unwrap();
+    let action_b = actions_b
+        .iter()
+        .find(|action| action.identity.operation.contains("stay_b"))
+        .unwrap();
+
+    let component = &mut forged.certificate.components[0];
+    component.value = ratio(0, 1);
+    component.gain = ratio(0, 1);
+    for bias in &mut component.bias {
+        bias.value = ratio(0, 1);
+    }
+    for value in &mut forged.certificate.values {
+        value.value = ratio(0, 1);
+    }
+    let policy = component
+        .policy
+        .as_mut()
+        .expect("scheduler certificate has a policy");
+    let row_a = policy.iter_mut().find(|row| row.state == a_key).unwrap();
+    let selected_a = if transient_at_a {
+        action_to_b
+    } else {
+        action_a
+    };
+    row_a.choice = LongRunPolicyChoice::Deterministic(ProductAction::Identity(
+        Schedule::of(&system, &selected_a.identity).unwrap(),
+    ));
+    let row_b = policy.iter_mut().find(|row| row.state != a_key).unwrap();
+    row_b.choice = LongRunPolicyChoice::Deterministic(ProductAction::Identity(
+        Schedule::of(&system, &action_b.identity).unwrap(),
+    ));
+
+    let encoded =
+        write_weighted_long_run_probability_certificate(&forged, limits(), &Cancel::new())
+            .expect("the false proof remains structurally encodable");
+    let result = check(&world, "Maximum", &encoded, &Cancel::new(), limits()).unwrap();
+    assert!(
+        matches!(
+            &result,
+            ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::InequalityFails,
+                at: ProbabilityCertificateLocus::ProductState(key),
+            }) if *key == a_key
+        ),
+        "false weighted maximum must fail at the zero-weight accepting product state: {result:?}"
+    );
+}
+
 fn claim(name: &str, predicate: &str, bound: &str) -> String {
-    format!("probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) weighted by duration {bound} }}\n")
+    format!(
+        "probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) weighted by duration {bound} }}\n"
+    )
 }
 fn availability() -> World {
     availability_with_claims(
@@ -179,12 +353,44 @@ fn periodic_model(initial: i64, a_rewards: &str, b_reward: &str, terminal: bool)
             deletes: false,
         },
     ];
-    let mut model = Model {package,object:"Server",population:"servers",key:"s",
-        integers:vec![("Phase",0,3),("Weight",1,6)],fields:vec![("phase",format!("ix://{package}/Phase"))],operations,
-        body: format!("pre A using v on M::Server::a {{ self.phase = 0 }}\npost NextA using v on M::Server::a {{ self.phase = 1 }}\npre B using v on M::Server::b {{ self.phase = 1 }}\npost NextB using v on M::Server::b {{ self.phase = 0 }}\npre Enter using v on M::Server::enter {{ self.phase = 2 }}\npost Entered using v on M::Server::enter {{ (heads and self.phase = 0) or (not heads and self.phase = 3) }}\npre Stay using v on M::Server::stay {{ self.phase = 3 }}\nrandom Server::a(d) ~ {{ {a_rewards} }};\nrandom Server::enter(heads) ~ {{ true: 1, false: 3 }};\nreward duration on Server::a = d;\nreward duration on Server::b = {b_reward};\nreward duration on Server::stay = 1;\nworkload Steady on M {{ weight Server::a = 1; weight Server::b = 1; weight Server::enter = 1; weight Server::stay = 1; }}\n{}{}",
-            if terminal { "terminal End using v on M when { self.phase = 3 };\n" } else {""},
-            [claim("Fraction","s.phase = 0 or s.phase = 3",if initial == 2 {">= rational(11,12)"} else {">= rational(2,3)"}), claim("Upper","s.phase = 0 or s.phase = 3",if initial == 2 {"<= rational(11,12)"} else {"<= rational(2,3)"})].concat()),
-        initial:serde_json::json!({"phase":{"integer":initial.to_string()}}),
+    let mut model = Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![("Phase", 0, 3), ("Weight", 1, 6)],
+        fields: vec![("phase", format!("ix://{package}/Phase"))],
+        operations,
+        body: format!(
+            "pre A using v on M::Server::a {{ self.phase = 0 }}\npost NextA using v on M::Server::a {{ self.phase = 1 }}\npre B using v on M::Server::b {{ self.phase = 1 }}\npost NextB using v on M::Server::b {{ self.phase = 0 }}\npre Enter using v on M::Server::enter {{ self.phase = 2 }}\npost Entered using v on M::Server::enter {{ (heads and self.phase = 0) or (not heads and self.phase = 3) }}\npre Stay using v on M::Server::stay {{ self.phase = 3 }}\nrandom Server::a(d) ~ {{ {a_rewards} }};\nrandom Server::enter(heads) ~ {{ true: 1, false: 3 }};\nreward duration on Server::a = d;\nreward duration on Server::b = {b_reward};\nreward duration on Server::stay = 1;\nworkload Steady on M {{ weight Server::a = 1; weight Server::b = 1; weight Server::enter = 1; weight Server::stay = 1; }}\n{}{}",
+            if terminal {
+                "terminal End using v on M when { self.phase = 3 };\n"
+            } else {
+                ""
+            },
+            [
+                claim(
+                    "Fraction",
+                    "s.phase = 0 or s.phase = 3",
+                    if initial == 2 {
+                        ">= rational(11,12)"
+                    } else {
+                        ">= rational(2,3)"
+                    }
+                ),
+                claim(
+                    "Upper",
+                    "s.phase = 0 or s.phase = 3",
+                    if initial == 2 {
+                        "<= rational(11,12)"
+                    } else {
+                        "<= rational(2,3)"
+                    }
+                )
+            ]
+            .concat()
+        ),
+        initial: serde_json::json!({"phase":{"integer":initial.to_string()}}),
     };
     if terminal {
         model.body = model.body.replace(
@@ -613,7 +819,7 @@ fn undefined_actual_weights_and_predicates_preserve_typed_nonacceptance() {
             Some(fsl_replay::TerminalValue::Proved { .. } | fsl_replay::TerminalValue::Refuted)
         ));
     }
-    let source="reward duration on Coin::drop = 1;\nprobabilistic Fraction using inf on M over (c: M::Coin) under Even on origin { long_run_fraction holds(c.v = 0) weighted by duration >= rational(1,2) }\n";
+    let source = "reward duration on Coin::drop = 1;\nprobabilistic Fraction using inf on M over (c: M::Coin) under Even on origin { long_run_fraction holds(c.v = 0) weighted by duration >= rational(1,2) }\n";
     let world = World::new(&prob_world::coin(source));
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let identity = fsl_replay::probabilistic_claim_identity(world.claim("Fraction")).unwrap();
@@ -623,7 +829,9 @@ fn undefined_actual_weights_and_predicates_preserve_typed_nonacceptance() {
 }
 
 fn quantity_availability(tick: &str, repair: &str) -> World {
-    let extra=format!("dimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(1000,1) * ms;\ndimension Length;\nunit m : Length = rational(1,1);\nreward duration on Server::tick = {tick};\nreward duration on Server::repair = {repair};\n");
+    let extra = format!(
+        "dimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(1000,1) * ms;\ndimension Length;\nunit m : Length = rational(1,1);\nreward duration on Server::tick = {tick};\nreward duration on Server::repair = {repair};\n"
+    );
     availability_with_claims(
         claim("Lower", "s.phase = 0", ">= rational(600,601)"),
         &extra,
