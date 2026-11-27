@@ -220,9 +220,22 @@ pub(super) fn concretise(
     target: &Target,
     scale: &BigInt,
 ) -> Result<Concrete, NotConcretised> {
-    let places = clocks;
     let zero = Rational::from_integer(Integer::zero());
-    let mut resets = Resets(vec![(0, zero.clone()); places]);
+    concretise_from(timed, &vec![zero; clocks], stages, target, scale)
+}
+
+/// [`concretise`] from the clock values `start`, one per clock, each exact
+/// at `scale`.
+pub(super) fn concretise_from(
+    timed: &TimedSystem<'_, '_>,
+    start: &[Rational],
+    stages: &[Stage],
+    target: &Target,
+    scale: &BigInt,
+) -> Result<Concrete, NotConcretised> {
+    let places = start.len();
+    let zero = Rational::from_integer(Integer::zero());
+    let mut resets = Resets(start.iter().map(|value| (0, value.clone())).collect());
     let mut times = Dbm::universe(stages.len() + 1);
     for (index, stage) in stages.iter().enumerate() {
         let at = index + 1;
@@ -301,8 +314,8 @@ pub(super) fn concretise(
     let mut unit = scale.clone();
     let mut stamps = vec![zero.clone()];
     let mut prefix = Vec::with_capacity(stages.len());
-    let mut values = vec![zero.clone(); places];
-    let mut reset_values = vec![zero.clone(); places];
+    let mut values = start.to_vec();
+    let mut reset_values = start.to_vec();
     let mut last_reset = vec![0_usize; places];
     // The delays of the silent stages since the last step.
     let mut waited = zero.clone();

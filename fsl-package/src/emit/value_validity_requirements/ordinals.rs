@@ -22,10 +22,11 @@ use filament_contract_model::{
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner;
-use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::check::wire_id::StructuralIds;
+use fsl_semantics::check::CheckedGraph;
+use ix_trace_rs::implements;
 
-use super::{EmitRefusal, Omitted, frames};
+use super::{frames, EmitRefusal, Omitted};
 use crate::emit::location_paths::Paths;
 
 /// What the checker located a use in: the declaration index of the function
@@ -95,21 +96,25 @@ impl Renumbering {
         !self.by_node.is_empty()
     }
 
-    /// Move every checked-term row naming a renumbered expression occurrence
-    /// to the occurrence's new ordinal, and put each changed table back in
-    /// its canonical order. `ids` names each node's id in the rows.
+    /// Relabel all term rows to the final owner-walk occurrence ordinals.
+    #[implements("FSpec-FR-322-AC-490")]
     pub(in crate::emit) fn relabel_term_data(
         &self,
         ids: &HashMap<NodeKey, CheckedNodeId>,
         data: &mut filament_contract_model::CheckedTermDataV2,
     ) {
+        let by_id = self.by_id(ids);
+        relabel_term_data_inner(&by_id, data);
+    }
+
+    fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
         let mut by_id = BTreeMap::new();
         for (key, mapping) in &self.by_node {
             if let Some(id) = ids.get(key) {
                 by_id.insert(id.clone(), mapping.clone());
             }
         }
-        relabel_term_data(&by_id, data);
+        by_id
     }
 }
 
@@ -538,6 +543,13 @@ pub(in crate::emit) fn rewalk(
 /// Move the checked-term rows that name a renumbered expression occurrence of
 /// the nodes `by_id` holds, and drop the rows of a dropped use.
 pub(in crate::emit) fn relabel_term_data(
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    data: &mut filament_contract_model::CheckedTermDataV2,
+) {
+    relabel_term_data_inner(by_id, data);
+}
+
+fn relabel_term_data_inner(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {

@@ -128,6 +128,20 @@ that no trace exists.
   trap ranking at the first product state of its initial state's part; at the
   same product state `Undefined` wins, since a position's letter is read before
   the automaton steps (ADR-018 UE-4).
+- If a contract conjunction of a reachable state's expansion evaluates
+  undefined, an undefined precondition guard included, the engine SHALL return
+  `Undefined` with FR-126's canonical breadth-first path to the first such
+  product state in discovery order, `where` naming that position, the
+  state's key, the conjunction's clause as the `contract` locus, the guarded
+  transition for a precondition, and the evaluator's undefined cause
+  (ADR-018 UE-6, ADR-022 RU-5). It SHALL take the place of `Witnessed`,
+  `WitnessedUnchecked`, `Trapped` and `NoDecision` whatever lassos or sampled
+  witnesses exist, and a letter at the same product state comes first. Over an
+  event-position clause the closed finite executions are searched with the
+  same reading, and the path is the execution prefix that reaches the state.
+  A conjunction that is refused, with no clause false and none undefined,
+  leaves the state open with cause `UndecidedSuccessor`. The two runs replay
+  the path and recompute the finding.
 - `Trapped` SHALL name the first initial state, in subject order, whose part
   of the product is closed (no open node) and holds no fair accepting
   cycle.
@@ -206,6 +220,7 @@ that no trace exists.
 | FR-181-AC-12 | Two parameters. Over two secure vaults, `v` at `l = 0` and `w` at `l = 1`, `over behaviours (x: V::Vault, y: V::Vault) exists trace b of V { always holds(x.l @ b = y.l @ b) }`, and its body under `always [0, 0]` and the event-position profile: the instances `(v, v)`, `(v, w)`, `(w, v)` and `(w, w)` settle `proved`, `refuted`, `refuted` and `proved`, and `settle_existential` refuses `HP-5-instance` an outcome that binds one parameter or both out of order. Over `pets` with two admitted keys and `(v: M::Thing, w: M::Thing)`, the source `native-analyze/1` item is `unsupported_construct`/`not-yet-implemented`, exit 21, with no verdict and no instance. | Test (TC-3219) |
 | FR-181-AC-13 | Unexpanded states of a trap. Over the secure vault with `witness_samples` 0, each of these returns `Trapped` and settles `refuted`, `closed-scope`: `holds(v.l @ b = 1)` from `l = 0` with `max_states` 1, and with `max_transitions` 1; and, from `l = 0` with AC-5's `remainder`, which has no value after a step to `l = 1`, `holds(v.l @ b = 1) and always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)`. From `(h, l) = (0, 1)`, where `step`'s precondition has no value, `holds(v.l @ b = 0)` does not return `Trapped`, with the default limits or `max_states` 1, and `settle_existential` does not confirm a `Trapped` outcome for it (ADR-018 UE-6). | Test (TC-3219) |
 | FR-181-AC-14 | An undefined read through the source item. `Counter`'s `inc` is disabled and an operation `drop` is framed `deletes Counter`; the universe and the initial state hold one counter `c` at `value = 0`. `exists trace a of M { always holds((v.value = 0) @ a) }` for `v: M::Counter` as a `native-analyze/1` item settles `refuted`, `decisive-counterexample`, exit 10, with an `undefined` counterexample of cause `absent-key` at position 1. | Test (TC-3219) |
+| FR-181-AC-15 | Undefined guard. Over the leaky vault whose `step` has the precondition `quotient(1 - self.l + self.h) >= 0`, `function quotient using v(x: Integer): Integer pure { 1 div x }` checked under `CheckMode::Kernel` and called by the Linked precondition, so the guard has no value at `(h, l) = (0, 1)`: `exists trace b of V { eventually holds(v.l @ b = 1) }` from `(0, 0)` returns `Undefined` with the one step `step(1)`, position 1, locus `contract` `Guard`, the guarded `step` transition and cause `DivisionByZero`, with `witness_samples` 0 and by default; from `(0, 1)` it returns `Undefined` with an empty path at position 0. With `reset` keeping `l` at 1, `fair weak step` and `always holds(v.l @ b = 1)` from `(0, 1)`, the loop through that state is no witness: the item returns `Undefined` at position 0, and settles `refuted`, `decisive-counterexample`, with the path replayed. Under the event-position profile `eventually [0, 2] holds(v.l @ b = 1)` over the same vault from `(0, 0)` and from `(0, 1)` returns `Undefined` at positions 1 and 0, never `ClosedWitnessed` or `Trapped`. | Test (TC-616) |
 
 ## Dependencies
 

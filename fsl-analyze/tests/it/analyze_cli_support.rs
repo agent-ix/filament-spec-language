@@ -12,6 +12,7 @@
 //! the library half every frontend calls.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{json, Value};
 
@@ -48,10 +49,19 @@ pub(crate) struct Workspace {
 
 impl Workspace {
     pub(crate) fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("fsl-analyze-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
-        Self { dir }
+        static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
+        loop {
+            let call = NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "fsl-analyze-{name}-{}-{call}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Self { dir },
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("a scratch directory is created: {error}"),
+            }
+        }
     }
 
     pub(crate) fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {

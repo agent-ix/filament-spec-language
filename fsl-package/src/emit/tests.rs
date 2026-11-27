@@ -115,7 +115,7 @@ mod selected_model_rows;
 mod source_enum_carrier;
 mod source_enum_rows;
 mod source_map_debug;
-mod source_objects;
+pub(in crate::emit) mod source_objects;
 mod source_record_rows;
 mod source_tuple_rows;
 mod source_union_rows;
@@ -3309,7 +3309,7 @@ fn emit_model_unit(unit: &str, evidence_identity: Option<&str>) -> (Emission, Va
 /// package by identity alone, with no version, while the emitted model nodes are keyed by the
 /// content-only `ModelOwner`, which carries no version. FSL's I2 read, given the package
 /// as domain package evidence, returns Verified exporting `keep` and `held`.
-#[trace("TC-442", "FR-027-AC-9", "FR-056-AC-9")]
+#[trace("TC-442", "FR-027-AC-9", "FR-056-AC-9", "FSpec-FR-322-AC-137")]
 #[test]
 fn a_model_bearing_unit_emits_its_model_selection_and_reads_back_verified() {
     let unit = spine_model_without(&[FIELD_ACCESS, CONFORMING_EQUALITY]);
@@ -3376,9 +3376,9 @@ fn a_model_bearing_unit_emits_its_model_selection_and_reads_back_verified() {
     );
     // FSL FR-094 "Model declaration nodes": every ordinary object of the selected
     // document is rooted, including the unused `Rock`.
-    // FSpec FR-322-AC-132/134/136: exactly one `model_root` for the one row,
-    // last in graph order with its `generated` source-map entry last, keyed by
-    // its identity alone, never by the alias.
+    // FSpec FR-322-AC-132/134/136: exactly one self-typed `model_root` for
+    // the selected identity. FR-322-AC-137 requires it and its generated
+    // source-map entry to be last.
     let graph = nodes(&wire);
     assert_eq!(
         graph

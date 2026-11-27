@@ -80,6 +80,16 @@ pub fn read_probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    read_probability_proof_document_in_scope(bytes, limits, cancel, None)
+}
+
+#[implements("FR-203-AC-29")]
+fn read_probability_proof_document_in_scope(
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     let cyclic_mdp = matches!(
         profile_dispatch(bytes, limits, cancel)?,
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward
@@ -88,7 +98,7 @@ pub fn read_probability_proof_document(
         profile_dispatch(bytes, limits, cancel)?,
         ProfileDispatch::FairMdp
     );
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut fairness = Vec::new();
     let document = read_document_profile(
         bytes,
@@ -114,6 +124,27 @@ pub fn write_probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    write_probability_proof_document_in_scope(document, limits, cancel, None)
+}
+
+/// Write and validate an exact proof document against the caller's item budget.
+#[implements("FR-203-AC-29")]
+pub fn write_probability_proof_document_with_work_scope(
+    document: &ProbabilityProofDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    write_probability_proof_document_in_scope(document, limits, cancel, Some(work))
+}
+
+#[implements("FR-203-AC-29")]
+fn write_probability_proof_document_in_scope(
+    document: &ProbabilityProofDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
     if !document.fairness.is_empty() {
         super::fairness::admit_encoding(&document.fairness, limits, cancel)?;
     }
@@ -125,7 +156,7 @@ pub fn write_probability_proof_document(
         document.fair_mdp,
         &document.fairness,
     )?;
-    read_probability_proof_document(&bytes, limits, cancel)?;
+    read_probability_proof_document_in_scope(&bytes, limits, cancel, work)?;
     Ok(bytes)
 }
 
@@ -141,6 +172,19 @@ pub fn write_value_bounds_proof_document(
     value_bounds::wrap(&exact, side, limits)
 }
 
+/// Write an interval-bound proof document using the caller's item work scope.
+#[implements("FR-203-AC-29")]
+pub fn write_value_bounds_proof_document_with_work_scope(
+    document: &ProbabilityProofDocument,
+    side: SubsystemBoundKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let exact = write_probability_proof_document_with_work_scope(document, limits, cancel, work)?;
+    value_bounds::wrap(&exact, side, limits)
+}
+
 /// Prefer existing eligible profiles before constructing cyclic MDP evidence.
 /// All admission attempts share the same arithmetic and retained-storage scope.
 pub fn probability_proof_document(
@@ -151,12 +195,47 @@ pub fn probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
-    let mut cx = Context::new(limits, cancel, None);
+    probability_proof_document_in_scope(system, claims, item, certificate, limits, cancel, None)
+}
+
+#[implements("FR-203-AC-29")]
+/// Produce an exact proof document using the caller's remaining item allowance.
+pub fn probability_proof_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    probability_proof_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn probability_proof_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    let mut cx = Context::new_with_work(limits, cancel, None, work);
     proof_document_in(system, claims, item, certificate, &mut cx)
 }
 
 /// [`probability_proof_document`], with the arithmetic and retained-storage
 /// scope its attempts spent, for a further attempt to continue.
+#[implements("FR-203-AC-29")]
 pub(super) fn probability_proof_document_spending(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -164,12 +243,13 @@ pub(super) fn probability_proof_document_spending(
     certificate: &ExactProbabilityCertificate,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> (
     Result<ProbabilityProofDocument, ProbabilityDocumentError>,
     filament_exact::Meter,
     u64,
 ) {
-    let mut cx = Context::new(limits, cancel, None);
+    let mut cx = Context::new_with_work(limits, cancel, None, work);
     let proof = proof_document_in(system, claims, item, certificate, &mut cx);
     (proof, cx.meter, cx.storage)
 }
@@ -275,6 +355,48 @@ pub fn cyclic_mdp_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+#[implements("FR-203-AC-29")]
+/// Produce cyclic MDP certificate evidence using the caller's item work scope.
+pub fn cyclic_mdp_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn cyclic_mdp_probability_certificate_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     if !matches!(
         bind_claim(claims, item, cancel)?.form,
         ProbForm::Reach {
@@ -289,7 +411,7 @@ pub fn cyclic_mdp_probability_certificate_document(
         claims,
         item,
         certificate,
-        &mut Context::new(limits, cancel, None),
+        &mut Context::new_with_work(limits, cancel, None, work),
     )
 }
 
@@ -303,6 +425,48 @@ pub fn cyclic_mdp_reward_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_reward_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+#[implements("FR-203-AC-29")]
+/// Produce cyclic reward certificate evidence using the caller's item work scope.
+pub fn cyclic_mdp_reward_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_reward_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn cyclic_mdp_reward_probability_certificate_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     if !matches!(
         bind_claim(claims, item, cancel)?.form,
         ProbForm::ExpectedReward { .. }
@@ -314,7 +478,7 @@ pub fn cyclic_mdp_reward_probability_certificate_document(
         claims,
         item,
         certificate,
-        &mut Context::new(limits, cancel, None),
+        &mut Context::new_with_work(limits, cancel, None, work),
     )
 }
 
@@ -352,6 +516,7 @@ struct Context<'a, 'control> {
     storage: u64,
     reward: bool,
     reward_control: Option<&'a super::super::reward::RewardControl<'control>>,
+    work: Option<&'a filament_exact::WorkScope>,
     identity: fsl_foundation::IdentityLimits,
     observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
 }
@@ -365,6 +530,7 @@ pub(super) struct ValueBoundControl<'a, 'control> {
     pub(super) limits: ProbabilityDocumentLimits,
     pub(super) cancel: &'a Cancel,
     pub(super) reward: &'a super::super::reward::RewardControl<'control>,
+    pub(super) work: Option<&'a filament_exact::WorkScope>,
 }
 
 /// The states a fair *minimum* values at zero: `U`, the non-target states in a
@@ -446,15 +612,26 @@ impl<'a, 'control> Context<'a, 'control> {
         cancel: &'a Cancel,
         observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
     ) -> Self {
+        Self::new_with_work(limits, cancel, observe, None)
+    }
+
+    #[implements("FR-203-AC-29")]
+    fn new_with_work(
+        limits: ProbabilityDocumentLimits,
+        cancel: &'a Cancel,
+        observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
+        work: Option<&'a filament_exact::WorkScope>,
+    ) -> Self {
         Self {
             limits,
             cancel,
             fair_mdp: false,
             bound_side: None,
-            meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+            meter: limits.accounting_meter_in_scope(cancel, work),
             storage: 0,
             reward: false,
             reward_control: None,
+            work,
             identity: fsl_foundation::IdentityLimits::default(),
             observe,
         }
@@ -1349,6 +1526,7 @@ pub(super) fn check<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-30")]
 pub(super) fn check_with_reward_control<'a, 'control>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1358,12 +1536,16 @@ pub(super) fn check_with_reward_control<'a, 'control>(
     limits: ProbabilityDocumentLimits,
     cancel: &'a Cancel,
     control: &'a super::super::reward::RewardControl<'control>,
+    work: Option<&'a filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel, None);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
+    cx.work = work;
     cx.reward_control = Some(control);
     check_with_context(system, claims, item, bytes, offer, cx)
 }
 
+#[implements("FR-203-AC-30")]
 pub(super) fn check_with_value_bound_control<'a, 'control>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1373,6 +1555,10 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
     control: ValueBoundControl<'a, 'control>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut cx = Context::new(control.limits, control.cancel, None);
+    cx.meter = control
+        .limits
+        .accounting_meter_in_scope(control.cancel, control.work);
+    cx.work = control.work;
     cx.reward_control = Some(control.reward);
     cx.bound_side = offer.side;
     check_with_context(system, claims, item, bytes, offer, cx)
@@ -1521,10 +1707,12 @@ fn check_with_context(
         } else if cx.reward {
             match side {
                 SubsystemBoundKind::Lower => BTreeMap::new(),
-                SubsystemBoundKind::Upper => match offered_ranks(&graph, document.ranking, &mut cx)? {
-                    Some(ranks) => ranks,
-                    None => return Ok(malformed_ranking()),
-                },
+                SubsystemBoundKind::Upper => {
+                    match offered_ranks(&graph, document.ranking, &mut cx)? {
+                        Some(ranks) => ranks,
+                        None => return Ok(malformed_ranking()),
+                    }
+                }
             }
         } else {
             match side {
@@ -2247,18 +2435,16 @@ mod tests {
         let values = BTreeMap::from([(key(0), rational(1)), (key(1), rational(1))]);
         let action_sums = sums(&graph, &values, None, &mut cx).unwrap();
         for objective in [ProbabilityObjective::Minimum, ProbabilityObjective::Maximum] {
-            assert!(
-                progress_failure(
-                    &graph,
-                    &values,
-                    &action_sums,
-                    &BTreeMap::from([(key(0), 1), (key(1), 0)]),
-                    objective,
-                    &mut cx
-                )
-                .unwrap()
-                .is_some()
-            );
+            assert!(progress_failure(
+                &graph,
+                &values,
+                &action_sums,
+                &BTreeMap::from([(key(0), 1), (key(1), 0)]),
+                objective,
+                &mut cx
+            )
+            .unwrap()
+            .is_some());
         }
         let mut graph = graph;
         graph.states.get_mut(&key(0)).unwrap().choices[0] = vec![ProbabilityEdge {
@@ -2279,18 +2465,16 @@ mod tests {
                 .unwrap(),
                 None
             );
-            assert!(
-                progress_failure(
-                    &graph,
-                    &values,
-                    &action_sums,
-                    &BTreeMap::from([(key(0), 0), (key(1), 0)]),
-                    objective,
-                    &mut cx
-                )
-                .unwrap()
-                .is_some()
-            );
+            assert!(progress_failure(
+                &graph,
+                &values,
+                &action_sums,
+                &BTreeMap::from([(key(0), 0), (key(1), 0)]),
+                objective,
+                &mut cx
+            )
+            .unwrap()
+            .is_some());
         }
     }
 }

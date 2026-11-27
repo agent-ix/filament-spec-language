@@ -61,6 +61,8 @@ serde_json = "1.0.151"
 test-support = []
 
 [dev-dependencies]
+fsl-definitional-reference = { path = "../fsl-definitional-reference" }
+fsl-certificate-mutation = { path = "../fsl-certificate-mutation" }
 # QSL-3162: exercise the real CG temporal SMT runner against FSL's production
 # typed settlement API; kept dev-only because CG is not an analysis runtime dep.
 filament-contract-codegen = { git = "https://github.com/agent-ix/filament-contract-codegen", rev = "a3d87f313c2d72bdece60357e3ebbd1ab2350982" }

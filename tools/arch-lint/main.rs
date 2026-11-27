@@ -7,12 +7,16 @@
 //! `arch-lint qualified-core` is FR-284 (ADR-029 CB-2, CB-3): no core crate
 //! depends on a crate above the core or a frontend, and no core crate reads
 //! ambient input or writes to the process.
+//! `arch-lint trusted-base` is FR-1051: no certificate checker shares a
+//! function with its producer outside its trusted base.
 #![forbid(unsafe_code)]
 
 mod api_surface;
 mod error;
 mod metadata;
 mod qualified_core;
+mod reference_base;
+mod trusted_base;
 
 use arch_lint::graph;
 
@@ -30,7 +34,8 @@ fn usage() -> Error {
         Code::Usage,
         "arch-lint direction --fsl <path> --ir <path> --rt <path> --cg <path>\n\
          arch-lint api-surface --fsl <path> [--cg <path> | --fsl-only]\n\
-         arch-lint qualified-core --fsl <path>",
+         arch-lint qualified-core --fsl <path>\n\
+         arch-lint trusted-base --fsl <path>",
     )
 }
 
@@ -254,7 +259,33 @@ fn run_qualified_core(mut args: Vec<String>) -> Result<(String, bool)> {
     }
     let direction = qualified_core::check_direction(&qualified_core::workspace_graph(&fsl)?)?;
     let ambient = qualified_core::scan_ambient(&fsl)?;
-    Ok(qualified_core::report(&fsl, &direction, &ambient))
+    let (mut report, mut passed) = qualified_core::report(&fsl, &direction, &ambient);
+    let reference = reference_base::scan(&fsl)?;
+    if reference.is_empty() {
+        report.push_str("  FR-1051-AC-18 [definitional reference isolation]: PASS\n");
+    } else {
+        passed = false;
+        report.push_str("  FR-1051-AC-18 [definitional reference isolation]: FAIL\n");
+        for finding in reference {
+            report.push_str(&format!(
+                "    {}:{} names {}\n",
+                finding.file.display(),
+                finding.line,
+                finding.construct
+            ));
+        }
+    }
+    Ok((report, passed))
+}
+
+fn run_trusted_base(mut args: Vec<String>) -> Result<(String, bool)> {
+    let fsl = require(&mut args, "--fsl")?;
+    if !args.is_empty() {
+        return Err(usage());
+    }
+    api_surface::assert_is_fsl_root(&fsl)?;
+    let outcome = trusted_base::check(&fsl, &trusted_base::data::FSL)?;
+    Ok((outcome.report(), outcome.passed()))
 }
 
 fn run(arguments: &[OsString]) -> Result<(String, bool)> {
@@ -271,6 +302,7 @@ fn run(arguments: &[OsString]) -> Result<(String, bool)> {
         "direction" => run_direction(args),
         "api-surface" => run_api_surface(args),
         "qualified-core" => run_qualified_core(args),
+        "trusted-base" => run_trusted_base(args),
         _ => Err(usage()),
     }
 }

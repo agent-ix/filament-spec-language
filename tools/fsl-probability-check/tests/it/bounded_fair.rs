@@ -1,15 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Fair bounded proof bytes checked without analyzer linkage in a fresh process.
 use super::bounded::{
-    alter_keys, check_kernel_document, document, kernel_proof, key, mutate, proof,
-    replace_kernel_source_and_rebind, request_with, run,
+    alter_keys, check_kernel_document, document, key, mutate, replace_kernel_source_and_rebind,
+    request_with_accounting, run,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
+const BOUNDED_FAIR_PRODUCER_WORK: u64 = 10_000_000;
+
+fn bounded_fair_proof(source: &str, snapshot: &[u8], domain: &[u8], kernel: bool) -> Value {
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = BOUNDED_FAIR_PRODUCER_WORK;
+    let (request, settlement) = request_with_accounting(
+        source,
+        snapshot,
+        ExactProbLimits::default(),
+        domain,
+        accounting,
+        kernel,
+    );
+    request.unwrap_or_else(|| panic!("bounded-fair source emits its document: {settlement:?}"))
+}
+
+fn proof(source: &str, snapshot: &[u8]) -> Value {
+    bounded_fair_proof(source, snapshot, DOMAIN, false)
+}
+
+fn kernel_proof(source: &str, snapshot: &[u8]) -> Value {
+    bounded_fair_proof(source, snapshot, DOMAIN, true)
+}
 
 fn limits() -> fsl_replay::ProbabilityDocumentLimits {
     fsl_replay::ProbabilityDocumentLimits {
@@ -33,7 +56,9 @@ fn source(
         "filament.temporal.infinite-trace/v1",
         "filament.temporal.event-position.false-extension/v1",
     );
-    format!("{model}\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler {fairness} on origin {{ probability {operator} {threshold} [ eventually[0,{horizon}] holds({predicate}) ] }}\n")
+    format!(
+        "{model}\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler {fairness} on origin {{ probability {operator} {threshold} [ eventually[0,{horizon}] holds({predicate}) ] }}\n"
+    )
 }
 fn replace_source(request: &mut Value, source: &str) {
     request["source"]["content"] = json!(source);
@@ -197,9 +222,7 @@ fn inherited_operation_uses_declaring_model_identity_and_rejects_consumer_identi
     types.push(base);
     let src = source("fair weak each Msg::send_a", ">=", "0.95", 2, "m.delivered");
     let domain = serde_json::to_vec(&domain).unwrap();
-    let (request, settlement) = request_with(&src, SNAPSHOT, ExactProbLimits::default(), &domain);
-    let request =
-        request.unwrap_or_else(|| panic!("inherited source must produce evidence: {settlement:?}"));
+    let request = bounded_fair_proof(&src, SNAPSHOT, &domain, false);
     assert_eq!(run(&request).0, 0);
     let target = document(&request)["objective"]["fairness"][0]["target"].clone();
     assert_eq!(
@@ -225,11 +248,13 @@ fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
             run(&request).1["value"],
             json!({"numerator":expected,"denominator":"1"})
         );
-        assert!(document(&request)["ranking"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|r| r["rank"] == 0));
+        assert!(
+            document(&request)["ranking"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["rank"] == 0)
+        );
     }
     let ordinary = proof(&source("", ">=", "0.95", 2, "m.delivered"), SNAPSHOT);
     let zero_source = source("fair weak Msg::send_a", "<=", "0.5", 0, "m.delivered");

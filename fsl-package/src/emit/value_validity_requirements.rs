@@ -1419,7 +1419,7 @@ fn reorder_frames(
 /// name them. Re-sorted rows can reorder one owner's records, so each record
 /// node's occurrence and its `generated` source-map entry take the ordinal of
 /// its row's place among its owner's rows.
-fn renumber_records(
+pub(super) fn renumber_records(
     rows: &[RequirementItemRow],
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
