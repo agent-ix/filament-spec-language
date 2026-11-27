@@ -852,6 +852,8 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-44 | An EN-1 state-graph item over a model subject with an enabled step, run with `analysis.retained_bytes=1`, stops before it stores the first successor its expansion returns, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`, and its graph holds only the initial states; with no setting it settles as it does at the published default. | Test |
 | FR-255-AC-45 | At the published defaults, each of these crash-size inputs ends typed, never in a crash, an unbounded run or an untyped failure, and the limit one short of it refuses naming the setting, the bound and the count: a package of 1,000 declared types admits under `model.declaration_records`, and with `model.declaration_records` one record short of its records the model intake refuses naming `model.declaration_records` and the record that passes the bound; a 1,000-link `redefines` chain links under `model.family_steps`, and with `model.family_steps` 999 the dispatch walk stops `Incomplete` naming `model.family_steps`; a snapshot sequence of 100,000 elements is refused `stage_limit_exceeded` naming `observation.input_bytes`, with that raised naming `observation.values` with bound 100000 and count 100001, and with both raised refused `cardinality_out_of_bound` by the declared collection maximum. Nesting 1,000 deep (FR-106-AC-16, FR-256-AC-1) and flat chains of 10,000 are bounded by their own criteria. | Test |
 | FR-255-AC-46 | A package of 1,011 declaration records run with `model.declaration_records` 1,010 refuses a denied charge with `actual` 1011 and `next_charge` 1011, not 2021; a 1,000-link chain normalized with `model.derivation_facts` 1,504,501 refuses with `actual` 1504502; a cumulative counter reports its prior usage plus the denied amount (usage 8 and amount 3 give 11). | Test |
+| FR-255-AC-47 | A protocol system whose replay retained bytes are bounded to 1 (`bound_replay_retained`), checked directly by `check_protocol_initial`, stops at its first closure path with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}` and stores none; a protocol system nobody bounded takes `model_check.max_transitions` 100000000 and `analysis.retained_bytes` 4294967296 for its replay, and the value-check `evaluate` and `replay` of one assignment take `max_cases` 1048576. | Test |
+| FR-255-AC-48 | `cargo xtask limit-literals` exits nonzero, listing the file, the kind and the counts, when a production file holds more findings of a kind than its row of `xtask/limit-literals.allow` allows, or fewer; and exits zero over the workspace at the allowlist. | Test |
 
 ## Status
 
@@ -873,12 +875,28 @@ FR-255-AC-30 is implemented in `replay_refinement_trace`, which takes the
 `max_transitions` allowance, and the analyze refinement item passes its own.
 No replay request route carries `stage_limits` into that call yet: the
 caller of `replay_refinement_trace` passes the `ModelCheckLimits`.
-Not charged, and unbounded for a direct caller: the replay closure paths
-(they retain nothing, `retained` is `None` in the protocol step), the public
-`check_protocol_initial` and `check_protocol_step` when called directly (their
-per-replay transition allowance defaults to `u64::MAX`; `replay_refinement_trace`
-and the timed replay set it, and it is per-replay state on the system, not
-per call). The model expansion's per-expansion candidate counter (`CandidateCount` in `fsl-eval`'s
+The replay closure paths, the public
+`check_protocol_initial` and `check_protocol_step` when called directly, and
+the closure of the protocol assumption-witness replay
+(`replay_protocol_assumption_witness`) are bounded (FR-255-AC-47): a system
+nobody bounded runs its replay under the published `model_check.max_transitions`
+and `analysis.retained_bytes`, the closure paths of a direct call are charged
+to `analysis.retained_bytes` before they are stored, and the witness replay
+charges each closure state it stores to both. `replay_refinement_trace` and
+the timed replay still set the transition allowance per replay, and it is
+per-replay state on the system, not per call.
+Named exceptions to the literal-limit rule: the value-check `evaluate` and
+`replay` of one assignment run under the published `max_cases` default
+1,048,576 (not `u64::MAX`); the position walk of a checked type environment in
+the value-check target's extent classification passes `u64::MAX` because the
+package's own `s3.nodes` bounds the types it reads and a refusal leaves the
+extent unclassified; FR-100's default accounting leaves the nine counters
+other than `work_units` at `u64::MAX`; and every `SCALAR_LIMITS_UNLIMITED`
+meter in `fsl-eval` is test code. `cargo xtask limit-literals` fails on any
+other production use of a type's maximum, an `UNLIMITED` constant or an
+`unbounded()` constructor beyond the rows of `xtask/limit-literals.allow`;
+the rows other than those named here are a baseline that is read and removed
+row by row, never added to (FR-255-AC-48). The model expansion's per-expansion candidate counter (`CandidateCount` in `fsl-eval`'s
 model walk) is not a second allowance: it counts the candidates of one expansion against the
 `expansion.max_candidates` the caller's limits give, starts at zero for each expansion, and ends in
 the expansion stop the case generation settles (FR-752), where the shared `Budget` is cumulative per
