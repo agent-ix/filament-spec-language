@@ -51,14 +51,19 @@ The route fixtures use these exact inputs:
    `Sequence<Integer>[0, 100000]` with values `0` through `99,999`, carried
    through the checked package and route fixture.
 
-For each source workload, compile to a checked package and run the check/lower
-entry with the exact counter controls in FR-869/FR-277. Read each emitted
-package through I2 and verify its `package_id`, values and declarations. Analyze
-the route fixture with one `Bounded` item; the collection fixture additionally
-asserts `size(values)=100000`. Replay the package fixture and compare its result
-with in-process `fsl_replay::replay`. Run FR-862-AC-4's nested request refusal
-as the 1,000-nested replay cell. Each negative control changes only its named
-counter and expects that counter's owning typed outcome.
+For each source workload, exercise compile and check/lower with the exact
+counter controls in FR-869/FR-277. Where compile emits a checked package, reuse
+its bytes for I2, analyze and replay and verify its `package_id`, values and
+declarations. For the operation-redefinition compile cell, assert FR-869-AC-8's
+typed `emit.output_bytes` refusal; its I2, analyze and replay cells use separate
+valid route-specific checked-package/request fixtures for the same 1,000-link
+shape, so those cells do not depend on that compile artifact. Analyze each route
+fixture with one `Bounded` item; the collection fixture additionally asserts
+`size(values)=100000`. Replay each valid package fixture and compare its result
+with in-process `fsl_replay::replay`. Reuse FR-862-AC-4's recorded nested
+request-array evidence for the 1,000-nested replay cell without rerunning it.
+Each negative control changes only its named counter and expects that
+counter's owning typed outcome.
 
 Use focused filters in the existing route test modules:
 
@@ -77,7 +82,7 @@ replay-array test remains tagged with FR-862-AC-4.
 | 1,000 nested | FR-869-AC-5: package emitted at counted `s1.nodes`; one below is `stage_limit_exceeded` naming `s1.nodes`. | FR-277-AC-8: success at counted `s3.nodes`; one below is `LimitExceeded{s3.nodes}`. | FR-264-AC-10: I2 verifies `package_id`; byte and node stops name `i2.input_bytes` and `i2.nodes` as `StageFailure::Limit`. | FR-620-AC-12: exact `request_bytes` admits `Bounded: proved`; one added byte yields document-level `incomplete`/`resource_exhausted`, exit 22. | FR-862-AC-4: nested request refuses `invalid-request` at `request`, exit 20, names its member, and does not overflow. |
 | 10,000 flat terms | FR-869-AC-6: package emitted at counted `s3.nodes`; one below is `stage_limit_exceeded`; `emit.output_bytes` is separate. | FR-277-AC-9: success at counted `s3.nodes`; one below is `LimitExceeded{s3.nodes}`. | FR-264-AC-11: I2 verifies `package_id`; one below node count is `StageFailure::Limit`/`i2.nodes`. | FR-620-AC-13: exact `request_bytes` gives `Bounded: proved`; one byte above yields the FR-624-AC-6 incomplete document. | FR-862-AC-5: replay is `reproduced-without-witness`, equal to in-process replay; envelope over-limit names `replay.input_bytes`. |
 | 1,000 declarations | FR-869-AC-7: all 1,000 enum types and 2,000 variants emit at counted `model.declaration_records=3000`; 2,999 yields `resource_exhausted`/`insufficient-next-charge`. | FR-277-AC-10: same 3,000-record model-intake outcome before S3; separate S3 limit is `LimitExceeded{s3.nodes}`. | FR-264-AC-12: I2 retains all 1,000 enum types, their 2,000 variants and package id; byte/node limits name `i2.input_bytes`/`i2.nodes`. | FR-620-AC-14: exact request is admitted and `Bounded` is `proved`; one byte above yields the FR-624-AC-6 incomplete document. | FR-862-AC-6: replay is `reproduced-without-witness`, equal to in-process replay; envelope over-limit names `replay.input_bytes`. |
-| 1,000 inheritance/redefinition links | FR-869-AC-8: both variants succeed at `model.ancestor_steps=1000` and `model.derivation_facts=1504502`; their one-under model limits refuse `resource_exhausted`/`insufficient-next-charge`. | FR-277-AC-11: both variants preserve those model-limit outcomes; an S3 stop remains `LimitExceeded{s3.nodes}`. | FR-264-AC-13: both package relations and package ids are preserved; one-under `i2.edges` (inheritance) / `i2.nodes` (redefinition) is `StageFailure::Limit`. | FR-620-AC-15: each fixture's `Bounded` item is `proved`; request-byte and engine-limit outcomes remain distinct. | FR-862-AC-7: both replay results are `reproduced-without-witness`, equal to in-process replay; envelope over-limit names `replay.input_bytes`. |
+| 1,000 inheritance/redefinition links | FR-869-AC-8: inheritance emits at `model.ancestor_steps=1000`; its one-under model limit refuses `resource_exhausted`/`insufficient-next-charge`. The redefinition chain completes normalization at `model.derivation_facts=1504502` but compile stops with `stage_limit_exceeded` at default `emit.output_bytes=16777216`, actual 16777217; one-under model facts refuses before emission. | FR-277-AC-11: both route fixtures preserve their model-limit outcomes; an S3 stop remains `LimitExceeded{s3.nodes}`. | FR-264-AC-13: separate valid checked-package fixtures preserve both relations and package ids; one-under `i2.edges` (inheritance) / `i2.nodes` (redefinition) is `StageFailure::Limit`. | FR-620-AC-15: separate route fixtures' `Bounded` items are `proved`; request-byte and engine-limit outcomes remain distinct. | FR-862-AC-7: separate valid package fixtures replay to `reproduced-without-witness`, equal to in-process `fsl_replay::replay`; envelope over-limit names `replay.input_bytes`. |
 | 100,000 collection values | FR-869-AC-9: default `model.sequence_maximum=10000` yields `resource_exhausted`/`insufficient-next-charge`; at 100,000 plus required source/check/emit bounds a package is emitted. | FR-277-AC-12: default model maximum refuses before S3; at 100,000, check succeeds at counted `s3.nodes`, one below is `LimitExceeded{s3.nodes}`. | FR-264-AC-14: I2 preserves all ordered values and package id; one-under byte/node limits name the corresponding `i2.*` setting. | FR-620-AC-16: `Bounded` with `size(values)=100000` is `proved`; request overrun is the FR-624-AC-6 incomplete document; `observation.values=99999` returns its typed `stage_limit_exceeded`. | FR-862-AC-8: replay is `reproduced-without-witness`, equal to in-process replay; envelope over-limit names `replay.input_bytes`. |
 
 The byte counters remain distinct: compile uses `request_bytes`,
