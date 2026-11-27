@@ -312,6 +312,15 @@ unsupported cause `DelayDistribution{operation}`.
   rederives the infinity from its own graph ("Infinite expected time"); the
   workload is one of the schedulers, and where a scheduler reaches the target
   almost surely the checker builds the workload's own product.
+- Until the checker derives the free-delay races of a mixed state
+  (QSL-3537), the free-delay forms `ClosesBeforeFiring` (a free identity's
+  delay window closes before it can fire) and `ManyFreeEnabled` (two or more
+  free identities enabled together) SHALL settle `unsupported` with the
+  catalog codes `workload-free-delay-window-closes` and
+  `workload-free-delays-race` respectively, in the producer and the checker
+  alike (FR-203-AC-17: a free delay under workload `One` is not stochastic, so
+  the claim is not decided). This is the one exception to the rule above that
+  a mixed race SHALL NOT be refused.
 - While EN-5 has no checker for a finite expected elapsed time under a
   workload on a timed subject, or for a workload whose infinity the checker's
   graphs cannot rebuild, such an item SHALL settle `unsupported` with
