@@ -109,6 +109,20 @@ fn retx_over_named(
     declarations: &str,
     claims: &str,
 ) -> World {
+    retx_over_named_bound(object, clocks, operations, guard, reset, declarations, claims, "2 ms")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn retx_over_named_bound(
+    object: &str,
+    clocks: &[&str],
+    operations: &[(&str, &[&str])],
+    guard: &str,
+    reset: bool,
+    declarations: &str,
+    claims: &str,
+    bound: &str,
+) -> World {
     let mut document: Value =
         serde_json::from_slice(&timed_world::document(clocks, operations)).expect("JSON");
     if object != "Call" {
@@ -143,7 +157,7 @@ fn retx_over_named(
          pre Send using v on M::{object}::send {{ not self.late{guard} }}\n\
          post Sent using v on M::{object}::send {{ self.late = not lost{reset} }}\n\
          random M::{object}::send(lost) ~ {{ true: 1, false: 9 }};\n\
-         time invariant Deadline when {{ not self.late }} {{ self.x <= 2 ms }}\n\
+         time invariant Deadline when {{ not self.late }} {{ self.x <= {bound} }}\n\
          {declarations}{claims}",
         timed_world::DENSE.replace("Call", object),
     );
@@ -2408,4 +2422,74 @@ fn a_region_subject_over_a_region_limit_settles_limit_reached_naming_the_setting
             );
         }
     }
+}
+
+/// FR-922-AC-8: a model whose largest constant sits AT `max_clock_cap` (and,
+/// in the twin, whose LCD scale sits AT `max_clock_scale`) builds; one tick
+/// over settles `LimitReached`. Heavy: run on its own under a memory cap, with
+/// `--ignored --nocapture`; the printed line is the measured cost the PR body
+/// records.
+fn at_the_bound(label: &str, bound: &str, set: impl Fn(&mut ExactProbLimits)) {
+    let world = retx_over_named_bound(
+        "Call",
+        &["x"],
+        &[("send", &["late", "x"])],
+        STRICT,
+        true,
+        "",
+        &every_deadlines(),
+        bound,
+    );
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let mut request = request(&world, "Deadline");
+    set(&mut request.limits);
+    let started = std::time::Instant::now();
+    let record = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let elapsed = started.elapsed();
+    let kind = match record.terminal().map(|terminal| terminal.value()) {
+        Some(TerminalValue::Proved { .. }) => "proved".to_owned(),
+        other => format!("{other:?}"),
+    };
+    let bytes = record
+        .terminal()
+        .and_then(|terminal| terminal.exact_certificate_document())
+        .map_or(0, <[u8]>::len);
+    let peak_kib = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find(|line| line.starts_with("VmHWM:"))?
+                .split_whitespace()
+                .nth(1)?
+                .parse::<u64>()
+                .ok()
+        })
+        .unwrap_or(0);
+    eprintln!(
+        "at-the-bound {label}: {kind}, {elapsed:?}, certificate {bytes} bytes, peak resident {peak_kib} KiB"
+    );
+    assert_eq!(kind, "proved", "{label}: {record:#?}");
+}
+
+#[trace("TC-2491", "FR-922-AC-8")]
+#[test]
+#[ignore = "heavy: builds a model at the 1048576-tick clock cap; run alone under a memory cap"]
+fn a_region_subject_at_the_clock_cap_builds() {
+    at_the_bound("max_clock_cap=1048576", "1048576 ms", |limits| {
+        limits.max_clock_cap = 1_048_576;
+    });
+}
+
+#[trace("TC-2491", "FR-922-AC-8")]
+#[test]
+#[ignore = "heavy: builds a model at the 1048576 clock scale; run alone under a memory cap"]
+fn a_region_subject_at_the_clock_scale_builds() {
+    at_the_bound("max_clock_scale=1048576", "0.00000095367431640625 ms", |limits| {
+        limits.max_clock_scale = 1_048_576;
+    });
 }
