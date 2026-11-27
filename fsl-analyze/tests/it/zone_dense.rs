@@ -582,9 +582,9 @@ fn a_partial_class_fixes_the_timers_outside_it() {
     assert!(reproduced(&settlement), "{settlement:?}");
 }
 
-/// FR-160 over EN-6: a claim over an empty universe has no orbit to
-/// reduce, so under a selected symmetry it runs unreduced and its proof is
-/// certified, never `Reduced` with no reduction applied.
+/// FSpec FR-361-AC-8 over EN-6: a claim over an empty universe has no
+/// instance, so under a selected symmetry it settles `NoInstance` before any
+/// state is explored, never `Holds` and never `Reduced`.
 #[trace("TC-1170", "FR-430-AC-3")]
 #[test]
 fn symmetry_over_no_instance_runs_unreduced() {
@@ -603,7 +603,13 @@ fn symmetry_over_no_instance_runs_unreduced() {
         &declared,
     );
     assert!(
-        matches!(outcome, ZoneCheckOutcome::Holds { .. }),
+        matches!(
+            outcome,
+            ZoneCheckOutcome::Undecided {
+                cause: fsl_analyze::zone_check::ZoneUndecided::NoInstance,
+                ..
+            }
+        ),
         "{outcome:?}"
     );
 }
