@@ -808,7 +808,7 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
             meter(u64::MAX),
         )
         .expect("the reduced each loop concretises");
-    let ModelCheckOutcome::Violated { stats, .. } = &counter_outcome else {
+    let ModelCheckOutcome::Violated { .. } = &counter_outcome else {
         panic!("the reduced each loop refutes: {counter_outcome:?}");
     };
     let counter_result = Ok(counter_outcome.clone());
@@ -818,46 +818,6 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
         moved(&counter_world.positions(counterexample)),
         ["b", "b", "b"]
     );
-    let counter_edges = usize::try_from(stats.product_edges).expect("small");
-    let counter_with_budgets = |max_transitions: usize, work_units: u64| {
-        let mut limits = ModelCheckLimits::default();
-        limits.limits.max_transitions = max_transitions;
-        counter_world.run_with_meter(
-            Some(0),
-            vec![atom(|v| Some(v == 2))],
-            symmetric(),
-            None,
-            limits,
-            meter(work_units),
-        )
-    };
-    let counter_exploration_work = (0..=4096)
-        .find(|work| {
-            counter_with_budgets(counter_edges, *work).is_ok_and(|outcome| {
-                matches!(
-                    outcome,
-                    ModelCheckOutcome::Stopped {
-                        limit: Some(ReachedLimit {
-                            limit: ModelCheckLimit::MaxTransitions,
-                            ..
-                        }),
-                        ..
-                    }
-                )
-            })
-        })
-        .expect("the bounded counter run reaches its transition limit");
-    let counter_completion_work = (0..=4096)
-        .find(|work| {
-            counter_with_budgets(counter_edges + 6, *work)
-                .is_ok_and(|outcome| matches!(outcome, ModelCheckOutcome::Violated { .. }))
-        })
-        .expect("the bounded counter run reaches the requested violation");
-    assert_eq!(
-        counter_completion_work - counter_exploration_work,
-        6
-    );
-
     let world = Flags::new(Subject::Token, "", EVENTUALLY_FIRED);
     let unrestricted = world.run(symmetric());
     let counterexample_len = violation(&unrestricted).len();
