@@ -38,7 +38,7 @@ pub(super) fn typed_equalities(
     selection: Option<&fsl_foundation::selection::ProfileSelection>,
     types: &TypeEnvironment,
     spans: Option<&ExpressionSpans>,
-) -> Option<super::CheckRefusal> {
+) -> Option<super::SemanticCheckRefusal> {
     let selected = HeaderLayer::from_identity(&selection?.identity)?;
     let admitted = HeaderLayer::closure(&[selected]);
     for node in body.root().descendants() {
@@ -110,7 +110,7 @@ pub(super) fn typed_equalities(
             (present && !admitted.contains(&required)).then_some(required)
         });
         if let Some(required) = required {
-            return Some(super::CheckRefusal {
+            return Some(super::SemanticCheckRefusal {
                 location: node.location().clone(),
                 cause: Box::new(super::CheckCause::LayerEquality {
                     selected,

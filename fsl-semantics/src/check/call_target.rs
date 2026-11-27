@@ -15,7 +15,7 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::check::Typer;
 use super::imports::ImportedNames;
-use super::refusal::{AmbiguousQualified, CheckCause, CheckRefusal, QualifiedCandidate};
+use super::refusal::{AmbiguousQualified, CheckCause, QualifiedCandidate, SemanticCheckRefusal};
 use super::sum_case::{UnionMember, UnionRef};
 
 /// What a call or name resolved to.
@@ -67,8 +67,8 @@ pub(crate) fn resolve_target<'a, V>(
     typer: &Typer<'a>,
     name: &str,
     location: &Location,
-    existing: impl FnOnce() -> Result<V, CheckRefusal>,
-) -> Result<ResolvedTarget<'a, V>, CheckRefusal> {
+    existing: impl FnOnce() -> Result<V, SemanticCheckRefusal>,
+) -> Result<ResolvedTarget<'a, V>, SemanticCheckRefusal> {
     let Some((qualifier, member)) = name.rsplit_once("::") else {
         return existing().map(ResolvedTarget::Value);
     };
@@ -95,7 +95,7 @@ pub(crate) fn resolve_target<'a, V>(
             .chain(enums.into_iter().map(QualifiedCandidate::Enum))
             .chain(import.map(QualifiedCandidate::Import))
             .collect();
-        return Err(CheckRefusal {
+        return Err(SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(CheckCause::AmbiguousQualified(Box::new(
                 AmbiguousQualified {
@@ -116,7 +116,7 @@ pub(crate) fn resolve_target<'a, V>(
     // `U::m` where `U` is a union that declares no `m` is an undeclared
     // member, not an unresolved name (FSpec FR-143).
     if candidates == 0 && names_a_union(typer, qualifier) {
-        return Err(CheckRefusal::ill_typed(
+        return Err(SemanticCheckRefusal::ill_typed(
             location,
             IllTypedCause::TypeMismatch,
         ));

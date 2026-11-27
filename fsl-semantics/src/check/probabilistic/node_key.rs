@@ -470,6 +470,7 @@ impl Statement {
     /// operand, an exact value as its kind, the unit operand of a quantity
     /// and its canonical text. A literal's type is no segment of an integer
     /// or a rational, since its position fixes it.
+    #[ix_trace_rs::string_edge]
     pub fn spell(&self, path: &mut Vec<PathSegment>) {
         match self {
             Self::Text(text) => path.push(PathSegment::Text(text.clone())),

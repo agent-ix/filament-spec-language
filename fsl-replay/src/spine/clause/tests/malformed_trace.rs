@@ -11,10 +11,10 @@ use crate::spine::ClauseRunReport;
 #[test]
 fn timed_clause_over_snapshots_has_a_specific_item_message() {
     use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
-    use fsl_semantics::check::{CheckCause, CheckRefusal, TemporalCause};
+    use fsl_semantics::check::{CheckCause, SemanticCheckRefusal, TemporalCause};
 
     let refusal = CompileRefusal::Check {
-        refusals: vec![CheckRefusal {
+        refusals: vec![SemanticCheckRefusal {
             location: ExpressionLocation::root(ExpressionOwner::Expression),
             cause: Box::new(CheckCause::Temporal(Box::new(
                 TemporalCause::TimedTraceSubject {

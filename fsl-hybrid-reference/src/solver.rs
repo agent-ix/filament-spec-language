@@ -527,6 +527,7 @@ impl<'a> Run<'a, '_> {
         }
     }
 
+    #[ix_trace_rs::string_edge]
     fn bounded(&mut self, starts: &[Start], cap: Cap) -> Result<HybridAnswer, Halt> {
         let pipe = self.pipe(starts, &cap)?;
         let coverage = Self::coverage(&pipe, &cap);

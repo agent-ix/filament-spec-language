@@ -12,19 +12,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
     types, AbiParam, Block, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, Value as Clif,
 };
-use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module};
 use filament_checked::integer_division::AdmittedIntegerDivision;
-use filament_checked::node::{
-    Arithmetic, Connective, IntegerDivisionOperator, NodeKind, OrderedKind, RecordField, RecordSlot,
-    Visit,
-};
 use filament_checked::key::DeclarationKey;
+use filament_checked::node::{
+    Arithmetic, Connective, IntegerDivisionOperator, NodeKind, OrderedKind, RecordField,
+    RecordSlot, Visit,
+};
 use filament_exact::{
     ArithmeticOperator, CardinalityBound, CollectionKind, CollectionType, DecimalType,
     DivisionMember, DivisionProfile, Integer, IntegerDomain, IntegerInterval, Meter, NodeKey,
@@ -184,7 +184,10 @@ pub(crate) enum OpKind {
     /// The `function.call` charge of a call.
     ChargeCall,
     FrameStart,
-    FrameArgument { boolean: bool, integer: bool },
+    FrameArgument {
+        boolean: bool,
+        integer: bool,
+    },
     FrameEnter,
     FrameLeave,
 }
@@ -1113,7 +1116,10 @@ impl Emitter<'_, '_, '_> {
                 }
                 let source_node = node.at(*source);
                 let (source_value, source_ty, collection_type) = match source_node.kind() {
-                    NodeKind::NamedPopulation { population, members } if members.len() == 1 => {
+                    NodeKind::NamedPopulation {
+                        population,
+                        members,
+                    } if members.len() == 1 => {
                         let ValueType::Population(maximum) = source_node.value_type() else {
                             return Err(self.unsupported(source_node));
                         };
@@ -1138,15 +1144,16 @@ impl Emitter<'_, '_, '_> {
                     }
                     NodeKind::NamedPopulation { .. } => return Err(self.unsupported(source_node)),
                     _ => {
-                        let ValueType::Collection(collection_type) = source_node.value_type() else {
+                        let ValueType::Collection(collection_type) = source_node.value_type()
+                        else {
                             return Err(self.unsupported(node));
                         };
                         let (value, ty) = self.emit(source_node, depth + 1)?;
                         (value, ty, collection_type.clone())
                     }
                 };
-                let element_ty = type_of(collection_type.element())
-                    .ok_or_else(|| self.unsupported(node))?;
+                let element_ty =
+                    type_of(collection_type.element()).ok_or_else(|| self.unsupported(node))?;
                 let element_boolean = element_ty == Ty::Boolean;
                 let element_integer = matches!(element_ty, Ty::Int(..));
                 let only_source_filter = matches!(
@@ -1192,10 +1199,10 @@ impl Emitter<'_, '_, '_> {
                     iteration,
                     zero,
                 );
-                let available = self
-                    .builder
-                    .ins()
-                    .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, item, 0);
+                let available =
+                    self.builder
+                        .ins()
+                        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, item, 0);
                 self.builder
                     .ins()
                     .brif(available, visit_block, &[], finish_block, &[]);
@@ -1290,8 +1297,8 @@ impl Emitter<'_, '_, '_> {
                 let ValueType::Collection(collection_type) = source_node.value_type() else {
                     return Err(self.unsupported(node));
                 };
-                let element_ty = type_of(collection_type.element())
-                    .ok_or_else(|| self.unsupported(node))?;
+                let element_ty =
+                    type_of(collection_type.element()).ok_or_else(|| self.unsupported(node))?;
                 let element_boolean = element_ty == Ty::Boolean;
                 let element_integer = matches!(element_ty, Ty::Int(..));
                 let (source_value, source_ty) = self.emit(source_node, depth + 1)?;
@@ -1301,14 +1308,14 @@ impl Emitter<'_, '_, '_> {
                 let identity_value = identity
                     .map(|identity| self.emit(node.at(identity), depth + 1))
                     .transpose()?;
-                let (identity_value, identity_ty) = identity_value
-                    .map_or((self.builder.ins().iconst(types::I64, 0), None), |(value, ty)| {
-                        (value, Some(ty))
-                    });
+                let (identity_value, identity_ty) = identity_value.map_or(
+                    (self.builder.ins().iconst(types::I64, 0), None),
+                    |(value, ty)| (value, Some(ty)),
+                );
                 let identity_boolean = identity_ty == Some(Ty::Boolean);
                 let identity_integer = matches!(identity_ty, Some(Ty::Int(..)));
-                let mut accumulator_ty = type_of(node.at(*step).value_type())
-                    .ok_or_else(|| self.unsupported(node))?;
+                let mut accumulator_ty =
+                    type_of(node.at(*step).value_type()).ok_or_else(|| self.unsupported(node))?;
                 if let (Some(Ty::Int(identity_low, identity_high)), Ty::Int(_, _)) =
                     (identity_ty, accumulator_ty)
                 {
@@ -1327,8 +1334,7 @@ impl Emitter<'_, '_, '_> {
                             && matches!(node.at(*right).kind(), NodeKind::Local(slot) if *slot == *binder))
                             || (accumulator_right
                                 && matches!(node.at(*left).kind(), NodeKind::Local(slot) if *slot == *binder));
-                        if matching_binder
-                        {
+                        if matching_binder {
                             let maximum = collection_type
                                 .bound()
                                 .map(|bound| i128::from(bound.maximum()))
@@ -1337,10 +1343,20 @@ impl Emitter<'_, '_, '_> {
                                 return Err(self.unsupported(node));
                             };
                             let low = identity_low
-                                .checked_add(element_low.min(0).checked_mul(maximum).ok_or_else(|| self.unsupported(node))?)
+                                .checked_add(
+                                    element_low
+                                        .min(0)
+                                        .checked_mul(maximum)
+                                        .ok_or_else(|| self.unsupported(node))?,
+                                )
                                 .ok_or_else(|| self.unsupported(node))?;
                             let high = identity_high
-                                .checked_add(element_high.max(0).checked_mul(maximum).ok_or_else(|| self.unsupported(node))?)
+                                .checked_add(
+                                    element_high
+                                        .max(0)
+                                        .checked_mul(maximum)
+                                        .ok_or_else(|| self.unsupported(node))?,
+                                )
                                 .ok_or_else(|| self.unsupported(node))?;
                             if !fits_i64((low, high)) {
                                 return Err(self.unsupported(node));
@@ -1386,10 +1402,10 @@ impl Emitter<'_, '_, '_> {
                     iteration,
                     zero,
                 );
-                let available = self
-                    .builder
-                    .ins()
-                    .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, item, 0);
+                let available =
+                    self.builder
+                        .ins()
+                        .icmp_imm_s(IntCC::SignedGreaterThanOrEqual, item, 0);
                 self.builder
                     .ins()
                     .brif(available, visit_block, &[], finish_block, &[]);
@@ -1476,7 +1492,9 @@ impl Emitter<'_, '_, '_> {
                 let (Ty::Int(al, ah), Ty::Int(bl, bh)) = (left_ty, right_ty) else {
                     return Err(self.unsupported(node));
                 };
-                let Some((low, high)) = division_interval(*operator, *selection, (al, ah), (bl, bh)) else {
+                let Some((low, high)) =
+                    division_interval(*operator, *selection, (al, ah), (bl, bh))
+                else {
                     return Err(self.unsupported(node));
                 };
                 if !fits_i64((low, high)) {
@@ -1499,12 +1517,7 @@ impl Emitter<'_, '_, '_> {
                 if !matches!((left_ty, right_ty), (Ty::Int(..), Ty::Int(..))) {
                     return Err(self.unsupported(node));
                 }
-                let result = self.shim_call(
-                    node,
-                    OpKind::ExactDivide(domain.clone()),
-                    a,
-                    b,
-                );
+                let result = self.shim_call(node, OpKind::ExactDivide(domain.clone()), a, b);
                 Ok((result, Ty::Opaque))
             }
             NodeKind::Order(operator, kind, left, right) => {

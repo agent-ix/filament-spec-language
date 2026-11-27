@@ -36,6 +36,7 @@ impl Quantity {
         })
     }
 
+    #[ix_trace_rs::string_edge]
     fn tla(&self) -> String {
         if self.denominator == "1" {
             self.numerator.clone()

@@ -9,7 +9,6 @@
 //! entry point.
 
 use filament_exact::{LimitKind as Counter, ScalarLimits};
-use std::collections::BTreeSet;
 use fsl_eval::execution::PrepareLimits;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::Limits as ExploreLimits;
@@ -21,6 +20,7 @@ use fsl_semantics::library::bundle::PackageLimits as LibraryLimits;
 use fsl_semantics::model::observation::ObservationLimits;
 use fsl_semantics::model::population::PopulationAdmissionLimits;
 use ix_trace_rs::implements;
+use std::collections::BTreeSet;
 
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::CertificateCheckLimits;
@@ -509,6 +509,7 @@ impl Default for WorkerCounts {
 }
 
 impl WorkerCounts {
+    #[ix_trace_rs::string_edge]
     fn set(&mut self, name: &str, value: u64) -> bool {
         let field = match name {
             "explore.workers" => &mut self.explore,

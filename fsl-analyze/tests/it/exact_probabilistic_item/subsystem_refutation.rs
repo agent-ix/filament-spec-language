@@ -6,12 +6,12 @@
 //! The model is the architecture example's service: `call(ok)` sets `up` to
 //! `ok`; the workload draws `ok` 99:1 and every call costs 1.
 use super::*;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use fsl_replay::{
     ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityWitnessError,
     ProbabilityWitnessReplay, ProductAction, Schedule,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const TRAFFIC: &str = "random Service::call(ok) ~ { true: 99, false: 1 };\n\
                        workload Traffic on M { weight Service::call = 1; }\n";
@@ -547,11 +547,9 @@ fn subsystem_refutation_checkpoints_share_work_on_source_and_owner_routes() {
         ))
     ));
     assert_work_limit(&source_production_short, EVENT_SUBSYSTEM_PRODUCTION_END - 1);
-    assert!(
-        source_production_short
-            .probabilistic_counterexample
-            .is_none()
-    );
+    assert!(source_production_short
+        .probabilistic_counterexample
+        .is_none());
     assert_phase_starts_without_completing(
         &source_production_checkpoints,
         ExactWorkPhase::WitnessProduction,

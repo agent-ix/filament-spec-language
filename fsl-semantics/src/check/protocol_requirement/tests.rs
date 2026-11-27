@@ -9,15 +9,15 @@ use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
-use super::{CheckedRequirement, UnitDeclarations, check};
+use super::{check, CheckedRequirement, UnitDeclarations};
 use crate::check::refusal::ProtocolAnchorCause;
-use crate::check::{CheckCause, CheckRefusal, PackageDeclarations};
+use crate::check::{CheckCause, PackageDeclarations, SemanticCheckRefusal};
 
 mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model};
+use fixture::{obligation_model, HEADER};
 
 #[trace("TC-1065", "FR-218-AC-31")]
 #[test]
@@ -100,7 +100,7 @@ fn assemble_under(header: &str, declarations: &str) -> (String, PackageDeclarati
 fn requirements(
     declarations: &str,
     name: &str,
-) -> Result<Vec<CheckedRequirement>, Vec<CheckRefusal>> {
+) -> Result<Vec<CheckedRequirement>, Vec<SemanticCheckRefusal>> {
     let (_, assembled) = assemble(declarations);
     let index = assembled
         .protocols
@@ -118,7 +118,9 @@ fn requirements(
 
 /// The protocol refusals the whole check of `declarations` gives, with the
 /// unit's text.
-fn protocol_refusals(declarations: &str) -> (String, Vec<(ProtocolAnchorCause, CheckRefusal)>) {
+fn protocol_refusals(
+    declarations: &str,
+) -> (String, Vec<(ProtocolAnchorCause, SemanticCheckRefusal)>) {
     let (text, assembled) = assemble(declarations);
     let refusals = assembled
         .check(

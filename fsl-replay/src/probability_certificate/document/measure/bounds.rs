@@ -79,6 +79,7 @@ pub(super) fn admit(
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 pub(in crate::probability_certificate) fn admit_subsystem(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
@@ -147,6 +148,7 @@ fn policy_action(
 
 #[allow(clippy::too_many_arguments)]
 #[implements("FR-203-AC-32")]
+#[ix_trace_rs::string_edge]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,

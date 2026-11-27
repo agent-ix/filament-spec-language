@@ -17,6 +17,8 @@ The command SHALL fetch `origin/main` in the PR workspace and accept a PR head
 behind that fetched main only when the PR's recipe-relevant path set has no
 overlap with main's changes since their merge-base. Otherwise, it SHALL require
 the PR workspace to merge current `origin/main` before emitting a recipe.
+For every non-spec PR recipe, the command SHALL include the repository's
+formatting, string-edge and canonical-type checks.
 
 ## Scope
 
@@ -60,6 +62,7 @@ current `main` head covers this limitation by evaluating the integrated tree.
 | NFR-142-AC-7 | Documentation states that textual path non-overlap cannot establish semantic compatibility and that the rolling merge-gate check on current `main` covers this limitation. | review |
 | NFR-142-AC-8 | A fresh repository checkout provides `cargo xtask merge-gate-recipe` through its tracked Cargo alias. | unit-testing |
 | NFR-142-AC-9 | When `--preflight` validates recipe selectors, the command invokes `cargo test --no-run --message-format=json` at most once for each selected package, resolves each selector to its test executable, and checks that selector by listing both ordinary and ignored tests from the executable. For every selector that passes preflight, the recipe lines printed to stdout remain identical to a non-preflight invocation for the same paths; existing no-match notes and refusals remain unchanged. | unit-testing |
+| NFR-142-AC-10 | Every non-spec PR recipe includes `cargo fmt --all -- --check`, `cargo run --locked -p xtask -- string-edge` and `cargo run --locked -p xtask -- canonical-types`; the spec-only recipe remains `NO CARGO`. | unit-testing |
 
 ## Verification
 

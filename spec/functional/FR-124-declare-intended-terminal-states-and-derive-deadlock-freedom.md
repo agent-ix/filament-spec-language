@@ -71,7 +71,7 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
   satisfaction`, `Unbounded{domains}`), property form `ReachableInvariant`,
   and an obligation identity made of the subject and the fixed item kind
   `deadlock-freedom`.
-- A typed `CheckRefusal` with a span on refusal.
+- A typed `SemanticCheckRefusal` with a span on refusal.
 
 ## Behavior
 

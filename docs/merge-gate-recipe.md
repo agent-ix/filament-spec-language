@@ -64,9 +64,18 @@ and selector listing durations are reported on stderr. An explicit filter with
 no non-ignored matches fails closed. A local library-module filter with no
 matches is reported as a note.
 
+Every non-spec recipe includes the repository's static checks:
+
+```text
+cargo fmt --all -- --check
+cargo run --locked -p xtask -- string-edge
+cargo run --locked -p xtask -- canonical-types
+```
+
 The output is one command per line, with target `--no-run` compilation commands
-first, named-filter test commands next, any external driver note after those,
-and `cargo check --locked --workspace --all-targets` last. Every test command
+first, named-filter test commands next, these three static checks after them,
+any external driver note after those, and `cargo check --locked --workspace
+--all-targets` last. Every test command
 has a named module or test filter; the recipe never runs an unfiltered library
 or crate test target. Run the printed commands in that order. The recipe itself
 only lists tests; it does not execute them. For spec-only changes it prints

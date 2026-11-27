@@ -1106,7 +1106,9 @@ impl ModelSystem<'_> {
             .collect();
         let total = drawn
             .values()
-            .fold(Rational::from_integer(Integer::zero()), |total, weight| total.add(weight));
+            .fold(Rational::from_integer(Integer::zero()), |total, weight| {
+                total.add(weight)
+            });
         let mut steps: Vec<(Vec<u8>, WeightedStep)> = Vec::new();
         for action in actions {
             let (_, identities) = operations
@@ -1211,7 +1213,9 @@ mod tests;
 /// takes none (`None`) while another has a positive weight; when every weight
 /// is 0 each takes 1, so they are drawn uniformly. Both the model's
 /// `weighted_steps` and the digital product's tie ordering draw by this rule.
-pub fn draw_weights<'w>(weights: impl IntoIterator<Item = &'w Rational> + Clone) -> Vec<Option<Rational>> {
+pub fn draw_weights<'w>(
+    weights: impl IntoIterator<Item = &'w Rational> + Clone,
+) -> Vec<Option<Rational>> {
     let any_positive = weights.clone().into_iter().any(|weight| !weight.is_zero());
     weights
         .into_iter()

@@ -114,7 +114,7 @@ fn lower(populations: &Populations, clauses: &str) -> Lowered {
 fn check(
     populations: &Populations,
     clauses: &str,
-) -> Result<CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages =
         fsl_semantics::model::intake::package_input([document(populations).as_slice()]).unwrap();
     let unit = format!(

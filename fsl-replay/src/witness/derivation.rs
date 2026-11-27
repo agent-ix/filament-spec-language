@@ -475,6 +475,7 @@ fn recorded_decision(
         .ok_or_else(|| InternalFault::new("witness", "decision-path-node-recorded"))
 }
 
+#[ix_trace_rs::string_edge]
 fn occurrence_at(
     graph: &CheckedGraph,
     location: &filament_semantic_value::location::ExpressionLocation,

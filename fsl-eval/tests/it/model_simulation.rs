@@ -33,13 +33,13 @@ use fsl_semantics::model::state::{ModelState, StateModel};
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
+#[path = "model_simulation/deep_state_key.rs"]
+mod deep_state_key;
 mod evaluator_closure_cases;
 #[path = "mbt_generate.rs"]
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
-#[path = "model_simulation/deep_state_key.rs"]
-mod deep_state_key;
 #[path = "model_simulation/model_based_run.rs"]
 mod model_based_run;
 #[path = "model_simulation/reference_literals.rs"]
@@ -292,7 +292,7 @@ fn world_with_unbounded_fields(operations: Vec<Json>) -> World {
 fn try_world(
     operations: Vec<Json>,
     clauses: &str,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     build_world(operations, clauses, false)
 }
 
@@ -300,7 +300,7 @@ fn build_world(
     operations: Vec<Json>,
     clauses: &str,
     extras: bool,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     build_world_with(operations, clauses, extras, Vec::new())
 }
 
@@ -309,7 +309,7 @@ fn build_world_with(
     clauses: &str,
     extras: bool,
     relationships: Vec<Json>,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let document = counters_document_with(operations, extras, relationships);
     build_world_document(document, clauses, extras, false)
 }
@@ -319,7 +319,7 @@ fn build_world_with(
 fn build_world_with_enum_mode(
     operations: Vec<Json>,
     clauses: &str,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let mut document: Json =
         serde_json::from_slice(&counters_document_with(operations, false, Vec::new()))
             .expect("the fixture document is JSON");
@@ -367,7 +367,7 @@ fn build_world_document(
     clauses: &str,
     extras: bool,
     enum_mode: bool,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     build_world_document_with_header(document, clauses, "", extras, enum_mode)
 }
 
@@ -377,7 +377,7 @@ fn build_world_document_with_header(
     header: &str,
     extras: bool,
     enum_mode: bool,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages = package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n{header}\

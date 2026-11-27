@@ -39,7 +39,7 @@ mod timed;
 pub use replay::{
     replay_sampled, SampledDisagreement, SampledRecord, SampledReplay, SampledReplayRefusal,
 };
-pub use timed::{draw_timed_delay, TimedDelayRefusal};
+pub use timed::{draw_timed_delay, TimedDelayDraw, TimedDelayRefusal};
 
 /// One step of a sampled behaviour (FR-188).
 #[derive(Clone, Debug)]

@@ -1302,7 +1302,7 @@ fn a_state_constraint_makes_the_transitions_it_reads_visible() {
     };
     let body = "pre Below using v on M::Counter::bump { self.v < 3 }\n\
          post Up using v on M::Counter::bump { self.v - pre(self.v) = 1 }\n\
-         invariant Low using v on M::Counter at current { self.v <= 1 }\n";
+         constraint Low using v on M::Counter at current { self.v <= 1 }\n";
     let world = World::new(shape, body, &[], &[start([0, 0, 0])], &KEYS);
     let system = world.system();
     // The constraint holds for every counter, so its reads are on any counter
