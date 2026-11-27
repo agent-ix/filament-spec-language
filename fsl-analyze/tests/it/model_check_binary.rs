@@ -81,6 +81,7 @@ mod zone_search;
 #[path = "zone_support.rs"]
 mod zone_support;
 
+mod carried_clocks;
 mod certificate_rejection_support;
 mod check_mode_record;
 mod claim_family;
@@ -91,6 +92,7 @@ mod config_lasso_fairness;
 mod counterexample_instance;
 mod deadlock_item;
 mod digital_clocks;
+mod family_constants;
 mod fill;
 mod fixture_ids;
 mod free_delays;

@@ -355,20 +355,15 @@ fn hp5_object_parameter_package_selection_returns_typed_unsupported() {
         assert_eq!(run.exit, 21, "{document}");
         assert_eq!(item["record"]["result"], "unsupported", "{document}");
         assert_eq!(
-            item["record"]["diagnostic"]["code"],
-            "unsupported_construct",
+            item["record"]["diagnostic"]["code"], "unsupported_construct",
             "{document}"
         );
         assert_eq!(
-            item["record"]["diagnostic"]["cause"],
-            "not-yet-implemented",
+            item["record"]["diagnostic"]["cause"], "not-yet-implemented",
             "{document}"
         );
         assert!(item["axes"]["truth"].is_null(), "{document}");
-        assert!(
-            !document.to_string().contains("\"instance\""),
-            "{document}"
-        );
+        assert!(!document.to_string().contains("\"instance\""), "{document}");
     }
 }
 
