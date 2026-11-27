@@ -19,6 +19,12 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-204
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-203
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1051
+    type: depends_on
 ---
 # FR-921: Check a timed-product certificate without the engine
 
@@ -132,6 +138,9 @@ threshold; the first failure or instancing outcome is the result.
 | FR-921-AC-3 | The same document with one reachable row removed, or with one added row for a key the product does not reach, is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-4 | `fsl-probability-check`, a separate process with no `fsl-analyze` linkage, accepts the documents of FR-922-AC-1, FR-923-AC-1, FR-924-AC-1 and FR-877-AC-1 from their bytes and the byte provision, and rejects each with one value altered. | Test (TC-2495) |
 | FR-921-AC-5 | For each row of the route admission table and each entry of the locked-run value mapping, EN-5 and the checker each give the route or value the test states by hand, none derived from the shared declaration. | Test (TC-2490) |
+| FR-921-AC-6 | Given a hand-valued certificate for a timed workload `MeanTime` claim whose bound requires `+infinity`, the checker returns `Accepted` only after reconstructing `ModelSystem` and `TimedSystem` from the checked package and independently verifying the route-specific chain and almost-sure target reachability under the claim's scheduler quantifier (`Max`: some scheduler; `Min`: every scheduler); the check entry uses only the certificate, checked package, claim, binding, limits and cancellation context. | Test (TC-639) |
+| FR-921-AC-7 | For a hand-valued false workload `MeanTime` infinity certificate, the checker returns `Rejected` with the expected semantic rule and analysis does not settle `proved`, including when the producer reports `ClosesBeforeFiring` or `ManyFreeEnabled`; a refusal code alone never yields checker acceptance. | Test (TC-639) |
+| FR-921-AC-8 | Given a digital-route certificate for workload `MeanTime` `+infinity`, the checker accepts it only when its independently derived chain is equivalent to dense-time workload semantics for that claim and scheduler quantifier; otherwise it rejects the certificate under the named semantic rule. | Test (TC-639) |
 
 ## Dependencies
 
