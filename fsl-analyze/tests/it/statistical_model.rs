@@ -1269,7 +1269,7 @@ fn service() -> World {
 /// test for each live server key, returning the emitted P95 item.
 fn source_p95_item(name: &str, keys: &[&str], method: &str, seed: u64) -> serde_json::Value {
     let model = prob_world::service(&p95("P95", 5));
-    let (unit, package) = model.unit_and_document();
+    let (unit, package) = model.unit_and_receiver_scoped_document();
     let snapshot = json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": name},
