@@ -3,7 +3,9 @@
 //! §15.5's `Retx`, decided by the finite-horizon solver.
 
 use filament_exact::{Cancel, Integer, Rational};
-use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::analyze::{
+    analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
+};
 use fsl_analyze::exact_probabilistic::{
     build_product, decide_bounded_event, witness_scheduler, ActionChoice, EntryChoice,
     ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
@@ -1625,25 +1627,29 @@ fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
             },
         );
         let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
-        let terminal = record.terminal().expect("the exact engine declines the form");
+        let Settlement::Disposed(disposed) = &record.settlement else {
+            panic!("{name} ({ownership}): expected an EN-5 disposition, got {record:?}");
+        };
         assert!(
-            matches!(
-                terminal.value(),
-                TerminalValue::Unsupported(UnavailabilityCause::Disposition)
-            ),
+            disposed.kind == DispositionKind::Unsupported,
             "{name} ({ownership}): {:?}",
-            terminal.value()
+            disposed.kind
         );
         assert_eq!(
-            terminal.backend().map(|backend| backend.as_str()),
+            disposed.backend.as_ref().map(|backend| backend.as_str()),
             Some("en-5"),
             "{name} ({ownership})"
         );
         assert_eq!(
-            terminal.diagnostic().map(|code| code.to_string()).as_deref(),
+            disposed
+                .diagnostic
+                .as_ref()
+                .map(|diagnostic| diagnostic.code.to_string())
+                .as_deref(),
             Some("unsupported_construct/not-yet-implemented"),
             "{name}"
         );
+        assert!(record.terminal().is_none(), "{name}");
         assert!(record.exact_probabilistic.is_none(), "{name}");
         assert!(record.probabilistic_counterexample.is_none(), "{name}");
     }
