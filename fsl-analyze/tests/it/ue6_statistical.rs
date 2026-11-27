@@ -4,7 +4,7 @@
 //! proved or accepted, even one decided before that state.
 
 use filament_semantic_value::checking::CheckMode;
-use fsl_replay::statistical::{Decision, StatisticalMethod};
+use fsl_replay::statistical::{Decision, StatisticalMethod, UndecidedCause};
 use fsl_replay::UndefinedLocus;
 use ix_trace_rs::trace;
 
@@ -56,4 +56,41 @@ fn ue6_statistical_atom_undefined_at_position_zero() {
     let verdict =
         crate::statistical_model::decided(&world(claim), "Safe", StatisticalMethod::Okamoto);
     assert_eq!(verdict.decision, Decision::Rejected);
+}
+
+/// The Cell model whose `inc` precondition is refused, not undefined, at the
+/// reachable state `v = 1`: the kernel refuses `convert<Int[0,9]>(10)`.
+fn refused_world(claim: &str) -> World {
+    let mut model = prob_world::undetermined(claim);
+    model.body = format!(
+        "function refused_pick using vc(x: Integer): Int[0,9] pure {{ convert<Int[0,9]>(x) }}\n\
+         pre CanInc using vc on M::Cell::inc {{ refused_pick(9 + self.v) >= 0 }}\n\
+         post Inc using vc on M::Cell::inc {{ self.v - pre(self.v) = 1 }}\n\
+         workload Even on M {{ weight Cell::inc = 1; }}\n{claim}"
+    );
+    World::new_with_mode(&model, CheckMode::Kernel)
+}
+
+/// FR-189-AC-5: over the AC-21 Cell model, a walk that reaches the state
+/// whose `inc` guard is refused (`convert<Int[0,9]>(10)`), not undefined,
+/// settles Undecided, `UndecidedSuccessor`, with no undefined contract.
+#[trace("FR-189-AC-5")]
+#[test]
+fn ue6_statistical_refused_guard_stays_an_undecided_successor() {
+    let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.1 \
+         { probability >= 0.5 [ always[0,2] holds(c.v >= 0) ] }";
+    let verdict = crate::statistical_model::decided(
+        &refused_world(claim),
+        "Safe",
+        StatisticalMethod::Okamoto,
+    );
+    assert_eq!(
+        verdict.decision,
+        Decision::Undecided(UndecidedCause::UndecidedSuccessor)
+    );
+    let [test] = &verdict.tests[..] else {
+        panic!("one test: {:?}", verdict.tests);
+    };
+    assert!(test.undefined.is_none(), "{:?}", test.undefined);
 }

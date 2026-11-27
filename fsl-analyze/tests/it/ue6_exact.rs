@@ -7,7 +7,7 @@ use filament_exact::Cancel;
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_foundation::RequestIndex;
-use fsl_replay::{ModelCheckLimits, TerminalValue, UndefinedLocus};
+use fsl_replay::{InconclusiveCause, ModelCheckLimits, TerminalValue, UndefinedLocus};
 use ix_trace_rs::trace;
 
 use crate::prob_world::{self, World};
@@ -158,6 +158,74 @@ fn ue6_exact_bounded_event_stops_at_its_horizon() {
         &world(
             "probabilistic P using ev on M over (c: M::Cell) under Even on origin \
              { probability >= 0.99 [ eventually[0,1] holds(c.v = 0) ] }\n",
+        ),
+        "P",
+    );
+    let value = record.terminal().map(|terminal| terminal.value().clone());
+    assert!(
+        matches!(value, Some(TerminalValue::Proved { .. })),
+        "{value:?}"
+    );
+}
+
+/// The Cell model whose `inc` precondition is refused, not undefined, at the
+/// reachable state `v = 1`: the kernel refuses `convert<Int[0,9]>(10)`.
+fn refused_world(claim: &str) -> World {
+    let mut model = prob_world::undetermined(claim);
+    model.body = format!(
+        "function refused_pick using vc(x: Integer): Int[0,9] pure {{ convert<Int[0,9]>(x) }}\n\
+         pre CanInc using vc on M::Cell::inc {{ refused_pick(9 + self.v) >= 0 }}\n\
+         post Inc using vc on M::Cell::inc {{ self.v - pre(self.v) = 1 }}\n\
+         workload Even on M {{ weight Cell::inc = 1; }}\n{claim}"
+    );
+    World::new_with_mode(&model, CheckMode::Kernel)
+}
+
+fn settles_undecided_successor(claim: &str) {
+    let record = record(&refused_world(claim), "P");
+    let value = record.terminal().map(|terminal| terminal.value().clone());
+    assert_eq!(
+        value,
+        Some(TerminalValue::Inconclusive(
+            InconclusiveCause::UndecidedSuccessor
+        )),
+        "a refused conjunction is not undefined: {value:?}"
+    );
+}
+
+/// FR-196-AC-20, refused clause, under a workload: the claim is decided at
+/// the start, the refused guard at `v = 1` is read, and the item settles
+/// `UndecidedSuccessor`, not refuted.
+#[trace("FR-196-AC-20")]
+#[test]
+fn ue6_exact_refused_guard_workload_reach_at_start() {
+    settles_undecided_successor(
+        "probabilistic P using inf on M over (c: M::Cell) under Even on origin \
+         { probability >= 0.99 [ eventually holds(c.v = 0) ] }\n",
+    );
+}
+
+/// FR-196-AC-20, refused clause, under a workload, claim decided at the
+/// refused state itself.
+#[trace("FR-196-AC-20")]
+#[test]
+fn ue6_exact_refused_guard_workload_reach_at_the_state() {
+    settles_undecided_successor(
+        "probabilistic P using inf on M over (c: M::Cell) under Even on origin \
+         { probability >= 0.99 [ eventually holds(c.v = 1) ] }\n",
+    );
+}
+
+/// FR-196-AC-20, refused clause, under every scheduler: the claim is decided
+/// at the start, the sweep reads only undefined conjunctions, so the refused
+/// guard leaves the item Proved.
+#[trace("FR-196-AC-20")]
+#[test]
+fn ue6_exact_refused_guard_every_scheduler_stays_proved() {
+    let record = record(
+        &refused_world(
+            "probabilistic P using inf on M over (c: M::Cell) under every scheduler on origin \
+             { probability >= 0.99 [ eventually holds(c.v = 0) ] }\n",
         ),
         "P",
     );
