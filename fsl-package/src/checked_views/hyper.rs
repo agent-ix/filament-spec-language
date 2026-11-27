@@ -527,8 +527,12 @@ impl BarePackage<'_> {
             let alias = match used_aliases.first() {
                 Some(used) => (*used).to_owned(),
                 None => {
-                    let Some(filament_contract_model::CheckedNodeOwner::ModelRoot { identity }) =
-                        nodes.get(model_node).and_then(|node| node.owner.as_ref())
+                    // A parameter's model node is the declared type (owned by the
+                    // model), or the model root itself: both name the package.
+                    let Some(
+                        filament_contract_model::CheckedNodeOwner::ModelRoot { identity }
+                        | filament_contract_model::CheckedNodeOwner::Model { identity, .. },
+                    ) = nodes.get(model_node).and_then(|node| node.owner.as_ref())
                     else {
                         return Err(malformed(claim));
                     };
