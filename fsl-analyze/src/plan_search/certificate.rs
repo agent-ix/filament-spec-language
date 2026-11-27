@@ -953,7 +953,7 @@ mod tests {
         .expect("the unit assembles");
         let graph = declarations
             .check(
-                CheckMode::Linked,
+                CheckMode::Kernel,
                 CheckingLimits::default(),
                 &fsl_eval::value::S6aRewardEvaluator,
             )
