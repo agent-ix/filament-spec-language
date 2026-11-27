@@ -122,7 +122,6 @@ pub use build::{
 };
 pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
-pub(crate) use route::{timed_route, TimedRoute};
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
@@ -139,6 +138,7 @@ pub use finite_horizon::{
 pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
 pub use fsl_replay::FreeDelayRow;
 pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
+pub(crate) use route::{timed_route, TimedRoute};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 #[cfg(feature = "test-support")]
