@@ -4906,8 +4906,9 @@ struct Echo {
     claim_name: String,
     /// The admitted FSpec FR-331 request item.
     request: Value,
-    /// FSpec FR-412's certificate identity of the item's obligation;
-    /// `None` when no one domain package owns the claim.
+    /// The item's obligation identity (FSpec FR-412); `None` when no one
+    /// domain package owns the claim. Statistical results publish it beside
+    /// the verdict so FR-191 can reproduce identity across run settings.
     identity: Option<Value>,
     /// The `{node, occurrence}` of the item's claim, which FSpec FR-410's
     /// rejection `where` names as its `locus`.
@@ -5092,7 +5093,7 @@ fn name_rejection_locus(verdict: &mut Value, locus: &Value) {
 }
 
 /// One FR-621 item from the FR-286 item `written`.
-#[ix_trace_rs::string_edge]
+#[implements("FR-191-AC-3", "FR-191-AC-4")]
 fn item_document(written: Value, members: ItemMembers) -> Value {
     let ItemMembers {
         claim_name,
@@ -5123,6 +5124,11 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
     let task_search_identity = identity.clone();
+    if record.get("result").and_then(Value::as_str) == Some("measured") {
+        if let Some(identity) = task_search_identity.clone() {
+            item.insert("identity".to_owned(), identity);
+        }
+    }
     if let Some(certificate) = certificate {
         item.insert("certificate".to_owned(), certificate);
     } else if let (Some(recorded), Some(identity)) = (
