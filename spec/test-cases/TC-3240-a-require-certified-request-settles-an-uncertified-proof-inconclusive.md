@@ -14,7 +14,7 @@ Verify that `require_certified` turns an `uncertified` or `trusted` proof into
 `inconclusive`, `proof-not-certified`, on every `analyze` route, and changes nothing
 else.
 
-Scope: FR-1052-AC-1 to FR-1052-AC-9.
+Scope: FR-1052-AC-1 to FR-1052-AC-16.
 
 ## Test Procedure
 
