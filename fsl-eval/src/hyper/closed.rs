@@ -147,6 +147,10 @@ pub struct ClosedUndefined {
     pub components: Vec<usize>,
     /// The transition a precondition guards.
     pub transition: Option<ModelTransition>,
+    /// The index of the execution's state a contract conjunction was read at,
+    /// among all its states, skipped steps included; `None` for a `match` or an
+    /// atom, which read the visible positions.
+    pub state: Option<usize>,
     /// Why it has no value.
     pub cause: crate::temporal::UndefinedCause,
 }
@@ -459,17 +463,25 @@ pub fn judge_closed_tuple(
         (universals, false, !clause.mu_universal().is_empty()),
         (executions.len(), true, !clause.mu_existential().is_empty()),
     ];
-    for (components, existential, present) in parts {
-        if !present {
-            continue;
-        }
-        let longest = executions
+    let longest_of = |components: usize| {
+        executions
             .iter()
             .take(components)
             .map(|execution| execution.steps.len())
             .max()
-            .unwrap_or(0);
-        for joint in 1..=longest {
+            .unwrap_or(0)
+    };
+    let overall = longest_of(executions.len());
+    // The `match` is read at the joint positions in increasing order, `μ_U`
+    // and then `μ_E` at one position (FR-183); the first conjunct with no
+    // value waits for the body, whose atom at an earlier position is read
+    // first (ADR-018 UE-4).
+    let mut undefined_match: Option<Box<ClosedUndefined>> = None;
+    'joints: for joint in 1..=overall {
+        for (components, existential, present) in parts {
+            if !present || joint > longest_of(components) {
+                continue;
+            }
             let part = if existential {
                 MatchPart::Existential
             } else {
@@ -485,7 +497,7 @@ pub fn judge_closed_tuple(
                     };
                 }
                 Ok(MatchReading::Undefined { conjunct, cause }) => {
-                    return ClosedVerdict::Undefined(Box::new(ClosedUndefined {
+                    undefined_match = Some(Box::new(ClosedUndefined {
                         position: u64::try_from(joint).unwrap_or(u64::MAX),
                         locus: if existential {
                             ClosedLocus::ExistentialMatch { conjunct }
@@ -494,14 +506,33 @@ pub fn judge_closed_tuple(
                         },
                         components: (0..executions.len()).collect(),
                         transition: None,
+                        state: None,
                         cause,
                     }));
+                    break 'joints;
                 }
                 Ok(_) => return ClosedVerdict::MatchUndetermined,
                 Err(verdict) => return verdict,
             }
         }
     }
+    let body = judge_closed_body(inputs, executions);
+    match undefined_match {
+        None => body,
+        Some(found) => match body {
+            ClosedVerdict::Undefined(atom) if atom.position < found.position => {
+                ClosedVerdict::Undefined(atom)
+            }
+            _ => ClosedVerdict::Undefined(found),
+        },
+    }
+}
+
+/// The verdict of the clause's body over `executions`, read over the
+/// executions as given: an undefined atom is the first in position and then
+/// clause-node order.
+fn judge_closed_body(inputs: &ClosedInputs<'_>, executions: &[&ClosedExecution]) -> ClosedVerdict {
+    let clause = inputs.clause;
     let lens: Vec<u64> = executions
         .iter()
         .map(|execution| u64::try_from(execution.states.len()).unwrap_or(u64::MAX))
@@ -531,6 +562,7 @@ pub fn judge_closed_tuple(
                             locus: ClosedLocus::Atom(atom),
                             components: components.into_iter().collect(),
                             transition: None,
+                            state: None,
                             cause,
                         }));
                     }
@@ -685,9 +717,6 @@ pub enum ClosedRead {
     Unmatched,
     /// Every expression the tuple reads has a value.
     Clear,
-    /// A contract conjunction of an `align skip` clause is not read: FR-183
-    /// states no replay for it.
-    Unread,
     /// A state could not be expanded for its contract conjunctions.
     Expansion {
         /// The component whose state it was.
@@ -702,14 +731,15 @@ pub enum ClosedRead {
 /// Read `executions`, one per trace variable in quantifier order, for the
 /// first expression with no value (ADR-018 UE-4, UE-6; ADR-023 HV-8), in the
 /// one order the producer and the replay share and FR-183 states: at each
-/// joint position in increasing order, the `match` over the step entering it,
-/// then the atoms of the body at it, then the contract conjunctions of the
-/// states it holds, by component. Only a universal component's contract
-/// conjunction is read: an existential member's undefined contract
-/// conjunction is no undefined evaluation, FR-177 settles it
-/// `Undecided(UndecidedSuccessor)`. `systems` holds each component's subject.
-/// The executions may differ in length: a component that has ended reads
-/// false (FR-043) and is expanded no further.
+/// joint position in increasing order, the `match` over the step entering it
+/// (`μ_U`, then `μ_E`), then the atoms of the body at it, then the contract
+/// conjunctions of the states it holds, by component. A contract conjunction
+/// of any component, universal or existential, refutes (FR-177). An `align
+/// skip` clause reads its `match` and atoms over the visible positions and its
+/// contract conjunctions on the unprojected states, each at the visible
+/// position it follows. `systems` holds each component's subject. The
+/// executions may differ in length: a component that has ended reads false
+/// (FR-043) and is expanded no further.
 pub fn read_closed_undefined(
     inputs: &ClosedInputs<'_>,
     systems: &[&ModelSystem<'_>],
@@ -720,7 +750,7 @@ pub fn read_closed_undefined(
         // is read first (UE-4).
         ClosedVerdict::Undefined(found) => {
             return match read_contracts(inputs, systems, executions, Some(found.position)) {
-                ClosedRead::Clear | ClosedRead::Unread => ClosedRead::Undefined(found),
+                ClosedRead::Clear => ClosedRead::Undefined(found),
                 earlier => earlier,
             };
         }
@@ -735,9 +765,24 @@ pub fn read_closed_undefined(
     read_contracts(inputs, systems, executions, None)
 }
 
-/// The first universal component's contract conjunction with no value, by
-/// joint position and then component, at the positions before `before` when
-/// given; [`ClosedRead::Clear`] when there is none.
+/// The visible position each state of `execution` follows: the number of
+/// visible steps before it (every step of a clause with no `align skip`).
+fn visible_positions(execution: &ClosedExecution) -> Vec<u64> {
+    let mut positions = Vec::with_capacity(execution.states.len());
+    let mut position = 0_u64;
+    positions.push(position);
+    for step in &execution.steps {
+        if !step.skipped {
+            position += 1;
+        }
+        positions.push(position);
+    }
+    positions
+}
+
+/// The first contract conjunction with no value, by visible position, then
+/// component, then state, at the positions before `before` when given;
+/// [`ClosedRead::Clear`] when there is none.
 fn read_contracts(
     inputs: &ClosedInputs<'_>,
     systems: &[&ModelSystem<'_>],
@@ -745,55 +790,79 @@ fn read_contracts(
     before: Option<u64>,
 ) -> ClosedRead {
     let clause = inputs.clause;
-    // FR-183 states no replay of a contract conjunction read on a projected
-    // tuple, so an `align skip` clause leaves its contracts unread here, for
-    // the producer and the replay alike (one reader, so they agree): the
-    // producer returns `Undecided(UndecidedSuccessor)` and the replay refuses
-    // an undefined counterexample of such a clause as `HyperProjected`.
-    if !clause.align_skip().is_empty() {
-        return ClosedRead::Unread;
-    }
     let Some(depth) = horizon(clause.body()) else {
         return ClosedRead::Stopped(closed_fault("a-body-has-a-horizon"));
     };
     let limit = before.map_or(depth, |before| before.min(depth));
-    let longest = executions
+    let positions: Vec<Vec<u64>> = executions
         .iter()
-        .take(clause.universals())
-        .map(|execution| execution.states.len())
+        .map(|execution| visible_positions(execution))
+        .collect();
+    let last = positions
+        .iter()
+        .filter_map(|of| of.last().copied())
         .max()
         .unwrap_or(0);
-    for joint in 0..longest {
-        if u64::try_from(joint).map_or(true, |joint| joint >= limit) {
+    for position in 0..=last {
+        if position >= limit {
             break;
         }
-        for (component, execution) in executions.iter().enumerate().take(clause.universals()) {
-            let Some(state) = execution.states.get(joint) else {
-                continue;
-            };
-            let Some(system) = systems.get(component) else {
-                return ClosedRead::Stopped(closed_fault("a-component-has-a-system"));
-            };
-            let expansion = match system.successors(state) {
-                Ok(expansion) => expansion,
-                Err(stop) => return ClosedRead::Expansion { component, stop },
-            };
-            if let Some(contract) = expansion
-                .findings
-                .iter()
-                .find_map(crate::simulation::model::ModelFinding::undefined_contract)
-            {
-                return ClosedRead::Undefined(Box::new(ClosedUndefined {
-                    position: u64::try_from(joint).unwrap_or(u64::MAX),
-                    locus: ClosedLocus::Contract(contract.clause),
-                    components: vec![component],
-                    transition: contract.guard_of,
-                    cause: contract.cause,
-                }));
+        for (component, execution) in executions.iter().enumerate() {
+            for (index, state) in execution.states.iter().enumerate() {
+                if positions[component].get(index) != Some(&position) {
+                    continue;
+                }
+                let Some(system) = systems.get(component) else {
+                    return ClosedRead::Stopped(closed_fault("a-component-has-a-system"));
+                };
+                let expansion = match system.successors(state) {
+                    Ok(expansion) => expansion,
+                    Err(stop) => return ClosedRead::Expansion { component, stop },
+                };
+                if let Some(contract) = expansion
+                    .findings
+                    .iter()
+                    .find_map(crate::simulation::model::ModelFinding::undefined_contract)
+                {
+                    return ClosedRead::Undefined(Box::new(ClosedUndefined {
+                        position,
+                        locus: ClosedLocus::Contract(contract.clause),
+                        components: vec![component],
+                        transition: contract.guard_of,
+                        state: Some(index),
+                        cause: contract.cause,
+                    }));
+                }
             }
         }
     }
     ClosedRead::Clear
+}
+
+/// The state key of the state a [`ClosedUndefined`] names in `execution`, the
+/// component's execution, which the producer and the replay both spell: the
+/// unprojected state of a contract conjunction, otherwise the state at the
+/// joint position, read over the visible positions of an `align skip` clause
+/// (ADR-023 PA-2). `None` when the execution has no such state.
+///
+/// # Errors
+///
+/// [`EncodingRefusal`] when the state has no canonical key.
+pub fn closed_found_state_key(
+    system: &ModelSystem<'_>,
+    clause: &CheckedHyperClause,
+    execution: &ClosedExecution,
+    found: &ClosedUndefined,
+) -> Result<Option<StateKey>, EncodingRefusal> {
+    let Some(index) = found.state else {
+        return closed_state_key(system, clause, execution, found.position);
+    };
+    let Some(state) = execution.states.get(index) else {
+        return Ok(None);
+    };
+    system
+        .state_key(state, fsl_foundation::IdentityLimits::default())
+        .map(|(_, key)| Some(key))
 }
 
 /// The state key of `execution`'s state at joint `position` of `clause`, read

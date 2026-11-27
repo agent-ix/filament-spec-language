@@ -463,15 +463,15 @@ fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skippe
     }
 }
 
-/// An `align skip` clause reads the executions through their projection
-/// (FR-178), and FR-183 states no replay for a contract conjunction read on a
-/// projected tuple. The producer and the replay read one function,
-/// `read_closed_undefined`, which leaves the contract of an `align skip`
-/// clause unread; so a guard with no value at a reached state refutes
-/// nothing and the item stays `Undecided(UndecidedSuccessor)`, never `Holds`.
+/// An `align skip` clause reads its `match` and atoms over the projection
+/// (FR-178) and its contract conjunctions on the unprojected states, each at
+/// the visible position it follows (FR-183 "Undefined evaluation"). A guard
+/// with no value at a reached state refutes with the contract clause as the
+/// locus at position 1, where `step(1)` from `(0, 0)` reaches it, and the
+/// counterexample replays and settles `refuted`.
 #[trace("TC-2243", "FR-173-AC-7")]
 #[test]
-fn an_undefined_guard_of_an_align_skip_clause_stays_undecided() {
+fn an_undefined_guard_of_an_align_skip_clause_refutes_and_replays() {
     let world = World::busy_with_kernel_function(
         Vault::BusyUndefined,
         &crate::hyper_projected_support::IDLE,
@@ -481,16 +481,16 @@ fn an_undefined_guard_of_an_align_skip_clause_stays_undecided() {
     let outcome = world
         .run(ModelCheckLimits::default(), &Cancel::new())
         .expect("the run is not refused");
-    assert!(
-        matches!(
-            outcome,
-            HyperOutcome::Undecided {
-                cause: fsl_replay::UndecidedCause::UndecidedSuccessor,
-                ..
-            }
-        ),
-        "{outcome:?}"
+    let counterexample = refuted(outcome.clone());
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!("expected undefined, got {:?}", counterexample.kind);
+    };
+    assert_eq!(
+        undefined.locus,
+        fsl_replay::HyperLocus::Contract("Guard".to_owned())
     );
+    assert_eq!(undefined.position, 1);
+    assert_eq!(settled(&world, &outcome).0, ResultLabel::Refuted);
 }
 
 /// FR-183 "Undefined evaluation" and "Projected (HP-6)": an `align skip`

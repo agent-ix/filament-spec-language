@@ -32,7 +32,7 @@ use std::collections::BTreeSet;
 
 use filament_exact::{LimitKind, Meter};
 use fsl_eval::hyper::{
-    closed_executions, closed_state_key, horizon, judge_closed_tuple, match_closed_step,
+    closed_executions, closed_found_state_key, horizon, judge_closed_tuple, match_closed_step,
     read_closed_undefined, search_partner, ClosedExecution, ClosedInputs, ClosedLocus, ClosedRead,
     ClosedStop, ClosedUndefined, ClosedVerdict, MatchPart, MatchReading, ParameterBinding,
     PartnerSearch, Tuples,
@@ -349,6 +349,7 @@ impl Run<'_, '_> {
                             locus: ClosedLocus::Match { conjunct },
                             components: (0..tuple.len()).collect(),
                             transition: None,
+                            state: None,
                             cause,
                         }),
                     )));
@@ -585,12 +586,10 @@ impl Run<'_, '_> {
             .ok_or_else(|| fault("a-prefix-component-has-a-system"))?;
         match read_closed_undefined(&inputs, &systems, tuple) {
             ClosedRead::Undefined(found) => self.undefined_outcome(instance, tuple, *found, totals),
-            ClosedRead::Unmatched | ClosedRead::Unread | ClosedRead::Clear => {
-                Ok(HyperOutcome::Undecided {
-                    cause: UndecidedCause::UndecidedSuccessor,
-                    stats: totals.stats(),
-                })
-            }
+            ClosedRead::Unmatched | ClosedRead::Clear => Ok(HyperOutcome::Undecided {
+                cause: UndecidedCause::UndecidedSuccessor,
+                stats: totals.stats(),
+            }),
             ClosedRead::Expansion { component, stop } => {
                 match self.expansion_ending(Some(component), stop)? {
                     Ending::Stopped(cause, limit, count) => {
@@ -629,7 +628,7 @@ impl Run<'_, '_> {
             let execution = tuple
                 .get(*component)
                 .ok_or_else(|| fault("an-undefined-component-is-traced"))?;
-            let key = closed_state_key(system, self.request.clause, execution, found.position)
+            let key = closed_found_state_key(system, self.request.clause, execution, &found)
                 .map_err(ModelCheckRefusal::Encoding)?
                 .ok_or_else(|| fault("an-undefined-position-is-a-state"))?;
             state_keys.push(key);

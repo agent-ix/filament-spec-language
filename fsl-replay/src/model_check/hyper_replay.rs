@@ -59,7 +59,7 @@
 
 use fsl_eval::automaton::translate_negation;
 use fsl_eval::hyper::{
-    closed_executions, closed_state_key, horizon as closed_horizon, judge_closed_tuple,
+    closed_executions, closed_found_state_key, horizon as closed_horizon, judge_closed_tuple,
     read_closed_undefined, search_partner, ClosedExecution, ClosedInputs, ClosedRead, ClosedStep,
     ClosedStop, ClosedVerdict, ComponentStep, Halt, HyperFinding, HyperLetters, HyperState,
     HyperTransition, MatchReading, ParameterBinding, PartnerSearch, Property, StepLabel, StepMatch,
@@ -1403,7 +1403,6 @@ fn closed_undefined(
                 Category::Success,
             )));
         }
-        ClosedRead::Unread => return Err(refused(ModelTraceRefusal::HyperProjected)),
         ClosedRead::Stopped(ClosedVerdict::Fault(_)) => {
             return Err(fault("the-closed-tuple-evaluates"));
         }
@@ -1423,7 +1422,7 @@ fn closed_undefined(
         ) else {
             return Err(fault("an-undefined-component-is-traced"));
         };
-        let Ok(Some(key)) = closed_state_key(system, clause, execution, found.position) else {
+        let Ok(Some(key)) = closed_found_state_key(system, clause, execution, &found) else {
             return Err(fault("an-undefined-position-is-a-state"));
         };
         state_keys.push(key);

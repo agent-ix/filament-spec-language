@@ -155,7 +155,7 @@ pub fn check_match_witness(
   universal and existential, as FSpec FR-400 states. The executor SHALL
   re-execute each path through its alias's `ModelSystem` with FR-128's
   step refusals, then evaluate `μ_U`, `μ_E`, the body's letters and each
-  universal component's contract conjunctions at the joint positions up to
+  component's contract conjunctions at the joint positions up to
   `trace_position` (ADR-018 UE-5, UE-6, ADR-023 HV-8).
 - The executor SHALL read the joint positions in increasing order and, at
   one joint position `p`, the expressions in the order EN-1 reads them
@@ -164,13 +164,12 @@ pub fn check_match_witness(
      `μ_E` over that step;
   2. the body's letter at `p`, its atoms in clause-node order (ADR-018
      UE-2);
-  3. the contract conjunctions of each universal component's FR-120
+  3. the contract conjunctions of each component's FR-120
      expansion at `p`, the components in quantifier order and, within one
      component, the conjunctions in the order its expansion records them.
-     Every component of an HP-2 clause is universal. An existential
-     member's undefined contract conjunction is no undefined evaluation:
-     FR-177 settles it `Undecided(UndecidedSuccessor)`, so the replay does
-     not read it as a locus.
+     An existential member's undefined contract conjunction is an
+     undefined evaluation of that member's component, as FR-177 states
+     (ADR-018 UE-6): the replay reads it as a locus naming that component.
 
   The first expression in this order that evaluates undefined is the
   replay's undefined evaluation; the expressions after it are not read.
@@ -215,10 +214,12 @@ pub fn check_match_witness(
 - An `Undefined` counterexample of an `align skip` clause under the
   event-position profile (FR-173 "Event-position form") holds one closed
   finite execution per variable with every step marked, and its position
-  counts visible steps. The executor SHALL read each execution over its
-  projection, by the producer's own reading, for its `match` conjuncts and
-  body atoms, and SHALL NOT read a contract conjunction of it: the producer
-  settles such a clause `Undecided(UndecidedSuccessor)` (FR-173).
+  counts visible steps. The executor SHALL read each execution's `match`
+  conjuncts and body atoms over its projection and its contract
+  conjunctions on the unprojected states, each at the visible position it
+  follows (several states of one execution may follow one position, read in
+  order), by the producer's own reading, so a contract conjunction with no
+  value at a skipped or a visible state is read as a locus (ADR-018 UE-6).
 - An `Undefined` counterexample of an `align skip` clause under the
   infinite-trace profile holds its skipped
   steps, unmarked, so its paths differ in total length, and its position
