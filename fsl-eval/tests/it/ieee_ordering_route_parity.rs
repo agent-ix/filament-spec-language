@@ -1298,7 +1298,7 @@ fn probe_a_source_field_read_on_both_routes() {
     .expect("the source route reads versionNumber");
     assert_eq!(
         source_evaluation.outcome,
-        Outcome::Completed(Value::Boolean(true)),
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))),
         "the source field read returns true"
     );
 
@@ -1327,10 +1327,17 @@ fn probe_a_source_field_read_on_both_routes() {
             &mut native_budget,
         )
         .expect("the admitted package joins its source-object rows");
+    let bare_anchor = identities
+        .source_operations()
+        .iter()
+        .find(|row| row.source_identity.as_ref() == "ConfigVersion::size")
+        .expect("the admitted size operation identity row")
+        .anchor_id
+        .clone();
     let mut bare_meter = Meter::new(UNLIMITED);
     let bare_evaluation = fsl_eval::value::evaluate_bare_source_operation_clause(
         &bare,
-        &anchor,
+        &bare_anchor,
         fsl_package::SourceOperationClause::Precondition {
             name: "versioned".to_owned(),
         },
@@ -1342,7 +1349,7 @@ fn probe_a_source_field_read_on_both_routes() {
     .expect("the bytes route reads versionNumber without missing-type-representation");
     assert_eq!(
         bare_evaluation.outcome,
-        Outcome::Completed(Value::Boolean(true)),
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))),
         "the bytes route returns the same true result"
     );
     assert_eq!(
