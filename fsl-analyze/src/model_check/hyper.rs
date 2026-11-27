@@ -802,6 +802,7 @@ enum FirstHit {
 
 /// Finalize the refused first-phase candidate without making an undefined
 /// counterexample.
+#[implements("FR-177-AC-7")]
 fn finalize_refused_candidate(depth: usize, candidate: Candidate) -> Option<(usize, FirstHit)> {
     match candidate {
         Candidate::Refused(cause) => Some((depth, FirstHit::Undecided(cause))),
