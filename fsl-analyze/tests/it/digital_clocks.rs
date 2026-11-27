@@ -1568,7 +1568,7 @@ fn delay_weighting_and_elapsed_quantiles_check_over_retx() {
 /// G11's timed-form boundary: Delay remains typed Unsupported(NOT_YET) under
 /// QSL-3580, and FR-199's weighted workload requirement does not imply
 /// weighted every-scheduler. EN-5 remains the deciding backend on both rows.
-#[trace("TC-2169", "FR-186-AC-15", "FR-199-AC-2")]
+#[trace("TC-2169", "FR-186-AC-15")]
 #[test]
 fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
     let claims = "probabilistic DelayLongRun using ev on M over (c: M::Call) under every scheduler on origin \
