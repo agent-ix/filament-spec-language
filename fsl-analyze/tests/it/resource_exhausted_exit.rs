@@ -20,9 +20,13 @@ fn exhausted() -> AdmissionFailure {
     }))
 }
 
-/// FR-285-AC-3: a limit exits 22. The admission failure `Incomplete` carrying
+/// FR-285: a limit exits 22. The admission failure `Incomplete` carrying
 /// `resource_exhausted` exits 22, not the refusal 20, on `analyze` and on
-/// `monitor` alike.
+/// `monitor` alike. Only the monitor half discriminates: `analyze` already
+/// takes its category from the `AdmissionFailure::Incomplete` variant, so it
+/// reads 22 with or without the `resource_exhausted` arm of `exit_category_of`;
+/// `monitor` goes through the code map and reads 20 without it. The analyze
+/// half pins the two routes to one answer.
 #[trace("TC-769", "FR-285-AC-3")]
 #[test]
 fn an_incomplete_resource_exhausted_admission_exits_22_on_analyze_and_monitor() {
