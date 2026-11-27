@@ -616,7 +616,16 @@ impl TransitionSystem for Watched<'_, '_> {
         &self,
         state: &Self::State,
     ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop> {
-        self.system.successors(state).inspect_err(|&stop| {
+        {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static N: AtomicU64 = AtomicU64::new(0);
+            let n = N.fetch_add(1, Ordering::Relaxed);
+            eprintln!("TMPTRACE successors enter {n}");
+        }
+        let t0 = std::time::Instant::now();
+        let r = self.system.successors(state);
+        eprintln!("TMPTRACE successors exit {:?}", t0.elapsed());
+        r.inspect_err(|&stop| {
             self.stop.set(Some(stop));
         })
     }
@@ -1737,6 +1746,7 @@ impl<'a> Run<'_, 'a> {
             Finding = HyperFinding,
         >,
     {
+        eprintln!("TMPTRACE retained enter cap={cap:?}");
         let identity = IdentityLimits::default();
         let retained = retain_reduced_admitting(
             product,
@@ -1750,6 +1760,7 @@ impl<'a> Run<'_, 'a> {
             || self.cancel.poll() && self.cancel.cause().is_some(),
             |_: &HyperState, key_len: usize| self.admit(key_len),
         );
+        eprintln!("TMPTRACE retained exit ok={}", retained.is_ok());
         match retained {
             Ok(graph) => Ok(graph),
             Err(error) => match take_halt() {

@@ -853,6 +853,15 @@ impl TransitionSystem for HyperProduct<'_, '_> {
         &self,
         state: &HyperState,
     ) -> Result<Expansion<HyperTransition, HyperState, HyperFinding>, ExpansionStop> {
+        let tmp_t0 = std::time::Instant::now();
+        {
+            use std::hash::{Hash, Hasher};
+            let d = format!("{:?}", state.components);
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            d.hash(&mut h);
+            eprintln!("TMPTRACE product.successors enter len={} hash={:x}", d.len(), h.finish());
+        }
+        let tmp_guard = TmpGuard(tmp_t0);
         self.joint.poll()?;
         let before = match &state.property {
             // The first phase ends at this state; nothing follows it.
@@ -889,9 +898,13 @@ impl TransitionSystem for HyperProduct<'_, '_> {
         }
         // The joint steps in the canonical order of their identities, so the
         // first undefined `μ_U` is the first in canonical order (FR-176-AC-4).
+        eprintln!("TMPTRACE options per component {:?} at {:?}", options.iter().map(|o| o.len()).collect::<Vec<_>>(), tmp_t0.elapsed());
         let mut successors = Vec::new();
         let mut cut = false;
-        for (step, posts) in self.joint.joint_steps(&options)? {
+        let tmp_steps = self.joint.joint_steps(&options)?;
+        eprintln!("TMPTRACE joint_steps {} at {:?}", tmp_steps.len(), tmp_t0.elapsed());
+        let _ = &tmp_guard;
+        for (step, posts) in tmp_steps {
             match self.joint.matched_universal(&step)? {
                 Matched::Fails => continue,
                 Matched::Holds => {}
@@ -925,5 +938,12 @@ impl TransitionSystem for HyperProduct<'_, '_> {
             successors,
             findings,
         })
+    }
+}
+
+struct TmpGuard(std::time::Instant);
+impl Drop for TmpGuard {
+    fn drop(&mut self) {
+        eprintln!("TMPTRACE product.successors exit {:?}", self.0.elapsed());
     }
 }

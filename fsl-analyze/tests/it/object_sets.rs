@@ -1476,6 +1476,23 @@ fn hyper_ranges_over_a_subtype_population() {
     check_route(Route::ForallExists, &[SUBTYPE_ONLY]);
 }
 
+#[test]
+fn tmpsplit_ff_unadmitted() {
+    check_route(Route::ForallForall, &[UNADMITTED_KEY]);
+}
+#[test]
+fn tmpsplit_fe_unadmitted() {
+    check_route(Route::ForallExists, &[UNADMITTED_KEY]);
+}
+#[test]
+fn tmpsplit_ff_created() {
+    check_route(Route::ForallForall, &[CREATED]);
+}
+#[test]
+fn tmpsplit_fe_created() {
+    check_route(Route::ForallExists, &[CREATED]);
+}
+
 #[trace("TC-3219", "FR-125-AC-19", "FR-125-AC-20")]
 #[test]
 fn hyper_excludes_unadmitted_keys() {
