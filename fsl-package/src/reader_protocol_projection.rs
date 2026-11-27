@@ -3713,6 +3713,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             declaration: field_declaration,
             name: field_name,
             read_form,
+            population: _population,
         }) = admitted_operation.member
         else {
             return Err(fault("reader-record-projection-has-admitted-field").into());
