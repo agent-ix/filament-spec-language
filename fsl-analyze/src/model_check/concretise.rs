@@ -76,8 +76,12 @@ mod tests {
         let (mut canonical, _) = system
             .canonicalise(&root, &group)
             .expect("the initial state canonicalises");
-        let (_, mut lift) = Lift::start(&system, Some(&system), &group, &canonical, 3)
-            .expect("the canonical root lifts");
+        let (_, mut lift) = match Lift::start(&system, Some(&system), &group, &canonical, 3) {
+            Ok(lift) => lift,
+            Err(LiftStop::Expansion(_)) => panic!("the canonical root lifts"),
+            Err(LiftStop::Transitions) => panic!("the lift has three transition units"),
+            Err(LiftStop::Refusal(_)) => panic!("the canonical root is an initial state"),
+        };
 
         let mut path = Vec::new();
         for _ in 0..3 {
@@ -110,8 +114,12 @@ mod tests {
         );
         assert_eq!(lift.charged(), 3);
 
-        let (_, mut exact_lift) = Lift::start(&system, Some(&system), &group, &root, 3)
-            .expect("the canonical root lifts again");
+        let (_, mut exact_lift) = match Lift::start(&system, Some(&system), &group, &root, 3) {
+            Ok(lift) => lift,
+            Err(LiftStop::Expansion(_)) => panic!("the canonical root lifts again"),
+            Err(LiftStop::Transitions) => panic!("the lift has three transition units"),
+            Err(LiftStop::Refusal(_)) => panic!("the root is an initial state"),
+        };
         system.share_evaluation_meter(meter(6));
         for (transition, target, permutation) in &path {
             match exact_lift.edge(transition, target, permutation) {
