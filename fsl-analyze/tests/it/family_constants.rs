@@ -135,6 +135,7 @@ fn a_time_lock_past_a_quantifier_family_constant_reproduces() {
 
 /// FR-419's task product keeps each source clock exactly up to the largest
 /// constant it is compared with: 5 for the element's `x`.
+#[trace("TC-704", "FR-249-AC-17")]
 #[test]
 fn a_task_automaton_ceiling_reads_a_quantifier_family() {
     let world = family_world(

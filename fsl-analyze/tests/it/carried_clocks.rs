@@ -104,7 +104,7 @@ fn temporal(flag: &str) -> String {
 /// FR-230 "Collection-valued writes" under ADR-026 EZ-4: `always not late`
 /// is false, `late` after 5, `copy` and `work` reaching it, in whichever
 /// order the two operations that enter phase 1 are named.
-#[trace("TC-692")]
+#[trace("TC-692", "FR-230-AC-72")]
 #[test]
 fn a_clock_carried_into_a_compared_field_keeps_its_bound() {
     for (early, late) in [("alpha", "go"), ("go", "alpha")] {
@@ -201,6 +201,7 @@ fn a_clock_carried_twice_keeps_the_last_fields_bound() {
 /// FR-419's task automaton keeps each source clock exactly up to the largest
 /// constant its value can be compared with: 5 for `us`'s element, which
 /// `copy` carries into `ts`.
+#[trace("TC-704", "FR-249-AC-17")]
 #[test]
 fn a_task_automaton_ceiling_follows_a_carried_clock() {
     let world = carrying_world(
@@ -233,6 +234,7 @@ fn a_task_automaton_ceiling_follows_a_carried_clock() {
 /// `late` is reached within 10 ms with probability 1 under every scheduler:
 /// `at least 0.5` holds with the value 1 and `at most 0.5` does not, over the
 /// digital product (closed guard) and the region product (strict guard).
+#[trace("TC-631", "FR-196-AC-20")]
 #[test]
 fn a_probability_cap_follows_a_carried_clock() {
     let claim = |name: &str, bound: &str| {
