@@ -35,6 +35,7 @@ mod request_diagnostics;
 mod request_overrides;
 mod review_process_extraction;
 mod revision_validation;
+mod run_provider_request_order;
 mod run_override_routes;
 mod run_requirement_items;
 mod run_text_witness;
