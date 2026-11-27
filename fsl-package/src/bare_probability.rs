@@ -230,6 +230,7 @@ impl BarePackage<'_> {
         })
     }
 
+    #[ix_trace_rs::string_edge]
     fn probability_declaration_index(
         &self,
         claim: &OccurrenceKey,

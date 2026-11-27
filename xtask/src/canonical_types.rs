@@ -634,6 +634,7 @@ pub struct Report {
 
 /// FR-271 and FR-272 over `packages`; files under `workspace_root` are named
 /// relative to it.
+#[ix_trace_rs::string_edge]
 pub fn scan(workspace_root: &Path, packages: Vec<Package>) -> Result<Report> {
     let mut definitions = Vec::new();
     let mut reexports = Vec::new();

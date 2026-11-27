@@ -509,6 +509,7 @@ impl Default for WorkerCounts {
 }
 
 impl WorkerCounts {
+    #[ix_trace_rs::string_edge]
     fn set(&mut self, name: &str, value: u64) -> bool {
         let field = match name {
             "explore.workers" => &mut self.explore,

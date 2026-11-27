@@ -57,6 +57,7 @@ struct DeclaredSpans<'a> {
 
 /// The `probabilistic N` declaration an `N`th probabilistic declaration's site
 /// name begins with.
+#[ix_trace_rs::string_edge]
 fn probabilistic_declaration_name(origin: &str) -> Option<&str> {
     let rest = origin.strip_prefix("probabilistic ")?;
     let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
@@ -530,6 +531,7 @@ impl CheckedGraph {
     /// every other occurrence. Positions inside the function keep the region
     /// [`Self::region`] gives them (FR-096).
     #[implements("FR-569-AC-6")]
+    #[ix_trace_rs::string_edge]
     pub fn clause_declaration_region(
         &self,
         node: &filament_exact::NodeKey,

@@ -204,6 +204,7 @@ impl ProviderLimits {
 
     /// The limit FR-287 names `name`, for the caller to set; `None` for a
     /// name FR-287 does not give.
+    #[ix_trace_rs::string_edge]
     pub fn named_mut(&mut self, name: &str) -> Option<&mut u64> {
         match name {
             "max_frame_bytes" => Some(&mut self.max_frame_bytes),
@@ -1716,6 +1717,7 @@ pub(crate) fn settle_record(
 /// is written against the graph of the package of the component of the peer
 /// guarantee it names (`packages`), never the graph its own `package` member
 /// names.
+#[ix_trace_rs::string_edge]
 fn component_premises(
     graphs: &BTreeMap<String, WireGraph>,
     packages: &fsl_semantics::check::ComponentPackages,

@@ -173,6 +173,7 @@ pub trait AnalysisView: sealed::Sealed {
     /// The package-native execution structure of the one protocol
     /// declaration whose qualified name is `name`, or `None` when the
     /// package has no unique declaration by that name.
+    #[ix_trace_rs::string_edge]
     fn protocol_execution_named(
         &self,
         name: &str,

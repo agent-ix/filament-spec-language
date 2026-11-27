@@ -354,6 +354,7 @@ fn wire_label<T: Serialize>(value: &T) -> Result<String, Failure> {
 /// The word the text form of an outcome header names a stage by (FR-865
 /// "Stage words"). A label outside the table is returned unchanged, so a
 /// stage added to the document before it is added here still renders.
+#[ix_trace_rs::string_edge]
 pub fn stage_word(label: &str) -> String {
     match label {
         "S0" => "source",
@@ -402,6 +403,7 @@ fn packaged_result_lines(result: &serde_json::Value) -> Result<Vec<String>, Fail
     Ok(lines)
 }
 
+#[ix_trace_rs::string_edge]
 fn outcome_text(
     writer: &mut Writer<'_>,
     document: &OutcomeDocument,
@@ -711,6 +713,7 @@ fn witness_value_text(value: &serde_json::Value) -> String {
 /// The source spelling of each operand of the deciding comparison, in operand
 /// order; `None` for an operand whose spelling is not certain. Empty when the
 /// comparison's shape or the source map is unavailable.
+#[ix_trace_rs::string_edge]
 fn witness_operand_names(
     witness: &serde_json::Value,
     sources: &RenderSources,

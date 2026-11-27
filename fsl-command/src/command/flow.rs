@@ -130,6 +130,7 @@ struct FactRef {
 /// report's `denials` member is ignored. Unsupported/malformed syntax refuses
 /// the generated request as a whole, while native per-item limits and outcomes
 /// are preserved by the existing analyze command.
+#[ix_trace_rs::string_edge]
 pub fn analyze_flow_report(
     report_bytes: &[u8],
     negotiate: &dyn Negotiate,
@@ -493,6 +494,7 @@ fn rule_expression_scoped(
     format!("({subject}) and ({matches}) and not ({protected})")
 }
 
+#[ix_trace_rs::string_edge]
 fn condition_expression(
     root: &str,
     condition: &Condition,

@@ -31,6 +31,7 @@ pub(super) fn validate_request(call: Option<&wire::Call>) -> Result<()> {
 /// which would otherwise discard the earlier spelling. Only the relationship
 /// selection is closed by FR-1045; unrelated request objects keep their
 /// existing duplicate-member behavior.
+#[ix_trace_rs::string_edge]
 pub(super) fn duplicate_selection_member(
     bytes: &[u8],
 ) -> std::result::Result<Option<String>, serde_json::Error> {
@@ -123,6 +124,7 @@ impl<'de> Visitor<'de> for DuplicateVisitor {
         Ok(first)
     }
 
+    #[ix_trace_rs::string_edge]
     fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
     where
         A: MapAccess<'de>,

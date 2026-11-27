@@ -197,6 +197,7 @@ fn argument_fields(operations: &[PlanOperation]) -> Vec<(String, ValueType)> {
 /// # Errors
 /// [`CheckCause::UnsupportedFeature`] at `location` when the unit's type
 /// environment cannot take the declarations.
+#[ix_trace_rs::string_edge]
 pub(crate) fn declare(
     scope: &Scope,
     named: &NamedScope,

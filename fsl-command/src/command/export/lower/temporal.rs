@@ -912,6 +912,7 @@ impl LeanClause<'_> {
     /// some offset `d` in the interval makes `right` hold and every offset
     /// `e` from the interval's lower bound up to `d` makes `left` hold.
     /// `negated` reads both operands negated.
+    #[ix_trace_rs::string_edge]
     fn relation(
         &mut self,
         out: &mut Vec<Piece<At>>,

@@ -17,6 +17,7 @@ pub struct CompiledModelUnit {
 }
 
 /// Whether bytes begin with an FSL model-unit header and `domain` selection.
+#[ix_trace_rs::string_edge]
 pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return false;
@@ -176,6 +177,7 @@ pub fn compile_model_unit(
 
 /// Compile a model unit while retaining the complete-V1 diagnostic causes
 /// needed by command outcome projection.
+#[ix_trace_rs::string_edge]
 pub fn compile_model_unit_with_causes(
     parsed: &FormsSource,
     limits: ModelNormalizationLimits,
@@ -1088,6 +1090,7 @@ pub fn compile_model_unit_with_causes(
     Ok(CompiledModelUnit { identity, bytes })
 }
 
+#[ix_trace_rs::string_edge]
 fn record_operation_span(tokens: &[Token], mut index: usize) -> Option<Span> {
     while tokens.get(index)?.text != "{" {
         index += 1;
@@ -1115,6 +1118,7 @@ fn record_operation_span(tokens: &[Token], mut index: usize) -> Option<Span> {
     None
 }
 
+#[ix_trace_rs::string_edge]
 fn read_identity(tokens: &[Token], cursor: &mut usize) -> Option<String> {
     if tokens.get(*cursor)?.text != "language" {
         return None;
@@ -1141,6 +1145,7 @@ fn read_identity(tokens: &[Token], cursor: &mut usize) -> Option<String> {
 }
 
 /// Keep the generic member reader within FR-710's per-declaration grammar.
+#[ix_trace_rs::string_edge]
 fn validate_declaration_inheritance_syntax(
     tokens: &[Token],
     index: usize,
@@ -1522,6 +1527,7 @@ struct MemberTarget {
     member_span: Span,
 }
 
+#[ix_trace_rs::string_edge]
 fn read_object(
     tokens: &[Token],
     mut index: usize,
@@ -1860,6 +1866,7 @@ fn read_object(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_scalar_alias(
     tokens: &[Token],
     mut index: usize,
@@ -1938,6 +1945,7 @@ fn scalar_type_definition(
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn read_scalar_bounds(
     tokens: &[Token],
     mut index: usize,
@@ -1960,6 +1968,7 @@ fn read_scalar_bounds(
     Some((bounds, index))
 }
 
+#[ix_trace_rs::string_edge]
 fn signed_integer(tokens: &[Token], index: &mut usize) -> Option<String> {
     let negative = tokens.get(*index)?.text == "-";
     if negative {
@@ -1977,6 +1986,7 @@ fn signed_integer(tokens: &[Token], index: &mut usize) -> Option<String> {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn read_variant_type(
     tokens: &[Token],
     mut index: usize,
@@ -2059,6 +2069,7 @@ fn read_variant_type(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_map_type(
     tokens: &[Token],
     mut index: usize,
@@ -2144,6 +2155,7 @@ fn read_map_type(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_event_type(
     tokens: &[Token],
     index: usize,
@@ -2168,6 +2180,7 @@ fn read_event_type(
     Some((event, next))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_namespace(
     tokens: &[Token],
     mut index: usize,
@@ -2240,6 +2253,7 @@ fn read_namespace(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_systems_interface(
     tokens: &[Token],
     index: usize,
@@ -2286,6 +2300,7 @@ fn read_systems_interface(
     Some((interface, next))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_systems_part(
     tokens: &[Token],
     mut index: usize,
@@ -2331,6 +2346,7 @@ fn read_systems_part(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_systems_port(
     tokens: &[Token],
     mut index: usize,
@@ -2382,6 +2398,7 @@ fn read_systems_port(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_systems_connection(
     tokens: &[Token],
     mut index: usize,
@@ -2452,6 +2469,7 @@ fn read_systems_connection(
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn validate_connection_end(
     parsed: &FormsSource,
     package: &str,
@@ -2515,6 +2533,7 @@ fn validate_connection_end(
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 fn read_systems_allocation(
     tokens: &[Token],
     mut index: usize,
@@ -2567,6 +2586,7 @@ fn read_systems_allocation(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_state_machine(
     tokens: &[Token],
     index: usize,
@@ -2648,6 +2668,7 @@ fn read_state_machine(
     Some((machine, next))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_process(
     tokens: &[Token],
     index: usize,
@@ -2725,6 +2746,7 @@ fn read_process(
     Some((process, next))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_store(
     tokens: &[Token],
     index: usize,
@@ -2753,6 +2775,7 @@ fn read_store(
     Some((store, next))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_dimension(
     tokens: &[Token],
     mut index: usize,
@@ -2781,6 +2804,7 @@ fn read_dimension(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_unit(
     tokens: &[Token],
     mut index: usize,
@@ -2839,6 +2863,7 @@ fn read_unit(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_tuple_type(
     tokens: &[Token],
     mut index: usize,
@@ -2913,6 +2938,7 @@ fn end_multiplicity(lower: u64, upper: Option<u64>, ordered: bool, unique: bool)
     multiplicity
 }
 
+#[ix_trace_rs::string_edge]
 fn read_multiplicity(
     tokens: &[Token],
     mut index: usize,
@@ -2953,6 +2979,7 @@ fn read_multiplicity(
     Some((lower, upper, ordered, unique, index))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_operation(
     tokens: &[Token],
     mut index: usize,
@@ -3110,6 +3137,7 @@ fn read_operation(
 
 /// An optional `redefines Owner :: member` at `index`, which it advances past.
 /// `None` is a malformed target, `Some(None)` an absent one.
+#[ix_trace_rs::string_edge]
 fn read_member_target(tokens: &[Token], index: &mut usize) -> Option<Option<MemberTarget>> {
     if tokens
         .get(*index)
@@ -3131,6 +3159,7 @@ fn read_member_target(tokens: &[Token], index: &mut usize) -> Option<Option<Memb
     }))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_clause_declaration(
     tokens: &[Token],
     mut index: usize,
@@ -3188,6 +3217,7 @@ fn read_clause_declaration(
     Some((clause, index))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_population(
     tokens: &[Token],
     mut index: usize,
@@ -3237,6 +3267,7 @@ fn read_population(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn skip_statement(tokens: &[Token], mut index: usize) -> Option<usize> {
     while tokens.get(index)?.text != ";" {
         index += 1;
@@ -3244,6 +3275,7 @@ fn skip_statement(tokens: &[Token], mut index: usize) -> Option<usize> {
     Some(index + 1)
 }
 
+#[ix_trace_rs::string_edge]
 fn type_ref(type_name: &str, package: &str) -> String {
     let native = match type_name {
         "Boolean" => "Boolean",
@@ -3266,6 +3298,7 @@ fn type_ref(type_name: &str, package: &str) -> String {
     format!("ix://filament/native/{native}")
 }
 
+#[ix_trace_rs::string_edge]
 fn read_member_type_ref(
     tokens: &[Token],
     index: usize,

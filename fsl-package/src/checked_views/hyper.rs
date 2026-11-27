@@ -97,6 +97,7 @@ fn field(bytes: &[u8], at: &mut usize) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[ix_trace_rs::string_edge]
 fn slot(name: &str) -> Option<(String, String)> {
     let bytes = name.strip_prefix("slot_s")?.as_bytes();
     let mut at = 0;

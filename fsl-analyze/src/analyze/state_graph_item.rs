@@ -66,6 +66,7 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
     clippy::too_many_arguments,
     reason = "the item binds source provision, subject, request identity, method, and independent budgets"
 )]
+#[ix_trace_rs::string_edge]
 pub(super) fn state_graph_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,

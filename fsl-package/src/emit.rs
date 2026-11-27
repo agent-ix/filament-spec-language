@@ -2126,6 +2126,7 @@ impl<'g> Candidate<'g> {
     /// `correspondence` node other than `component_composition`, and on a
     /// `value`/`enum_value` node; on eligible nodes it is present exactly
     /// when the node has a `declaration` occurrence.
+    #[ix_trace_rs::string_edge]
     fn declaration_matches_occurrences(&self) -> bool {
         // The `EnumValue` arm is not distinguished by any fixture today:
         // occurrence-recording never attaches a `Declaration`-role
@@ -3624,6 +3625,7 @@ fn recorded_occurrences(
 /// Emit every authored related clause against its actual recorded control
 /// occurrence and final full node id (FSpec FR-831). Canonical positions
 /// were retained before lowering deduplicated the records.
+#[ix_trace_rs::string_edge]
 fn protocol_correlation_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -4283,6 +4285,7 @@ fn equality_fact_witness_rows(
 /// Turns the checked equality decision and its exact occurrence witness into
 /// FR-322's wire sidecar. The structural graph supplies operand type nodes;
 /// the producer rows supply the schedule and occurrence-specific decision.
+#[ix_trace_rs::string_edge]
 fn checked_equality_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -4677,10 +4680,12 @@ fn emitted_source_declaration_key(
 /// Rewrite source declaration keys in the typed literals of an emitted clock
 /// place. Those keys are producer-local S3 strings; the package names the
 /// same declarations from their SourceOwner identities.
+#[ix_trace_rs::string_edge]
 fn rewrite_source_keys_in_clock_place(
     node: &mut CheckedSemanticNodeV2,
     source_keys: &SourceDeclarationKeys,
 ) -> Result<(), EmitRefusal> {
+    #[ix_trace_rs::string_edge]
     fn rewrite_term(
         term: &mut CheckedTerm,
         source_keys: &SourceDeclarationKeys,
@@ -6896,6 +6901,7 @@ fn append_model_roots<'a>(
 }
 
 #[implements("FSpec-FR-322-AC-137")]
+#[ix_trace_rs::string_edge]
 fn move_model_roots_to_end(
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -6941,6 +6947,7 @@ fn move_model_roots_to_end(
 /// node carries one generated occurrence at its selected model root region.
 /// Type references discovered while emitting a declaration do not create
 /// additional occurrences on that declaration node.
+#[ix_trace_rs::string_edge]
 fn normalize_model_declaration_occurrences(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -7469,6 +7476,7 @@ impl<'g> Candidates<'g> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn candidates_of<'g>(
     ids: &StructuralIds,
     foreign: &ForeignNodes,
@@ -8946,6 +8954,7 @@ type SourceObjectRows = (
 /// FR-569 "Source-object identity rows": one row for each emitted source
 /// object node, joined to its checked declaration, effective body bindings,
 /// normalized supertypes and populations.
+#[ix_trace_rs::string_edge]
 fn source_object_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
@@ -10102,6 +10111,7 @@ fn validate_temporal_clock(
 /// Whether `node` is claim-bearing (FSpec FR-322 "Claim declaration names"):
 /// a `state`/`state_clause`, `relation`/`refinement`,
 /// `correspondence`/`component_composition` or `claim` node.
+#[ix_trace_rs::string_edge]
 fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
     let (tag, form) = (node.node_tag.as_ref(), node.semantic_form.as_ref());
     (tag == CheckedNodeTag::State.as_wire() && form == "state_clause")
@@ -10117,6 +10127,7 @@ fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
 /// declaration's region, sorted by node then occurrence. The rows are
 /// written from the checked unit's declarations, never derived from a
 /// region, a node path or the clause body.
+#[ix_trace_rs::string_edge]
 fn claim_name_rows(
     graph: &CheckedGraph,
     ids: &StructuralIds,

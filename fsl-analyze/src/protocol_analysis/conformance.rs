@@ -93,6 +93,7 @@ fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::R
     clippy::too_many_arguments,
     reason = "the recording assessment binds the subject, package, recording, cancellation, and replay limits"
 )]
+#[ix_trace_rs::string_edge]
 fn recording_result(
     index: fsl_foundation::RequestIndex,
     package: &super::recording_input::Input<'_>,
@@ -546,6 +547,7 @@ pub(crate) fn global_behavior_item<'a>(
     )
 }
 
+#[ix_trace_rs::string_edge]
 fn behavior_report(
     index: fsl_foundation::RequestIndex,
     protocol: &fsl_semantics::check::CheckedProtocol,
@@ -1178,6 +1180,7 @@ impl ConformanceReplayRefusal {
 ///
 /// [`ConformanceReplayRefusal`] when the counterexample is malformed or the
 /// subject cannot build its protocol system.
+#[ix_trace_rs::string_edge]
 pub fn replay_counterexample(
     subject: &ProtocolSubject<'_>,
     counterexample: &ConformanceCounterexample,

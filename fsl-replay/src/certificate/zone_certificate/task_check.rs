@@ -908,6 +908,7 @@ fn shape<O>(certificate: &ZoneCertificate<O>, dim: usize) -> Step<(), O> {
 }
 
 /// The static part of the `task_product` member against its recompilation.
+#[ix_trace_rs::string_edge]
 fn compare_member<O>(
     automaton: &TaskAutomaton<'_, '_, '_>,
     certificate: &ZoneCertificate<O>,
@@ -1552,6 +1553,7 @@ pub(super) enum Route {
 
 /// FR-418: reads the `task_product` member's method and, for the no-release
 /// closure, compares the member with its recomputation (ZC-27, ZC-29).
+#[ix_trace_rs::string_edge]
 pub(super) fn route<O>(
     timed: &TimedSystem<'_, '_>,
     claim: &CheckedScheduleClaim,

@@ -168,6 +168,7 @@ impl CheckedGraph {
             .map(|(key, _)| key.clone())
     }
 
+    #[ix_trace_rs::string_edge]
     fn operand(&self, key: &NodeKey, position: usize) -> Option<NodeKey> {
         let BodyTerm::Application(application) = self.body_of(key)? else {
             return None;

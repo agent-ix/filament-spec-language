@@ -2128,6 +2128,7 @@ impl Pass<'_, '_> {
     ///
     /// `delay` is a time weighting only for a subject with a model-time
     /// binding; resolve it before looking for a reward with that name.
+    #[ix_trace_rs::string_edge]
     fn weight(
         &self,
         claim: &ClaimCx<'_>,

@@ -1111,6 +1111,7 @@ pub(crate) struct CallSources<'a> {
 /// argument admission and evaluation accounting while reusing the checked
 /// package, emitted package and admitted model set.
 #[allow(clippy::too_many_arguments)]
+#[ix_trace_rs::string_edge]
 pub(crate) fn run_compiled(
     checked: &super::CheckedUnit,
     models: &super::AdmittedModels,

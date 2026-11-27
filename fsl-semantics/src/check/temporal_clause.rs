@@ -1872,6 +1872,7 @@ const UNIT_SPELLINGS: [&str; 9] = ["ps", "ns", "us", "µs", "ms", "s", "min", "h
 ///   time unit or a model binding name refuses under the four step-counting
 ///   profiles, and an unwritten clock is the role `default`. A timed clause
 ///   over a trace subject is [`timed::binding`]'s.
+#[ix_trace_rs::string_edge]
 fn clause_clock(
     written: Option<&fsl_forms::ClockForm>,
     profile: TemporalProfile,

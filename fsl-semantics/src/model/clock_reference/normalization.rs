@@ -484,6 +484,7 @@ impl SourceDeclarations {
 
     /// Recover the same original inline member chain from either route's
     /// checked steps and resolution rows, without a second provenance join.
+    #[ix_trace_rs::string_edge]
     pub fn clock_origin_rows(
         &self,
         steps: &[crate::check::PlaceStep],
@@ -664,6 +665,7 @@ impl SourceDeclarations {
 
     /// Resolve a retained member spelling through its authenticated declaring
     /// type. In particular, W/c is never matched against an unrelated W.
+    #[ix_trace_rs::string_edge]
     pub fn member(&self, declaring: &str, member: &str) -> Result<String, InternalFault> {
         let normalized = self.text(member);
         if normalized.starts_with("ix://") || normalized.contains("[slot]") {

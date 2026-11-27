@@ -517,6 +517,7 @@ struct WireTimedObjective {
     form: String,
 }
 
+#[ix_trace_rs::string_edge]
 fn read_timed_objective(
     wire: WireTimedObjective,
 ) -> Result<TimedProbabilityObjective, ProbabilityDocumentError> {

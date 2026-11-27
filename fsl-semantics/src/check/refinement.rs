@@ -2371,6 +2371,7 @@ impl LiftedPairing<'_> {
 }
 
 /// `rest` under the component `head`; an index follows its component directly.
+#[ix_trace_rs::string_edge]
 fn component_path(head: &str, rest: &str) -> String {
     match rest {
         "" => head.to_owned(),

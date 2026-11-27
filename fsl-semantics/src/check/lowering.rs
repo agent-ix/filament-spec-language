@@ -384,6 +384,7 @@ impl SemanticNode {
 
     /// The effective field bindings of a source object type, each with the
     /// exact checked target and optional-group shape used by FR-569's row.
+    #[ix_trace_rs::string_edge]
     pub fn source_object_member_nodes(&self) -> Option<Vec<(&str, NodeKey, bool)>> {
         if self.node_tag() != NodeTag::Model || self.semantic_form() != "object_type" {
             return None;
@@ -3364,6 +3365,7 @@ impl<'a> Lowering<'a> {
     /// Start the declared record or tuple `declaration`: its node
     /// if it is built, its placeholder if it is being built (it reached
     /// itself), or its open frame.
+    #[ix_trace_rs::string_edge]
     fn open_composite<'v>(
         &mut self,
         declaration: NodeKey,
@@ -4727,6 +4729,7 @@ impl<'a> Lowering<'a> {
 
     /// The result type of `argument` when it directly names an application
     /// of `filament.op.numeric.narrow`.
+    #[ix_trace_rs::string_edge]
     fn narrow_application_result_type(&self, argument: &MemberTerm) -> Option<NodeKey> {
         let MemberTerm::Leaf(leaf) = argument else {
             return None;
@@ -8052,6 +8055,7 @@ fn is_map(content: &NodeContent) -> bool {
 /// hybrid and bounded-domain nodes retain their compact first-occurrence
 /// spelling; this computation-key rule does not revise their encodings. A
 /// decimal or integer range retains repeated text, so equal bounds repeat.
+#[ix_trace_rs::string_edge]
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     // The carrier is keyed by the protocol it names, not just by the

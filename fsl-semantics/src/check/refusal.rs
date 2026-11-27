@@ -2980,6 +2980,7 @@ pub enum SlotTag {
 
 impl SlotTag {
     /// The tag a name begins with, before its first `_`.
+    #[ix_trace_rs::string_edge]
     pub(crate) fn of(name: &str) -> Option<Self> {
         match name.split_once('_')?.0 {
             "slot" => Some(Self::Slot),

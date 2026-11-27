@@ -422,6 +422,7 @@ pub(crate) fn binding(
 /// trace subject binds its clock role through the role's `timed`
 /// configuration, whose `unit` names a declared unit of the `Time`
 /// dimension. No unit is taken from the bounds, the trace or a default.
+#[ix_trace_rs::string_edge]
 fn role_binding(
     clock: &fsl_forms::ClockForm,
     over: &ValueType,

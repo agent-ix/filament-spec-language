@@ -82,6 +82,7 @@ fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentErro
         })
         .collect())
 }
+#[ix_trace_rs::string_edge]
 fn is_fair_base(profile: &str) -> bool {
     profile == "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
 }
@@ -110,6 +111,7 @@ fn object(value: &Value) -> Result<&serde_json::Map<String, Value>, ProbabilityD
     value.as_object().ok_or(ProbabilityDocumentError::Malformed)
 }
 
+#[ix_trace_rs::string_edge]
 fn side_of(kind: &str) -> Option<SubsystemBoundKind> {
     match kind {
         "lower" => Some(SubsystemBoundKind::Lower),

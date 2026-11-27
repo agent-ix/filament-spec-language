@@ -1512,6 +1512,7 @@ impl<'a> Typer<'a> {
     #[deny(clippy::wildcard_enum_match_arm)]
     #[deny(clippy::match_wildcard_for_single_variants)]
     #[implements("FR-063-AC-7")]
+    #[ix_trace_rs::string_edge]
     fn infer_form<'e, 'r>(
         &mut self,
         expression: ExprRef<'e>,

@@ -223,6 +223,7 @@ fn is_lookup(identity: &str) -> bool {
 }
 
 #[implements("FR-176-AC-7")]
+#[ix_trace_rs::string_edge]
 fn expression(
     inputs: &Inputs<'_, '_>,
     root: &CheckedNodeId,

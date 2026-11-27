@@ -3509,6 +3509,7 @@ fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep>
 /// the document spells them and ending at the failing member (FR-663). A
 /// missing member is absent from the document, so its pointer stays at the
 /// containing object.
+#[ix_trace_rs::string_edge]
 fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
     let mut steps = document_spelling(form, &record.path);
     let missing = record.catalog.cause() == "missing-member";

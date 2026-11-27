@@ -2047,6 +2047,7 @@ fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> 
             })
 }
 
+#[ix_trace_rs::string_edge]
 fn verification_plan_refusal(
     package: &PackageDeclarations,
     plan: &fsl_forms::VerificationPlanForm,
@@ -2305,6 +2306,7 @@ fn temporal_declaration_index(origin: &str) -> Option<usize> {
 }
 
 impl PackageDeclarations {
+    #[ix_trace_rs::string_edge]
     fn synthesis_domain_type(&self, name: &str) -> Option<ValueType> {
         self.aliases
             .iter()

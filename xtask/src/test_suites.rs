@@ -1021,6 +1021,7 @@ pub struct RunParser<'a> {
     findings: Vec<Finding>,
 }
 
+#[ix_trace_rs::string_edge]
 fn required_source_corpus_test_findings(
     suite: &SuiteId,
     selected_tests: &BTreeSet<String>,
@@ -1710,6 +1711,7 @@ pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<String> {
 
 /// Existing source-corpus areas must have a program. Missing directories are
 /// allowed while QSL-2039..2045 introduce the areas in stages.
+#[ix_trace_rs::string_edge]
 fn empty_source_corpus_areas(workspace_root: &Path) -> Result<Vec<String>> {
     let corpus = workspace_root.join("tests/corpus");
     let mut empty = Vec::new();

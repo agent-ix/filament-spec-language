@@ -579,6 +579,7 @@ impl<'a> Forms<'a> {
 
     /// FR-650 "Population argument": `{"population": P}` names a population
     /// of the call's snapshot.
+    #[ix_trace_rs::string_edge]
     fn read_population(
         &self,
         object: &Map<String, Json>,
@@ -691,6 +692,7 @@ impl<'a> Forms<'a> {
 
     /// FR-650's typed Map value form, with duplicate keys refused at the
     /// later entry's key member.
+    #[ix_trace_rs::string_edge]
     fn read_map(
         &self,
         object: &Map<String, Json>,
@@ -1346,6 +1348,7 @@ fn model_declaration_name(owner: &NodeKey) -> Option<String> {
     borrowed_model_declaration_name(owner).map(str::to_owned)
 }
 
+#[ix_trace_rs::string_edge]
 fn borrowed_model_declaration_name(owner: &NodeKey) -> Option<&str> {
     use filament_exact::PathSegmentView;
     let view = owner.view();
@@ -1420,6 +1423,7 @@ fn read_bytes(text: &str) -> Option<Vec<u8>> {
 
 /// Rewrite each Decimal object inside `form` with its trailing zeros
 /// stripped and its scale lowered by as many.
+#[ix_trace_rs::string_edge]
 fn normalize_decimals(form: &mut Json) {
     match form {
         Json::Object(object) => {
@@ -1624,6 +1628,7 @@ fn tagged<'a>(object: &'a Map<String, Json>, tag: &str, path: &Path) -> Result<&
 /// A native payload object `{"kind": kind, <members>}`: a `kind` of another
 /// form is `wrong-value-kind`, a missing member `missing-member`, an extra
 /// one `unknown-member`.
+#[ix_trace_rs::string_edge]
 fn native(
     object: &Map<String, Json>,
     kind: &str,

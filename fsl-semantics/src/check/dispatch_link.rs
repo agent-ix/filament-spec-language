@@ -663,6 +663,7 @@ impl PackageDeclarations {
     /// body, and for an authored precondition, which `synthesized_spans`
     /// already places at its `pre` declaration.
     #[implements("FR-569-AC-6")]
+    #[ix_trace_rs::string_edge]
     fn clause_declaration_span(&self, clause: &ModelClause) -> Option<Span> {
         let path = clause.source_declaration.as_ref()?;
         match clause.kind {

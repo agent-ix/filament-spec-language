@@ -61,10 +61,9 @@ pub(crate) fn crate_roots() -> Vec<PathBuf> {
     .collect()
 }
 
-/// FSL's edge rules. The allow-list is empty: nothing in the FSL crates has
-/// yet been reviewed and admitted as a genuine non-branching string
-/// comparison; each addition is a deliberate, reviewed decision, not a
-/// default.
+/// FSL's edge rules. The allow-list is empty: every reviewed occurrence is
+/// either marked at its enclosing function or excluded by the detector's
+/// syntax-level scope.
 #[implements("FR-064-AC-11")]
 fn rules() -> EdgeRules {
     EdgeRules::default()

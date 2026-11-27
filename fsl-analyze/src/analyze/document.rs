@@ -325,6 +325,7 @@ impl SubjectSelection {
     /// An explicit subject's references were checked with
     /// [`Self::check_universes`]; the default subject leaves an incomplete
     /// population out (FR-620).
+    #[ix_trace_rs::string_edge]
     pub fn binding<'a>(
         &self,
         packages: &'a fsl_semantics::model::intake::PackageInput,
@@ -580,6 +581,7 @@ pub struct RequestCount {
 }
 
 impl RequestCount {
+    #[ix_trace_rs::string_edge]
     fn read<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
         let raw = Box::<serde_json::value::RawValue>::deserialize(decoder)?;
         let token = raw.get();
@@ -1157,6 +1159,7 @@ impl ExactLimitsSelection {
 /// budgets, each absent member at its published default. `long_run` selects
 /// the default method of a long-run fraction, `regenerative` with
 /// `min_cycles` 100 (FR-190).
+#[ix_trace_rs::string_edge]
 fn probabilistic_item(
     value: &Value,
     default_evidence: EvidenceKind,
@@ -4781,6 +4784,7 @@ fn spell_states(value: &mut Value) {
 /// through [`held_identity::hold`]. An item over a dependency of the request
 /// (a composition's component-guarantee premise) names that dependency in
 /// its `package` member and indexes the dependency's graph.
+#[ix_trace_rs::string_edge]
 fn hold_item(
     item: &mut Value,
     graphs: &super::DocumentGraphs,
@@ -4961,6 +4965,7 @@ fn counterpart_member(document: Value) -> Value {
 }
 
 /// The FR-741 `kind` a certificate `document` is reported under.
+#[ix_trace_rs::string_edge]
 fn certificate_kind(document: &Value) -> &'static str {
     let bound = document
         .get("kind")
@@ -5010,6 +5015,7 @@ fn name_rejection_locus(verdict: &mut Value, locus: &Value) {
 }
 
 /// One FR-621 item from the FR-286 item `written`.
+#[ix_trace_rs::string_edge]
 fn item_document(written: Value, members: ItemMembers) -> Value {
     let ItemMembers {
         claim_name,

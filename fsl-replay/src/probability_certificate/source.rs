@@ -435,6 +435,7 @@ struct HeldCertificate {
 /// past serde_json's recursion limit, so it stays text until the iterative
 /// node reader reads it. `parts` is how many levels of conditional members
 /// below `written` hold identities of their own.
+#[ix_trace_rs::string_edge]
 fn detach_node_ids(
     written: &RawValue,
     at: &str,

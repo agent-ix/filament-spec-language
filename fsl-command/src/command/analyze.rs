@@ -1270,6 +1270,7 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
 /// before any item resolves when a compile member sits beside it, the reader
 /// refuses the bytes, a recorded domain package is not supplied, or a
 /// supplied one is not recorded.
+#[ix_trace_rs::string_edge]
 fn admit_package<'d>(
     directory: &'d Path,
     dependent_bytes: usize,

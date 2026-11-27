@@ -206,6 +206,7 @@ impl<'de> serde::Deserialize<'de> for PositionWire {
                 Ok(PositionWire::Key(key.to_owned()))
             }
 
+            #[ix_trace_rs::string_edge]
             fn visit_map<M: serde::de::MapAccess<'de>>(
                 self,
                 mut map: M,
@@ -671,6 +672,7 @@ impl ClauseRunSelectionWire {
     }
 
     /// The closed selection this member set names.
+    #[ix_trace_rs::string_edge]
     pub fn into_parts(&self) -> Result<ClauseSelectionPartsKind, ClauseRequestReadError> {
         let count = usize::from(self.clause.is_some())
             + usize::from(self.frame.is_some())
@@ -1885,6 +1887,7 @@ fn trace_binding(wire: BindingWire) -> TraceBinding {
 ///
 /// # Errors
 /// A malformed canonical argument, unbound observation or invalid selection.
+#[ix_trace_rs::string_edge]
 pub fn read_canonical_clause_run_request(
     parts: ClauseRequestParts,
     supplied: filament_semantic_value::supplied_stop::SuppliedLimits,

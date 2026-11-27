@@ -682,6 +682,7 @@ impl<'p> PackageModelInput<'p> {
         Self::of_trace_input(package, packages, normalization, true)
     }
 
+    #[ix_trace_rs::string_edge]
     fn of_trace_input(
         package: &'p BarePackage<'p>,
         packages: &fsl_semantics::model::intake::PackageInput,

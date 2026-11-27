@@ -415,6 +415,7 @@ impl<'a> PackageProtocolProgram<'a> {
         Self::from_form(input, form, memory)
     }
 
+    #[ix_trace_rs::string_edge]
     fn from_form(
         input: &ModelCheckInput<'a>,
         form: ProtocolExecutionView<'a>,

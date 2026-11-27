@@ -5265,6 +5265,7 @@ impl<'a> Typer<'a> {
     /// Whether `operand`, the operand of a field read `operand.op`, is
     /// `t.step` over a name `t` this scope does not resolve: the read is
     /// then the step label `t.step.op` of a trace variable (FR-612).
+    #[ix_trace_rs::string_edge]
     pub(super) fn unbound_step_label(&self, operand: fsl_forms::ExprRef<'_>) -> bool {
         let fsl_forms::ExprNode::Field {
             operand: trace,
@@ -6090,6 +6091,7 @@ impl<'a> Typer<'a> {
 
     /// `e.f` over the typed record `e`.
     #[implements("FR-230-AC-67")]
+    #[ix_trace_rs::string_edge]
     fn field(
         &mut self,
         operand: Node,

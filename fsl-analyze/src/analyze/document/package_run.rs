@@ -469,6 +469,7 @@ pub fn settle_package_call(
     settle_package_run_inner(run, Some((function, call_items)), negotiate, cancel)
 }
 
+#[ix_trace_rs::string_edge]
 fn settle_package_run_inner(
     run: PackageRun<'_>,
     call: Option<(&str, &[super::CallItem])>,
@@ -1125,6 +1126,7 @@ fn owner_of_graph(
 }
 
 /// Whether the package node `node` is a `claim`/`state_graph` node (FR-410).
+#[ix_trace_rs::string_edge]
 fn is_state_graph(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
@@ -1255,6 +1257,7 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
 /// composition, which only the default items select over a package yet: the
 /// name could be that claim's or composition's. A default item selecting a
 /// composition (`defaults`) resolves to it (FR-1044-AC-10).
+#[ix_trace_rs::string_edge]
 fn resolve_names<'s>(
     view: &dyn AnalysisView,
     selections: &'s [ItemSelection],
@@ -1714,6 +1717,7 @@ fn protocol_binding(
 
 /// Whether the package node `node` names a state clause. The kind determines
 /// whether FR-489 routes it to `contract-checker` or EN-1.
+#[ix_trace_rs::string_edge]
 fn is_state_clause(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
@@ -2079,6 +2083,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// A Boolean value clause or an explicitly selected scalar record.
     /// Non-Boolean function names retain their declaration's inapplicable
     /// family; unsupported parameter shapes keep their typed refusal.
+    #[ix_trace_rs::string_edge]
     fn value(
         &self,
         index: RequestIndex,
@@ -3648,6 +3653,7 @@ impl<'a> WorkInputs<'_, 'a> {
     /// route, as the source route's `work` builds it: a temporal clause
     /// over its package form, a derived deadlock-freedom item over the
     /// package route's input, and any other kind its unadapted item.
+    #[ix_trace_rs::string_edge]
     fn item(&self, route: Option<Route<'a>>, negotiated: &NegotiatedItem) -> AnalyzeItem<'a> {
         let item = &negotiated.item;
         let temporal_kind = match &item.form {
@@ -4252,6 +4258,7 @@ fn model_deadlock_claim(identity: &str) -> Result<OccurrenceKey, PackageRunError
 }
 
 /// Whether the package node `node` is a `claim`/`schedulability` node (FR-246).
+#[ix_trace_rs::string_edge]
 fn is_schedulability(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()

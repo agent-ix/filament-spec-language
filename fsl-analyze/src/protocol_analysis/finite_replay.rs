@@ -163,6 +163,7 @@ impl SuppliedTrace {
     /// missing, extra or mistyped member, and a `send` step without a
     /// `send_record` or another step with one, are each a wire-shape defect,
     /// and the first one is reported (FR-941 "Read", FSpec FR-433-AC-8).
+    #[ix_trace_rs::string_edge]
     pub(crate) fn read(bytes: &[u8]) -> Result<Self, TraceDefect> {
         use DefectKind::{InvalidValue, MissingMember, UnknownMember, WrongValueKind};
         let document: Value =

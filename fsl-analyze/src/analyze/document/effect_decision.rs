@@ -369,6 +369,7 @@ struct Receipt {
     effect_request: Vec<u8>,
 }
 
+#[ix_trace_rs::string_edge]
 fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptError> {
     let malformed = |cause, pointer: &str| {
         ReceiptError::Refusal(Box::new(ReceiptRefusal::Malformed {

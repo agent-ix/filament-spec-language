@@ -386,6 +386,7 @@ pub(crate) fn sample_index(index: u64, fingerprint: Option<&str>) -> DocumentRef
 /// The index of a record sample [`sample_index`] names, and the content
 /// fingerprint it carries, if any. `None` for a sample named by its text and
 /// for every other document.
+#[ix_trace_rs::string_edge]
 pub(crate) fn indexed_sample(document: &DocumentRef) -> Option<(u64, Option<&str>)> {
     if document.authority != SAMPLE_AUTHORITY {
         return None;
@@ -403,6 +404,7 @@ pub(crate) fn indexed_sample(document: &DocumentRef) -> Option<(u64, Option<&str
 /// is its place in FR-501's canonical order, which its value decides among
 /// positions of one stamp and order key, so the listing order still decides
 /// nothing. `Ok(None)` for a trace that needs no renaming.
+#[ix_trace_rs::string_edge]
 fn indexed_samples(
     trace: &TraceInput,
 ) -> Result<Option<TraceInput>, filament_semantic_value::catalog::InternalFault> {
@@ -3561,6 +3563,7 @@ pub(super) fn step_interval(
 /// an `Undefined` result) and the trace position. `None` for every other
 /// disposition, and for an `Undefined` result whose first undefined reading
 /// the evaluator did not record at its position.
+#[ix_trace_rs::string_edge]
 fn counterexample(
     clause: &fsl_semantics::check::CheckedTemporalClause,
     trace: &TraceInput,

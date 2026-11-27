@@ -323,6 +323,7 @@ impl Lowering<'_> {
     /// that expression's content, or a literal body's text. The expression
     /// was lowered once, under the lowering's own charge, so this reads one
     /// binding and walks nothing.
+    #[ix_trace_rs::string_edge]
     fn function_body_operand(&self, function: &NodeKey) -> Option<PathSegment> {
         let BodyTerm::Aggregate(aggregate) = self.graph.nodes.get(function)?.body() else {
             return None;
@@ -401,6 +402,7 @@ impl Lowering<'_> {
 
     /// The unit node a quantity bound of the reward whose function is
     /// `function` is in, or `None` for an integer reward.
+    #[ix_trace_rs::string_edge]
     fn reward_unit(&self, function: &NodeKey) -> Option<NodeKey> {
         let nodes = &self.graph.nodes;
         let value_type = nodes
