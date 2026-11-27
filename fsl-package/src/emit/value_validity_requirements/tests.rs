@@ -1237,10 +1237,21 @@ fn a_moved_record_id_carries_its_new_occurrence_and_conversion() {
     let name = |text: &str| Segment::Name(text.into());
     let id = CheckedNodeId {
         package: "p".into(),
-        path: ["value_validity", "owner", "claim", "0", "bound", "result", "conversion", "narrow", "1", "rest"]
-            .into_iter()
-            .map(name)
-            .collect(),
+        path: [
+            "value_validity",
+            "owner",
+            "claim",
+            "0",
+            "bound",
+            "result",
+            "conversion",
+            "narrow",
+            "1",
+            "rest",
+        ]
+        .into_iter()
+        .map(name)
+        .collect(),
         ordinal: 0,
     };
     let moved = super::record_id_with(&id, 5, Some(6)).expect("a record id of the known shape");
@@ -1291,7 +1302,10 @@ fn rename_moved_records_updates_the_node_body_and_source_map() {
             binding(aggregate(Vec::new())),
             binding(literal(occurrence)),
             binding(aggregate(Vec::new())),
-            binding(aggregate(vec![binding(aggregate(Vec::new())), binding(literal(conversion))])),
+            binding(aggregate(vec![
+                binding(aggregate(Vec::new())),
+                binding(literal(conversion)),
+            ])),
         ])
     };
     let mut nodes = vec![CheckedSemanticNodeV2 {
