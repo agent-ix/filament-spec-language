@@ -57,9 +57,11 @@ fn refutes_at(world: &World, name: &str, locus: impl Fn(&UndefinedLocus) -> bool
 }
 
 fn refutes(world: &World, name: &str) {
-    refutes_at(world, name, |locus| {
-        matches!(locus, UndefinedLocus::Contract(clause) if clause == "CanInc")
-    });
+    refutes_at(
+        world,
+        name,
+        |locus| matches!(locus, UndefinedLocus::Contract(clause) if clause == "CanInc"),
+    );
 }
 
 #[trace("FR-196-AC-20")]

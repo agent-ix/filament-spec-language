@@ -26,12 +26,13 @@ fn statistical(horizon: u32) {
          with alpha 0.01, beta 0.01, indifference 0.1 \
          {{ probability >= 0.5 [ always[0,{horizon}] holds(c.v >= 0) ] }}"
     );
-    let verdict = crate::statistical_model::decided(
-        &world(&claim),
-        "Safe",
-        StatisticalMethod::Okamoto,
+    let verdict =
+        crate::statistical_model::decided(&world(&claim), "Safe", StatisticalMethod::Okamoto);
+    let text = format!(
+        "{:?} witnesses={}",
+        verdict.decision,
+        verdict.witnesses.len()
     );
-    let text = format!("{:?} witnesses={}", verdict.decision, verdict.witnesses.len());
     println!("OBSERVED: {text:.300}");
     assert!(
         text.starts_with("Rejected"),
@@ -53,8 +54,13 @@ fn ue6_statistical_atom_undefined_at_position_zero() {
     let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \
          with alpha 0.01, beta 0.01, indifference 0.1 \
          { probability >= 0.5 [ always[0,0] holds(undefined_remainder(c.v) >= 0) ] }";
-    let verdict = crate::statistical_model::decided(&world(claim), "Safe", StatisticalMethod::Okamoto);
-    let text = format!("{:?} witnesses={}", verdict.decision, verdict.witnesses.len());
+    let verdict =
+        crate::statistical_model::decided(&world(claim), "Safe", StatisticalMethod::Okamoto);
+    let text = format!(
+        "{:?} witnesses={}",
+        verdict.decision,
+        verdict.witnesses.len()
+    );
     println!("OBSERVED: {text:.300}");
     assert!(text.starts_with("Rejected"), "{text:.300}");
 }

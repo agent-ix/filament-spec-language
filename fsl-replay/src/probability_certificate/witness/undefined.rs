@@ -243,7 +243,8 @@ pub fn replay_probabilistic_undefined_with_work_scope(
                         )));
                     }
                     PredicateReading::Undefined { cause, .. } => {
-                        if !seen.contains(&pre_key) && seen.len() >= limits.model.limits.max_states {
+                        if !seen.contains(&pre_key) && seen.len() >= limits.model.limits.max_states
+                        {
                             return Err(ExactProbabilityGraphError::LimitReached.into());
                         }
                         let evaluation = crate::UndefinedEvaluation {
