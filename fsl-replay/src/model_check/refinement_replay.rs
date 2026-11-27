@@ -42,7 +42,7 @@ use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::{
     CounterexampleKind, Lasso, TemporalCounterexample, UndefinedEvaluation, UndefinedLocus,
 };
-use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
+use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::replay::{
     close_loop, disagreement, fault, loop_states_of, no_value_cause, reexecute, refused,
     timed_prefix, unfair_constraint, ModelTraceRefusal, Position,
@@ -754,11 +754,14 @@ enum Found {
 /// refinement failure, a lasso's history values or candidates differ at the
 /// end of its loop from its entry, a lasso is unfair under `F_C`, or an
 /// internal fault occurs.
+#[implements("FR-255-AC-30")]
 pub fn replay_refinement_trace(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
+    limits: &ModelCheckLimits,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    bound_protocol_replay(systems, &limits.limits);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
@@ -771,6 +774,16 @@ pub fn replay_refinement_trace(
         close_loop(&systems.concrete, &positions, lasso.clone())?;
     }
     settle_positions(refinement, systems, payload, recorded, &positions, true)
+}
+
+/// FR-255-AC-30: the protocol closures of one replay together expand at most
+/// `limits.max_transitions` transitions; a replay over a system with no
+/// protocol side has nothing to bound.
+#[implements("FR-255-AC-30")]
+fn bound_protocol_replay(systems: &RefinementSystems<'_>, limits: &Limits) {
+    if let Some(protocol) = systems.abstract_protocol.as_ref() {
+        protocol.bound_replay_transitions(widen(limits.max_transitions));
+    }
 }
 
 /// FSpec FR-430: replay `payload`, a refinement counterexample of
@@ -827,6 +840,7 @@ fn replay_refinement_trace_with_time_source(
     exploration: &Limits,
     timed: &TimedSystem<'_, '_>,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    bound_protocol_replay(systems, exploration);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };

@@ -44,7 +44,8 @@ use filament_exact::Presence;
 use source_enum::SourceEnumJson;
 
 /// The format of `identities.json` (FR-531 "The identity file").
-pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/7";
+pub const IDENTITIES_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffIdentities.as_str();
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
@@ -221,6 +222,7 @@ impl<'p> BarePackage<'p> {
     /// A unit the package declares but `time_unit_scale` cannot read here has a
     /// real factor this route lacks, which a caller must not replace by a count.
     #[must_use]
+    #[ix_trace_rs::string_edge]
     pub fn declares_unit(&self, unit: &str) -> bool {
         self.package.resolved_graph().nodes.iter().any(|node| {
             node.node_tag.as_ref() == "scalar_type"
@@ -669,6 +671,7 @@ impl<'p> BarePackage<'p> {
     /// FR-395). The rows and value-validity facts are projected from the
     /// admitted package; this does not reconstruct them from source.
     #[must_use]
+    #[ix_trace_rs::string_edge]
     pub fn call_requirements(&self, function: &str) -> Vec<BareCallRequirement> {
         let mut owners = self
             .package
@@ -1832,6 +1835,12 @@ impl ReadIdentityRows {
     /// with [`Self::source_objects`].
     pub fn source_object_operations(&self) -> &[Vec<crate::SourceObjectOperationFacts>] {
         &self.source_object_operations
+    }
+
+    /// The exact member identities, presence and checked value types aligned
+    /// with [`Self::source_objects`] and each object's members.
+    pub(crate) fn source_object_member_facts(&self) -> &[Vec<crate::SourceObjectMemberFacts>] {
+        &self.source_object_member_facts
     }
 
     /// Original source-operation rows, with final anchor references.

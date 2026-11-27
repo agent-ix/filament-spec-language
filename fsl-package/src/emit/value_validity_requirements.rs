@@ -16,9 +16,9 @@ use fsl_semantics::check::{Capability, CheckedGraph, NodeTag, RequirementRecord}
 use fsl_semantics::family::ClaimExtent;
 
 use super::{
-    EmitRefusal, GRAPH_V2, OmissionCause, OmittedNode, admitted_key, body_reference_targets,
-    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_literal,
-    encoding, node_id, push_scalar_type, source_artifact,
+    admitted_key, body_reference_targets, checked_literal_json, checked_occurrence,
+    claim_aggregate, claim_binding, claim_literal, encoding, node_id, push_scalar_type,
+    source_artifact, EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
 };
 
 mod frames;
@@ -1419,7 +1419,7 @@ fn reorder_frames(
 /// name them. Re-sorted rows can reorder one owner's records, so each record
 /// node's occurrence and its `generated` source-map entry take the ordinal of
 /// its row's place among its owner's rows.
-fn renumber_records(
+pub(super) fn renumber_records(
     rows: &[RequirementItemRow],
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],

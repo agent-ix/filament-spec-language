@@ -66,15 +66,19 @@ pub use inventory::{Inventory, InventoryReadError, InventoryRow, InventorySource
 pub use selection::{Selection, SelectionAxis, SelectionReadError, SelectionRefusal};
 
 /// The format of `selection.json`.
-pub const SELECTION_FORMAT: &str = "filament.checked-handoff.selection/1";
+pub const SELECTION_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffSelection.as_str();
 
 /// The format of `inventory.json`.
-pub const INVENTORY_FORMAT: &str = "filament.checked-handoff.inventory/1";
+pub const INVENTORY_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffInventory.as_str();
 
 /// The format of `mutations/manifest.json`.
-pub const MUTATIONS_FORMAT: &str = "filament.checked-handoff.mutations/1";
+pub const MUTATIONS_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffMutations.as_str();
 
-const DEPENDENCIES_FORMAT: &str = "filament.checked-handoff.dependencies/1";
+const DEPENDENCIES_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffDependencies.as_str();
 
 #[derive(serde::Serialize)]
 struct DependencyManifest<'a> {

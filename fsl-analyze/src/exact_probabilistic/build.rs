@@ -66,6 +66,17 @@ pub fn build_product(
     build_retaining_monitor(request, cancel).map(|(build, _)| build)
 }
 
+/// Build a product under a caller-owned item work scope.
+#[cfg(feature = "test-support")]
+#[implements("FR-203-AC-29")]
+pub fn build_product_with_work_scope(
+    request: ProductRequest<'_>,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<ProbBuild, ProductRefusal> {
+    build_retaining_monitor_in_scope(request, work, cancel).map(|(build, _)| build)
+}
+
 /// Retain the reached semantic owner for certificate key projection. The
 /// monitor cache moves once after exploration, never once per product node.
 pub(crate) fn build_retaining_monitor(
@@ -78,6 +89,7 @@ pub(crate) fn build_retaining_monitor(
 
 /// [`build_retaining_monitor`] under the item's `work` allowance, so that a
 /// later reading of the same item spends only what the build left (FR-203).
+#[implements("FR-203-AC-29")]
 pub(crate) fn build_retaining_monitor_in_scope(
     request: ProductRequest<'_>,
     work: WorkScope,
@@ -111,19 +123,8 @@ struct KeyPolicy<'a> {
     budget: RefCell<&'a mut dyn ModelKeyBudget>,
 }
 
-/// Retain the semantic monitor while every key uses the same caller admission.
-pub(crate) fn build_retaining_monitor_with_budget(
-    request: ProductRequest<'_>,
-    identity: IdentityLimits,
-    budget: &mut dyn ModelKeyBudget,
-    cancel: &Cancel,
-) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
-    let work = WorkScope::new(request.subject.simulation.meter);
-    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
-}
-
-/// [`build_retaining_monitor_with_budget`] under the item's `work` allowance,
-/// as [`build_retaining_monitor_in_scope`] is for an unbudgeted build.
+/// Retain the semantic monitor while every key uses the item's work allowance.
+#[implements("FR-203-AC-29")]
 pub(crate) fn build_retaining_monitor_with_budget_in_scope(
     request: ProductRequest<'_>,
     identity: IdentityLimits,
@@ -146,7 +147,9 @@ pub fn build_product_with_key_budget(
     budget: &mut dyn ModelKeyBudget,
     cancel: &Cancel,
 ) -> Result<ProbBuild, BudgetedProductError> {
-    build_retaining_monitor_with_budget(request, identity, budget, cancel).map(|(build, _)| build)
+    let work = WorkScope::new(request.subject.simulation.meter);
+    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
+        .map(|(build, _)| build)
 }
 
 /// Admit `simulation` under the item's `work` allowance.
@@ -184,6 +187,7 @@ pub(crate) fn admit_in_scope<'a>(
     })
 }
 
+#[implements("FR-125-AC-9")]
 fn build_configured(
     request: ProductRequest<'_>,
     work: WorkScope,
@@ -247,7 +251,7 @@ fn build_configured(
                 .into_iter()
                 .map(|instance| {
                     let reference = system
-                        .bound_reference(object.clone(), &instance)
+                        .written_reference(object.clone(), &instance)
                         .map_err(ProductRefusal::Internal)?;
                     Ok((Some(instance), Some(reference)))
                 })
@@ -614,6 +618,7 @@ struct Hit {
 /// omitted edge keeps its original probability and action, so rows are never
 /// renormalized and each omitted successor contributes exactly its original
 /// mass at the least continuation value.
+#[implements("FR-1042-AC-25")]
 fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, OmittedEdge)>) -> ProbProduct {
     let mut completed = product.clone();
     if omitted.is_empty() {
@@ -904,6 +909,7 @@ impl Builder<'_, '_, '_, '_> {
         Ok(Ok(truths))
     }
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn key_of(
         &self,
         state: &ModelSimState,

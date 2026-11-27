@@ -45,6 +45,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-095
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-120
+    type: depends_on
 ---
 # FR-267: Write and read run results as native-run-result/2
 

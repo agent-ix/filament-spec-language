@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
 ---
 # FR-181: Check a single-existential hyper claim through the possible family
 
@@ -126,14 +128,54 @@ that no trace exists.
   trap ranking at the first product state of its initial state's part; at the
   same product state `Undefined` wins, since a position's letter is read before
   the automaton steps (ADR-018 UE-4).
+- If a contract conjunction of a reachable state's expansion evaluates
+  undefined, an undefined precondition guard included, the engine SHALL return
+  `Undefined` with FR-126's canonical breadth-first path to the first such
+  product state in discovery order, `where` naming that position, the
+  state's key, the conjunction's clause as the `contract` locus, the guarded
+  transition for a precondition, and the evaluator's undefined cause
+  (ADR-018 UE-6, ADR-022 RU-5). It SHALL take the place of `Witnessed`,
+  `WitnessedUnchecked`, `Trapped` and `NoDecision` whatever lassos or sampled
+  witnesses exist, and a letter at the same product state comes first. Over an
+  event-position clause the closed finite executions are searched with the
+  same reading, and the path is the execution prefix that reaches the state.
+  A conjunction that is refused, with no clause false and none undefined,
+  leaves the state open with cause `UndecidedSuccessor`. The two runs replay
+  the path and recompute the finding.
 - `Trapped` SHALL name the first initial state, in subject order, whose part
   of the product is closed (no open node) and holds no fair accepting
   cycle.
+- A product state from which the body automaton has no run lies on no
+  accepting cycle, and no state after it does, so one a run limit or
+  `max_depth` left unexpanded SHALL NOT count against a part being closed for
+  `Trapped` when every contract conjunction of its model state has a value.
+  It stays open for `Witnessed`. An undefined contract conjunction is never
+  read as a disabled step (ADR-018 UE-6). Those conjunctions SHALL be read
+  when the product state is created, so that deciding a part closed expands
+  no state the run limits did not admit.
 - A clause with object parameters (`over`) SHALL be checked once per instance
   in FR-125's canonical instance order, the instances sharing the run's
   `max_states` and `max_transitions` as FR-126 shares them across bindings, and
   the result SHALL be one outcome per instance; a clause with no instance has
-  no outcome.
+  no outcome of this check, and its item settles `NoInstance`, or
+  `NoInitialState` for a subject with no initial state, as FR-125 Instancing
+  states: `inconclusive`, never a fault.
+- The item's one record over its instances' outcomes SHALL follow FR-621
+  "Items over several claim instances": a refuted instance decides the item,
+  an earlier instance that is not `proved` notwithstanding.
+- `settle_existential` SHALL refuse
+  `ProductClosureRefusal::Input("HP-5-instance")`, and write no record, an
+  outcome whose instance does not bind each object parameter, in parameter
+  order, to an instance of it (FR-125 Instancing).
+- A package selection of an HP-5 clause with an object parameter SHALL settle
+  the item `unsupported_construct`/`not-yet-implemented`, exit 21, with no
+  verdict and no instance.
+- `check_single_existential` and `settle_existential` SHALL decide and settle
+  each instance of a clause with two or more object parameters. FSpec
+  FR-393's evidence instance names one parameter, so the source
+  `native-analyze/1` item of such a clause SHALL settle
+  `unsupported_construct`/`not-yet-implemented`, exit 21, with no verdict and
+  no instance.
 - Every other case SHALL return `NoDecision` with the run's end and open
   causes.
 
@@ -148,7 +190,11 @@ that no trace exists.
   with the fairness filter: no fair accepting cycle SHALL settle
   `reproduced-with-evaluated-witness`; one found SHALL settle
   `inconclusive`, `Verdicts`; a stopped exploration SHALL return the replay
-  result stopped with its limit.
+  result stopped with its limit. The re-exploration SHALL NOT expand a state
+  from which the body automaton has no run, nor one whose letter has no
+  value, so neither can stop it. A no-run state whose contract conjunction,
+  read when the state is created, has no value or is refused SHALL NOT
+  reproduce the trap.
 - An `Undefined` path SHALL replay as FR-170 replays undefined-evaluation
   evidence, re-executing the path and evaluating the body's letter at its
   last position.
@@ -167,6 +213,14 @@ that no trace exists.
 | FR-181-AC-5 | Over the secure vault, with `function remainder using v(x: Integer): Integer pure { 1 mod x }`, its body checked under `CheckMode::Kernel` and called by the Linked claim (FR-495-AC-3, FR-952), `exists trace b of V { eventually always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0) }`, whose division is evaluated first and has no value at `l = 1`, returns `Undefined` at the first product state with `l = 1`, with the default `witness_samples` as with `witness_samples` 0, while phase 0 finds a sampled witness lasso looping `step(0)` at `(h, 0)` for each initial state; cause `division-by-zero`. It settles `refuted`, `decisive-counterexample`, cause `UndefinedEvaluation`. AC-1's claim with the default `witness_samples` settles `proved` only from a product exploration that completed with no open node. | Test (TC-615) |
 | FR-181-AC-6 | AC-1's claim with the default `witness_samples` and `max_states` 2 gets a sampled witness lasso per initial state, the exploration stops at `max_states`, and the item returns `WitnessedUnchecked` and settles `inconclusive`, `WellDefinednessUnchecked`, never `proved`; with `witness_samples` 0 the same run settles `incomplete`, `LimitReached`, naming `max_states`. | Test (TC-616) |
 | FR-181-AC-7 | Two vaults in one start, so two instances of `over (v: V::Vault)`, give one outcome per instance in canonical order, and the second instance's product is explored with the `max_states` the first left; a clause with no instance has no outcome. | Test (TC-606) |
+| FR-181-AC-8 | `pets` declares `Thing`, which has the subtype `Lamp`; its universe is `[l, m]`; the model has no operation; the one initial state holds a `Lamp` under `l`, and none admits `m`. With `v: M::Thing`, `exists trace a of M { always holds(BODY @ a) }` under the infinite-trace profile, default limits, for `BODY` `present(lookup<M::Thing>(M::pets, v) absent empty)` and for `BODY` `(v = v)`: `check_single_existential` returns exactly one instance, `l`, `Witnessed`; `settle_existential` settles it `proved` and refuses an outcome at the instance `m` as `ProductClosureRefusal::Input("HP-5-instance")`; `excluded_keys` is `[m]`; and the source `native-analyze/1` item is `proved`, exit 0, its evidence binding `v` to the reference with identity `l` and object type `Lamp`, with no instance binding naming `m`. With universe `[k, l]`, the initial state holding only `l`, and `BODY` `(v != v)`, the item is `refuted`, exit 10, at the instance `l`, never `k`. | Test (TC-3219) |
+| FR-181-AC-9 | AC-8's two bodies over AC-8's first fixture, under `filament.temporal.event-position.false-extension/v1` with `always [0, 0] holds(BODY @ a)`, give the one instance `l` and settle `proved`, with no instance binding naming `m`. | Test (TC-3219) |
+| FR-181-AC-10 | AC-8's request selected by package settles `unsupported_construct`/`not-yet-implemented`, exit 21, with no record verdict and no instance. | Test (TC-3219) |
+| FR-181-AC-11 | A refutation after an inconclusive instance. `Counter`'s `value` is `Int[0, 5]`, `inc` raises its receiver's value by 1 and is enabled below 3, the universe is `[p, q]`, and the one initial state holds `p` at 0 and `q` at 4. For `v: M::Counter`, `exists trace a of M { always holds((v.value <= 3) @ a) }` with `max_depth` 1 and `witness_samples` 0 gives `p` `NoDecision`, bound reached at depth 1, and `q` `Trapped`, and the item settles `refuted`, exit 10, at the instance `q`. Over the universe `[p]` with the same initial `p`, the item settles `inconclusive`. Over the universe `[r]` with one initial state that holds no `Counter`, the item settles `inconclusive`, `no-instance`, and is not a fault. | Test (TC-3219) |
+| FR-181-AC-12 | Two parameters. Over two secure vaults, `v` at `l = 0` and `w` at `l = 1`, `over behaviours (x: V::Vault, y: V::Vault) exists trace b of V { always holds(x.l @ b = y.l @ b) }`, and its body under `always [0, 0]` and the event-position profile: the instances `(v, v)`, `(v, w)`, `(w, v)` and `(w, w)` settle `proved`, `refuted`, `refuted` and `proved`, and `settle_existential` refuses `HP-5-instance` an outcome that binds one parameter or both out of order. Over `pets` with two admitted keys and `(v: M::Thing, w: M::Thing)`, the source `native-analyze/1` item is `unsupported_construct`/`not-yet-implemented`, exit 21, with no verdict and no instance. | Test (TC-3219) |
+| FR-181-AC-13 | Unexpanded states of a trap. Over the secure vault with `witness_samples` 0, each of these returns `Trapped` and settles `refuted`, `closed-scope`: `holds(v.l @ b = 1)` from `l = 0` with `max_states` 1, and with `max_transitions` 1; and, from `l = 0` with AC-5's `remainder`, which has no value after a step to `l = 1`, `holds(v.l @ b = 1) and always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)`. From `(h, l) = (0, 1)`, where `step`'s precondition has no value, `holds(v.l @ b = 0)` does not return `Trapped`, with the default limits or `max_states` 1, and `settle_existential` does not confirm a `Trapped` outcome for it (ADR-018 UE-6). | Test (TC-3219) |
+| FR-181-AC-14 | An undefined read through the source item. `Counter`'s `inc` is disabled and an operation `drop` is framed `deletes Counter`; the universe and the initial state hold one counter `c` at `value = 0`. `exists trace a of M { always holds((v.value = 0) @ a) }` for `v: M::Counter` as a `native-analyze/1` item settles `refuted`, `decisive-counterexample`, exit 10, with an `undefined` counterexample of cause `absent-key` at position 1. | Test (TC-3219) |
+| FR-181-AC-15 | Undefined guard. Over the leaky vault whose `step` has the precondition `quotient(1 - self.l + self.h) >= 0`, `function quotient using v(x: Integer): Integer pure { 1 div x }` checked under `CheckMode::Kernel` and called by the Linked precondition, so the guard has no value at `(h, l) = (0, 1)`: `exists trace b of V { eventually holds(v.l @ b = 1) }` from `(0, 0)` returns `Undefined` with the one step `step(1)`, position 1, locus `contract` `Guard`, the guarded `step` transition and cause `DivisionByZero`, with `witness_samples` 0 and by default; from `(0, 1)` it returns `Undefined` with an empty path at position 0. With `reset` keeping `l` at 1, `fair weak step` and `always holds(v.l @ b = 1)` from `(0, 1)`, the loop through that state is no witness: the item returns `Undefined` at position 0, and settles `refuted`, `decisive-counterexample`, with the path replayed. Under the event-position profile `eventually [0, 2] holds(v.l @ b = 1)` over the same vault from `(0, 0)` and from `(0, 1)` returns `Undefined` at positions 1 and 0, never `ClosedWitnessed` or `Trapped`. | Test (TC-616) |
 
 ## Dependencies
 

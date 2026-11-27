@@ -8,11 +8,11 @@
 //! emits for the same model, with the values the criterion names.
 
 use super::bounded::{
-    DOMAIN, document, model_source, mutate, replace_source_and_rebind, request_with,
-    requests_offering, requests_with_mode, run,
+    document, model_source, mutate, replace_source_and_rebind, request_with, requests_offering,
+    requests_with_mode, run, DOMAIN,
 };
 use super::certificate_kinds::likely;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use filament_exact::{Integer, Rational};
 use fsl_analyze::analyze::Settlement;
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
@@ -21,7 +21,9 @@ use fsl_replay::{
     TerminalValue,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
+
+pub(crate) mod mutation;
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const VALUE_BOUNDS: &str = "filament.probability-objective/value-bounds/v1";
@@ -750,8 +752,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
     assert_eq!(code, 2, "{output}");
     assert_eq!(output["status"], "refused", "{output}");
     assert_eq!(
-        output["reason"],
-        "invalid_runtime_input: probability certificate objective mismatch",
+        output["reason"], "invalid_runtime_input: probability certificate objective mismatch",
         "{output}"
     );
 
@@ -1529,4 +1530,372 @@ fn a_fraction_or_fair_lower_over_a_stopped_graph_stays_stopped() {
         rejected(&within(&alone, 100), "threshold-missed", at_key(&initial));
         stopped_at_max_states(&within(&alone, 1), 1);
     }
+}
+
+/// `proof`, FR-1043-AC-3's `quantile 0.9 of M >= 2` document, with every
+/// shifted value raised by `9/10 - 1/3 = 17/30` and bound to the claim at
+/// level `1/3`, where the maximum is exactly 0.
+fn tight_zero(proof: Value) -> Value {
+    let shift = Rational::new(Integer::from(17_i64), Integer::from(30_i64)).unwrap();
+    let mut request = edit(&proof, |doc| {
+        for row in doc["values"].as_array_mut().unwrap() {
+            let part = |name: &str| row["value"][name].as_str().unwrap().parse::<i64>().unwrap();
+            let value = Rational::new(
+                Integer::from(part("numerator")),
+                Integer::from(part("denominator")),
+            )
+            .unwrap()
+            .add(&shift);
+            row["value"] = json!({"numerator": value.numerator().to_string(), "denominator": value.denominator().to_string()});
+        }
+        // A bound document wraps the objective an `exact` one states.
+        let objective = if doc["kind"] == "exact" {
+            &mut doc["objective"]
+        } else {
+            &mut doc["objective"]["base"]
+        };
+        objective["measure"]["level"] = rational(1, 3);
+    });
+    replace_source_and_rebind(&mut request, &quantile("rational(1,3)", ">= 2"));
+    request
+}
+
+/// FR-1042 "Pairing" over FR-1043-AC-3's `>= c` quantile with the maximum
+/// shifted value exactly 0: the claim-side `upper` whose tight actions reach an
+/// activated state is rejected `InequalityFails` at the first one breadth-first,
+/// here the activated initial state.
+#[trace("TC-3151", "FR-1042-AC-28")]
+#[test]
+fn a_strict_quantile_upper_of_zero_with_tight_activation_is_rejected() {
+    let exact = proof(&quantile("0.9", ">= 2"));
+    let initial = ranked(&document(&exact), 4).remove(0).0;
+    let request = tight_zero(bound(&exact, "upper", &[], None, true));
+    rejected(&request, "inequality-fails", at_key(&initial));
+}
+
+/// The checker side of the exact route over the same tight zero: the `exact`
+/// document is rejected `InequalityFails` at FR-201's locus, the first
+/// activated state breadth-first, here the activated initial state.
+#[trace("TC-1197", "FR-201-AC-6")]
+#[test]
+fn a_strict_quantile_exact_zero_with_tight_activation_is_rejected_at_the_initial_key() {
+    let request = tight_zero(proof(&quantile("0.9", ">= 2")));
+    let initial = ranked(&document(&request), 4).remove(0).0;
+    rejected(&request, "inequality-fails", at_key(&initial));
+}
+
+/// FR-1042-AC-29, FR-1043 "Forms and documents": where activation is
+/// unreachable the checker refuses an offered numeric bound document, in
+/// either role, at the initial key.
+#[trace("TC-3151", "FR-1042-AC-29")]
+#[test]
+fn a_numeric_quantile_bound_without_activation_is_rejected() {
+    let never = |text: String| text.replace("from holds(true)", "from holds(false)");
+    for scheduler in ["every scheduler", "Even"] {
+        for (comparison, claim_kind) in [("<= 2", "lower"), (">= 2", "upper")] {
+            let source =
+                |text: String| text.replace("under every scheduler", &format!("under {scheduler}"));
+            let reachable = source(quantile("0.4", comparison));
+            let unreachable = never(reachable.clone());
+            // The never-activating product's keys and ranks, from the event
+            // proof over the same measure.
+            let event = proof(&never(source(measured("<=", "0.5"))));
+            let keys = document(&event);
+            let shifted = if scheduler == "Even" {
+                // A workload's exact proof is a ratio; its bound takes the
+                // `shifted` base the every-scheduler proof writes.
+                let mut base = document(&proof(&quantile("0.4", comparison)))["objective"].clone();
+                base["optimization"] = json!("workload");
+                base
+            } else {
+                document(&proof(&reachable))["objective"].clone()
+            };
+            for (kind, claim_side) in [
+                (claim_kind, true),
+                (
+                    if claim_kind == "lower" {
+                        "upper"
+                    } else {
+                        "lower"
+                    },
+                    false,
+                ),
+            ] {
+                let mut request = bound(&event, kind, &[], None, claim_side);
+                request = edit(&request, |doc| {
+                    doc["objective"]["base"] = shifted.clone();
+                    doc["values"] = keys["values"].clone();
+                    for row in doc["values"].as_array_mut().unwrap() {
+                        row["value"] = rational(0, 1);
+                    }
+                    if kind == "lower" {
+                        doc["ranking"] = keys["ranking"].clone();
+                    } else {
+                        doc.as_object_mut().unwrap().remove("ranking");
+                    }
+                });
+                replace_source_and_rebind(&mut request, &unreachable);
+                let initial = ranked(&document(&event), 4).remove(0).0;
+                let (code, output) = run(&request);
+                assert_eq!(code, 1, "{scheduler} {comparison} {kind}: {output}");
+                assert_eq!(output["rule"], "inequality-fails", "{output}");
+                assert_eq!(output["at"], at_key(&initial), "{output}");
+            }
+        }
+    }
+}
+
+/// The analyzer's settlement of `source` from the `link` snapshot beside a
+/// second initial one, with `m` delivered and `attempts` as given.
+fn from_two_initials(source: &str, second: (u64, bool), exact: ExactProbLimits) -> Settlement {
+    use fsl_eval::simulation::model::{
+        ExpansionLimits, ModelSimulationRequest, PopulationUniverse,
+    };
+    use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
+    let (checked, packages) = super::bounded::compile_source_with(source, domain().as_bytes());
+    let package = checked.package();
+    let claim = package
+        .graph()
+        .probabilistic_model()
+        .claim("Likely")
+        .unwrap();
+    let limits = fsl_replay::spine::SpineLimits::default();
+    let mut other: Value = serde_json::from_slice(SNAPSHOT).unwrap();
+    other["identity"]["identity"] = json!("s1");
+    let fields = &mut other["populations"][0]["objects"][0]["fields"];
+    fields["attempts"] = json!({"integer": second.0.to_string()});
+    fields["delivered"] = json!({"boolean": second.1});
+    let reference = |identity: &str| DocumentRef {
+        authority: "test".to_owned(),
+        identity: identity.to_owned(),
+    };
+    let snapshots = [
+        (reference("s0"), SNAPSHOT.to_vec()),
+        (reference("s1"), serde_json::to_vec(&other).unwrap()),
+    ]
+    .into_iter()
+    .collect();
+    let simulation = ModelSimulationRequest {
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        packages: &packages,
+        normalization: limits.model,
+        snapshots: &snapshots,
+        initial: vec![reference("s0"), reference("s1")],
+        universes: vec![PopulationUniverse {
+            population: filament_checked::key::DeclarationKey {
+                package: other["model"]["identity"].as_str().unwrap().to_owned(),
+                node: other["populations"][0]["population"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            },
+            keys: vec!["m".to_owned()],
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 100_000,
+        },
+        meter: fsl_replay::AccountingLimits::default().0,
+        emit: limits.package.emit(),
+    };
+    let item = fsl_analyze::analyze::exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: fsl_eval::model_subject::ModelSubject {
+                simulation,
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: exact,
+        },
+    );
+    let engines = fsl_analyze::analyze::Engines::fsl().unwrap();
+    fsl_analyze::analyze::analyze_items(&engines, vec![item], &filament_exact::Cancel::new())
+        .remove(0)
+        .settlement
+}
+
+/// FR-1042 "Pairing": a bound checks its threshold at one initial key, so over
+/// two initial states it is refused as the exact document is, and EN-5 proves
+/// nothing from the interval route. Each claim below is false at one of the
+/// two initial states.
+#[trace("TC-3151", "FR-1042-AC-30")]
+#[test]
+fn measure_bounds_over_two_initial_states_prove_nothing() {
+    let interval = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
+    // `(2, false)` never delivers; `(0, true)` is already delivered.
+    let mut proved = Vec::new();
+    for (comparison, second) in [
+        ("<= 3", (2, false)),
+        ("<= 0", (0, true)),
+        (">= 1", (0, true)),
+        (">= 2", (2, false)),
+    ] {
+        for limits in [interval, ExactProbLimits::default()] {
+            let settlement = from_two_initials(&quantile("0.4", comparison), second, limits);
+            // A `<=` claim reaches the checker on both routes. (The interval
+            // route offers a `>=` quantile the wrong kind first.)
+            if comparison.starts_with("<=") {
+                assert!(
+                    matches!(&settlement, Settlement::Disposed(disposed)
+                        if disposed.kind == fsl_analyze::analyze::DispositionKind::Unsupported),
+                    "{comparison} {second:?}: {settlement:?}"
+                );
+            }
+            if matches!(&settlement, Settlement::Terminal(record)
+                if matches!(record.value(), TerminalValue::Proved { .. }))
+            {
+                proved.push((comparison, second));
+            }
+        }
+    }
+    assert!(
+        proved.is_empty(),
+        "proved at one of two initial states: {proved:?}"
+    );
+}
+
+/// FR-1042 "Pairing", FR-1043-AC-3's maximum of 0: where only a path that
+/// never activates attains 0, the claim-side `upper` is accepted.
+#[trace("TC-3151", "FR-1042-AC-28")]
+#[test]
+fn a_strict_quantile_upper_of_zero_without_tight_activation_is_accepted() {
+    let source = w(">=", "rational(1,4)")
+        .replace(
+            "profile inf = \"filament.temporal.infinite-trace/v1\";",
+            "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile ev = \"filament.temporal.event-position.false-extension/v1\";",
+        )
+        .replace("using inf on M", "using ev on M")
+        .replace(
+            "probability >= rational(1,4) [ eventually holds(m.delivered) ]",
+            "quantile 0.4 of (steps from holds(m.delivered) until holds(false) within 2) >= 1",
+        );
+    let exact = proof(&source);
+    assert_eq!(run(&exact).0, 0, "{}", run(&exact).1);
+    accepted(&bound(&exact, "upper", &[], None, true), rational(0, 1));
+}
+
+/// A key of the continuing model's state past `g`, taken from a claim whose
+/// graph runs on to it.
+fn past_target_key(exact: &Value) -> Value {
+    let further = proof(&acyclic("rational(2,5)", true).replace(
+        "holds(m.delivered)",
+        "holds(m.delivered and m.attempts = 2)",
+    ));
+    let known: Vec<Value> = document(exact)["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["state"].clone())
+        .collect();
+    let further = document(&further);
+    let mut past = further["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| &row["state"])
+        .filter(|state| !known.contains(state));
+    let key = past.next().expect("a state past the target").clone();
+    assert!(past.next().is_none());
+    key
+}
+
+/// FR-201 "Closed reachability document profile": the values and ranking of an
+/// acyclic `eventually` cover the graph that stops at its targets, so a model
+/// that runs on past a target keeps its exact proof and its bounds, under a
+/// workload and under every scheduler, for either side of the threshold.
+#[trace("TC-636", "FR-201-AC-11")]
+#[trace("TC-3151", "FR-1042-AC-25")]
+#[test]
+fn an_exact_proof_past_a_target_is_accepted() {
+    let workload = acyclic("rational(2,5)", true);
+    let every = workload.replace("under Even on origin", "under every scheduler on origin");
+    for (source, optimization) in [(workload, "workload"), (every, "minimum")] {
+        for (source, optimization) in [
+            (source.clone(), optimization),
+            (
+                source.replace(
+                    "probability >= rational(2,5)",
+                    "probability <= rational(3,5)",
+                ),
+                if optimization == "minimum" {
+                    "maximum"
+                } else {
+                    optimization
+                },
+            ),
+        ] {
+            let exact = proof(&source);
+            let doc = document(&exact);
+            assert_eq!(
+                doc["objective"]["profile"],
+                "filament.probability-objective/reachability/v1"
+            );
+            assert_eq!(doc["objective"]["optimization"], optimization);
+            // `s`, `g` and `f`; the state past `g` has no row.
+            assert_eq!(doc["values"].as_array().map(Vec::len), Some(3));
+            assert_eq!(doc["ranking"].as_array().map(Vec::len), Some(3));
+            accepted(&exact, rational(1, 2));
+        }
+    }
+
+    let exact = proof(&acyclic("rational(2,5)", true));
+    let s = ranked_key(&exact);
+    accepted(
+        &bound(&exact, "lower", &[(&s, rational(7, 16))], None, true),
+        rational(7, 16),
+    );
+    accepted(
+        &bound(&exact, "upper", &[(&s, rational(9, 16))], None, false),
+        rational(9, 16),
+    );
+}
+
+/// Over the model that runs on past a target (value `1/2`), a false claim is
+/// refuted and its checker rejects the threshold, a wrong value, and a row for
+/// the state past the target.
+#[trace("TC-636", "FR-201-AC-10", "FR-201-AC-11")]
+#[test]
+fn a_false_claim_past_a_target_is_still_rejected() {
+    let exact = proof(&acyclic("rational(2,5)", true));
+    let s = ranked_key(&exact);
+    for (claim, stricter) in [
+        (">= rational(2,5)", ">= rational(3,5)"),
+        ("<= rational(3,5)", "<= rational(2,5)"),
+    ] {
+        let holding = acyclic("rational(2,5)", true).replace(">= rational(2,5)", claim);
+        let failing = holding.replace(claim, stricter);
+        let (_, settlement) = request_with(
+            &failing,
+            SNAPSHOT,
+            ExactProbLimits::default(),
+            domain().as_bytes(),
+        );
+        assert!(
+            matches!(&settlement, Settlement::Terminal(record)
+                if matches!(record.value(), fsl_replay::TerminalValue::Refuted)),
+            "{settlement:?}"
+        );
+        let mut offered = proof(&holding);
+        replace_source_and_rebind(&mut offered, &failing);
+        rejected(&offered, "threshold-missed", at_key(&s));
+    }
+    let wrong = edit(&exact, |doc| {
+        set(doc, "values", &s, "value", rational(3, 5))
+    });
+    rejected(&wrong, "inequality-fails", at_key(&s));
+    let past = past_target_key(&exact);
+    let extra = edit(&exact, |doc| {
+        insert_row(
+            doc,
+            "values",
+            json!({"state": past, "value": rational(1, 1)}),
+        );
+    });
+    rejected(&extra, "malformed", at_member("values"));
 }

@@ -119,15 +119,27 @@ fn boolean_round_trips() {
         json!({"type": "boolean", "value": true}),
         json!({"type": "boolean", "value": true}),
     );
-    assert_round_trip("id_bool", json!({"type": "boolean", "value": true}), json!({"type": "boolean", "value": true}));
+    assert_round_trip(
+        "id_bool",
+        json!({"type": "boolean", "value": true}),
+        json!({"type": "boolean", "value": true}),
+    );
 }
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
 fn integer_round_trips() {
     let big = "1267650600228229401496703205376";
-    assert_round_trip("id_big", json!({"type": "integer", "value": big}), json!({"type": "integer", "value": big}));
-    assert_round_trip("id_big", json!({"type": "integer", "value": "7"}), json!({"type": "integer", "value": "7"}));
+    assert_round_trip(
+        "id_big",
+        json!({"type": "integer", "value": big}),
+        json!({"type": "integer", "value": big}),
+    );
+    assert_round_trip(
+        "id_big",
+        json!({"type": "integer", "value": "7"}),
+        json!({"type": "integer", "value": "7"}),
+    );
 }
 
 #[test]
@@ -181,16 +193,14 @@ fn enum_round_trips() {
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
 fn record_round_trips() {
-    let value =
-        json!({"type": "record", "name": fixture_name("make_record"), "fields": [{"name": "x", "value": {"type": "integer", "value": "1"}}, {"name": "y", "value": {"type": "integer", "value": "2"}}]});
+    let value = json!({"type": "record", "name": fixture_name("make_record"), "fields": [{"name": "x", "value": {"type": "integer", "value": "1"}}, {"name": "y", "value": {"type": "integer", "value": "2"}}]});
     assert_round_trip("id_rec", value.clone(), value);
 }
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
 fn tuple_round_trips() {
-    let value =
-        json!({"type": "tuple", "name": fixture_name("make_tuple"), "components": [{"type": "integer", "value": "2"}, {"type": "integer", "value": "1"}]});
+    let value = json!({"type": "tuple", "name": fixture_name("make_tuple"), "components": [{"type": "integer", "value": "2"}, {"type": "integer", "value": "1"}]});
     assert_round_trip("id_tup", value.clone(), value);
 }
 
@@ -216,7 +226,11 @@ fn set_round_trips_in_canonical_order() {
 fn option_round_trips() {
     let present = json!({"type": "option", "value": {"type": "integer", "value": "3"}});
     assert_round_trip("id_opt", present.clone(), present);
-    assert_round_trip("id_opt", json!({"type": "option", "value": null}), json!({"type": "option", "value": null}));
+    assert_round_trip(
+        "id_opt",
+        json!({"type": "option", "value": null}),
+        json!({"type": "option", "value": null}),
+    );
 }
 
 #[test]
@@ -277,7 +291,9 @@ fn mistyped_arguments_refuse_with_cause_and_path() {
     );
     assert_call_refusal(
         "id_rec",
-        record(json!([{"name": "x", "value": {"type": "integer", "value": "1"}}, {"name": "y", "value": {"type": "integer", "value": "2"}}, {"name": "z", "value": {"type": "integer", "value": "3"}}])),
+        record(
+            json!([{"name": "x", "value": {"type": "integer", "value": "1"}}, {"name": "y", "value": {"type": "integer", "value": "2"}}, {"name": "z", "value": {"type": "integer", "value": "3"}}]),
+        ),
         "invalid_runtime_input",
         "invalid-value",
         "/fields",
@@ -394,7 +410,11 @@ fn seven_completes_as_a_tagged_integer() {
 #[trace("FSpec-TC-1200", "FSpec-FR-550-AC-1")]
 fn fspec_values_round_trip_in_one_form() {
     let big = "1267650600228229401496703205376";
-    assert_round_trip("id_big", json!({"type": "integer", "value": big}), json!({"type": "integer", "value": big}));
+    assert_round_trip(
+        "id_big",
+        json!({"type": "integer", "value": big}),
+        json!({"type": "integer", "value": big}),
+    );
     assert_round_trip(
         "id_rat",
         json!({"type": "rational", "numerator": "4", "denominator": "6"}),
@@ -405,8 +425,7 @@ fn fspec_values_round_trip_in_one_form() {
         json!({"type": "set", "elements": [{"type": "integer", "value": "3"}, {"type": "integer", "value": "1"}]}),
         json!({"type": "set", "elements": [{"type": "integer", "value": "1"}, {"type": "integer", "value": "3"}]}),
     );
-    let tuple =
-        json!({"type": "tuple", "name": fixture_name("make_tuple"), "components": [{"type": "integer", "value": "2"}, {"type": "integer", "value": "1"}]});
+    let tuple = json!({"type": "tuple", "name": fixture_name("make_tuple"), "components": [{"type": "integer", "value": "2"}, {"type": "integer", "value": "1"}]});
     assert_round_trip("id_tup", tuple.clone(), tuple);
 }
 
@@ -475,7 +494,12 @@ fn run_quantity(function: &str, arguments: Value) -> Output {
 fn quantity_has_a_form_so_it_is_not_refused_unsupported() {
     for (value, stage, code, cause) in [
         (json!(2), "request", "invalid-request", None),
-        (json!({"type": "integer", "value": "2"}), "call", "invalid_runtime_input", Some("wrong-value-kind")),
+        (
+            json!({"type": "integer", "value": "2"}),
+            "call",
+            "invalid_runtime_input",
+            Some("wrong-value-kind"),
+        ),
     ] {
         let output = run_quantity("take", json!([{"parameter":"a","value":value}]));
         assert_eq!(output.status.code(), Some(20), "{output:?}");
@@ -485,7 +509,10 @@ fn quantity_has_a_form_so_it_is_not_refused_unsupported() {
         if let Some(cause) = cause {
             assert_eq!(failure["cause"], cause, "{failure}");
         } else {
-            assert!(failure.to_string().contains("/call/arguments/0/value"), "{failure}");
+            assert!(
+                failure.to_string().contains("/call/arguments/0/value"),
+                "{failure}"
+            );
         }
     }
     let output = run_quantity("give", json!([]));

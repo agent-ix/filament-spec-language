@@ -22,7 +22,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-641
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-267
-    type: references
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-114
     type: implements
   - target: ix://agent-ix/filament-specification/FR-301

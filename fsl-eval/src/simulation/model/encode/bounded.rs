@@ -12,8 +12,8 @@ use filament_exact::{
 use filament_semantic_value::declaration::{CompositeDeclaration, TypeEnvironment};
 use fsl_foundation::{IdentityLimits, Setting};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObject};
-use quire_canonical::{Encode, Error, Limits, NodeRef, Sink, Writer};
 use ix_trace_rs::implements;
+use quire_canonical::{Encode, Error, Limits, NodeRef, Sink, Writer};
 
 use super::super::{ModelKeyBudget, ModelKeyError};
 use super::projection::{self, ArrayOrder, Scalar, StructuralSink, ValueSink};

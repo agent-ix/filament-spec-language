@@ -113,6 +113,7 @@ pub enum ClockDeclarationTableError {
     Collision(#[from] ClockDeclarationCollision),
 }
 
+#[ix_trace_rs::string_edge]
 fn clock_rows(
     clock: &CheckedClockPlace,
 ) -> Result<

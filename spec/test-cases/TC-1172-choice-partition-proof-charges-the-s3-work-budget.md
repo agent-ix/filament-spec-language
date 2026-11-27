@@ -44,7 +44,7 @@ Tag the tests `#[trace("TC-1172", "FR-218-AC-30")]`, `#[trace("TC-1172", "FR-218
 ## Expected Results
 
 - Step 1: both check; the spends differ by exactly 6.
-- Step 2: `CheckRefusal`/`stage_limit_exceeded`, cause `work-budget-exceeded`, naming bound 16777216 and `s3.work_units`, `region: None` on the cause and `refusal_region` the choice's span; no `unproved-exhaustiveness`.
+- Step 2: `SemanticCheckRefusal`/`stage_limit_exceeded`, cause `work-budget-exceeded`, naming bound 16777216 and `s3.work_units`, `region: None` on the cause and `refusal_region` the choice's span; no `unproved-exhaustiveness`.
 - Step 3: each raised run checks.
 - Step 4: `undefined_expression`/`unproved-exhaustiveness` with `failed` `[missing-arm]`.
 - Step 5: with `while a`, the feasible false valuation retains the skip edge
@@ -52,7 +52,7 @@ Tag the tests `#[trace("TC-1172", "FR-218-AC-30")]`, `#[trace("TC-1172", "FR-218
   for missing progress. With the tautological guard, false is infeasible,
   the skip edge is absent and the outer repeat checks from the nested repeat's
   entered-body progress. That proof checks at the measured exact limit. One
-  unit less stops at the nested repeat's span with `CheckRefusal`/
+  unit less stops at the nested repeat's span with `SemanticCheckRefusal`/
   `stage_limit_exceeded`, cause `work-budget-exceeded`, naming the bound, the
   denied charge count and `s3.work_units`; it does not report an enclosing
   progress refusal. Each raised entry point checks.

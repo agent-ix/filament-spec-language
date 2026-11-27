@@ -73,38 +73,38 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{
-    Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter, Monitor,
-    PropertyAutomaton, SafetyItem, SafetyState, SafetyStates, SafetyTranslation, StateId,
-    SubjectKind, translate, translate_counted,
+    translate, translate_counted, Atom, AutomatonStateKey, BoundedKind, BoundedState,
+    BoundedTranslation, Letter, Monitor, PropertyAutomaton, SafetyItem, SafetyState, SafetyStates,
+    SafetyTranslation, StateId, SubjectKind,
 };
 use fsl_eval::model_subject::{
-    AtomStop, ModelLetters, ModelSubject, ProtocolSubject, refused_invariant,
+    refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
     ModelFinding, ModelSimState, ModelSystem, ProtocolDefinition, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    Capacities, MemoryModel, ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget,
-    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory, activates_on_each, check_protocol_bounds,
-    live_instance_bound,
+    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, MemoryModel,
+    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
+    ProtocolSystem, Sc, SubjectMemory,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    BOUND_POSITIONS, ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion,
-    ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress,
-    ZeroProgressError,
+    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
+    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
+    BOUND_POSITIONS,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
-use serde::{Serialize, Serializer, ser::SerializeStruct};
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::certificate::check::{
-    Budgets, Checker, Halt, Step, admit, admit_read_identities, expansion_halt, finish, poll,
-    stopped, widen,
+    admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker,
+    Halt, Step,
 };
 use crate::certificate::recording::Recording;
-use crate::certificate::scc::{Component, ComponentCertificate, check_partition};
-use crate::certificate::{CertificateLocus, CertificateRule};
+use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
+use crate::certificate::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::ClauseRootRefusal;
 use crate::model_check::item::{
     Instance, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
@@ -132,9 +132,10 @@ impl Serialize for ProductStateRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use base64::Engine as _;
         let mut object = serializer.serialize_struct("ProductStateRef", 2)?;
-        let model_state =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.model_state.as_bytes());
-        object.serialize_field("model_state", &model_state)?;
+        object.serialize_field(
+            "model_state",
+            &crate::shared_wire::state_key_text(&self.model_state),
+        )?;
         let octets = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(self.automaton_state.as_bytes());
         object.serialize_field("automaton_state", &octets)?;
@@ -786,6 +787,23 @@ fn check_system<S: SubjectSystem>(
     }
 }
 
+/// FR-339's partition rule over a product with no reached state: only no
+/// component partitions it. The locus is the first component's first listed
+/// state, or the `components` member when that component lists none.
+fn partition_of_no_state(components: &[Component]) -> TemporalCertificateCheck {
+    let Some(first) = components.first() else {
+        return TemporalCertificateCheck::Accepted;
+    };
+    let at = first.states.first().map_or(
+        CertificateLocus::CertificateMember(CertificateMember::Components),
+        |state| CertificateLocus::ProductState(state.clone()),
+    );
+    TemporalCertificateCheck::Rejected(CertificateRejection {
+        rule: CertificateRule::NotPartition,
+        at,
+    })
+}
+
 fn rejected(rule: CertificateRule, at: ProductStateRef) -> TemporalCertificateCheck {
     TemporalCertificateCheck::Rejected(CertificateRejection {
         rule,
@@ -940,6 +958,7 @@ impl<S: SubjectSystem> Check<'_, S> {
     /// FR-339: the partition `components` of the closure the run accepted,
     /// checked over the product graph the run recorded and the clause's
     /// resolved constraints. It reads no fact but the recorded ones.
+    #[implements("FR-339-AC-1", "FR-339-AC-2")]
     fn components(
         &self,
         recording: Recording<S>,
@@ -963,8 +982,14 @@ impl<S: SubjectSystem> Check<'_, S> {
                 ConstraintError::Protocol(error) => ClosureRefusal::Fairness(error),
                 ConstraintError::Unnumbered => fault("every-recorded-transition-is-numbered"),
             })?;
+        // The negated liveness automaton has no successor for any initial
+        // letter when the claim already holds at every initial state: no
+        // product state is reached, whatever else the closure lists.
+        if recorded.graph.is_empty() {
+            return Ok(partition_of_no_state(components));
+        }
         check_partition(&recorded.graph, components, &constraints, self.cancel)
-            .map_err(|_| fault("a-reached-closure-holds-an-initial-state"))
+            .map_err(|_| fault("the-partitioned-product-holds-a-state"))
     }
 
     fn run(&mut self, instances: &mut [Instance]) -> Step<()> {
@@ -2307,7 +2332,7 @@ fn fault(invariant: &'static str) -> ClosureRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProtocolLoopProofKind, ProtocolLoopProofTarget, loop_proof_target};
+    use super::{loop_proof_target, ProtocolLoopProofKind, ProtocolLoopProofTarget};
     use crate::ModelCheckItem;
     use fsl_semantics::check::ProtocolNodeId;
 

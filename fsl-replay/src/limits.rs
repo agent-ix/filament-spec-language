@@ -9,7 +9,6 @@
 //! entry point.
 
 use filament_exact::{LimitKind as Counter, ScalarLimits};
-use std::collections::BTreeSet;
 use fsl_eval::execution::PrepareLimits;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::Limits as ExploreLimits;
@@ -21,6 +20,7 @@ use fsl_semantics::library::bundle::PackageLimits as LibraryLimits;
 use fsl_semantics::model::observation::ObservationLimits;
 use fsl_semantics::model::population::PopulationAdmissionLimits;
 use ix_trace_rs::implements;
+use std::collections::BTreeSet;
 
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::CertificateCheckLimits;
@@ -245,6 +245,8 @@ pub struct EngineLimits {
     pub certificate: CertificateCheckLimits,
     /// `certificate_check.max_rank` (FR-201).
     pub certificate_max_rank: u64,
+    /// `analysis.retained_bytes` (FR-255).
+    pub analysis_retained_bytes: u64,
     /// `schedule.max_demand_points` (FR-247).
     pub schedule_max_demand_points: u64,
     /// `hybrid.max_solver_steps` and `hybrid.max_solver_time` (FR-250).
@@ -273,6 +275,11 @@ impl Default for EngineLimits {
             zone_check: [1 << 20, 1 << 24, 1 << 20, 1 << 30],
             certificate: CertificateCheckLimits::default(),
             certificate_max_rank: DEFAULT_CERTIFICATE_MAX_RANK,
+            analysis_retained_bytes: const {
+                Setting::AnalysisRetainedBytes
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
             schedule_max_demand_points: 1_048_576,
             hybrid: [1_000_000, 60],
             smt_encoding: SmtEncodingLimits::default(),
@@ -362,6 +369,11 @@ impl SettingLimits for EngineLimits {
             (Setting::ZoneCheckMaxAutomatonStates, self.zone_check[2]),
             (Setting::ZoneCheckMaxZoneBytes, self.zone_check[3]),
             (
+                Setting::ZoneCheckMaxCheckWork,
+                self.certificate.max_check_work,
+            ),
+            (Setting::AnalysisRetainedBytes, self.analysis_retained_bytes),
+            (
                 Setting::CertificateCheckMaxCertificateEdges,
                 self.certificate.max_certificate_edges,
             ),
@@ -441,6 +453,8 @@ impl SettingLimits for EngineLimits {
             Setting::ZoneCheckMaxSymbolicTransitions => self.zone_check[1] = bound,
             Setting::ZoneCheckMaxAutomatonStates => self.zone_check[2] = bound,
             Setting::ZoneCheckMaxZoneBytes => self.zone_check[3] = bound,
+            Setting::ZoneCheckMaxCheckWork => self.certificate.max_check_work = bound,
+            Setting::AnalysisRetainedBytes => self.analysis_retained_bytes = bound,
             Setting::CertificateCheckMaxCertificateEdges => {
                 self.certificate.max_certificate_edges = bound;
             }
@@ -495,6 +509,7 @@ impl Default for WorkerCounts {
 }
 
 impl WorkerCounts {
+    #[ix_trace_rs::string_edge]
     fn set(&mut self, name: &str, value: u64) -> bool {
         let field = match name {
             "explore.workers" => &mut self.explore,
@@ -735,6 +750,25 @@ mod tests {
             .find(|(reported, _)| *reported == setting)
             .map(|(_, bound)| bound)
             .unwrap_or_else(|| panic!("no limits type reports {setting}"))
+    }
+
+    #[trace("FR-255-AC-27")]
+    #[test]
+    fn the_settings_operation_returns_published_defaults_and_refuses_zero() {
+        let limits = CallerLimits::from_operands([]).unwrap();
+        for (setting, bound) in [
+            (Setting::S1Tokens, 100_000),
+            (Setting::EmitOutputBytes, 16_777_216),
+            (Setting::ZoneCheckMaxSymbolicStates, 1_048_576),
+            (Setting::ZoneCheckMaxCheckWork, 100_000_000),
+            (Setting::AnalysisRetainedBytes, 4_294_967_296),
+        ] {
+            assert_eq!(bound_of(&limits, setting), bound, "{setting}");
+        }
+        for operand in ["analysis.retained_bytes=0", "zone_check.max_check_work=0"] {
+            let refusal = CallerLimits::from_operands([operand]).unwrap_err();
+            assert_eq!(refusal.operand, operand);
+        }
     }
 
     /// The builders and the settings mapping are one: each builder sets the

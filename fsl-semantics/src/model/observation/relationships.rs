@@ -270,6 +270,7 @@ fn read_instance(value: Json<'_>) -> Result<RawInstance, AdmissionRecord> {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn read_positions(value: Option<Json<'_>>) -> Result<RelationshipPositions, AdmissionRecord> {
     let Some(value) = value else {
         return Ok(RelationshipPositions::default());
@@ -563,6 +564,7 @@ fn escape_pointer_segment(segment: &str) -> String {
 /// # Errors
 ///
 /// The first failing condition in walk order.
+#[ix_trace_rs::string_edge]
 pub(super) fn check_entries(
     types: &TypeEnvironment,
     facts: &ModelFacts,

@@ -21,6 +21,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-170
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-331
+    type: depends_on
 ---
 # FR-169: Settle a state-graph verdict with its settlement method
 

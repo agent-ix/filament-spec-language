@@ -8,7 +8,7 @@ use fsl_foundation::{
     source::provenance::{OccurrenceKey, SourceRegion},
 };
 
-use crate::{EntryBudget, InspectCause, InspectLimits, View, check_cancel};
+use crate::{check_cancel, EntryBudget, InspectCause, InspectLimits, View};
 
 /// An outcome document and source loci resolved from its producing values.
 #[derive(Clone, Debug)]

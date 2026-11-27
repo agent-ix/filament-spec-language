@@ -74,7 +74,7 @@ pub enum StateGraphForm {
 - The claim's `Requirements{kind: temporal-satisfaction, extent:
   Unbounded{domains}}`, with `domains` naming the claim, and its
   `StateGraphForm` recorded beside it.
-- A typed `CheckRefusal` with a span, and no checked claim, on refusal.
+- A typed `SemanticCheckRefusal` with a span, and no checked claim, on refusal.
 - For the request writer: the request's deadlock-freedom items.
 
 ## Behavior
@@ -134,8 +134,8 @@ pub enum StateGraphForm {
 - S3 SHALL record a claim's `over` binding (`Some` when written, `None`
   when absent) and SHALL NOT instantiate it. A population universe is a
   request-time input (`ModelSubject.universes`, FR-125), not an S3 input, so
-  FR-125 instantiates the claim: one instance per object of the parameter's
-  universe, or one instance when the claim has no `over` binding.
+  FR-125 instantiates the claim: one instance per admitted key of the
+  parameter's type, or one instance when the claim has no `over` binding.
 - The form and every predicate SHALL be part of the claim's checked
   identity, so two claims that differ only in form have different node
   identities.

@@ -12,7 +12,7 @@ relationships:
 
 Verify the exact twelve-versus-one split ADR-011's module table describes
 for `value::expression::refusal`: `check` defines every check-cause type
-(`CheckCause`, `CheckRefusal`, `Obligation`, `MeasureObligation`,
+(`CheckCause`, `SemanticCheckRefusal`, `Obligation`, `MeasureObligation`,
 `CheckingStage`, `CheckingLimitKind`, `DispatchFunctionRole`,
 `InvalidDispatchDeclaration`, `Location`, `Origin`, `ProvedInterval`)
 and does not define `InputRefusal` or `WrongSnapshotCause` (both live in

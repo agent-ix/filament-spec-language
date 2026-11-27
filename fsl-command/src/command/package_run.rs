@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use super::{FileCounts, Result, RunCause, RunResult, output, wire};
+use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
@@ -32,11 +32,22 @@ pub struct PreparedPackageRun {
     packages: fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     work: Work,
+    /// The limits its requirement items settle under.
+    item_limits: fsl_analyze::analyze::AnalyzeLimits,
     /// The request's `package` selection, echoed by the result.
     selection: serde_json::Value,
     /// The domain package sources the request supplied.
     models: Vec<fsl_foundation::Source>,
     sources: Vec<fsl_foundation::Source>,
+}
+
+/// A package `tl_lowering` and the limits it runs under.
+struct LoweringWork {
+    lowering: super::tl::TlLowering,
+    /// The `cross_evaluate.initial` snapshot.
+    snapshot: Option<Vec<u8>>,
+    accounting: filament_exact::ScalarLimits,
+    observation_limits: fsl_semantics::model::observation::ObservationLimits,
 }
 
 /// What a package run does once the package is admitted.
@@ -46,9 +57,8 @@ enum Work {
         Box<fsl_replay::spine::Call>,
         Option<super::requirements::Requirements>,
     ),
-    /// FR-1039: lower a temporal clause the package names (FR-931). The
-    /// bytes are the `cross_evaluate.initial` snapshot.
-    Lowering(super::tl::TlLowering, Option<Vec<u8>>),
+    /// FR-1039: lower a temporal clause the package names (FR-931).
+    Lowering(Box<LoweringWork>),
     /// FR-1039: run a temporal clause the package names over record samples.
     Clause(Box<ClauseWork>),
 }
@@ -127,6 +137,7 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
 
 /// The request-stage refusal of a package the strict reader refused, with
 /// the reader's pointer under `/request/package` (FR-1039).
+#[ix_trace_rs::string_edge]
 fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     if let Some(failure) = refusal.host_allocation_failure {
         return RunCause::AnalyzePackage {
@@ -218,9 +229,10 @@ pub(super) fn prepare(
     request: &wire::Request,
     package: &wire::RunPackageSelection,
     dependent_bytes: usize,
-    progress_capacity: u64,
+    overrides: &super::RequestOverrides<'_>,
 ) -> Result<PreparedPackageRun> {
     validate_request(request)?;
+    let stage = overrides.spine_limits();
     if package.source_package.is_some() {
         return Err(invalid(
             "package.source_package",
@@ -251,11 +263,18 @@ pub(super) fn prepare(
             package,
             clause,
             dependent_bytes,
-            progress_capacity,
+            overrides,
         );
     }
     if let Some(member) = &request.tl_lowering {
-        return prepare_lowering(directory, request, package, member, dependent_bytes);
+        return prepare_lowering(
+            directory,
+            request,
+            package,
+            member,
+            dependent_bytes,
+            overrides,
+        );
     }
     let Some(call) = &request.call else {
         return Err(invalid("call", "a package run names its call"));
@@ -272,10 +291,10 @@ pub(super) fn prepare(
         package,
         dependent_bytes,
         call.snapshot.as_deref(),
+        &stage,
     )?;
     if let Some(bytes) = &admitted.snapshot {
-        let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None)
-            .map_err(|error| invalid(&error.member, error.reason))?;
+        let limits = overrides.observation_limits().unwrap_or_default();
         let (snapshot_bytes, relationship_extents) =
             super::relationships::snapshot_document(bytes, call.relationships.as_ref())?;
         let observation =
@@ -299,6 +318,7 @@ pub(super) fn prepare(
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Call(Box::new(spine_call), requirements),
+        item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
         models: admitted.models,
         sources: admitted.sources,
@@ -311,17 +331,18 @@ pub(super) fn prepare(
 /// trace, a lasso or a model-arm behaviour). Any other selection refuses here,
 /// before a file is opened. A run builds states over the package's model
 /// world, so a `{file}` selection refuses it.
+#[ix_trace_rs::string_edge]
 fn prepare_clause(
     directory: &Path,
     request: &wire::Request,
     package: &wire::RunPackageSelection,
     clause: &wire::ClauseRun,
     dependent_bytes: usize,
-    progress_capacity: u64,
+    overrides: &super::RequestOverrides<'_>,
 ) -> Result<PreparedPackageRun> {
     use fsl_replay::spine::{
-        ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation, TraceInput,
-        read_clause_selection,
+        read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation,
+        TraceInput,
     };
 
     if request.call.is_some() || request.tl_lowering.is_some() {
@@ -348,9 +369,22 @@ fn prepare_clause(
     if !matches!(parts, ClauseSelectionPartsKind::Temporal { .. }) {
         return Err(not_read("clause.selection"));
     }
-    let observation_limits =
-        fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
-            .map_err(|error| invalid(&error.member, error.reason))?;
+    // FR-312: as the source route, one source states the observation limits.
+    let observation_override = overrides.observation_limits();
+    if observation_override.is_some() && clause.observation_limits.is_some() {
+        return Err(invalid(
+            "observation_limits",
+            "request member and an observation limit override were both supplied",
+        ));
+    }
+    let observation_limits = match observation_override {
+        Some(limits) => limits,
+        None => {
+            fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
+                .map_err(|error| invalid(&error.member, error.reason))?
+        }
+    };
+    let stage = overrides.spine_limits();
     // Each observation file is read once, as the source route reads it, and the
     // progress ledger file beside them.
     let mut files: Vec<&str> = Vec::new();
@@ -363,7 +397,7 @@ fn prepare_clause(
     if let Some(ledger) = clause.selection.ledger_path() {
         files.push(ledger);
     }
-    let admitted = admit_files(directory, request, package, dependent_bytes, &files)?;
+    let admitted = admit_files(directory, request, package, dependent_bytes, &files, &stage)?;
     let mut observations = std::collections::BTreeMap::new();
     for (key, file) in &clause.observations {
         let index = files
@@ -444,8 +478,8 @@ fn prepare_clause(
         snapshots,
         observation_limits,
         selection: selection.clone(),
-        accounting: super::call_accounting(&clause.accounting),
-        progress_capacity,
+        accounting: overrides.accounting_over(super::call_accounting(&clause.accounting)),
+        progress_capacity: stage.progress.covered_positions,
     };
     Ok(PreparedPackageRun {
         package: admitted.package,
@@ -457,6 +491,7 @@ fn prepare_clause(
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Clause(Box::new(work)),
+        item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
         models: admitted.models,
         sources: admitted.sources,
@@ -538,6 +573,7 @@ fn execute_clause(
                 trace: &work.trace,
                 over,
                 ledger: work.ledger.as_ref(),
+                emit: fsl_replay::spine::PackageLimits::default().emit(),
             })
             .map_err(selection_not_read)?
         }
@@ -582,6 +618,7 @@ fn prepare_lowering(
     package: &wire::RunPackageSelection,
     member: &serde_json::Value,
     dependent_bytes: usize,
+    overrides: &super::RequestOverrides<'_>,
 ) -> Result<PreparedPackageRun> {
     if request.call.is_some() || request.clause.is_some() {
         return Err(invalid(
@@ -599,7 +636,15 @@ fn prepare_lowering(
         Some(super::tl::CrossEvaluate::Initial { initial, .. }) => Some(initial.as_str()),
         Some(super::tl::CrossEvaluate::Trace { .. }) | None => None,
     };
-    let admitted = admit(directory, request, package, dependent_bytes, initial)?;
+    let stage = overrides.spine_limits();
+    let admitted = admit(
+        directory,
+        request,
+        package,
+        dependent_bytes,
+        initial,
+        &stage,
+    )?;
     Ok(PreparedPackageRun {
         package: admitted.package,
         package_bytes: admitted.package_bytes,
@@ -609,7 +654,13 @@ fn prepare_lowering(
         budget: admitted.budget,
         packages: admitted.packages,
         model_limits: admitted.model_limits,
-        work: Work::Lowering(lowering, admitted.snapshot),
+        work: Work::Lowering(Box::new(LoweringWork {
+            lowering,
+            snapshot: admitted.snapshot,
+            accounting: overrides.accounting_over(fsl_replay::AccountingLimits::default().0),
+            observation_limits: overrides.observation_limits().unwrap_or_default(),
+        })),
+        item_limits: super::overrides::item_limits(overrides),
         selection: admitted.selection,
         models: admitted.models,
         sources: admitted.sources,
@@ -659,6 +710,7 @@ pub(super) fn admit(
     package: &wire::RunPackageSelection,
     dependent_bytes: usize,
     snapshot: Option<&str>,
+    stage: &fsl_replay::spine::SpineLimits,
 ) -> Result<AdmittedPackage> {
     let mut admitted = admit_files(
         directory,
@@ -666,6 +718,7 @@ pub(super) fn admit(
         package,
         dependent_bytes,
         snapshot.as_slice(),
+        stage,
     )?;
     admitted.snapshot = admitted.observations.pop();
     Ok(admitted)
@@ -680,6 +733,7 @@ pub(super) fn admit_files(
     package: &wire::RunPackageSelection,
     dependent_bytes: usize,
     files: &[&str],
+    stage: &fsl_replay::spine::SpineLimits,
 ) -> Result<AdmittedPackage> {
     // FR-1039: `equality` is a string admitted on the file form only, and
     // refuses before any selected file is opened.
@@ -766,8 +820,7 @@ pub(super) fn admit_files(
             cause => cause,
         },
     )?;
-    let limits =
-        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let limits = stage.imports;
     let (admitted, identities, equality, budget, dependencies) = match &handoff {
         Selected::Directory(handoff) => {
             let loaded = super::handoff::admit(&mut intake, handoff, bytes, &supplied, limits)
@@ -842,7 +895,7 @@ pub(super) fn admit_files(
         equality,
         budget,
         packages: supplied,
-        model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        model_limits: stage.model,
         relationship_navigation,
         snapshot: None,
         observations,
@@ -865,6 +918,7 @@ enum Selected {
 /// is not the v2 contract is refused before the strict reader runs as
 /// `unknown_wire`/`unsupported-wire` at `/request/package/contract_version`
 /// (FR-1039-AC-3, never `invalid_package`).
+#[ix_trace_rs::string_edge]
 fn require_contract_version(bytes: &[u8]) -> Result<()> {
     #[derive(serde::Deserialize)]
     struct Contract {
@@ -967,6 +1021,7 @@ pub(super) fn execute_with_settle(
     execute_inner(prepared, Some(settle))
 }
 
+#[ix_trace_rs::string_edge]
 fn execute_inner(
     prepared: PreparedPackageRun,
     settle: Option<&super::settle::Settle<'_>>,
@@ -981,6 +1036,7 @@ fn execute_inner(
         packages,
         model_limits,
         work,
+        item_limits,
         selection,
         models,
         sources,
@@ -1018,7 +1074,13 @@ fn execute_inner(
             result.sources = crate::Sources::from_sources(models.into_iter().chain(sources));
             return Ok(result);
         }
-        Work::Lowering(lowering, snapshot) => {
+        Work::Lowering(work) => {
+            let LoweringWork {
+                lowering,
+                snapshot,
+                accounting,
+                observation_limits,
+            } = *work;
             let lowered = super::tl::lower_over_package(
                 &bare,
                 &lowering,
@@ -1027,6 +1089,8 @@ fn execute_inner(
                     packages: &packages,
                     model_limits,
                     snapshot: snapshot.as_deref(),
+                    accounting,
+                    observation_limits,
                 },
             )?;
             let mut result = match lowered {
@@ -1207,6 +1271,7 @@ fn execute_inner(
             function: &call.function,
             requirements,
             settle,
+            limits: item_limits,
             budget,
         })?)
     } else {
@@ -1231,6 +1296,7 @@ struct ValueCall<'a> {
     function: &'a str,
     requirements: &'a super::requirements::Requirements,
     settle: &'a super::settle::Settle<'a>,
+    limits: fsl_analyze::analyze::AnalyzeLimits,
     budget: filament_contract_model::NativeJoinBudget,
 }
 
@@ -1244,6 +1310,7 @@ fn settle_value_call(
         function,
         requirements,
         settle,
+        limits,
         budget,
     }: ValueCall<'_>,
 ) -> Result<fsl_analyze::analyze::document::SettledRun> {
@@ -1335,7 +1402,7 @@ fn settle_value_call(
             subject,
             items: Some(&selections),
             engines: settle.engines,
-            limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
+            limits,
             budget,
         },
         function,

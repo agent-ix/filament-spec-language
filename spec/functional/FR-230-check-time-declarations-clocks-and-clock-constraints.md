@@ -149,7 +149,7 @@ pub enum ClockOp { Lt, Le, Eq, Ge, Gt }
 `CheckedStateModel::time: Option<TimedModel>`, each operation's checked
 guard as data predicates and atomic clock constraints, and each operation's
 resets as `(ClockRef, ExactRational)` pairs and, for each collection-valued postcondition
-conjunct over a clock collection, the `Provenance` of every occurrence of the written value. A typed `CheckRefusal` with a
+conjunct over a clock collection, the `Provenance` of every occurrence of the written value. A typed `SemanticCheckRefusal` with a
 span on refusal.
 
 ## Behavior

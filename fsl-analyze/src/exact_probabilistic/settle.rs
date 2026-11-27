@@ -5,7 +5,7 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::NotSimulated;
 use fsl_replay::statistical::SubjectLimits;
 use fsl_replay::{
-    ExactProbBuildIssue, ExactProbBuildRecord, UnavailabilityCause, settle_exact_prob_build_issue,
+    settle_exact_prob_build_issue, ExactProbBuildIssue, ExactProbBuildRecord, UnavailabilityCause,
 };
 
 use super::{ProductRefusal, ProductStop};

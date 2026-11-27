@@ -80,6 +80,7 @@ pub use model_check::digital_state_graph::{
 };
 pub use task_transition::{TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity};
 mod monitor_plan;
+mod not_digitisable;
 mod object_environment;
 pub mod outcome;
 
@@ -118,6 +119,7 @@ mod refinement_query;
 mod request;
 mod result;
 mod scalar;
+pub mod shared_wire;
 pub mod source_inventory;
 pub mod spine;
 mod spine_eval_api;
@@ -128,6 +130,7 @@ mod timed;
 pub mod value_check;
 mod witness;
 mod witness_entry_name;
+mod written_operation;
 
 use fsl_package::{ModelIdentity, ObligationIdentity};
 
@@ -159,8 +162,8 @@ pub use call_requirements::{
     CallRequirements, RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
-    call_site, locate_in_checked, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName,
-    CallSiteUnit, ClauseSite, FieldName, FieldSite, FunctionSite, ImportedFunctionName,
+    call_site, locate_in_checked, CallSite, CallSiteRefusal, CallSiteSelection, CallSiteUnit,
+    ClauseName, ClauseSite, FieldName, FieldSite, FunctionSite, ImportedFunctionName,
     ImportedFunctionSite, OperationSite, PopulationName, PopulationSite, ValueParitySite,
 };
 pub use certificate::closed_form::check::{
@@ -301,7 +304,9 @@ pub use model_check::counterexample::{
     UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
-pub use model_check::existential_settle::{settle_existential, ExistentialRecord};
+pub use model_check::existential_settle::{
+    settle_existential, settle_package_existential, ExistentialRecord,
+};
 pub use model_check::finite_hyper_replay::{
     replay_finite_hyper_refutation, reproduce_finite_hyper_refutation,
     ReproducedFiniteHyperRefutation,
@@ -385,9 +390,8 @@ pub use model_check::replay::{
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
     settle_smt_proof, settle_smt_proof_with_evidence, smt_query_digest, CertificateChecker,
-    Execution,
-    ModelCheckRecord, RecordWarning, ResultLabel, SmtProofSettlement, Truth, EXPLICIT_STATE,
-    K_INDUCTION,
+    Execution, ModelCheckRecord, RecordWarning, ResultLabel, SmtProofSettlement, Truth,
+    EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, encode_temporal_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal,
@@ -423,30 +427,28 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
-    check_step_for_model,
-    abstract_classes, candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
-    candidate_lasso_has_fair_run,
-    candidate_lasso_has_fair_run_with_recurring_edge, check_initial, check_protocol_initial,
-    check_protocol_initial_with_transition_limit, check_protocol_state_relations,
-    check_protocol_step, check_protocol_step_with_transition_limit, check_step, initial_history,
-    map_state,
-    open_protocol_systems, open_protocol_systems_with_initial_limit, open_systems,
-    open_systems_with_initial_limit, protocol_observation_label, protocol_transition_class,
-    step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
-    AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateStep,
-    CandidateLivenessError, ConcreteStep, EvalFailure, FieldMapping, HiddenSlot, HistoryValues,
-    LivenessHalf, MappedState, MappingExpression, MappingFailure, MappingRowRef, MappingTarget,
-    MappingUndetermined, ObjectKey, ObjectMapping, ObservationField, ObservationLabel,
-    PackageRefinement, PackageRefinementRefusal, PairedAssumptionPath, PairedAssumptionStep,
-    PopulationMapping, ProtocolAssumptionFairness, ProtocolAssumptionReason,
-    ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal, ProtocolTrace,
-    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementRead, RefinementSystems,
-    RefinementWitness, RefinementWitnessError, RefinementWorld, RequiredTemporalFairness,
-    SafetyOutcome, SafetyUndecided, StateIndex, StepArgument, StepMapping, StepRejection,
-    StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken, TerminalSuccessDirection,
-    Undetermined, UnsteppedConstruct,
+    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
+    candidate_lasso_has_fair_run_with_recurring_edge, candidate_stutter_target_ordinal,
+    check_initial, check_protocol_initial, check_protocol_initial_with_transition_limit,
+    check_protocol_state_relations, check_protocol_step, check_protocol_step_with_transition_limit,
+    check_step, check_step_for_model, initial_history, map_state, open_protocol_systems,
+    open_protocol_systems_with_initial_limit, open_systems, open_systems_with_initial_limit,
+    protocol_observation_label, protocol_transition_class, step_history, step_view_over,
+    AbstractClass, AbstractInitial, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
+    AssumptionSelectedMember, AssumptionSide, AssumptionTarget, CandidateFairHop,
+    CandidateFairState, CandidateFairStep, CandidateLivenessError, CandidateStep, ConcreteStep,
+    EvalFailure, FieldMapping, HiddenSlot, HistoryValues, LivenessHalf, MappedState,
+    MappingExpression, MappingFailure, MappingRowRef, MappingTarget, MappingUndetermined,
+    ObjectKey, ObjectMapping, ObservationField, ObservationLabel, PackageRefinement,
+    PackageRefinementRefusal, PairedAssumptionPath, PairedAssumptionStep, PopulationMapping,
+    ProtocolAssumptionFairness, ProtocolAssumptionReason, ProtocolAssumptionWitness,
+    ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation, ProtocolStep,
+    ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal, ProtocolTrace, RefinementFailure,
+    RefinementOutcome, RefinementPosition, RefinementRead, RefinementSystems, RefinementWitness,
+    RefinementWitnessError, RefinementWorld, RequiredTemporalFairness, SafetyOutcome,
+    SafetyUndecided, StateIndex, StepArgument, StepMapping, StepRejection, StepResult, StepVerdict,
+    StepViewRefusal, SubjectRefusal, Taken, TerminalSuccessDirection, Undetermined,
+    UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
@@ -456,8 +458,8 @@ pub use filament_semantic_value::declaration::EqualityOperator;
 pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
+pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use outcome::undefined_reason;
-pub use outcome::verdict_bound_wire;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,
@@ -494,45 +496,58 @@ pub use probability_certificate::{
 pub use probability_certificate::{
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,
     check_probability_certificate_document, check_probability_certificate_document_as,
+    check_probability_certificate_document_as_with_work_scope,
     check_probability_certificate_package, check_probability_certificate_source, claim_binding,
     conditional_measure_probability_certificate, cyclic_mdp_probability_certificate_document,
-    cyclic_mdp_reward_probability_certificate_document, digital_key_clocks,
+    cyclic_mdp_probability_certificate_document_with_work_scope,
+    cyclic_mdp_reward_probability_certificate_document,
+    cyclic_mdp_reward_probability_certificate_document_with_work_scope, digital_key_clocks,
     digital_probability_product_key, long_run_probability_certificate_document,
-    measure_probability_certificate_document, measure_probability_objective,
+    long_run_probability_certificate_document_with_work_scope,
+    measure_probability_certificate_document,
+    measure_probability_certificate_document_with_work_scope, measure_probability_objective,
     measure_probability_product_key, on_each_has_instance, on_each_outcome,
-    partial_lower_measure_probability_certificate_document,
-    partial_lower_probability_proof_document, probabilistic_claim_identity,
+    on_each_outcome_with_work_scope, partial_lower_measure_probability_certificate_document,
+    partial_lower_measure_probability_certificate_document_with_work_scope,
+    partial_lower_probability_proof_document,
+    partial_lower_probability_proof_document_with_work_scope, probabilistic_claim_identity,
     probabilistic_formula_monitor_context, probability_certificate_document,
-    probability_proof_document, read_long_run_probability_certificate,
-    read_measure_probability_certificate, read_probability_certificate,
-    read_probability_proof_document, read_weighted_long_run_probability_certificate,
-    region_probability_product_key, replay_on_each_witness, replay_probabilistic_undefined,
-    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
-    vacuous_measure_probability_certificate_document,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_measure_probability_certificate, write_value_bounds_measure_certificate,
-    write_probability_certificate,
-    write_probability_proof_document, write_timed_fair_probability_certificate,
-    write_value_bounds_certificate,
-    write_value_bounds_proof_document, write_weighted_long_run_probability_certificate,
-    ActivationPhase, ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput,
-    CertificateRole, DigitalTail, ExactProbabilityAcceptance, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue,
-    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, MeasurePayoffKind, MeasureProbabilityDocument, OnEachOutcome,
-    ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityBoundSide,
-    ProbabilityCertificateDocument, ProbabilityCertificateLocus, ProbabilityCertificatePart,
-    ProbabilityCertificateRejection, ProbabilityCertificateRule, ProbabilityDocumentError,
-    ProbabilityDocumentIoLimits, ProbabilityDocumentLimit, ProbabilityDocumentLimits,
-    ProbabilityKeyAdmission, ProbabilityObjective, ProbabilityPackageRequest,
-    ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
-    ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
-    ProbabilityStateEvent, ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness,
-    ProbabilityVacuityAcceptance, ProbabilityWitnessError, ProbabilityWitnessPath,
-    ProbabilityWitnessReplay, ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey,
-    RegionKeyKind, RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind,
-    TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
-    WeightedLongRunProbabilityDocument, WorkloadFreeDelayRefusal,
+    probability_proof_document, probability_proof_document_with_work_scope,
+    read_long_run_probability_certificate, read_measure_probability_certificate,
+    read_probability_certificate, read_probability_proof_document,
+    read_weighted_long_run_probability_certificate, region_probability_product_key,
+    replay_on_each_witness, replay_on_each_witness_with_work_scope, replay_probabilistic_undefined,
+    replay_probabilistic_undefined_with_work_scope, replay_probabilistic_witness,
+    replay_probabilistic_witness_from_package,
+    replay_probabilistic_witness_from_package_with_work_scope,
+    replay_probabilistic_witness_with_work_scope, vacuous_measure_probability_certificate_document,
+    vacuous_measure_probability_certificate_document_with_work_scope,
+    weighted_long_run_probability_certificate_document,
+    weighted_long_run_probability_certificate_document_with_work_scope,
+    write_long_run_probability_certificate, write_measure_probability_certificate,
+    write_probability_certificate, write_probability_proof_document,
+    write_probability_proof_document_with_work_scope, write_timed_fair_probability_certificate,
+    write_value_bounds_certificate, write_value_bounds_measure_certificate,
+    write_value_bounds_proof_document, write_value_bounds_proof_document_with_work_scope,
+    write_weighted_long_run_probability_certificate, ActivationPhase, CertificateRole,
+    ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail,
+    ExactProbabilityAcceptance, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    ExactProbabilityGraphError, ExactProbabilityValue, LongRunOptimization, LongRunPolicyChoice,
+    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument, MeasurePayoffKind,
+    MeasureProbabilityDocument, OnEachOutcome, ProbabilisticCounterexample,
+    ProbabilisticSchedulerChoice, ProbabilityBoundSide, ProbabilityCertificateDocument,
+    ProbabilityCertificateLocus, ProbabilityCertificatePart, ProbabilityCertificateRejection,
+    ProbabilityCertificateRule, ProbabilityDocumentError, ProbabilityDocumentIoLimits,
+    ProbabilityDocumentLimit, ProbabilityDocumentLimits, ProbabilityKeyAdmission,
+    ProbabilityObjective, ProbabilityPackageRequest, ProbabilityProductKey,
+    ProbabilityProofDocument, ProbabilityRewardObjective, ProbabilitySourceError,
+    ProbabilitySourceLimits, ProbabilitySourceRequest, ProbabilityStateEvent,
+    ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness, ProbabilityVacuityAcceptance,
+    ProbabilityWitnessError, ProbabilityWitnessPath, ProbabilityWitnessReplay,
+    ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
+    RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind, TimedProbabilityForm,
+    TimedProbabilityObjective, TimedProbabilityRoute, WeightedLongRunProbabilityDocument,
+    WorkloadFreeDelayRefusal,
 };
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{
@@ -551,8 +566,7 @@ pub use proof_result::{
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
     read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
     BackendProviderSource, BoundsExploration, BoundsMethod, Certification, DeclineCode,
-    EmptyEnvelopeSet, ExactBinding, ExactBound, ExactEntry, ExactOrBounds, ExactRational,
-    Extremum, FslOnlyCause,
+    EmptyEnvelopeSet, ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
     IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
     PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
     ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, ReportedInconclusiveCause,
@@ -565,7 +579,9 @@ pub use proof_result::{
 // select by. They are defined in `spine` because the spine compile reads
 // them; re-exported at the root so CG names them without naming `spine`,
 // which it may not (ADR-011 §3 FB-05, T-12 rule (a)).
-pub use spine::{DependencyInput, DependencyInputRefusal, OperationName, SourceHolder, SuppliedLibrary};
+pub use spine::{
+    DependencyInput, DependencyInputRefusal, OperationName, SourceHolder, SuppliedLibrary,
+};
 // FR-121, FR-640: the clock selections `call_site` compiles under.
 pub use spine::{InvalidClock, RequestClocks};
 // The O-07 occurrence key and O-12 source region these envelopes carry
@@ -824,11 +840,9 @@ mod redaction_tests {
         // A separately, validly constructed witness from the trimmed block
         // still returns the marker through its typed accessor.
         let valid_witness = Witness::parse(format!("<<<assertion|h|c|{marker}=1>>>")).unwrap();
-        assert!(
-            valid_witness
-                .concrete_values()
-                .iter()
-                .any(|(name, _)| name == marker)
-        );
+        assert!(valid_witness
+            .concrete_values()
+            .iter()
+            .any(|(name, _)| name == marker));
     }
 }

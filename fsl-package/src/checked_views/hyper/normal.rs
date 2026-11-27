@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-940's package normal form, without source expressions or recursive walks.
 
-use super::{FORMULA_VISITS, Nodes, malformed, pending};
+use super::{malformed, pending, Nodes, FORMULA_VISITS};
 use crate::BareClauseRefusal;
 use filament_contract_model::{CheckedNodeId, CheckedTerm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{CopyGenerator, CopyGroup, PackageFormulaNode, PackageHyperQuantifier};
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub(super) struct Inputs<'a, 'p> {
@@ -215,6 +216,14 @@ enum Work<'a> {
     },
 }
 
+/// Whether the wire operation `identity` is `lookup`.
+#[ix_trace_rs::string_edge]
+fn is_lookup(identity: &str) -> bool {
+    identity == "filament.op.model.lookup"
+}
+
+#[implements("FR-176-AC-7")]
+#[ix_trace_rs::string_edge]
 fn expression(
     inputs: &Inputs<'_, '_>,
     root: &CheckedNodeId,
@@ -328,31 +337,51 @@ fn expression(
                     {
                         return Err(pending(root, "hyper-normal-form-operation"));
                     }
-                    if read.mode.is_some() || !read.laws.is_empty() || !read.leaves.is_empty() {
+                    // FR-940's opaque table: `lookup` is opaque, and its mode (the
+                    // FR-084 absence result) and type argument are part of its tag.
+                    let lookup = is_lookup(identity);
+                    if (read.mode.is_some() && !lookup)
+                        || !read.laws.is_empty()
+                        || !read.leaves.is_empty()
+                    {
                         return Err(pending(root, "hyper-normal-form-metadata"));
                     }
+                    let mode = match &read.mode {
+                        Some(mode) => budget.copy(format!("{mode:?}").as_bytes())?,
+                        None => Vec::new(),
+                    };
                     let member = match read.member {
                         None => Vec::new(),
                         Some(filament_contract_model::CheckedOperationMember::Field {
                             declaration,
                             name,
                             read_form,
+                            population,
                         }) => encode(
                             b"field",
                             &[
                                 inputs.key(declaration, claim, budget)?,
                                 budget.copy(name.as_bytes())?,
                                 format!("{read_form:?}").into_bytes(),
+                                match population {
+                                    Some(population) => encode(
+                                        b"population",
+                                        &[inputs.key(population, claim, budget)?],
+                                        budget,
+                                    )?,
+                                    None => Vec::new(),
+                                },
                             ],
                             budget,
                         )?,
                         Some(filament_contract_model::CheckedOperationMember::TypeArgument {
                             declaration,
                             alias,
-                        }) if matches!(
-                            identity,
-                            "filament.op.numeric.convert" | "filament.op.numeric.narrow"
-                        ) =>
+                        }) if lookup
+                            || matches!(
+                                identity,
+                                "filament.op.numeric.convert" | "filament.op.numeric.narrow"
+                            ) =>
                         {
                             let alias = match alias {
                                 Some(alias) => encode(
@@ -384,6 +413,7 @@ fn expression(
                         &[
                             budget.copy(identity.as_bytes())?,
                             member,
+                            mode,
                             inputs.key(result_type, claim, budget)?,
                             encode(
                                 b"constraints",
@@ -419,14 +449,11 @@ fn expression(
                             .saturating_mul(std::mem::size_of::<Work<'_>>()),
                     )?;
                     if identity == "filament.op.control.let" {
-                        let [
-                            CheckedTerm::Binding {
-                                binder: Some(binder),
-                                value,
-                                ..
-                            },
-                            body,
-                        ] = arguments.as_slice()
+                        let [CheckedTerm::Binding {
+                            binder: Some(binder),
+                            value,
+                            ..
+                        }, body] = arguments.as_slice()
                         else {
                             return Err(malformed(claim));
                         };
@@ -466,7 +493,7 @@ fn expression(
                             || identity.ends_with(".ne")
                             || identity == "filament.op.ieee.numeric_equal",
                         model_read: identity == "filament.op.model.deref",
-                        opaque: false,
+                        opaque: lookup,
                     });
                     pending_work.extend(arguments.iter().rev().map(Work::Term));
                 }

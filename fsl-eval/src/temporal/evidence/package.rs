@@ -166,6 +166,7 @@ pub(super) fn clock_time_unit(clock: &fsl_package::ClockConfiguration) -> Option
 }
 
 /// Whether the package declares a unit named `unit`, whichever route built it.
+#[ix_trace_rs::string_edge]
 fn package_declares_unit(package: &CheckedPackageV2, unit: &str) -> bool {
     package.resolved_graph().nodes.iter().any(|node| {
         node.node_tag.as_ref() == "scalar_type"

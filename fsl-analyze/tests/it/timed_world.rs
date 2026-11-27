@@ -544,7 +544,7 @@ fn world_built_in_with_protocol_selection_and_source(
     }
 }
 
-const METER: ScalarLimits = ScalarLimits {
+pub(crate) const METER: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,
     decimal_digits: 1 << 20,
     scale_expansion: 1 << 20,
