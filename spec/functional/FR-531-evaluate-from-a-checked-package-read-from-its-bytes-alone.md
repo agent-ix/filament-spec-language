@@ -204,14 +204,14 @@ entry defines no result type of its own.
 | HP-1 distinct subject aliases in source model declaration order | the admitted `step_relation` body's optional `subject_declaration_order` Group, joined exactly to `subjects` by alias and model-root identity (FR-940 "Declaration-order member contract"); absence refuses only selection of an HP-1 package form | the same witness of its own S4 emission, emitted from `CheckedModelRelation::aliases()` |
 | clause name, capture names and capture value types | the occurrence's `temporal_clause_names` row, the captures argument's binding names and the typed result types of the capture initializer terms | the source clause's `name()` and `captures()` |
 | arithmetic exactness and bounds | the lock and the nodes' types | the same, through the source |
-| the package's requirement records: each record's occurrence key, capability kind and extent, its request index (its position in package order), and for a `value-validity` record its owner function, application occurrence, result bound, direct conversion, path condition, extent roots and object types, or for an `operation-contract` record its result-bound type, invariant flag, optional operation anchor, model object types and ordered populations with their member types, ordinals and optional maxima | the `requirement_items` rows and their `claim`/`value_validity` or `claim`/`operation_contract` nodes (FSpec FR-825), through Contract IR's `requirement_items()` and record accessors | the same rows of its own S4 emission, through `AdmittedPackageRead` |
+| the package's FR-825 source requirement records: each source record's occurrence key, capability kind and extent, its request index (its position in package order), and for a `value-validity` record its owner function, application occurrence, result bound, direct conversion, path condition, extent roots and object types, or for a source-owned function pre/post `operation-contract` record its result-bound type, invariant flag, optional operation anchor, model-object references and ordered populations with their member types, ordinals and optional maxima | the `requirement_items` rows and their `claim`/`value_validity` or source-owned `claim`/`operation_contract` nodes required by FSpec FR-825, through Contract IR's `requirement_items()` and record accessors; generated relation/refinement operation-contract items have no source row or record node | the same FR-825 source rows of its own S4 emission, through `AdmittedPackageRead` |
 
-**Requirement records in the bytes.** S4 SHALL write every record of
-`CheckedGraph::requirements()` (FR-062 "Records") as one FSpec FR-825
-`requirement_items` row, in the order `RequirementMap` iterates, which is
-FR-825's package order (structural node key, occurrence role, occurrence
-ordinal, then capability spelling), so a row's position is the record's
-FR-395 request index. Each row's `claim` is the record's occurrence key,
+**Requirement records in the bytes.** S4 SHALL write every source requirement
+record FR-825 requires from `CheckedGraph::requirements()` (FR-062 "Records")
+as one FSpec FR-825 `requirement_items` row, in the order `RequirementMap`
+iterates, which is FR-825's package order (structural node key, occurrence
+role, occurrence ordinal, then capability spelling), so a row's position is
+the record's FR-395 request index. Each row's `claim` is the record's occurrence key,
 `kind` is `Capability::to_wire()` and `extent` is the record's `ClaimExtent`
 (no domain for `Bounded`; each `DomainKey` and `DomainKind` of `Unbounded`, in
 domain-key order). Each `value-validity` record SHALL also be written as a
@@ -221,16 +221,22 @@ type node of its `ResultBound`, `conversion` its conversion context,
 `path_condition` its `PathGuard`s in order, `extent_roots` its
 `extent_roots()` and `objects` the declaration nodes of its references'
 object types; its `generated` ordinal is its position among its owner's
-records. Each `operation-contract` record SHALL also be written as a
+records. Each source-owned function precondition or postcondition
+`operation-contract` record in this requirement's scope SHALL also be written as a
 `claim`/`operation_contract` node whose `result_bound` is the record's
 Boolean bound type, `invariant` is its invariant-clause flag, `operation` is
 its optional operation anchor, `model_objects` are its referenced object
 types in structural order, and `populations` are its population member types,
-declaration ordinals and authored maxima in record order. The package reader's
+declaration ordinals and authored maxima in record order. A generated
+`operation-contract` item on a `claim`/`step_relation` or model-refinement
+`refinement` node is not an FR-825 source requirement record: S4 SHALL NOT
+write a `requirement_items` row or `claim`/`operation_contract` record node
+for it; the item retains FR-290's `operation-contract` kind (FSpec FR-825).
+The package reader's
 `requirement_items()` SHALL expose both record variants alongside the same
 claim, occurrence, capability and extent facts; a consumer SHALL preserve the
 row's position as its request index. S4 writes no record by any other route and omits none, because the
-package order counts every record of every kind. A record S4 cannot write
+package order counts every FR-825 source record of every kind. A source record S4 cannot write
 (an owner with no function node, a key with no `source_map` occurrence, an
 object type with no declaration node) is `EmitRefusal::UnlocatedOccurrence`
 with no bytes, as FR-062-AC-9 refuses an unlocatable occurrence; it is never
