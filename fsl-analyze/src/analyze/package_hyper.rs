@@ -370,10 +370,9 @@ impl<'a> PackageHyperSubject<'a> {
             return super::instance_records::undecided(cause, &method, budgets.witness_samples);
         }
         let records: Vec<_> = reports.iter().map(|report| report.record.clone()).collect();
-        match reports
-            .into_iter()
-            .nth(super::instance_records::decisive(&records))
-        {
+        let decided = super::instance_records::decisive(&records);
+        super::instance_records::proved_item_evidence(&mut reports, decided);
+        match reports.into_iter().nth(decided) {
             Some(report) => EngineReport::StateGraph(Box::new(report)),
             None => EngineReport::Refused(Refusal::Failed(BROKEN)),
         }

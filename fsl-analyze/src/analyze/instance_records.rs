@@ -45,3 +45,24 @@ pub(super) fn undecided(
         checker: None,
     }))
 }
+
+/// FSpec FR-393 `ItemEvidence`: a single-existential hyper item that settles
+/// `proved` carries one `witness` arm per instance, in instance order, as the
+/// array its `evidence` member holds. A refuted item keeps its one
+/// counterexample and any other result keeps its one value.
+pub(super) fn proved_item_evidence(reports: &mut [GraphReport], decisive: usize) -> bool {
+    let proved = reports
+        .get(decisive)
+        .is_some_and(|report| matches!(report.record.value, TerminalValue::Proved { .. }));
+    if !proved || reports.iter().any(|report| report.evidence.is_none()) {
+        return false;
+    }
+    let arms: Vec<serde_json::Value> = reports
+        .iter()
+        .filter_map(|report| report.evidence.clone())
+        .collect();
+    if let Some(report) = reports.get_mut(decisive) {
+        report.evidence = Some(serde_json::Value::Array(arms));
+    }
+    true
+}

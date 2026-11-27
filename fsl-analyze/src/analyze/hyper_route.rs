@@ -364,7 +364,9 @@ fn single(
         return undecided(cause, &method, budgets.witness_samples);
     }
     let records: Vec<_> = reports.iter().map(|report| report.record.clone()).collect();
-    match reports.into_iter().nth(decisive(&records)) {
+    let decided = decisive(&records);
+    super::instance_records::proved_item_evidence(&mut reports, decided);
+    match reports.into_iter().nth(decided) {
         Some(report) => EngineReport::StateGraph(Box::new(report)),
         None => EngineReport::Refused(Refusal::Failed(BROKEN)),
     }
