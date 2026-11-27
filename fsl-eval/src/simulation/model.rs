@@ -244,7 +244,7 @@ pub use timed::admission::{
 };
 pub use timed::{
     advance_timed, sample_timed, sample_timed_from, sample_timed_race, BehaviourLetters,
-    BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal,
+    BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, GuardedSteps, MoveRefusal,
     PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock,
     TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep,
     TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd, TimedSampleStop,
