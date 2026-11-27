@@ -156,7 +156,7 @@ fn slot(name: &str) -> Option<(String, String)> {
 impl BarePackage<'_> {
     /// Read the temporal profile of a selected hyper clause without building
     /// its package evaluation form.
-    #[implements("FR-173-AC-3")]
+    #[implements("FR-173-AC-3", "FR-940-AC-16")]
     pub fn hyper_clause_profile(
         &self,
         claim: &OccurrenceKey,
@@ -346,15 +346,17 @@ impl BarePackage<'_> {
             if !subject_roots.contains_key(alias) {
                 return Err(malformed(claim));
             }
-            if group_member(entry, "quantifier").and_then(text) != Some("forall") {
-                return Err(pending(&node.node_id, "hyper-quantifier-form"));
-            }
+            let kind = match group_member(entry, "quantifier").and_then(text) {
+                Some("forall") => fsl_semantics::check::QuantifierKind::Forall,
+                Some("exists") => fsl_semantics::check::QuantifierKind::Exists,
+                _ => return Err(pending(&node.node_id, "hyper-quantifier-form")),
+            };
             if members(entry).ok_or_else(|| malformed(claim))?.len() != 3 {
                 return Err(pending(&node.node_id, "hyper-fairness"));
             }
             quantifiers.push(PackageHyperQuantifier {
                 variable: variable.to_owned(),
-                kind: fsl_semantics::check::QuantifierKind::Forall,
+                kind,
                 alias: alias.to_owned(),
                 fairness: Vec::new(),
             });
