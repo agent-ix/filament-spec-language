@@ -42,6 +42,7 @@ mod exact_probabilistic;
 mod exact_probabilistic_fr196;
 mod exact_probabilistic_item;
 mod exact_probabilistic_zero_binding;
+mod fair_exact_value_budget;
 mod exact_route;
 mod finite_hyper_request;
 mod hyper_closed;
