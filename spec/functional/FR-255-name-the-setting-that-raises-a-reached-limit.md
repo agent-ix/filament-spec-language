@@ -646,8 +646,12 @@ these names through the same operand grammar as the stage settings
    intake runs (replay `select`, the compile path and observation admission),
    because it is a size ceiling. A denied charge, `resource_exhausted`/
    `insufficient-next-charge`, carries `setting`, `limit` (FSpec FR-272's
-   canonical name for the effective limit), `actual` (the prior usage plus the
-   denied amount), `stage`, `accounting_contract`, `limit_kind`, `consumed`, `next_charge`
+   canonical name for the effective limit), `actual` (for a cumulative counter
+   the prior usage plus the denied amount; for a high-water counter, which keeps
+   the largest size admitted (`model.declaration_records`,
+   `model.derivation_facts`, `model.effective_declarations`,
+   `model.dispatch_candidates`, `admission.population_members`), the size the
+   refused step reaches, which is its `next_charge`), `stage`, `accounting_contract`, `limit_kind`, `consumed`, `next_charge`
    and `charge_point`, wherever the budget is read: the compile path, replay
    `select`, observation admission's re-run walks and the S6a family
    refusals. A `model.*` or `admission.*` walk ceiling is a denied one-edge
@@ -847,6 +851,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-43 | An EN-1 hyper item over a lockstep clause, run with `analysis.retained_bytes=1`, stops before it stores its first product state with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}` and stores none; two runs give equal outcomes, and with no setting the item settles as it does at the published default. | Test |
 | FR-255-AC-44 | An EN-1 state-graph item over a model subject with an enabled step, run with `analysis.retained_bytes=1`, stops before it stores the first successor its expansion returns, with `LimitReached{limit: retained_bytes, value: 1, setting: analysis.retained_bytes}`, and its graph holds only the initial states; with no setting it settles as it does at the published default. | Test |
 | FR-255-AC-45 | At the published defaults, each of these crash-size inputs ends typed, never in a crash, an unbounded run or an untyped failure, and the limit one short of it refuses naming the setting, the bound and the count: a package of 1,000 declared types admits under `model.declaration_records`, and with `model.declaration_records` one record short of its records the model intake refuses naming `model.declaration_records` and the record that passes the bound; a 1,000-link `redefines` chain links under `model.family_steps`, and with `model.family_steps` 999 the dispatch walk stops `Incomplete` naming `model.family_steps`; a snapshot sequence of 100,000 elements is refused `stage_limit_exceeded` naming `observation.input_bytes`, with that raised naming `observation.values` with bound 100000 and count 100001, and with both raised refused `cardinality_out_of_bound` by the declared collection maximum. Nesting 1,000 deep (FR-106-AC-16, FR-256-AC-1) and flat chains of 10,000 are bounded by their own criteria. | Test |
+| FR-255-AC-46 | A package of 1,011 declaration records run with `model.declaration_records` 1,010 refuses a denied charge with `actual` 1011 and `next_charge` 1011, not 2021; a 1,000-link chain normalized with `model.derivation_facts` 1,504,501 refuses with `actual` 1504502; a cumulative counter reports its prior usage plus the denied amount (usage 8 and amount 3 give 11). | Test |
 
 ## Status
 
