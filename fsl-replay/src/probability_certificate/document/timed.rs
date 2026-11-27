@@ -313,13 +313,7 @@ fn check_expected_elapsed(
     // value-free infinity document is false. A finite value over a quiescent
     // state, which may idle without end, is not derived here.
     if quiescent {
-        if document.values.is_empty() && document.ranking.is_empty() {
-            return Ok(rejected(
-                ProbabilityCertificateRule::Malformed,
-                graph.initial,
-            ));
-        }
-        return Err(ProbabilityDocumentError::Unsupported);
+        return quiescent_finite_verdict(graph.initial, &document);
     }
     let checked = check_mean_time_values(
         &graph,
@@ -403,6 +397,20 @@ fn check_workload_mean_time(
         ));
     }
     check_infinite_mean_time(graph.initial, bytes, document, bound)
+}
+
+/// The verdict on a document over a graph some policy reaches almost surely
+/// and whose reached non-target state is quiescent: a value-free document
+/// claims infinity, which is false, so it is `Malformed`; a document with
+/// values is a finite claim the checker does not derive, so `Unsupported`.
+fn quiescent_finite_verdict(
+    initial: ProbabilityProductKey,
+    document: &ProbabilityCertificateDocument,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    if document.values.is_empty() && document.ranking.is_empty() {
+        return Ok(rejected(ProbabilityCertificateRule::Malformed, initial));
+    }
+    Err(ProbabilityDocumentError::Unsupported)
 }
 
 /// The checker's expected-elapsed graph.
@@ -5952,5 +5960,104 @@ mod witness_pricing_tests {
             price(&graph, part(1, 5), &[kept]),
             Some((vec![0], part(1, 4)))
         );
+    }
+}
+
+#[cfg(test)]
+mod quiescent_infinity_tests {
+    use super::*;
+    use crate::probability_certificate::document::tests::{document, fixture_key, limits};
+    use ix_trace_rs::trace;
+
+    fn key(name: &str) -> ProbabilityProductKey {
+        ProbabilityProductKey::from_canonical_bytes(name.as_bytes().to_vec())
+    }
+
+    /// The initial state `I` is a quiescent non-target state; when `reaches`,
+    /// its one enabled step reaches the target `T` with probability one.
+    fn graph(reaches: bool) -> CheckerGraph {
+        let choices = if reaches {
+            vec![vec![ProbabilityEdge {
+                target: key("T"),
+                probability: Rational::new(Integer::from(1), Integer::from(1)).expect("nonzero"),
+            }]]
+        } else {
+            Vec::new()
+        };
+        CheckerGraph {
+            initial: key("I"),
+            actions_by_state: None,
+            states: [
+                (
+                    key("I"),
+                    CheckerState {
+                        terminal: None,
+                        choices,
+                    },
+                ),
+                (
+                    key("T"),
+                    CheckerState {
+                        terminal: Some(true),
+                        choices: Vec::new(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            scheduler_actions: Default::default(),
+        }
+    }
+
+    fn value_free() -> ProbabilityCertificateDocument {
+        let mut forged = document();
+        forged.targets = vec![fixture_key(0)];
+        forged.values.clear();
+        forged.ranking.clear();
+        forged
+    }
+
+    fn reaches_initial(graph: &CheckerGraph) -> bool {
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        some_policy_reaches_almost_surely(graph, &Cancel::new(), &mut meter)
+            .expect("the graph is small")
+            .contains(&graph.initial)
+    }
+
+    fn at_least() -> Bound {
+        Bound::AtLeast(Rational::new(Integer::from(1), Integer::from(1)).expect("nonzero"))
+    }
+
+    /// FR-921-AC-6: a quiescent state keeps its enabled steps, so a target the
+    /// step reaches has a finite expected time and a value-free document
+    /// claiming infinity is rejected `Malformed`; a document with values is a
+    /// finite claim the checker does not derive. Before the fix the quiescent
+    /// state had no moves, the target looked unreachable, and the forged
+    /// document was accepted as infinite. Control: with the target unreachable
+    /// the same value-free document is accepted as infinite.
+    #[trace("TC-2490", "FR-921-AC-6")]
+    #[test]
+    fn a_value_free_infinity_over_a_quiescent_state_that_reaches_the_target_is_malformed() {
+        let reaching = graph(true);
+        assert!(reaches_initial(&reaching));
+        let forged = value_free();
+        assert_eq!(
+            quiescent_finite_verdict(reaching.initial.clone(), &forged),
+            Ok(rejected(
+                ProbabilityCertificateRule::Malformed,
+                reaching.initial.clone()
+            ))
+        );
+        assert_eq!(
+            quiescent_finite_verdict(reaching.initial.clone(), &document()),
+            Err(ProbabilityDocumentError::Unsupported)
+        );
+
+        let stuck = graph(false);
+        assert!(!reaches_initial(&stuck));
+        assert!(matches!(
+            check_infinite_mean_time(stuck.initial.clone(), b"{}", &forged, &at_least()),
+            Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
+        ));
     }
 }

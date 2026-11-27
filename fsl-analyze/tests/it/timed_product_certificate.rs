@@ -887,9 +887,10 @@ fn quiescent_send(claim: &str) -> World {
 /// target the quiescent `send` does reach) cannot be built from outside: the
 /// producer yields no document for a finite value over a quiescent state, and
 /// a forged one must carry the checker's own target keys. The checker rejects
-/// it `Malformed` (`check_expected_elapsed`, fsl-replay document/timed.rs);
-/// the forging test lands with the producer derivation in QSL-3537, which
-/// retains that document for `tamper` to strip.
+/// it `Malformed` (`check_expected_elapsed`, fsl-replay document/timed.rs),
+/// and the in-crate test
+/// `a_value_free_infinity_over_a_quiescent_state_that_reaches_the_target_is_malformed`
+/// (fsl-replay `quiescent_infinity_tests`) asserts that rejection.
 #[trace("TC-2490", "FR-921-AC-6")]
 #[test]
 fn a_quiescent_state_target_no_step_reaches_is_accepted_as_infinite() {
