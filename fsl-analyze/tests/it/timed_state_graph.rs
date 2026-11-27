@@ -2433,27 +2433,6 @@ fn fr852_gap_assert_undefined_record(
         }
         _ => panic!("known undefined locus: {expected_locus}"),
     }
-    if matches!(expected_locus, "terminal" | "constraint") {
-        let counterexample = graph
-            .counterexample
-            .as_ref()
-            .expect("the state-graph record retains its typed FR-393 evidence");
-        let fsl_replay::CounterexampleKind::UndefinedEvaluation(undefined) = &counterexample.kind
-        else {
-            panic!("expected typed undefined-evaluation evidence: {counterexample:?}");
-        };
-        match (expected_locus, &undefined.site.locus) {
-            ("terminal", fsl_replay::UndefinedLocus::Terminal(model)) => {
-                assert_eq!(model.label(), "Done", "{counterexample:?}");
-            }
-            ("constraint", fsl_replay::UndefinedLocus::Constraint(name)) => {
-                assert_eq!(name, "C", "{counterexample:?}");
-            }
-            (expected, actual) => panic!(
-                "expected {expected} source locus, got {actual:?}: {counterexample:?}"
-            ),
-        }
-    }
 }
 
 /// FR-852-AC-16 and AC-24: at adapter level, not the command route, EN-6
@@ -2675,6 +2654,119 @@ fn fr852_gap_zone_records_distinguish_terminal_and_constraint_loci() {
             json!([fr852_gap_request_item(variant, claim, None)]),
         );
         fr852_gap_assert_undefined_record(&run.item(0), locus, 2, run.record(0));
+    }
+}
+
+/// FR-852-AC-18/19/26/27: the low-level EN-6 decision retains a distinct
+/// typed source location for the terminal predicate and selected constraint.
+#[trace("TC-2412", "FR-852-AC-18")]
+#[trace("TC-2412", "FR-852-AC-19")]
+#[trace("TC-2412", "FR-852-AC-26")]
+#[trace("TC-2412", "FR-852-AC-27")]
+#[test]
+fn fr852_gap_zone_decision_distinguishes_terminal_and_constraint_loci() {
+    for (variant, claim_name, source_locus) in [
+        ("U-T", "UndefinedAlways", "terminal"),
+        ("U-C", "UndefinedAlways", "constraint"),
+        ("U-T", "UndefinedUnique", "terminal"),
+        ("U-C", "UndefinedUnique", "constraint"),
+    ] {
+        let source = fr852_gap_undefined_unit(variant);
+        let body = source
+            .split_once("model M = \"test/timed\";\n")
+            .map(|(_, body)| body)
+            .expect("the timed fixture has its model declaration");
+        let profiles = format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        );
+        let world = crate::timed_world::world_with_mode(
+            &crate::zone_search::rpc_document(),
+            &profiles,
+            body,
+            filament_semantic_value::checking::CheckMode::Kernel,
+        );
+        let system = world.system();
+        let timed = fsl_eval::simulation::model::TimedSystem::new(&system, "M")
+            .expect("the source selects a timed model");
+        let zones = fsl_analyze::zone_check::explore_timed_state_graph(
+            &timed,
+            fsl_analyze::zone_check::ZoneCheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .expect("zone exploration reaches the undefined state");
+        let claim = world
+            .package
+            .graph()
+            .state_graph_claim(claim_name)
+            .expect("the source package has the requested state-graph claim");
+        let parameter = claim.over().expect("the claim is over a call");
+        let instance = system
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
+            .expect("enumerate claim instances")
+            .into_iter()
+            .next()
+            .expect("one call instance");
+        let over = system
+            .bound_reference(parameter.object.clone(), &instance)
+            .expect("bind the claim instance");
+        let constraint = (variant == "U-C").then_some("C");
+        let decision = fsl_analyze::zone_check::decide_timed_state_graph_with_constraint(
+            &timed,
+            &zones,
+            claim,
+            Some(&over),
+            constraint,
+            fsl_analyze::zone_check::ZoneCheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .expect("decide the state-graph item");
+        let fsl_analyze::zone_check::TimedStateGraphDecision::Undefined { reading, .. } = decision
+        else {
+            panic!("the undefined source refutes the item: {decision:?}");
+        };
+        let expected_location = match source_locus {
+            "terminal" => {
+                let terminal = fsl_package::resolve_terminals(&world.package)
+                    .expect("the source terminal resolves")
+                    .into_iter()
+                    .find(|terminal| terminal.name == "Done")
+                    .expect("the source declares Done");
+                let model = fsl_eval::simulation::model::TerminalModel::new(
+                    terminal.package,
+                    terminal.model,
+                )
+                .with_ordinal(terminal.ordinal);
+                system.terminal_locus(&model)
+            }
+            "constraint" => system.state_clause_locus("C"),
+            _ => panic!("known source locus: {source_locus}"),
+        };
+        if source_locus == "terminal" {
+            let terminal = fsl_package::resolve_terminals(&world.package)
+                .expect("the source terminal resolves")
+                .into_iter()
+                .find(|terminal| terminal.name == "Done")
+                .expect("the source declares Done");
+            let expected_site = fsl_eval::simulation::model::TimedSite::Terminal {
+                model: terminal.package.to_owned(),
+            };
+            let terminal_reading = zones
+                .undefined
+                .iter()
+                .find(|entry| entry.reading.site == expected_site)
+                .expect("the zone graph retains the terminal-predicate source");
+            assert_eq!(
+                terminal_reading.reading.location, expected_location,
+                "the terminal reading names its declared predicate"
+            );
+        }
+        assert_eq!(
+            reading.locus, expected_location,
+            "the typed undefined reading names its {source_locus} expression: {reading:?}"
+        );
     }
 }
 
