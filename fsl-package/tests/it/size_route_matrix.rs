@@ -45,6 +45,19 @@ fn link_source(redefines: bool) -> String {
     source
 }
 
+fn enum_source() -> String {
+    let mut source = String::from(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         domain \"test/qsl-3570-enums\";\n\
+         profile v = \"filament.value.complete/v1\";\n",
+    );
+    for index in 0..1_000 {
+        source.push_str(&format!("enum E{index:04} {{ A, B }}\n"));
+    }
+    source.push_str("function ready using v(): Boolean pure { true }\n");
+    source
+}
+
 fn checked_package(source_text: &str) -> CheckedPackage {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-3570-package"),
@@ -142,6 +155,71 @@ fn i2_reads_the_thousand_nested_expression_package_at_its_exact_byte_bound() {
     assert_eq!(limit.setting(), fsl_foundation::Setting::I2Nodes);
     assert_eq!(limit.configured_bound(), (node_count - 1) as u64);
     assert_eq!(limit.actual(), node_count as u128);
+}
+
+/// I2 admits the package carrying 1,000 enum types and their 2,000 variants
+/// at its exact encoded byte and node counts, refusing one node below.
+#[trace("TC-3242", "FR-264-AC-12")]
+#[test]
+fn i2_reads_one_thousand_enum_declarations_at_its_counted_boundaries() {
+    let package = checked_package(&enum_source());
+    let emit = EmitLimits::new(1 << 32);
+    let emission = fsl_package::emit_checked(&package, emit).expect("the package emits");
+    let package_bytes = emission.package().bytes();
+    let wire: serde_json::Value = serde_json::from_slice(package_bytes).expect("package JSON");
+    let node_count = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes")
+        .len();
+    let enum_count = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes")
+        .iter()
+        .filter(|node| node["node_tag"] == "model" && node["semantic_form"] == "variant_type")
+        .count();
+    assert_eq!(enum_count, 1_000);
+
+    let domain = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the empty model closure admits");
+    let identity =
+        fsl_semantics::library::LibraryName::new("qsl-3570").expect("a library identity");
+    let mut limits = V2ReadLimits::bounded(1 << 24);
+    limits.artifact_bytes = package_bytes.len();
+    limits.nodes = node_count as u64;
+    let read =
+        fsl_package::read_evaluation_package(&package, identity.clone(), &domain, limits, emit)
+            .expect("I2 admits all enum declarations at exact byte and node counts");
+    assert_eq!(read.admitted().name(), "qsl-3570");
+    assert_eq!(read.canonical_bytes(), package_bytes);
+
+    limits.nodes = (node_count - 1) as u64;
+    let refusal = fsl_package::read_evaluation_package(&package, identity, &domain, limits, emit)
+        .err()
+        .expect("I2 refuses one node below the enum package count");
+    let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
+        panic!("expected the typed I2 node limit, got {refusal:?}");
+    };
+    let fsl_foundation::diagnostic::StageFailure::Limit(limit) = *refusal else {
+        panic!("expected StageFailure::Limit, got {refusal:?}");
+    };
+    assert_eq!(limit.setting(), fsl_foundation::Setting::I2Nodes);
+    assert_eq!(limit.configured_bound(), (node_count - 1) as u64);
+    assert_eq!(limit.actual(), node_count as u128);
+
+    limits.nodes = node_count as u64;
+    limits.artifact_bytes = package_bytes.len() - 1;
+    let refusal = fsl_package::read_evaluation_package(&package, identity, &domain, limits, emit)
+        .err()
+        .expect("I2 refuses one byte below the enum package length");
+    let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
+        panic!("expected the typed I2 byte limit, got {refusal:?}");
+    };
+    let fsl_foundation::diagnostic::StageFailure::Limit(limit) = *refusal else {
+        panic!("expected StageFailure::Limit, got {refusal:?}");
+    };
+    assert_eq!(limit.setting(), fsl_foundation::Setting::I2InputBytes);
+    assert_eq!(limit.configured_bound(), (package_bytes.len() - 1) as u64);
+    assert_eq!(limit.actual(), package_bytes.len() as u128);
 }
 
 /// I2 reads both 1,000-link checked packages without changing their canonical
