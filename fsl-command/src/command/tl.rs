@@ -1548,3 +1548,17 @@ fn package_interval(
         }
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    /// FR-267-AC-8: the lowering document carries the run-result label with
+    /// no clause-run or command-error members, so the strict reader refuses
+    /// it; this records what it shows.
+    #[ix_trace_rs::trace("FR-267-AC-8")]
+    #[test]
+    fn the_lowering_document_is_refused_by_the_run_result_reader() {
+        let value = super::document(serde_json::json!({}));
+        let bytes = fsl_foundation::canonical_json::encode(&value).expect("canonical bytes");
+        assert!(fsl_replay::spine::read_native_run_result(&bytes).is_err());
+    }
+}

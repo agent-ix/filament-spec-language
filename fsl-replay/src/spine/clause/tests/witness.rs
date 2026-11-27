@@ -624,8 +624,10 @@ fn assert_snapshot_refusal(
         panic!("the report must read as a clause-run document");
     };
     assert_eq!(
-        read.fields().and_then(|fields| fields.get("path")),
-        Some(&path.to_owned())
+        read.fields()
+            .and_then(|fields| fields.get("path"))
+            .as_deref(),
+        Some(path)
     );
 }
 
@@ -808,6 +810,62 @@ fn native_result_two_writes_decisive_closed_and_unavailable_reports() {
             assert!(value["witness"].get("trace_position").is_none());
         }
     }
+}
+
+/// FR-267-AC-1, FSpec FR-352: the production writer's bytes read as the one
+/// declared type and write back as the same canonical bytes, and the typed
+/// members equal the values FR-352 assigns by hand: a closed-scope `true`
+/// claim is stage `evaluate`, category `success`, a completed Boolean outcome
+/// and `closed-scope` settlement.
+#[ix_trace_rs::trace("FR-267-AC-1")]
+#[test]
+fn native_result_two_one_declared_type_round_trips_the_writer_bytes() {
+    let report = run("AllBelow", Snapshot::Low, "child");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    assert_eq!(
+        crate::spine::native_result_reencode_for_tests(&bytes),
+        bytes
+    );
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value["disposition"],
+        serde_json::json!({
+            "stage": "evaluate",
+            "category": "success",
+            "truth": true,
+            "outcome": {"kind": "completed", "value": {"kind": "boolean", "value": true}},
+        })
+    );
+    assert_eq!(value["basis"], "closed-scope");
+    let crate::spine::NativeRunResult::Clause(read) =
+        crate::spine::read_native_run_result(&bytes).unwrap()
+    else {
+        panic!("a clause-run document");
+    };
+    assert_eq!(
+        (read.stage(), read.category(), read.truth(), read.basis()),
+        ("evaluate", "success", Some(true), "closed-scope")
+    );
+}
+
+/// FR-267-AC-8: a member the declared type does not define is refused by the
+/// one strict reader, and so is a changed format label.
+#[ix_trace_rs::trace("FR-267-AC-8")]
+#[test]
+fn native_result_two_declared_type_refuses_an_injected_member_and_label() {
+    let report = run("AllBelow", Snapshot::Low, "child");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["disposition"]["injected"] = serde_json::json!(1);
+    let injected = fsl_foundation::canonical_json::encode(&value).unwrap();
+    assert!(crate::spine::read_native_run_result(&injected).is_err());
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["format"] = serde_json::json!("native-run-result/3");
+    let relabelled = fsl_foundation::canonical_json::encode(&value).unwrap();
+    assert!(matches!(
+        crate::spine::read_native_run_result(&relabelled),
+        Err(crate::spine::NativeRunReadError::UnsupportedFormat(_))
+    ));
 }
 
 /// FR-109-AC-1: the Boolean completion must agree with both truth and its
@@ -1197,7 +1255,7 @@ fn native_result_two_retains_refused_outcome_members() {
     assert_eq!(read.outcome_location().unwrap().path, [2, 1]);
     assert!(matches!(
         &read.outcome_location().unwrap().origin,
-        crate::spine::CallOriginRead::Expression
+        crate::spine::CallOrigin::Expression
     ));
     for edit in ["fields", "locus", "location"] {
         let mut mutated = value.clone();
@@ -1338,7 +1396,7 @@ fn native_result_two_retains_compile_limit_fields() {
         panic!("clause")
     };
     assert_eq!(
-        read.fields().unwrap().get("setting").map(String::as_str),
+        read.fields().unwrap().get("setting").as_deref(),
         Some("s3.nodes")
     );
     for member in ["kind", "bound", "actual", "setting"] {

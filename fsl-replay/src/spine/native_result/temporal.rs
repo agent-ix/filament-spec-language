@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::Value;
 
-use super::{
-    Basis, CallLocationRead, CallLocationWire, Category, DeclarationKeyRead, DispositionRead,
-    DocumentRefRead, DocumentRefWire, NativeRunReadError, NativeRunResultError, Outcome,
-    OutcomeRead, Stage,
+use super::wire::{
+    CallLocation, Category, DeclarationKeyWire, Disposition, DocumentRefWire, Outcome, Stage,
 };
+use super::{NativeRunReadError, NativeRunResultError};
+use crate::proof_result::SettlementBasis;
 use crate::model_check::counterexample::{ObservedTemporalCounterexample, ObservedTemporalKind};
 use crate::result::CauseCodecError;
 use crate::spine::{
@@ -128,7 +128,7 @@ pub(crate) enum TemporalWire {
     Incomplete,
     ActivationIncomplete {
         position: u64,
-        guard: CallLocationWire,
+        guard: CallLocation,
     },
     WindowLimitReached {
         limit: &'static str,
@@ -638,9 +638,7 @@ pub(super) fn verdict_wire(
                 count: *count,
                 min_count: *min_count,
             },
-            Some(Outcome::Undefined {
-                reason: INSUFFICIENT_DATA,
-            }),
+            Some(Outcome::undefined(INSUFFICIENT_DATA)),
         ),
         TemporalVerdict::Undefined { at, cause } => {
             let reason = undefined_reason(cause);
@@ -651,7 +649,7 @@ pub(super) fn verdict_wire(
                         .map(|_| checked(*at, Some(reason)))
                         .transpose()?,
                 },
-                Some(Outcome::Undefined { reason }),
+                Some(Outcome::undefined(reason)),
             )
         }
         TemporalVerdict::Pending => (TemporalWire::Pending, None),
@@ -676,19 +674,15 @@ pub(super) fn verdict_wire(
             TemporalWire::MissingFairnessPremise {
                 constraint: fairness_wire(constraint)?,
             },
-            Some(Outcome::Refused {
-                code: "unsupported_projection",
-                cause: "missing-fairness-premise",
-                fields: None,
-                locus: None,
-                location: None,
-            }),
+            Some(Outcome::refused(
+                "unsupported_projection",
+                "missing-fairness-premise",
+                None,
+            )),
         ),
         TemporalVerdict::Incomplete(incomplete) => (
             TemporalWire::Incomplete,
-            Some(Outcome::Incomplete {
-                limit: incomplete.limit_kind.as_str(),
-            }),
+            Some(Outcome::incomplete(incomplete.limit_kind.as_str())),
         ),
         // FR-853: a cancelled open clause is FSpec FR-352's `incomplete`
         // row; no limit ran out, so its outcome names none.
@@ -696,7 +690,7 @@ pub(super) fn verdict_wire(
         TemporalVerdict::ActivationIncomplete { at, guard } => (
             TemporalWire::ActivationIncomplete {
                 position: *at,
-                guard: CallLocationWire::from(guard),
+                guard: CallLocation::from(guard),
             },
             None,
         ),
@@ -710,9 +704,7 @@ pub(super) fn verdict_wire(
                 value: value.to_string(),
                 setting,
             },
-            Some(Outcome::Incomplete {
-                limit: MAX_WINDOW_VALUES,
-            }),
+            Some(Outcome::incomplete(MAX_WINDOW_VALUES)),
         ),
         TemporalVerdict::ProgressLimitReached(reached) => (
             TemporalWire::ProgressLimitReached {
@@ -727,9 +719,7 @@ pub(super) fn verdict_wire(
         // bound `max_candidates`, or the `accounting.*` counter).
         TemporalVerdict::ExpansionLimitReached(reached) => (
             TemporalWire::Incomplete,
-            Some(Outcome::Incomplete {
-                limit: reached.limit.as_str(),
-            }),
+            Some(Outcome::incomplete(reached.limit.as_str())),
         ),
     })
 }
@@ -741,13 +731,7 @@ pub(super) fn refusal_wire(refusal: &TemporalTraceRefusal) -> Option<(TemporalWi
     let code = refusal.catalog_code();
     Some((
         wire,
-        Outcome::Refused {
-            code: code.code(),
-            cause: code.cause(),
-            fields: None,
-            locus: None,
-            location: None,
-        },
+        Outcome::refused(code.code(), code.cause(), None),
     ))
 }
 
@@ -761,13 +745,11 @@ pub(super) fn contradiction_wire(refusal: &ProgressRefusal) -> (TemporalWire, Ou
             retained: progress_value_wire(&contradiction.retained),
             asserted: progress_value_wire(&contradiction.asserted),
         },
-        Outcome::Refused {
-            code: refusal.record.catalog.code(),
-            cause: refusal.record.catalog.cause(),
-            fields: Some(refusal.record.fields.clone()),
-            locus: None,
-            location: None,
-        },
+        Outcome::refused(
+            refusal.record.catalog.code(),
+            refusal.record.catalog.cause(),
+            Some(&refusal.record.fields),
+        ),
     )
 }
 
@@ -840,7 +822,7 @@ pub enum TemporalRecord {
         /// The guard's trace position.
         position: u64,
         /// The guard's checked location.
-        guard: CallLocationRead,
+        guard: CallLocation,
     },
     /// A window aggregate outgrew `max_window_values`.
     WindowLimitReached {
@@ -1235,7 +1217,7 @@ impl FairnessRead {
 impl EffectiveIdRead {
     /// The typed identity, built from its root owner down without recursion.
     fn typed(&self) -> filament_exact::EffectiveId {
-        let key = |original: &DeclarationKeyRead| {
+        let key = |original: &DeclarationKeyWire| {
             filament_exact::OriginalDeclarationKey::new(
                 original.package.clone(),
                 original.node.clone(),
@@ -1300,7 +1282,7 @@ pub struct EffectiveIdRead {
     #[serde(deserialize_with = "nullable")]
     owner_effective_type: Option<Box<EffectiveIdRead>>,
     /// The original declaration key.
-    original: DeclarationKeyRead,
+    original: DeclarationKeyWire,
 }
 
 /// FSpec FR-364's counterexample as read, with its trace arm checked before use.
@@ -1442,7 +1424,7 @@ enum EnvelopeTag {
 enum WhereRead {
     Observed {
         position: u64,
-        document: DocumentRefRead,
+        document: DocumentRefWire,
         locus: UndefinedLocusRead,
     },
     Model {
@@ -1497,7 +1479,7 @@ pub enum GuardRead {
 /// sample by its index (FR-330-AC-18).
 #[derive(Debug)]
 enum StepRead {
-    Document { document: DocumentRefRead },
+    Document { document: DocumentRefWire },
     Sample { sample: String },
     Model(ModelStepRead),
 }
@@ -1509,7 +1491,7 @@ impl<'de> Deserialize<'de> for StepRead {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
             struct DocumentStep {
-                document: DocumentRefRead,
+                document: DocumentRefWire,
             }
             let step: DocumentStep =
                 serde_path_to_error::deserialize(value).map_err(serde::de::Error::custom)?;
@@ -1852,15 +1834,15 @@ fn trace_refusal(
 struct Row {
     category: Category,
     truth: Option<bool>,
-    basis: Basis,
+    basis: SettlementBasis,
 }
 
 /// Check a disposition carrying `temporal` against its FR-267 row, and the
 /// document's basis and witness presence.
 pub(super) fn validate_temporal(
-    value: &DispositionRead,
+    value: &Disposition,
     temporal: &TemporalRecord,
-    basis: &Basis,
+    basis: &SettlementBasis,
     has_witness: bool,
 ) -> Result<(), NativeRunReadError> {
     if !matches!(value.stage, Stage::Evaluate) {
@@ -1896,7 +1878,7 @@ pub(super) fn validate_temporal(
         )),
     };
     let undefined = |expected: Option<&str>| match outcome {
-        Some(OutcomeRead::Undefined { reason })
+        Some(Outcome::Undefined { reason })
             if expected.map_or(!is_insufficient_data(reason), |expected| reason == expected) =>
         {
             Ok(reason.as_str())
@@ -1907,7 +1889,7 @@ pub(super) fn validate_temporal(
         )),
     };
     let incomplete = |window: bool| match outcome {
-        Some(OutcomeRead::Incomplete { limit }) if is_window_limit(limit) == window => Ok(()),
+        Some(Outcome::Incomplete { limit }) if is_window_limit(limit) == window => Ok(()),
         _ => Err(invalid(
             "disposition.outcome",
             "outcome disagrees with the temporal row",
@@ -1915,7 +1897,7 @@ pub(super) fn validate_temporal(
     };
     let refused = |code: &str, cause: &str, fields: Option<&BTreeMap<String, String>>| match outcome
     {
-        Some(OutcomeRead::Refused {
+        Some(Outcome::Refused {
             code: read_code,
             cause: read_cause,
             fields: read_fields,
@@ -1930,12 +1912,12 @@ pub(super) fn validate_temporal(
     let unsettled = Row {
         category: Category::Pending,
         truth: None,
-        basis: Basis::Unsettled,
+        basis: SettlementBasis::Unsettled,
     };
     let unavailable = |category| Row {
         category,
         truth: None,
-        basis: Basis::Unavailable,
+        basis: SettlementBasis::Unavailable,
     };
     let row = match temporal {
         TemporalRecord::Inactive {} => {
@@ -1943,7 +1925,7 @@ pub(super) fn validate_temporal(
             Row {
                 category: Category::Success,
                 truth: None,
-                basis: Basis::ClosedScope,
+                basis: SettlementBasis::ClosedScope,
             }
         }
         TemporalRecord::Holds {} => {
@@ -1951,7 +1933,7 @@ pub(super) fn validate_temporal(
             Row {
                 category: Category::Success,
                 truth: Some(true),
-                basis: Basis::ClosedScope,
+                basis: SettlementBasis::ClosedScope,
             }
         }
         TemporalRecord::Violated {
@@ -1963,7 +1945,7 @@ pub(super) fn validate_temporal(
             Row {
                 category: Category::Violation,
                 truth: Some(false),
-                basis: Basis::ClosedScope,
+                basis: SettlementBasis::ClosedScope,
             }
         }
         TemporalRecord::Undefined {
@@ -1983,7 +1965,7 @@ pub(super) fn validate_temporal(
             Row {
                 category: Category::Violation,
                 truth: Some(false),
-                basis: Basis::ClosedScope,
+                basis: SettlementBasis::ClosedScope,
             }
         }
         TemporalRecord::InsufficientData { .. } => {
@@ -2059,7 +2041,7 @@ pub(super) fn validate_temporal(
             unavailable(Category::Refusal)
         }
         TemporalRecord::ConditionRefused { .. } => {
-            let Some(OutcomeRead::Refused { code, .. }) = outcome else {
+            let Some(Outcome::Refused { code, .. }) = outcome else {
                 return Err(invalid(
                     "disposition.outcome",
                     "condition refusal needs its FR-100 record",
@@ -2161,14 +2143,14 @@ fn is_window_limit_setting(limit: &str, setting: &str) -> bool {
 /// FR-267-AC-16: the undefined reason `insufficient-data` and the incomplete
 /// limit `max_window_values` belong to their temporal rows only.
 pub(super) fn refuse_temporal_only_outcome(
-    outcome: Option<&OutcomeRead>,
+    outcome: Option<&Outcome>,
 ) -> Result<(), NativeRunReadError> {
     match outcome {
-        Some(OutcomeRead::Undefined { reason }) if is_insufficient_data(reason) => Err(invalid(
+        Some(Outcome::Undefined { reason }) if is_insufficient_data(reason) => Err(invalid(
             "disposition.outcome.reason",
             "insufficient-data is read in the insufficient-data row only",
         )),
-        Some(OutcomeRead::Incomplete { limit }) if is_window_limit(limit) => Err(invalid(
+        Some(Outcome::Incomplete { limit }) if is_window_limit(limit) => Err(invalid(
             "disposition.outcome.limit",
             "max_window_values is read in the window-limit-reached row only",
         )),

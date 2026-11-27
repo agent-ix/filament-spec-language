@@ -7,27 +7,33 @@ use std::collections::BTreeMap;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::diagnostic::Locus;
 use fsl_foundation::wire_format::WireFormat;
-use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
-use quire_rs::semantic::{
-    AvailabilityState, ClauseRef, KindAvailability, SemanticDiagnostic, SemanticSeverity,
-    SourceLocus,
-};
-use serde::de::Error as _;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use super::call::{CallOutcome, CallRefusal, CallValue};
 use super::{ClauseDisposition, ClauseRunReport};
+use crate::proof_result::SettlementBasis;
 use crate::result::RecordWire;
-use filament_checked::key::DeclarationKey;
-use fsl_semantics::model::observation::{
-    DocumentRef, FrameChange, FrameWitness, LinkDifference, SelectedObject,
-};
+use fsl_semantics::model::observation::FrameWitness;
 use fsl_semantics::value::environment_stage::membership_failure_cause;
 use ix_trace_rs::implements;
+
+mod wire;
+use wire::{
+    present, AdmissionUsage, AdmittedWire, Category, ClauseRunDocument, CounterUsage, Disposition,
+    FrameWitnessRecord, InternalFault, LateWire, ModelLimits, Outcome, OutcomeValue,
+    RefusalRecord, RunResultFormat, Stage, SupportWire, Usage,
+};
+pub use wire::{
+    CallLocation, CallLocusRecord, CallOrigin, DocumentObject, ExtractionBinding, ExtractionBody,
+    ExtractionMap, ExtractionOriginal, ExtractionOutcome, ExtractionPosition, ExtractionRecord,
+    ExtractionRegion, ExtractionSegment, ExtractionSegments, ExtractionSpan, FieldValue,
+    FieldsView, Located, OperationClause, RefusalLocus, RunPosition, RunSpan, SourceRef,
+};
+use wire::{source_identity_uri, validate_extraction, OperationContract};
 
 mod protocol;
 pub use protocol::{
@@ -262,7 +268,7 @@ pub enum NativeRunResult {
 
 /// The typed clause-run document returned by the strict reader.
 pub struct ClauseRunRecord(
-    ClauseRead,
+    ClauseRunDocument,
     Option<Vec<u8>>,
     Option<FrameWitness>,
     Option<TemporalRecord>,
@@ -336,7 +342,7 @@ impl ClauseRunRecord {
             .as_ref()
             .map(|r| r.code.as_str())
             .or(match self.0.disposition.outcome.as_ref() {
-                Some(OutcomeRead::Refused { code, .. }) => Some(code.as_str()),
+                Some(Outcome::Refused { code, .. }) => Some(code.as_str()),
                 _ => None,
             })
     }
@@ -349,20 +355,22 @@ impl ClauseRunRecord {
             .as_ref()
             .and_then(|r| r.cause.as_deref())
             .or(match self.0.disposition.outcome.as_ref() {
-                Some(OutcomeRead::Refused { cause, .. }) => Some(cause.as_str()),
+                Some(Outcome::Refused { cause, .. }) => Some(cause.as_str()),
                 _ => None,
             })
     }
 
-    /// Structured refusal fields supplied by the underlying stage.
-    pub fn fields(&self) -> Option<&BTreeMap<String, String>> {
+    /// Structured refusal fields supplied by the underlying stage; a list
+    /// member reads as its kinds joined by commas.
+    pub fn fields(&self) -> Option<FieldsView<'_>> {
         self.0
             .disposition
             .refusal
             .as_ref()
             .and_then(|r| r.fields.as_ref())
+            .map(FieldsView::Refusal)
             .or(match self.0.disposition.outcome.as_ref() {
-                Some(OutcomeRead::Refused { fields, .. }) => fields.as_ref(),
+                Some(Outcome::Refused { fields, .. }) => fields.as_ref().map(FieldsView::Outcome),
                 _ => None,
             })
     }
@@ -371,14 +379,14 @@ impl ClauseRunRecord {
     pub fn has_outcome_locus(&self) -> bool {
         matches!(
             self.0.disposition.outcome.as_ref(),
-            Some(OutcomeRead::Refused { locus: Some(_), .. })
+            Some(Outcome::Refused { locus: Some(_), .. })
         )
     }
 
     /// The typed source locus of a refused S6a outcome, when assigned.
-    pub fn outcome_locus(&self) -> Option<&CallLocusRead> {
+    pub fn outcome_locus(&self) -> Option<&CallLocusRecord> {
         match self.0.disposition.outcome.as_ref() {
-            Some(OutcomeRead::Refused { locus, .. }) => locus.as_ref(),
+            Some(Outcome::Refused { locus, .. }) => locus.as_ref(),
             _ => None,
         }
     }
@@ -387,7 +395,7 @@ impl ClauseRunRecord {
     pub fn has_outcome_location(&self) -> bool {
         matches!(
             self.0.disposition.outcome.as_ref(),
-            Some(OutcomeRead::Refused {
+            Some(Outcome::Refused {
                 location: Some(_),
                 ..
             })
@@ -395,15 +403,15 @@ impl ClauseRunRecord {
     }
 
     /// The typed expression location of a refused S6a outcome, when assigned.
-    pub fn outcome_location(&self) -> Option<&CallLocationRead> {
+    pub fn outcome_location(&self) -> Option<&CallLocation> {
         match self.0.disposition.outcome.as_ref() {
-            Some(OutcomeRead::Refused { location, .. }) => location.as_deref(),
+            Some(Outcome::Refused { location, .. }) => location.as_deref(),
             _ => None,
         }
     }
 
     /// The source locus of a pre-evaluation or frame refusal, when assigned.
-    pub fn refusal_locus(&self) -> Option<&RefusalLocusRead> {
+    pub fn refusal_locus(&self) -> Option<&RefusalLocus> {
         self.0
             .disposition
             .refusal
@@ -433,13 +441,13 @@ impl ClauseRunRecord {
             .outcome
             .as_ref()
             .map(|outcome| match outcome {
-                OutcomeRead::Completed {
-                    value: ValueRead::Boolean { value },
+                Outcome::Completed {
+                    value: OutcomeValue::Boolean { value },
                 } => NativeRunOutcome::Boolean(*value),
-                OutcomeRead::Completed {
-                    value: ValueRead::Integer { decimal },
+                Outcome::Completed {
+                    value: OutcomeValue::Integer { decimal },
                 } => NativeRunOutcome::Integer(decimal),
-                OutcomeRead::Refused {
+                Outcome::Refused {
                     code,
                     cause,
                     fields,
@@ -452,8 +460,8 @@ impl ClauseRunRecord {
                     locus: locus.as_ref(),
                     location: location.as_deref(),
                 },
-                OutcomeRead::Undefined { reason } => NativeRunOutcome::Undefined(reason),
-                OutcomeRead::Incomplete { limit } => NativeRunOutcome::Incomplete(limit),
+                Outcome::Undefined { reason } => NativeRunOutcome::Undefined(reason),
+                Outcome::Incomplete { limit } => NativeRunOutcome::Incomplete(limit),
             })
     }
 
@@ -494,9 +502,9 @@ pub enum NativeRunOutcome<'a> {
         /// Cause-specific fields, when assigned.
         fields: Option<&'a BTreeMap<String, String>>,
         /// The source locus, when assigned.
-        locus: Option<&'a CallLocusRead>,
+        locus: Option<&'a CallLocusRecord>,
         /// The expression location, when assigned.
-        location: Option<&'a CallLocationRead>,
+        location: Option<&'a CallLocation>,
     },
     /// The claim was undefined for this reason.
     Undefined(&'a str),
@@ -539,1136 +547,6 @@ impl CommandErrorRecord {
     }
 }
 
-#[derive(Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-enum Basis {
-    ClosedScope,
-    DecisiveWitness,
-    DecisiveCounterexample,
-    Unsettled,
-    Unavailable,
-}
-
-impl Basis {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::ClosedScope => "closed-scope",
-            Self::DecisiveWitness => "decisive-witness",
-            Self::DecisiveCounterexample => "decisive-counterexample",
-            Self::Unsettled => "unsettled",
-            Self::Unavailable => "unavailable",
-        }
-    }
-
-    fn is_decisive(&self) -> bool {
-        matches!(self, Self::DecisiveWitness | Self::DecisiveCounterexample)
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Stage {
-    Compile,
-    Select,
-    Admit,
-    Evaluate,
-}
-
-impl Stage {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Compile => "compile",
-            Self::Select => "select",
-            Self::Admit => "admit",
-            Self::Evaluate => "evaluate",
-        }
-    }
-}
-
-#[derive(Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-enum Category {
-    Success,
-    Violation,
-    Undefined,
-    Refusal,
-    Unsupported,
-    Incomplete,
-    Inconclusive,
-    InternalFailure,
-    Pending,
-    Indeterminate,
-}
-
-impl Category {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Indeterminate => "indeterminate",
-            Self::Success => "success",
-            Self::Violation => "violation",
-            Self::Undefined => "undefined",
-            Self::Refusal => "refusal",
-            Self::Unsupported => "unsupported",
-            Self::Incomplete => "incomplete",
-            Self::Inconclusive => "inconclusive",
-            Self::InternalFailure => "internal-failure",
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CounterRead {
-    kind: String,
-    consumed: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AdmissionRead {
-    document_bytes: u64,
-    objects: u64,
-    values: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UsageRead {
-    admission: AdmissionRead,
-    evaluation_admissions: u64,
-    evaluation_consumed: Vec<CounterRead>,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum OutcomeRead {
-    Completed {
-        value: ValueRead,
-    },
-    Refused {
-        code: String,
-        cause: String,
-        #[serde(default, deserialize_with = "present")]
-        fields: Option<BTreeMap<String, String>>,
-        #[serde(default, deserialize_with = "present")]
-        locus: Option<CallLocusRead>,
-        #[serde(default, deserialize_with = "present")]
-        location: Option<Box<CallLocationRead>>,
-    },
-    Undefined {
-        reason: String,
-    },
-    Incomplete {
-        limit: String,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ValueRead {
-    Boolean { value: bool },
-    Integer { decimal: String },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-/// Decoded source locus attached to an evaluation refusal.
-pub struct CallLocusRead {
-    /// Authored path of the source that owns this span.
-    pub file: String,
-    /// The located source span.
-    pub span: SpanRead,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-/// Decoded source span.
-pub struct SpanRead {
-    /// First position in the source region.
-    pub start: PositionRead,
-    /// Position after the source region.
-    pub end: PositionRead,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-/// Decoded position in an authored source.
-pub struct PositionRead {
-    /// Zero-based byte offset.
-    pub byte: usize,
-    /// One-based line number.
-    pub line: usize,
-    /// One-based column number.
-    pub column: usize,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-/// Decoded expression location within a declaration.
-pub struct CallLocationRead {
-    /// Declaration origin of the expression.
-    pub origin: CallOriginRead,
-    /// Child-index path within the origin.
-    pub path: Vec<usize>,
-}
-
-impl CallLocationRead {
-    /// The typed location this record restores.
-    #[ix_trace_rs::string_edge]
-    fn typed(&self) -> filament_semantic_value::location::ExpressionLocation {
-        use filament_semantic_value::location::{
-            ExpressionLocation as Location, ExpressionOwner as Origin,
-        };
-        let origin = match &self.origin {
-            CallOriginRead::Body { function, index } => Origin::Body {
-                function: function.clone(),
-                index: *index,
-            },
-            CallOriginRead::Measure { function, index } => Origin::Measure {
-                function: function.clone(),
-                index: *index,
-            },
-            CallOriginRead::Expression => Origin::Expression,
-            CallOriginRead::TypeDeclaration { name } => {
-                Origin::TypeDeclaration { name: name.clone() }
-            }
-            CallOriginRead::StateClause { clause, index } => Origin::StateClause {
-                clause: clause.clone(),
-                index: *index,
-            },
-            CallOriginRead::ProtocolAttempt { protocol, attempt } => Origin::ProtocolAttempt {
-                protocol: *protocol,
-                attempt: *attempt,
-            },
-            CallOriginRead::ModelOperationClause {
-                operation,
-                clause,
-                position,
-            } => Origin::ModelOperationClause {
-                operation: operation.clone(),
-                kind: match clause.as_str() {
-                    "requires" => filament_semantic_value::location::OperationClauseKind::Requires,
-                    "ensures" => filament_semantic_value::location::OperationClauseKind::Ensures,
-                    _ => unreachable!("the native reader validates operation-clause origins"),
-                },
-                position: *position,
-            },
-        };
-        Location::at(origin, &self.path)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-/// Declaration origin of a decoded expression location.
-pub enum CallOriginRead {
-    /// Function body clause.
-    Body {
-        /// Function name.
-        function: String,
-        /// Body clause index.
-        index: usize,
-    },
-    /// Function measure clause.
-    Measure {
-        /// Function name.
-        function: String,
-        /// Measure clause index.
-        index: usize,
-    },
-    /// Standalone expression.
-    Expression,
-    /// Named type declaration.
-    TypeDeclaration {
-        /// Type name.
-        name: String,
-    },
-    /// State clause declaration.
-    StateClause {
-        /// State clause name.
-        clause: String,
-        /// Clause index.
-        index: usize,
-    },
-    /// Protocol attempt declaration.
-    ProtocolAttempt {
-        /// Protocol index.
-        protocol: usize,
-        /// Attempt index.
-        attempt: usize,
-    },
-    /// One of a model operation's kept `requires` or `ensures` clauses.
-    ModelOperationClause {
-        /// Operation declaration node identity.
-        operation: String,
-        /// `requires` or `ensures`.
-        clause: String,
-        /// Zero-based position in that clause list.
-        position: usize,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InternalFaultRead {
-    stage: String,
-    invariant: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-struct RefusalRead {
-    code: String,
-    #[serde(default, deserialize_with = "present")]
-    cause: Option<String>,
-    #[serde(default, deserialize_with = "fields_read")]
-    fields: Option<BTreeMap<String, String>>,
-    #[serde(default, deserialize_with = "present")]
-    message: Option<String>,
-    #[serde(default, deserialize_with = "present")]
-    locus: Option<RefusalLocusRead>,
-    #[serde(default, deserialize_with = "present")]
-    frame_witness: Option<FrameWitnessRead>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FrameWitnessRead {
-    code: String,
-    cause: String,
-    invocation: DocumentRefRead,
-    pre: DocumentRefRead,
-    post: DocumentRefRead,
-    population: String,
-    change: FrameChangeRead,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DocumentRefRead {
-    authority: String,
-    identity: String,
-}
-
-impl DocumentRefRead {
-    #[ix_trace_rs::string_edge]
-    fn typed(&self) -> DocumentRef {
-        DocumentRef {
-            authority: self.authority.clone(),
-            identity: self.identity.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DeclarationKeyRead {
-    package: String,
-    node: String,
-}
-
-impl DeclarationKeyRead {
-    fn typed(&self) -> DeclarationKey {
-        DeclarationKey {
-            package: self.package.clone(),
-            node: self.node.clone(),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum FrameChangeRead {
-    FieldWrite {
-        object: String,
-        field: String,
-        modifies: Vec<DeclarationKeyRead>,
-    },
-    Created {
-        object: String,
-        type_name: DeclarationKeyRead,
-        creates: Vec<DeclarationKeyRead>,
-    },
-    Deleted {
-        object: String,
-        type_name: DeclarationKeyRead,
-        deletes: Vec<DeclarationKeyRead>,
-    },
-    Retyped {
-        object: String,
-        pre_type: DeclarationKeyRead,
-        post_type: DeclarationKeyRead,
-    },
-    Link {
-        relationship: DeclarationKeyRead,
-        difference: LinkDifferenceRead,
-        source: ObjectRefRead,
-        target: ObjectRefRead,
-        modifies: Vec<DeclarationKeyRead>,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum LinkDifferenceRead {
-    Added,
-    Removed,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ObjectRefRead {
-    population: String,
-    key: String,
-}
-
-impl ObjectRefRead {
-    fn typed(&self) -> SelectedObject {
-        SelectedObject {
-            population: self.population.clone(),
-            key: self.key.clone(),
-        }
-    }
-}
-
-impl FrameChangeRead {
-    fn typed(&self) -> FrameChange {
-        match self {
-            Self::FieldWrite {
-                object,
-                field,
-                modifies,
-            } => FrameChange::FieldWrite {
-                object: object.clone(),
-                field: field.clone(),
-                modifies: modifies.iter().map(DeclarationKeyRead::typed).collect(),
-            },
-            Self::Created {
-                object,
-                type_name,
-                creates,
-            } => FrameChange::Created {
-                object: object.clone(),
-                type_name: type_name.typed(),
-                creates: creates.iter().map(DeclarationKeyRead::typed).collect(),
-            },
-            Self::Deleted {
-                object,
-                type_name,
-                deletes,
-            } => FrameChange::Deleted {
-                object: object.clone(),
-                type_name: type_name.typed(),
-                deletes: deletes.iter().map(DeclarationKeyRead::typed).collect(),
-            },
-            Self::Retyped {
-                object,
-                pre_type,
-                post_type,
-            } => FrameChange::Retyped {
-                object: object.clone(),
-                pre_type: pre_type.typed(),
-                post_type: post_type.typed(),
-            },
-            Self::Link {
-                relationship,
-                difference,
-                source,
-                target,
-                modifies,
-            } => FrameChange::Link {
-                relationship: relationship.typed(),
-                difference: match difference {
-                    LinkDifferenceRead::Added => LinkDifference::Added,
-                    LinkDifferenceRead::Removed => LinkDifference::Removed,
-                },
-                source: source.typed(),
-                target: target.typed(),
-                modifies: modifies.iter().map(DeclarationKeyRead::typed).collect(),
-            },
-        }
-    }
-}
-
-impl FrameWitnessRead {
-    #[ix_trace_rs::string_edge]
-    fn typed(&self) -> Result<FrameWitness, NativeRunReadError> {
-        if self.code != "frame_violation" || self.cause != "unauthorized-change" {
-            return Err(NativeRunReadError::Invalid {
-                member: "disposition.refusal.frame_witness",
-                reason: "frame witness code or cause disagrees with catalog",
-            });
-        }
-        if let FrameChangeRead::Link { source, .. } = &self.change {
-            if source.population != self.population {
-                return Err(NativeRunReadError::Invalid {
-                    member: "disposition.refusal.frame_witness.population",
-                    reason: "link witness population is not its source end's population",
-                });
-            }
-        }
-        Ok(FrameWitness {
-            code: Code::FrameViolation,
-            cause: "unauthorized-change",
-            invocation: self.invocation.typed(),
-            pre: self.pre.typed(),
-            post: self.post.typed(),
-            population: self.population.clone(),
-            change: self.change.typed(),
-        })
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-/// Decoded locus attached to a compile or selection refusal.
-pub enum RefusalLocusRead {
-    /// Region within an authored source.
-    Region {
-        /// Source identity.
-        source: SourceRefRead,
-        /// First byte of the region.
-        start: u64,
-        /// Byte after the region.
-        end: u64,
-    },
-    /// Source path and line-column span.
-    Located(LocatedRead),
-    /// Named occurrence.
-    Occurrence {
-        /// Occurrence identifier.
-        occurrence: String,
-    },
-    /// Pointer into an identified artifact.
-    Artifact {
-        /// Artifact identity.
-        identity: SourceRefRead,
-        /// Pointer within the artifact.
-        pointer: String,
-    },
-    /// A position in a caller-named input operand.
-    Input {
-        /// The operand exactly as the caller wrote it.
-        operand: String,
-        /// Member path relative to a directory operand, present as null when absent.
-        #[serde(default, deserialize_with = "present")]
-        member: Option<Option<String>>,
-        /// Pointer into the input, present as null when absent.
-        #[serde(default, deserialize_with = "present")]
-        pointer: Option<Option<String>>,
-    },
-    /// A member in a JSON input document.
-    Document {
-        /// Document identity, present as null when the caller supplied none.
-        #[serde(default, deserialize_with = "present")]
-        document: Option<Option<SourceRefRead>>,
-        /// Caller path, present as null when the caller supplied none.
-        #[serde(default, deserialize_with = "present")]
-        path: Option<Option<String>>,
-        /// Pointer to the failing member or object holding a missing member.
-        pointer: String,
-        /// Object identity, present as null when no snapshot object applies.
-        #[serde(default, deserialize_with = "present")]
-        object: Option<Option<DocumentObjectRead>>,
-        /// Failing member, present as null when none is named.
-        #[serde(default, deserialize_with = "present")]
-        member: Option<Option<String>>,
-    },
-}
-
-/// The two closed located forms: native bytes or imported coordinates.
-#[derive(Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
-pub enum LocatedRead {
-    /// A native source span with real byte offsets and no imported URI.
-    Native {
-        /// Authored path.
-        file: String,
-        /// Native byte-bearing span.
-        span: SpanRead,
-    },
-    /// An imported origin, without any native label pair or byte offsets.
-    Imported {
-        /// Authored path.
-        file: String,
-        /// Exact admitted FCD source identity URI.
-        #[serde(rename = "sourceIdentity", deserialize_with = "source_identity_uri")]
-        source_identity: String,
-        /// Byte-free authored coordinates.
-        span: fsl_foundation::SourceCoordinates,
-    },
-}
-
-fn source_identity_uri<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<String, D::Error> {
-    let value = String::deserialize(deserializer)?;
-    if fsl_semantics::model::intake::is_source_identity_uri(&value) {
-        Ok(value)
-    } else {
-        Err(serde::de::Error::custom(
-            "an admitted FCD source identity URI",
-        ))
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code, reason = "the closed read shape validates document loci")]
-/// Decoded snapshot object identity in a document locus.
-pub struct DocumentObjectRead {
-    /// Model population name.
-    pub population: String,
-    /// Object key within the population.
-    pub key: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the closed read shape validates every field during deserialization"
-)]
-/// Decoded identity of an authored source.
-pub struct SourceRefRead {
-    /// Source authority.
-    pub authority: String,
-    /// Source identity.
-    pub identity: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DispositionRead {
-    stage: Stage,
-    category: Category,
-    #[serde(default, deserialize_with = "present")]
-    truth: Option<bool>,
-    #[serde(default, deserialize_with = "present")]
-    outcome: Option<OutcomeRead>,
-    #[serde(default, deserialize_with = "present")]
-    internal_fault: Option<InternalFaultRead>,
-    #[serde(default, deserialize_with = "present")]
-    refusal: Option<RefusalRead>,
-    #[serde(default, deserialize_with = "present")]
-    temporal: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present")]
-    operation_contract: Option<OperationContractRead>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OperationContractKindRead {
-    Requires,
-    Ensures,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OperationContractRead {
-    operation: DeclarationKeyRead,
-    name: String,
-    kind: OperationContractKindRead,
-    position: usize,
-    #[serde(default, deserialize_with = "present")]
-    artifact: Option<String>,
-    #[serde(default, deserialize_with = "present")]
-    span: Option<SpanRead>,
-    location: CallLocationRead,
-    member: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelLimitsRead {
-    #[serde(rename = "expansion.max_candidates")]
-    max_candidates: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ClauseRead {
-    format: String,
-    disposition: DispositionRead,
-    usage: UsageRead,
-    basis: Basis,
-    #[serde(default, deserialize_with = "present")]
-    witness: Option<RecordWire<Box<RawValue>>>,
-    #[serde(default, deserialize_with = "present")]
-    extraction: Option<ExtractionRecord>,
-    #[serde(default, deserialize_with = "present")]
-    ledger: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present")]
-    limits: Option<fsl_foundation::serde_object::Object<ModelLimitsRead>>,
-    axes: crate::OutcomeAxes,
-    #[serde(default, rename = "support")]
-    _support: Option<serde_json::Value>,
-    #[serde(default, rename = "late")]
-    _late: Option<serde_json::Value>,
-    #[serde(default, rename = "admitted_late")]
-    _admitted_late: Option<serde_json::Value>,
-    #[serde(default, rename = "result_identity")]
-    _result_identity: Option<String>,
-    #[serde(default, rename = "input_identity")]
-    _input_identity: Option<String>,
-    #[serde(default, rename = "relation")]
-    _relation: Option<serde_json::Value>,
-    #[serde(default, rename = "lineage")]
-    _lineage: Option<u64>,
-    #[serde(default, rename = "evidence_ledger")]
-    _evidence_ledger: Option<serde_json::Value>,
-}
-
-trait ExtractionShape {
-    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String>;
-}
-
-macro_rules! extraction_leaf_shape {
-    ($($type:ty),+ $(,)?) => {
-        $(
-            impl ExtractionShape for $type {
-                fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
-                    None
-                }
-            }
-        )+
-    };
-}
-
-extraction_leaf_shape!(
-    String,
-    u8,
-    u64,
-    usize,
-    bool,
-    AvailabilityState,
-    SemanticSeverity
-);
-
-impl<K, V> ExtractionShape for BTreeMap<K, V> {
-    fn missing_member(_: NodeRef<'_>, _: &str) -> Option<String> {
-        None
-    }
-}
-
-impl<T: ExtractionShape> ExtractionShape for Vec<T> {
-    #[implements("FR-267-AC-17")]
-    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
-        let Node::Array(entries) = node.node() else {
-            return None;
-        };
-        entries
-            .enumerate()
-            .find_map(|(index, entry)| T::missing_member(entry, &format!("{path}[{index}]")))
-    }
-}
-
-impl<T: ExtractionShape> ExtractionShape for Option<T> {
-    #[implements("FR-267-AC-17")]
-    fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
-        if matches!(node.node(), Node::Null) {
-            None
-        } else {
-            T::missing_member(node, path)
-        }
-    }
-}
-
-macro_rules! extraction_record_type {
-    (
-        $name:ident {
-            $($(#[$field_attribute:meta])* $field:ident: $field_type:ty),* $(,)?
-            ;
-            $($(#[$optional_attribute:meta])* $optional_field:ident: $optional_type:ty),* $(,)?
-        }
-    ) => {
-        #[derive(Clone, Debug, Serialize)]
-        #[allow(missing_docs, reason = "fields implement the native extraction wire record")]
-        pub struct $name {
-            $($(#[$field_attribute])* pub $field: $field_type,)*
-            $($(#[$optional_attribute])* pub $optional_field: $optional_type,)*
-        }
-
-        // Serde's derived struct decoder also accepts a positional array, so
-        // the members are decoded only after object syntax is confirmed.
-        const _: () = {
-            type Record = $name;
-
-            #[derive(Deserialize)]
-            #[serde(remote = "Record", deny_unknown_fields)]
-            #[allow(dead_code, reason = "a Serde remote decoder is never constructed")]
-            struct Members {
-                $($(#[$field_attribute])* $field: $field_type,)*
-                $($(#[$optional_attribute])* $optional_field: $optional_type,)*
-            }
-
-            struct Decoded(Record);
-
-            impl<'de> Deserialize<'de> for Decoded {
-                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-                    Members::deserialize(decoder).map(Self)
-                }
-            }
-
-            impl<'de> Deserialize<'de> for $name {
-                #[implements("FR-267-AC-17")]
-                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-                    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
-                        .map(|Decoded(record)| record)
-                }
-            }
-        };
-
-        impl ExtractionShape for $name {
-            #[implements("FR-267-AC-17")]
-            fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
-                if !matches!(node.node(), Node::Object(_)) {
-                    return None;
-                }
-                $(
-                    let field_path = format!("{path}.{}", stringify!($field));
-                    let Some(value) = node.get(stringify!($field)) else {
-                        return Some(field_path);
-                    };
-                    if let Some(missing) = <$field_type as ExtractionShape>::missing_member(value, &field_path) {
-                        return Some(missing);
-                    }
-                )*
-                $(
-                    if let Some(value) = node.get(stringify!($optional_field)) {
-                        let field_path = format!("{path}.{}", stringify!($optional_field));
-                        if let Some(missing) = <$optional_type as ExtractionShape>::missing_member(value, &field_path) {
-                            return Some(missing);
-                        }
-                    }
-                )*
-                None
-            }
-        }
-
-    };
-}
-
-extraction_record_type! {
-    ExtractionRecord {
-        original: ExtractionOriginal,
-        body: ExtractionBody,
-        binding: ExtractionBinding,
-        outcome: ExtractionOutcome,
-        map: ExtractionMap;
-        #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-        original_regions: Option<Vec<ExtractionRegion>>
-    }
-}
-
-extraction_record_type! {
-    ExtractionOriginal {
-        authority: String,
-        identity: String,
-        path: String,
-        bytes: Vec<u8>;
-    }
-}
-
-extraction_record_type! {
-    ExtractionBody {
-        authority: String,
-        identity: String,
-        document: String,
-        bytes: Vec<u8>;
-    }
-}
-
-extraction_record_type! {
-    ExtractionBinding {
-        clause: String,
-        package: String;
-    }
-}
-
-extraction_record_type! {
-    ExtractionMap {
-        region: ExtractionSpan,
-        segments: Vec<ExtractionSegment>;
-    }
-}
-
-extraction_record_type! {
-    ExtractionSpan {
-        start: u64,
-        end: u64;
-    }
-}
-
-extraction_record_type! {
-    ExtractionSegment {
-        body_start: u64,
-        body_end: u64,
-        original_start: u64,
-        original_end: u64;
-    }
-}
-
-extraction_record_type! {
-    ExtractionRegion {
-        start: ExtractionPosition,
-        end: ExtractionPosition;
-    }
-}
-
-extraction_record_type! {
-    ExtractionPosition {
-        byte: u64,
-        line: u64,
-        column: u64;
-    }
-}
-
-extraction_record_type! {
-    ExtractionOutcome {
-        #[serde(deserialize_with = "closed_object")]
-        availability: KindAvailability,
-        clause_text: std::collections::BTreeMap<String, String>,
-        #[serde(deserialize_with = "closed_objects")]
-        diagnostics: Vec<SemanticDiagnostic>;
-        #[serde(default, deserialize_with = "present_closed_objects", skip_serializing_if = "Option::is_none")]
-        clauses: Option<Vec<ClauseRef>>
-    }
-}
-
-/// A Quire record this reader decodes as a closed JSON object. Quire's own
-/// derived decoders accept a positional array and unknown members.
-trait ClosedRecord: Sized {
-    fn closed<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error>;
-}
-
-/// The closed decoder and the missing-member walk of one Quire record, which
-/// Quire writes with its own encoding. Serde's remote derive builds the Quire
-/// type, so a member Quire adds, removes or retypes stops the build.
-macro_rules! quire_record {
-    (
-        $record:ident {
-            $($wire:literal $field:ident: $field_type:ty $(=> $with:literal)?),*
-            ;
-            $($optional_wire:literal $optional_field:ident: $optional_type:ty => $optional_with:literal),*
-        }
-    ) => {
-        const _: () = {
-            type Record = $record;
-
-            #[derive(Deserialize)]
-            #[serde(remote = "Record", deny_unknown_fields)]
-            #[allow(dead_code, reason = "a Serde remote decoder is never constructed")]
-            struct Members {
-                $(
-                    #[serde(rename = $wire $(, deserialize_with = $with)?)]
-                    $field: $field_type,
-                )*
-                $(
-                    #[serde(rename = $optional_wire, default, deserialize_with = $optional_with)]
-                    $optional_field: Option<$optional_type>,
-                )*
-            }
-
-            struct Decoded(Record);
-
-            impl<'de> Deserialize<'de> for Decoded {
-                fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-                    Members::deserialize(decoder).map(Self)
-                }
-            }
-
-            impl ClosedRecord for $record {
-                #[implements("FR-267-AC-17")]
-                fn closed<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-                    fsl_foundation::serde_object::from_object::<D, Decoded>(decoder)
-                        .map(|Decoded(record)| record)
-                }
-            }
-        };
-
-        impl ExtractionShape for $record {
-            #[implements("FR-267-AC-17")]
-            fn missing_member(node: NodeRef<'_>, path: &str) -> Option<String> {
-                if !matches!(node.node(), Node::Object(_)) {
-                    return None;
-                }
-                $(
-                    let field_path = format!("{path}.{}", $wire);
-                    let Some(value) = node.get($wire) else {
-                        return Some(field_path);
-                    };
-                    if let Some(missing) = <$field_type as ExtractionShape>::missing_member(value, &field_path) {
-                        return Some(missing);
-                    }
-                )*
-                $(
-                    if let Some(value) = node.get($optional_wire) {
-                        let field_path = format!("{path}.{}", $optional_wire);
-                        if let Some(missing) = <$optional_type as ExtractionShape>::missing_member(value, &field_path) {
-                            return Some(missing);
-                        }
-                    }
-                )*
-                None
-            }
-        }
-    };
-}
-
-quire_record! {
-    KindAvailability {
-        "state" state: AvailabilityState => "string_variant",
-        "lossy" lossy: bool
-        ;
-        "reason" reason: String => "present"
-    }
-}
-
-quire_record! {
-    SemanticDiagnostic {
-        "code" code: String,
-        "severity" severity: SemanticSeverity => "string_variant",
-        "message" message: String
-        ;
-        "line" line: usize => "present",
-        "column" column: usize => "present",
-        "reason" reason: String => "present",
-        "sourceSpan" source_span: SourceLocus => "present_closed_object",
-        "section" section: String => "present"
-    }
-}
-
-quire_record! {
-    ClauseRef {
-        "language" language: String,
-        "clauseId" clause_id: String
-        ;
-        "sourceSpan" source_span: SourceLocus => "present_closed_object"
-    }
-}
-
-quire_record! {
-    SourceLocus {
-        "sourceIdentity" source_identity: String,
-        "path" path: String,
-        "startLine" start_line: usize,
-        "startColumn" start_column: usize
-        ;
-        "endLine" end_line: usize => "present",
-        "endColumn" end_column: usize => "present"
-    }
-}
-
-/// One closed record, wherever a decoder needs a `Deserialize` type.
-struct Closed<T>(T);
-
-impl<'de, T: ClosedRecord> Deserialize<'de> for Closed<T> {
-    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-        T::closed(decoder).map(Self)
-    }
-}
-
-fn closed_object<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
-    decoder: D,
-) -> Result<T, D::Error> {
-    T::closed(decoder)
-}
-
-fn present_closed_object<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
-    decoder: D,
-) -> Result<Option<T>, D::Error> {
-    T::closed(decoder).map(Some)
-}
-
-#[implements("FR-267-AC-17")]
-fn closed_objects<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
-    decoder: D,
-) -> Result<Vec<T>, D::Error> {
-    Vec::<Closed<T>>::deserialize(decoder)
-        .map(|entries| entries.into_iter().map(|Closed(entry)| entry).collect())
-}
-
-fn present_closed_objects<'de, D: serde::Deserializer<'de>, T: ClosedRecord>(
-    decoder: D,
-) -> Result<Option<Vec<T>>, D::Error> {
-    closed_objects(decoder).map(Some)
-}
-
-/// A Quire enum, admitted only as a JSON string: Serde's derived enum decoder
-/// also accepts `{"error": null}`.
-#[implements("FR-267-AC-17")]
-fn string_variant<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
-    decoder: D,
-) -> Result<T, D::Error> {
-    let name = String::deserialize(decoder)?;
-    T::deserialize(serde::de::value::StringDeserializer::new(name))
-}
-
-#[implements("FR-267-AC-17")]
-fn validate_extraction(extraction: Option<NodeRef<'_>>) -> Result<(), NativeRunReadError> {
-    let Some(value) = extraction.filter(|value| !matches!(value.node(), Node::Null)) else {
-        return Ok(());
-    };
-    if let Some(member) = ExtractionRecord::missing_member(value, "extraction") {
-        return Err(NativeRunReadError::MalformedMember {
-            member,
-            source: serde_json::Error::custom("missing required extraction member"),
-        });
-    }
-    let segments_empty = value
-        .get("map")
-        .and_then(|map| map.get("segments"))
-        .is_some_and(
-            |segments| matches!(segments.node(), Node::Array(entries) if entries.len() == 0),
-        );
-    if segments_empty {
-        return Err(NativeRunReadError::Invalid {
-            member: "extraction.map.segments",
-            reason: "a non-empty segment array",
-        });
-    }
-    let regions_empty = value.get("original_regions").is_some_and(
-        |regions| matches!(regions.node(), Node::Array(entries) if entries.len() == 0),
-    );
-    if regions_empty {
-        return Err(NativeRunReadError::Invalid {
-            member: "extraction.original_regions",
-            reason: "a non-empty region array",
-        });
-    }
-    Ok(())
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CommandErrorRead {
@@ -1680,39 +558,7 @@ struct CommandErrorRead {
     message: String,
     #[serde(rename = "details")]
     _details: Box<RawValue>,
-    basis: Basis,
-}
-
-/// A refusal record's `fields`: text members, and FR-645's `expected` list, which
-/// reads as its kinds joined by commas.
-fn fields_read<'de, D>(decoder: D) -> Result<Option<BTreeMap<String, String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Field {
-        Text(String),
-        List(Vec<String>),
-    }
-    let fields = BTreeMap::<String, Field>::deserialize(decoder)?;
-    Ok(Some(
-        fields
-            .into_iter()
-            .map(|(name, field)| match field {
-                Field::Text(text) => (name, text),
-                Field::List(kinds) => (name, kinds.join(",")),
-            })
-            .collect(),
-    ))
-}
-
-fn present<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(decoder).map(Some)
+    basis: SettlementBasis,
 }
 
 fn read_typed<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, NativeRunReadError> {
@@ -1768,8 +614,8 @@ fn kernel_causes(code: &str) -> Option<&'static [&'static str]> {
     }
 }
 
-fn validate_refused_outcome(outcome: &OutcomeRead) -> Result<(), NativeRunReadError> {
-    let OutcomeRead::Refused {
+fn validate_refused_outcome(outcome: &Outcome) -> Result<(), NativeRunReadError> {
+    let Outcome::Refused {
         code,
         cause,
         fields,
@@ -1817,7 +663,7 @@ fn validate_refused_outcome(outcome: &OutcomeRead) -> Result<(), NativeRunReadEr
 }
 
 #[ix_trace_rs::string_edge]
-fn validate_compile_limit(refusal: &RefusalRead) -> Result<(), NativeRunReadError> {
+fn validate_compile_limit(refusal: &RefusalRecord) -> Result<(), NativeRunReadError> {
     if refusal.code != "stage_limit_exceeded" {
         return Ok(());
     }
@@ -1829,8 +675,8 @@ fn validate_compile_limit(refusal: &RefusalRead) -> Result<(), NativeRunReadErro
     if fields.len() != 4 {
         return Err(invalid());
     }
-    let setting = fields
-        .get("setting")
+    let text = |name: &str| fields.get(name).and_then(FieldValue::text);
+    let setting = text("setting")
         .and_then(|name| {
             fsl_foundation::Setting::ALL
                 .iter()
@@ -1838,18 +684,16 @@ fn validate_compile_limit(refusal: &RefusalRead) -> Result<(), NativeRunReadErro
                 .find(|setting| setting.name() == name)
         })
         .ok_or_else(invalid)?;
-    let bound = fields
-        .get("bound")
+    let bound = text("bound")
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or_else(invalid)?;
-    let actual = fields
-        .get("actual")
+    let actual = text("actual")
         .and_then(|value| value.parse::<u128>().ok())
         .ok_or_else(invalid)?;
-    if fields.get("kind").map(String::as_str) != Some(setting.kind().catalog_cause())
+    if text("kind") != Some(setting.kind().catalog_cause())
         || refusal.cause.as_deref() != Some(setting.kind().catalog_cause())
-        || fields.get("bound") != Some(&bound.to_string())
-        || fields.get("actual") != Some(&actual.to_string())
+        || text("bound") != Some(bound.to_string().as_str())
+        || text("actual") != Some(actual.to_string().as_str())
     {
         return Err(invalid());
     }
@@ -1869,7 +713,7 @@ fn catalog_category(code: &str) -> Option<&'static str> {
 }
 
 #[ix_trace_rs::string_edge]
-fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadError> {
+fn validate_disposition(value: &Disposition) -> Result<(), NativeRunReadError> {
     let invalid = |member, reason| NativeRunReadError::Invalid { member, reason };
     temporal::refuse_temporal_only_outcome(value.outcome.as_ref())?;
     if let Some(refusal) = &value.refusal {
@@ -1880,18 +724,18 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
     if let Some(contract) = &value.operation_contract {
         let declaration = contract.operation.typed();
         let (kind, member) = match contract.kind {
-            OperationContractKindRead::Requires => ("requires", "pre"),
-            OperationContractKindRead::Ensures => ("ensures", "post"),
+            OperationClause::Requires => (OperationClause::Requires, "pre"),
+            OperationClause::Ensures => (OperationClause::Ensures, "post"),
         };
         let expected_member = format!("Operation.{member}[{}]", contract.position);
         let origin_matches = matches!(
             &contract.location.origin,
-            CallOriginRead::ModelOperationClause {
+            CallOrigin::ModelOperationClause {
                 operation,
                 clause,
                 position,
             } if operation == &declaration.node
-                && clause == kind
+                && *clause == kind
                 && *position == contract.position
                 && contract.location.path.is_empty()
         );
@@ -1905,14 +749,14 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
             || declaration.node.is_empty()
             || !matches!(
                 contract.kind,
-                OperationContractKindRead::Requires | OperationContractKindRead::Ensures
+                OperationClause::Requires | OperationClause::Ensures
             )
             || contract.member != expected_member
             || !origin_matches
             || !matches!(
                 value.outcome,
-                Some(OutcomeRead::Completed {
-                    value: ValueRead::Boolean { value: false }
+                Some(Outcome::Completed {
+                    value: OutcomeValue::Boolean { value: false }
                 })
             )
         {
@@ -2023,8 +867,8 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
                 ));
             }
             let completed = match &value.outcome {
-                Some(OutcomeRead::Completed {
-                    value: ValueRead::Boolean { value },
+                Some(Outcome::Completed {
+                    value: OutcomeValue::Boolean { value },
                 }) => Some(*value),
                 _ => None,
             };
@@ -2071,7 +915,7 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
             }
         }
         (Stage::Evaluate, Category::Undefined) => {
-            if !matches!(value.outcome.as_ref(), Some(OutcomeRead::Undefined { .. }))
+            if !matches!(value.outcome.as_ref(), Some(Outcome::Undefined { .. }))
                 || value.internal_fault.is_some()
                 || value.refusal.is_some()
                 || value.truth.is_some()
@@ -2099,14 +943,15 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
                             .fields
                             .as_ref()
                             .and_then(|fields| fields.get("reason"))
+                            .and_then(FieldValue::text)
                             .is_some_and(|reason| {
-                                super::clause::TRACE_REFUSAL_REASONS.contains(&reason.as_str())
+                                super::clause::TRACE_REFUSAL_REASONS.contains(&reason)
                             })
                 });
             if trace_refusal {
                 return Ok(());
             }
-            if !matches!(value.outcome.as_ref(), Some(OutcomeRead::Refused { .. }))
+            if !matches!(value.outcome.as_ref(), Some(Outcome::Refused { .. }))
                 || value.internal_fault.is_some()
                 || value.refusal.is_some()
                 || value.truth.is_some()
@@ -2117,7 +962,7 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
                 ));
             }
             validate_refused_outcome(value.outcome.as_ref().expect("checked above"))?;
-            if let Some(OutcomeRead::Refused { code, .. }) = value.outcome.as_ref() {
+            if let Some(Outcome::Refused { code, .. }) = value.outcome.as_ref() {
                 if catalog_category(code) != Some(value.category.as_str()) {
                     return Err(invalid(
                         "disposition.category",
@@ -2129,7 +974,7 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
         (Stage::Evaluate, Category::Incomplete) => {
             if !matches!(
                 value.outcome.as_ref(),
-                Some(OutcomeRead::Incomplete { .. } | OutcomeRead::Refused { .. })
+                Some(Outcome::Incomplete { .. } | Outcome::Refused { .. })
             ) || value.internal_fault.is_some()
                 || value.refusal.is_some()
                 || value.truth.is_some()
@@ -2141,7 +986,7 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
             }
             if let Some(outcome) = value.outcome.as_ref() {
                 validate_refused_outcome(outcome)?;
-                if let OutcomeRead::Refused { code, .. } = outcome {
+                if let Outcome::Refused { code, .. } = outcome {
                     if catalog_category(code) != Some(value.category.as_str()) {
                         return Err(invalid(
                             "disposition.category",
@@ -2161,16 +1006,16 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
     Ok(())
 }
 
-fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadError> {
+fn validate_refusal_locus(value: &RefusalLocus) -> Result<(), NativeRunReadError> {
     let invalid = || NativeRunReadError::Invalid {
         member: "disposition.refusal.locus",
         reason: "a closed refusal locus with an RFC 6901 pointer",
     };
-    let valid_identity = |identity: &SourceRefRead| {
+    let valid_identity = |identity: &SourceRef| {
         !identity.authority.trim().is_empty() && !identity.identity.trim().is_empty()
     };
     match value {
-        RefusalLocusRead::Artifact { identity, pointer } => {
+        RefusalLocus::Artifact { identity, pointer } => {
             if !valid_identity(identity)
                 || pointer
                     .parse::<fsl_foundation::diagnostic::JsonPointer>()
@@ -2179,7 +1024,7 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
                 return Err(invalid());
             }
         }
-        RefusalLocusRead::Input {
+        RefusalLocus::Input {
             operand: _,
             member,
             pointer,
@@ -2198,7 +1043,7 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
                 return Err(invalid());
             }
         }
-        RefusalLocusRead::Document {
+        RefusalLocus::Document {
             document,
             path,
             pointer,
@@ -2219,12 +1064,12 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
                 return Err(invalid());
             }
         }
-        RefusalLocusRead::Region { source, .. } => {
+        RefusalLocus::Region { source, .. } => {
             if !valid_identity(source) {
                 return Err(invalid());
             }
         }
-        RefusalLocusRead::Located(LocatedRead::Native { span, .. }) => {
+        RefusalLocus::Located(Located::Native { span, .. }) => {
             if [
                 span.start.line,
                 span.start.column,
@@ -2236,15 +1081,15 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
                 return Err(invalid());
             }
         }
-        RefusalLocusRead::Located(LocatedRead::Imported { .. })
-        | RefusalLocusRead::Occurrence { .. } => {}
+        RefusalLocus::Located(Located::Imported { .. })
+        | RefusalLocus::Occurrence { .. } => {}
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod refusal_locus_tests {
-    use super::{read_native_run_result, NativeRunResult, RefusalLocusRead};
+    use super::{read_native_run_result, NativeRunResult, RefusalLocus};
     use crate::outcome::{DocumentObjectLocus, OutcomeLocus};
     use ix_trace_rs::trace;
     use serde_json::{json, Value};
@@ -2291,7 +1136,7 @@ mod refusal_locus_tests {
     #[test]
     #[trace("TC-3081", "FR-267-AC-33")]
     fn imported_loci_and_native_controls_preserve_distinct_wire_forms() {
-        use super::{read_outcome_diagnostics, LocatedRead, NativeRunLimits};
+        use super::{read_outcome_diagnostics, Located, NativeRunLimits};
         for identity in [
             "ix://example/Invoice:Model_V1",
             "ix://example/invoice:model_v1",
@@ -2312,7 +1157,7 @@ mod refusal_locus_tests {
                 panic!("a clause record")
             };
             assert!(
-                matches!(record.refusal_locus(),Some(RefusalLocusRead::Located(LocatedRead::Imported{file,source_identity,span})) if file=="Invoice.model" && source_identity==identity && span.start.line.get()==17 && span.end.line.get()==21 && span.end.column.get()==14)
+                matches!(record.refusal_locus(),Some(RefusalLocus::Located(Located::Imported{file,source_identity,span})) if file=="Invoice.model" && source_identity==identity && span.start.line.get()==17 && span.end.line.get()==21 && span.end.column.get()==14)
             );
             let decoded = read_outcome_diagnostics(
                 &serde_json::to_vec(&diagnostic_document(wire)).unwrap(),
@@ -2320,7 +1165,7 @@ mod refusal_locus_tests {
             )
             .unwrap();
             assert!(
-                matches!(decoded[0].locus(),Some(RefusalLocusRead::Located(LocatedRead::Imported{source_identity,..})) if source_identity==identity)
+                matches!(decoded[0].locus(),Some(RefusalLocus::Located(Located::Imported{source_identity,..})) if source_identity==identity)
             );
         }
         let native = OutcomeLocus::Located {
@@ -2347,7 +1192,7 @@ mod refusal_locus_tests {
             panic!("a clause record")
         };
         assert!(
-            matches!(record.refusal_locus(),Some(RefusalLocusRead::Located(LocatedRead::Native{span,..})) if span.start.byte==14 && span.end.byte==18)
+            matches!(record.refusal_locus(),Some(RefusalLocus::Located(Located::Native{span,..})) if span.start.byte==14 && span.end.byte==18)
         );
         let decoded = read_outcome_diagnostics(
             &serde_json::to_vec(&diagnostic_document(wire)).unwrap(),
@@ -2355,7 +1200,7 @@ mod refusal_locus_tests {
         )
         .unwrap();
         assert!(
-            matches!(decoded[0].locus(),Some(RefusalLocusRead::Located(LocatedRead::Native{span,..})) if span.start.byte==14)
+            matches!(decoded[0].locus(),Some(RefusalLocus::Located(Located::Native{span,..})) if span.start.byte==14)
         );
     }
 
@@ -2520,7 +1365,7 @@ mod refusal_locus_tests {
         };
         assert!(matches!(
             record.refusal_locus(),
-            Some(RefusalLocusRead::Document {
+            Some(RefusalLocus::Document {
                 document: Some(None),
                 path: Some(Some(path)),
                 pointer,
@@ -2552,7 +1397,7 @@ mod refusal_locus_tests {
         };
         assert!(matches!(
             record.refusal_locus(),
-            Some(RefusalLocusRead::Artifact { .. })
+            Some(RefusalLocus::Artifact { .. })
         ));
 
         let legacy = json!({
@@ -2583,7 +1428,7 @@ mod refusal_locus_tests {
         };
         assert!(matches!(
             record.refusal_locus(),
-            Some(RefusalLocusRead::Input {
+            Some(RefusalLocus::Input {
                 operand,
                 member: Some(Some(member)),
                 pointer: Some(None),
@@ -2600,7 +1445,7 @@ mod refusal_locus_tests {
         };
         assert!(matches!(
             record.refusal_locus(),
-            Some(RefusalLocusRead::Input {
+            Some(RefusalLocus::Input {
                 operand,
                 member: Some(None),
                 pointer: Some(None),
@@ -2904,6 +1749,17 @@ impl Encode for WitnessSplice<'_> {
     }
 }
 
+/// The clause-run document `bytes` holds, decoded as the one declared type and
+/// written again, canonically.
+#[cfg(test)]
+pub(crate) fn reencode_clause_document(bytes: &[u8]) -> Vec<u8> {
+    let document: ClauseRunDocument =
+        serde_json::from_slice(bytes).expect("the declared type reads the writer's bytes");
+    let json = serde_json::to_vec(&document).expect("the declared type writes");
+    let parsed = quire_canonical::read(&json, u64::MAX).expect("canonical read");
+    quire_canonical::to_vec(&parsed.root(), Limits::new(u64::MAX)).expect("canonical write")
+}
+
 /// Read the exact `/2` identifier before choosing the closed clause-run or
 /// command-error shape. No other format is inferred from its payload.
 #[ix_trace_rs::string_edge]
@@ -2919,7 +1775,7 @@ pub struct OutcomeDiagnosticRead {
     #[serde(default, deserialize_with = "present")]
     cause: Option<Option<String>>,
     #[serde(default, deserialize_with = "present")]
-    locus: Option<Option<RefusalLocusRead>>,
+    locus: Option<Option<RefusalLocus>>,
     message: String,
     #[serde(default, rename = "details", deserialize_with = "present")]
     _details: Option<Option<Box<RawValue>>>,
@@ -2947,7 +1803,7 @@ impl OutcomeDiagnosticRead {
         self.cause.as_ref().and_then(Option::as_deref)
     }
     /// The strictly decoded locus, absent when written as null.
-    pub fn locus(&self) -> Option<&RefusalLocusRead> {
+    pub fn locus(&self) -> Option<&RefusalLocus> {
         self.locus.as_ref().and_then(Option::as_ref)
     }
     /// The original human-readable message.
@@ -3119,9 +1975,9 @@ pub fn read_native_run_result_bounded(
             .map_err(|_| budget.copy_failure("witness", "cannot traverse witness document"))?;
         budget.charge(u64::try_from(shallow.len()).unwrap_or(u64::MAX))?;
         validate_extraction(root.get("extraction"))?;
-        let document: ClauseRead = read_typed(&shallow)?;
+        let document: ClauseRunDocument = read_typed(&shallow)?;
         if let Some(limits) = &document.limits {
-            let value = &limits.0.max_candidates;
+            let value = &limits.max_candidates;
             if !value.parse::<u64>().ok().is_some_and(|count| {
                 (1..=9_007_199_254_740_991).contains(&count) && count.to_string() == *value
             }) {
@@ -3144,9 +2000,6 @@ pub fn read_native_run_result_bounded(
                 })
             })
             .transpose()?;
-        if document.format != format {
-            return Err(NativeRunReadError::UnsupportedFormat(document.format));
-        }
         if let Some(ledger) = &document.ledger {
             let invalid = |_| NativeRunReadError::Invalid {
                 member: "ledger",
@@ -3198,10 +2051,10 @@ pub fn read_native_run_result_bounded(
             .refusal
             .as_ref()
             .and_then(|refusal| refusal.frame_witness.as_ref())
-            .map(FrameWitnessRead::typed)
+            .map(FrameWitnessRecord::typed)
             .transpose()?;
         if frame_witness.is_some()
-            && (!matches!(document.basis, Basis::ClosedScope) || document.witness.is_some())
+            && (!matches!(document.basis, SettlementBasis::ClosedScope) || document.witness.is_some())
         {
             return Err(NativeRunReadError::Invalid {
                 member: "basis",
@@ -3225,9 +2078,9 @@ pub fn read_native_run_result_bounded(
         if (verdict
             && !matches!(
                 document.basis,
-                Basis::ClosedScope | Basis::DecisiveWitness | Basis::DecisiveCounterexample
+                SettlementBasis::ClosedScope | SettlementBasis::DecisiveWitness | SettlementBasis::DecisiveCounterexample
             ))
-            || (!verdict && !matches!(document.basis, Basis::Unavailable))
+            || (!verdict && !matches!(document.basis, SettlementBasis::Unavailable))
         {
             return Err(NativeRunReadError::Invalid {
                 member: "basis",
@@ -3249,7 +2102,7 @@ pub fn read_native_run_result_bounded(
         if document.format != format {
             return Err(NativeRunReadError::UnsupportedFormat(document.format));
         }
-        if !matches!(document.basis, Basis::Unavailable) {
+        if !matches!(document.basis, SettlementBasis::Unavailable) {
             return Err(NativeRunReadError::Invalid {
                 member: "basis",
                 reason: "command errors use unavailable",
@@ -3272,501 +2125,19 @@ pub fn read_native_run_result_bounded(
     }
 }
 
-#[derive(Serialize)]
-struct CounterUsage {
-    kind: &'static str,
-    consumed: u64,
-}
-
-#[derive(Serialize)]
-struct Usage {
-    admission: AdmissionUsage,
-    evaluation_admissions: u64,
-    evaluation_consumed: Vec<CounterUsage>,
-}
-
-#[derive(Serialize)]
-struct AdmissionUsage {
-    document_bytes: u64,
-    objects: u64,
-    values: u64,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum Outcome {
-    Completed {
-        value: ValueWire,
-    },
-    Refused {
-        code: &'static str,
-        cause: &'static str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        fields: Option<BTreeMap<&'static str, String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        locus: Option<CallLocusWire>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        location: Option<CallLocationWire>,
-    },
-    Undefined {
-        reason: &'static str,
-    },
-    Incomplete {
-        limit: &'static str,
-    },
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ValueWire {
-    Boolean { value: bool },
-    Integer { decimal: String },
-}
-
-#[derive(Serialize)]
-struct CallLocusWire {
-    file: String,
-    span: LocatedSpan,
-}
-
-#[derive(Serialize)]
-struct CallLocationWire {
-    origin: CallOriginWire,
-    path: Vec<usize>,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-enum CallOriginWire {
-    Body {
-        function: String,
-        index: usize,
-    },
-    Measure {
-        function: String,
-        index: usize,
-    },
-    Expression,
-    TypeDeclaration {
-        name: String,
-    },
-    StateClause {
-        clause: String,
-        index: usize,
-    },
-    ProtocolAttempt {
-        protocol: usize,
-        attempt: usize,
-    },
-    ModelOperationClause {
-        operation: String,
-        clause: &'static str,
-        position: usize,
-    },
-}
-
-impl From<&filament_semantic_value::location::ExpressionLocation> for CallLocationWire {
-    fn from(location: &filament_semantic_value::location::ExpressionLocation) -> Self {
-        use filament_semantic_value::location::{ExpressionOwner as Origin, OperationClauseKind};
-        let origin = match &location.origin {
-            Origin::Body { function, index } => CallOriginWire::Body {
-                function: function.clone(),
-                index: *index,
-            },
-            Origin::Measure { function, index } => CallOriginWire::Measure {
-                function: function.clone(),
-                index: *index,
-            },
-            Origin::Expression => CallOriginWire::Expression,
-            Origin::TypeDeclaration { name } => {
-                CallOriginWire::TypeDeclaration { name: name.clone() }
-            }
-            Origin::StateClause { clause, index } => CallOriginWire::StateClause {
-                clause: clause.clone(),
-                index: *index,
-            },
-            Origin::ProtocolAttempt { protocol, attempt } => CallOriginWire::ProtocolAttempt {
-                protocol: *protocol,
-                attempt: *attempt,
-            },
-            Origin::ModelOperationClause {
-                operation,
-                kind,
-                position,
-            } => CallOriginWire::ModelOperationClause {
-                operation: operation.clone(),
-                clause: match kind {
-                    OperationClauseKind::Requires => "requires",
-                    OperationClauseKind::Ensures => "ensures",
-                },
-                position: *position,
-            },
-        };
-        Self {
-            origin,
-            path: location.path(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct InternalFaultWire {
-    stage: &'static str,
-    invariant: &'static str,
-}
-
-#[derive(Serialize)]
-struct RefusalWire {
-    code: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cause: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fields: Option<BTreeMap<&'static str, FieldWire>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    locus: Option<crate::outcome::OutcomeLocus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    frame_witness: Option<FrameWitnessWire>,
-}
-
-/// One member of a refusal record's `fields`: text, or the list of FR-645's
-/// `expected` trace kinds.
-#[derive(Serialize)]
-#[serde(untagged)]
-enum FieldWire {
-    Text(String),
-    List(Vec<&'static str>),
-}
-
-impl RefusalWire {
-    fn new(code: &'static str, cause: Option<&'static str>) -> Self {
-        Self {
-            code,
-            cause,
-            fields: None,
-            message: None,
-            locus: None,
-            frame_witness: None,
-        }
-    }
-    fn fields(mut self, fields: BTreeMap<&'static str, String>) -> Self {
-        self.fields = Some(
-            fields
-                .into_iter()
-                .map(|(name, text)| (name, FieldWire::Text(text)))
-                .collect(),
-        );
-        self
-    }
-}
-
-#[derive(Serialize)]
-struct FrameWitnessWire {
-    code: &'static str,
-    cause: &'static str,
-    invocation: DocumentRefWire,
-    pre: DocumentRefWire,
-    post: DocumentRefWire,
-    population: String,
-    change: FrameChangeWire,
-}
-
-impl From<&FrameWitness> for FrameWitnessWire {
-    fn from(value: &FrameWitness) -> Self {
-        Self {
-            code: value.code.as_str(),
-            cause: value.cause,
-            invocation: DocumentRefWire::from(&value.invocation),
-            pre: DocumentRefWire::from(&value.pre),
-            post: DocumentRefWire::from(&value.post),
-            population: value.population.clone(),
-            change: FrameChangeWire::from(&value.change),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct DocumentRefWire {
-    authority: String,
-    identity: String,
-}
-
-impl From<&DocumentRef> for DocumentRefWire {
-    fn from(value: &DocumentRef) -> Self {
-        Self {
-            authority: value.authority.clone(),
-            identity: value.identity.clone(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct DeclarationKeyWire {
-    package: String,
-    node: String,
-}
-
-impl From<&DeclarationKey> for DeclarationKeyWire {
-    fn from(value: &DeclarationKey) -> Self {
-        Self {
-            package: value.package.clone(),
-            node: value.node.clone(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum FrameChangeWire {
-    FieldWrite {
-        object: String,
-        field: String,
-        modifies: Vec<DeclarationKeyWire>,
-    },
-    Created {
-        object: String,
-        type_name: DeclarationKeyWire,
-        creates: Vec<DeclarationKeyWire>,
-    },
-    Deleted {
-        object: String,
-        type_name: DeclarationKeyWire,
-        deletes: Vec<DeclarationKeyWire>,
-    },
-    Retyped {
-        object: String,
-        pre_type: DeclarationKeyWire,
-        post_type: DeclarationKeyWire,
-    },
-    Link {
-        relationship: DeclarationKeyWire,
-        difference: &'static str,
-        source: ObjectRefWire,
-        target: ObjectRefWire,
-        modifies: Vec<DeclarationKeyWire>,
-    },
-}
-
-#[derive(Serialize)]
-struct ObjectRefWire {
-    population: String,
-    key: String,
-}
-
-impl From<&SelectedObject> for ObjectRefWire {
-    fn from(value: &SelectedObject) -> Self {
-        Self {
-            population: value.population.clone(),
-            key: value.key.clone(),
-        }
-    }
-}
-
-impl From<&FrameChange> for FrameChangeWire {
-    fn from(value: &FrameChange) -> Self {
-        match value {
-            FrameChange::FieldWrite {
-                object,
-                field,
-                modifies,
-            } => Self::FieldWrite {
-                object: object.clone(),
-                field: field.clone(),
-                modifies: modifies.iter().map(DeclarationKeyWire::from).collect(),
-            },
-            FrameChange::Created {
-                object,
-                type_name,
-                creates,
-            } => Self::Created {
-                object: object.clone(),
-                type_name: DeclarationKeyWire::from(type_name),
-                creates: creates.iter().map(DeclarationKeyWire::from).collect(),
-            },
-            FrameChange::Deleted {
-                object,
-                type_name,
-                deletes,
-            } => Self::Deleted {
-                object: object.clone(),
-                type_name: DeclarationKeyWire::from(type_name),
-                deletes: deletes.iter().map(DeclarationKeyWire::from).collect(),
-            },
-            FrameChange::Retyped {
-                object,
-                pre_type,
-                post_type,
-            } => Self::Retyped {
-                object: object.clone(),
-                pre_type: DeclarationKeyWire::from(pre_type),
-                post_type: DeclarationKeyWire::from(post_type),
-            },
-            FrameChange::Link {
-                relationship,
-                difference,
-                source,
-                target,
-                modifies,
-            } => Self::Link {
-                relationship: DeclarationKeyWire::from(relationship),
-                difference: match difference {
-                    LinkDifference::Added => "added",
-                    LinkDifference::Removed => "removed",
-                },
-                source: ObjectRefWire::from(source),
-                target: ObjectRefWire::from(target),
-                modifies: modifies.iter().map(DeclarationKeyWire::from).collect(),
-            },
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct Disposition {
-    stage: &'static str,
-    category: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    truth: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    outcome: Option<Outcome>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    internal_fault: Option<InternalFaultWire>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    refusal: Option<RefusalWire>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temporal: Option<temporal::TemporalWire>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    operation_contract: Option<OperationContractWire>,
-}
-
-#[derive(Serialize)]
-struct OperationContractWire {
-    operation: DeclarationKeyWire,
-    name: String,
-    kind: &'static str,
-    position: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    artifact: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    span: Option<LocatedSpan>,
-    location: CallLocationWire,
-    member: String,
-}
-
-impl From<&crate::spine::clause::OperationContractViolation> for OperationContractWire {
-    fn from(value: &crate::spine::clause::OperationContractViolation) -> Self {
-        Self {
-            operation: DeclarationKeyWire::from(&value.operation),
-            name: value.operation_name.clone(),
-            kind: match value.kind {
-                filament_semantic_value::location::OperationClauseKind::Requires => "requires",
-                filament_semantic_value::location::OperationClauseKind::Ensures => "ensures",
-            },
-            position: value.position,
-            artifact: value.artifact.clone(),
-            span: value.span,
-            location: CallLocationWire::from(
-                &filament_semantic_value::location::ExpressionLocation::root(value.origin.clone()),
-            ),
-            member: value.member.to_string(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct ClauseRunDocument {
-    format: WireFormat,
-    disposition: Disposition,
-    usage: Usage,
-    basis: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    witness: Option<RecordWire<Box<RawValue>>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    extraction: Option<ExtractionRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ledger: Option<serde_json::Value>,
-    /// FR-641-AC-8, FSpec FR-352-AC-19: the effective limits a `model`
-    /// trace ran under, defaults written out, so runs that differ only in a
-    /// limit have different result identities. A sample trace writes none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limits: Option<BTreeMap<&'static str, String>>,
-    axes: crate::OutcomeAxes,
-    /// FR-501 "Result report": the decision support of a finite-window
-    /// result, as `(position, atom)` pairs in canonical positions.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    support: Option<Vec<SupportWire>>,
-    /// FR-501 "Request-file spelling": the observations a late-data cutoff
-    /// excluded, written whenever a cutoff is selected.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    late: Option<Vec<LateWire>>,
-    /// FR-526: the late observations a superseding repair admitted.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    admitted_late: Option<Vec<AdmittedWire>>,
-    /// FR-526: the result's identity, its input identity, its relation, its
-    /// lineage and the updated evidence ledger.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result_identity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    input_identity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    relation: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    lineage: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    evidence_ledger: Option<serde_json::Value>,
-}
-
-/// One decision-support pair of a finite-window result.
-#[derive(Serialize)]
-struct SupportWire {
-    position: u64,
-    atom: String,
-}
-
-/// One `late` entry of a finite-window result.
-#[derive(Serialize)]
-struct LateWire {
-    position: u64,
-    observation: String,
-    stamp: u64,
-    arrival: u64,
-    anchors: Vec<u64>,
-}
-
-/// One `admitted_late` entry of a superseding repair.
-#[derive(Serialize)]
-struct AdmittedWire {
-    position: u64,
-    observation: String,
-}
-
 impl Disposition {
     fn of(
         value: &ClauseDisposition,
         counterexample: Option<&crate::ClauseRunCounterexample>,
         selection: Option<&super::ClauseRunSelection>,
     ) -> Result<Self, NativeRunResultError> {
-        let mut result = Self {
-            stage: match value.stage() {
-                super::ClauseRunStage::Compile => "compile",
-                super::ClauseRunStage::Select => "select",
-                super::ClauseRunStage::Admit => "admit",
-                super::ClauseRunStage::Evaluate => "evaluate",
-            },
-            category: value.category_label(),
-            truth: value.truth(),
-            outcome: None,
-            internal_fault: None,
-            refusal: None,
-            temporal: None,
-            operation_contract: None,
-        };
+        let mut result = Self::new(value.stage(), Category::of(value.category()));
+        result.truth = value.truth();
         match value {
             ClauseDisposition::Compile(refusal) => {
-                let mut record = RefusalWire::new(refusal.code().as_str(), refusal.cause());
+                let mut record = RefusalRecord::new(refusal.code().as_str(), refusal.cause());
                 record.locus = refusal.region().map(|region| {
-                    crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone()))
+                    RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone())))
                 });
                 let mut source: &super::CompileRefusal = refusal.as_ref();
                 while let super::CompileRefusal::Dependency { refusal, .. } = source {
@@ -3776,25 +2147,27 @@ impl Disposition {
                     record = record.fields(fields);
                 }
                 if let super::CompileRefusal::Limit(limit) = source {
-                    record.locus = limit.locus().map(crate::outcome::OutcomeLocus::from);
+                    record.locus = limit
+                        .locus()
+                        .map(|locus| RefusalLocus::from(crate::outcome::OutcomeLocus::from(locus)));
                 }
                 result.refusal = Some(record);
             }
             ClauseDisposition::UnknownLanguage { language } => {
                 result.refusal = Some(
-                    RefusalWire::new(Code::UnknownLanguage.as_str(), None)
+                    RefusalRecord::new(Code::UnknownLanguage.as_str(), None)
                         .fields(BTreeMap::from([("language", language.clone())])),
                 );
             }
             ClauseDisposition::ExtractionClauseCount { actual } => {
                 result.refusal = Some(
-                    RefusalWire::new(Code::ExtractionClauseCount.as_str(), None)
+                    RefusalRecord::new(Code::ExtractionClauseCount.as_str(), None)
                         .fields(BTreeMap::from([("actual", actual.to_string())])),
                 );
             }
             ClauseDisposition::MissingName { name } => {
                 result.refusal = Some(
-                    RefusalWire::new(Code::MissingDeclaration.as_str(), Some("missing-name"))
+                    RefusalRecord::new(Code::MissingDeclaration.as_str(), Some("missing-name"))
                         .fields(BTreeMap::from([("name", name.clone())])),
                 );
             }
@@ -3803,16 +2176,16 @@ impl Disposition {
                 actual,
                 result_type_locus,
             } => {
-                let mut refusal = RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch"))
+                let mut refusal = RefusalRecord::new(Code::IllTyped.as_str(), Some("type-mismatch"))
                     .fields(BTreeMap::from([("name", name.clone())]));
                 refusal.message = Some(format!(
                     "function `{name}` returns `{actual}`; a claim selection needs a function whose result is `Boolean`"
                 ));
                 refusal.locus = result_type_locus.as_ref().map(|(file, span)| {
-                    crate::outcome::OutcomeLocus::Located {
+                    RefusalLocus::Located(Located::Native {
                         file: file.clone(),
-                        span: *span,
-                    }
+                        span: RunSpan::from(*span),
+                    })
                 });
                 result.refusal = Some(refusal);
             }
@@ -3821,7 +2194,7 @@ impl Disposition {
                 | filament_eval::CallAdmissionFailure::Incomplete(admission)) = failure.as_ref();
                 let record = &admission.record;
                 result.refusal = Some(
-                    RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                    RefusalRecord::new(record.catalog.code(), Some(record.catalog.cause()))
                         .fields(record.fields.clone()),
                 );
             }
@@ -3829,15 +2202,12 @@ impl Disposition {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
                     let refusal =
-                        RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                        RefusalRecord::new(record.catalog.code(), Some(record.catalog.cause()))
                             .fields(record.fields.clone());
                     result.refusal = Some(refusal);
                 }
                 fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
-                    result.internal_fault = Some(InternalFaultWire {
-                        stage: fault.stage(),
-                        invariant: fault.invariant(),
-                    });
+                    result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
                 }
             },
             ClauseDisposition::SnapshotAdmission {
@@ -3848,25 +2218,20 @@ impl Disposition {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
                     let mut refusal =
-                        RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                        RefusalRecord::new(record.catalog.code(), Some(record.catalog.cause()))
                             .fields(record.fields.clone());
                     refusal.locus =
-                        crate::outcome::snapshot_admission_locus(record, document, path.as_deref());
+                        crate::outcome::snapshot_admission_locus(record, document, path.as_deref())
+                            .map(RefusalLocus::from);
                     result.refusal = Some(refusal);
                 }
                 fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
-                    result.internal_fault = Some(InternalFaultWire {
-                        stage: fault.stage(),
-                        invariant: fault.invariant(),
-                    });
+                    result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
                 }
             },
             ClauseDisposition::ArgumentRefusal(refusal) => {
                 if let super::RunRefusal::Fault(fault) = refusal.as_ref() {
-                    result.internal_fault = Some(InternalFaultWire {
-                        stage: fault.stage(),
-                        invariant: fault.invariant(),
-                    });
+                    result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
                     return Ok(result);
                 }
                 let cause = match refusal.as_ref() {
@@ -3903,7 +2268,7 @@ impl Disposition {
                     super::RunRefusal::ObjectEnvironment(record) => Some(record.catalog.cause()),
                     super::RunRefusal::Storage { failure, .. } => membership_failure_cause(failure),
                 };
-                let mut record = RefusalWire::new(refusal.code().as_str(), cause);
+                let mut record = RefusalRecord::new(refusal.code().as_str(), cause);
                 match refusal.as_ref() {
                     super::RunRefusal::SourceEnum(error) => {
                         let fields: BTreeMap<&'static str, String> = match error.as_ref() {
@@ -3999,7 +2364,7 @@ impl Disposition {
                     }
                     super::RunRefusal::Compile(compile) => {
                         record.locus = compile.region().map(|region| {
-                            crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone()))
+                            RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone())))
                         });
                     }
                     super::RunRefusal::MissingDeclaration { function }
@@ -4089,7 +2454,7 @@ impl Disposition {
                         if let Some(location) = payload.location {
                             // The wire's own location form, as compact JSON.
                             if let Ok(text) =
-                                serde_json::to_string(&CallLocationWire::from(location))
+                                serde_json::to_string(&CallLocation::from(location))
                             {
                                 fields.insert("location", text);
                             }
@@ -4113,22 +2478,19 @@ impl Disposition {
             ClauseDisposition::Evaluate(outcome) => match outcome {
                 CallOutcome::Completed(CallValue::Boolean(value)) => {
                     result.outcome = Some(Outcome::Completed {
-                        value: ValueWire::Boolean { value: *value },
+                        value: OutcomeValue::Boolean { value: *value },
                     });
                 }
                 CallOutcome::Completed(CallValue::Integer(value)) => {
                     result.outcome = Some(Outcome::Completed {
-                        value: ValueWire::Integer {
+                        value: OutcomeValue::Integer {
                             decimal: value.to_string(),
                         },
                     });
                 }
                 CallOutcome::Completed(CallValue::Reference(_) | CallValue::Written(_)) => {
-                    result.category = Category::InternalFailure.as_str();
-                    result.internal_fault = Some(InternalFaultWire {
-                        stage: "native-result",
-                        invariant: "clause-completes-reference",
-                    });
+                    result.category = Category::InternalFailure;
+                    result.internal_fault = Some(InternalFault::new("native-result", "clause-completes-reference"));
                 }
                 CallOutcome::Refused(refusal) => {
                     result.outcome = Some(match refusal {
@@ -4138,65 +2500,55 @@ impl Disposition {
                             locus,
                             location,
                         } => Outcome::Refused {
-                            code: code.code(),
-                            cause: code.cause(),
-                            fields: Some(fields.clone()),
-                            locus: locus.as_ref().map(|locus| CallLocusWire {
+                            code: code.code().to_owned(),
+                            cause: code.cause().to_owned(),
+                            fields: Some(wire::text_fields(fields)),
+                            locus: locus.as_ref().map(|locus| CallLocusRecord {
                                 file: locus.file.clone(),
-                                span: locus.span,
+                                span: RunSpan::from(locus.span),
                             }),
-                            location: location.as_ref().map(CallLocationWire::from),
+                            location: location.as_ref().map(|at| Box::new(CallLocation::from(at))),
                         },
                         CallRefusal::Family { code, location } => Outcome::Refused {
-                            code: code.code(),
-                            cause: code.cause(),
+                            code: code.code().to_owned(),
+                            cause: code.cause().to_owned(),
                             fields: None,
                             locus: None,
-                            location: location.as_ref().map(CallLocationWire::from),
+                            location: location.as_ref().map(|at| Box::new(CallLocation::from(at))),
                         },
                     });
                 }
                 CallOutcome::Undefined { reason, .. } => {
-                    result.outcome = Some(Outcome::Undefined { reason });
+                    result.outcome = Some(Outcome::undefined(reason));
                 }
                 CallOutcome::Incomplete(incomplete) => {
-                    result.outcome = Some(Outcome::Incomplete {
-                        limit: incomplete.limits_field(),
-                    });
+                    result.outcome = Some(Outcome::incomplete(incomplete.limits_field()));
                 }
                 CallOutcome::RelationshipIncomplete(_) => {
-                    result.outcome = Some(Outcome::Incomplete {
-                        limit: "relationship-correlation",
-                    });
+                    result.outcome = Some(Outcome::incomplete("relationship-correlation"));
                 }
                 CallOutcome::RelationshipLimit(limit) => {
-                    result.outcome = Some(Outcome::Incomplete { limit });
+                    result.outcome = Some(Outcome::incomplete(limit));
                 }
             },
             ClauseDisposition::FrameViolation(witness) => {
-                let mut record = RefusalWire::new(witness.code.as_str(), Some(witness.cause));
-                record.frame_witness = Some(FrameWitnessWire::from(witness.as_ref()));
+                let mut record = RefusalRecord::new(witness.code.as_str(), Some(witness.cause));
+                record.frame_witness = Some(FrameWitnessRecord::from(witness.as_ref()));
                 result.refusal = Some(record);
             }
             ClauseDisposition::OperationContractViolation(witness) => {
                 result.outcome = Some(Outcome::Completed {
-                    value: ValueWire::Boolean { value: false },
+                    value: OutcomeValue::Boolean { value: false },
                 });
-                result.operation_contract = Some(OperationContractWire::from(witness));
+                result.operation_contract = Some(OperationContract::from(witness));
             }
             ClauseDisposition::EvaluateFault(fault) => {
-                result.internal_fault = Some(InternalFaultWire {
-                    stage: fault.stage(),
-                    invariant: fault.invariant(),
-                });
+                result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
             }
             // A valuation is read by the TL cross-evaluation (FR-931), never
             // written as a clause-run result.
             ClauseDisposition::TemporalValuation(_) => {
-                result.internal_fault = Some(InternalFaultWire {
-                    stage: "clause-run",
-                    invariant: "a-valuation-is-not-a-clause-run-result",
-                });
+                result.internal_fault = Some(InternalFault::new("clause-run", "a-valuation-is-not-a-clause-run-result"));
             }
             ClauseDisposition::Temporal(verdict) => {
                 let (wire, outcome) = temporal::verdict_wire(verdict, counterexample)?;
@@ -4204,54 +2556,51 @@ impl Disposition {
                 if matches!(wire, temporal::TemporalWire::Undefined { .. }) {
                     result.truth = Some(false);
                 }
-                result.temporal = Some(wire);
+                result.temporal = Some(serde_json::to_value(wire)?);
                 result.outcome = outcome;
             }
             ClauseDisposition::TemporalRefusal(refusal) => match temporal::refusal_wire(refusal) {
                 Some((wire, outcome)) => {
-                    result.temporal = Some(wire);
+                    result.temporal = Some(serde_json::to_value(wire)?);
                     result.outcome = Some(outcome);
                 }
                 None => {
                     if let super::TemporalTraceRefusal::Fault(fault) = refusal {
-                        result.internal_fault = Some(InternalFaultWire {
-                            stage: fault.stage(),
-                            invariant: fault.invariant(),
-                        });
+                        result.internal_fault = Some(InternalFault::new(fault.stage(), fault.invariant()));
                     }
                 }
             },
             ClauseDisposition::TraceRefused(refusal) => {
                 let mut fields = BTreeMap::from([
-                    ("reason", FieldWire::Text(refusal.reason.to_owned())),
-                    ("profile", FieldWire::Text(refusal.profile.to_owned())),
+                    ("reason".to_owned(), FieldValue::Text(refusal.reason.to_owned())),
+                    ("profile".to_owned(), FieldValue::Text(refusal.profile.to_owned())),
                 ]);
                 if !refusal.expected.is_empty() {
-                    fields.insert("expected", FieldWire::List(refusal.expected.clone()));
+                    fields.insert("expected".to_owned(), FieldValue::List(refusal.expected.iter().map(|kind| (*kind).to_owned()).collect()));
                 }
                 if let Some(supplied) = refusal.supplied {
-                    fields.insert("supplied", FieldWire::Text(supplied.to_owned()));
+                    fields.insert("supplied".to_owned(), FieldValue::Text(supplied.to_owned()));
                 }
                 if let Some(position) = refusal.position {
-                    fields.insert("position", FieldWire::Text(position.to_string()));
+                    fields.insert("position".to_owned(), FieldValue::Text(position.to_string()));
                 }
                 if let Some(pointer) =
                     selection.and_then(|selection| selection.request_pointer(refusal.reason))
                 {
-                    fields.insert("request_pointer", FieldWire::Text(pointer));
+                    fields.insert("request_pointer".to_owned(), FieldValue::Text(pointer));
                 }
                 let mut record =
-                    RefusalWire::new(Code::InvalidRuntimeInput.as_str(), Some("invalid-value"));
+                    RefusalRecord::new(Code::InvalidRuntimeInput.as_str(), Some("invalid-value"));
                 record.fields = Some(fields);
                 record.message = Some(refusal.message.clone());
                 record.locus = refusal.locus.as_ref().map(|region| {
-                    crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone()))
+                    RefusalLocus::from(crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone())))
                 });
                 result.refusal = Some(record);
             }
             ClauseDisposition::ProgressContradiction(refusal) => {
                 let (wire, outcome) = temporal::contradiction_wire(refusal);
-                result.temporal = Some(wire);
+                result.temporal = Some(serde_json::to_value(wire)?);
                 result.outcome = Some(outcome);
             }
         }
@@ -4298,7 +2647,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
     use super::{TemporalIndeterminateReason as Reason, TemporalUndefinedCause, TemporalVerdict};
     let witness = match &report.disposition {
         ClauseDisposition::FrameViolation(frame_witness) => {
-            let mut witness = serde_json::to_value(FrameWitnessWire::from(frame_witness.as_ref()))?;
+            let mut witness = serde_json::to_value(FrameWitnessRecord::from(frame_witness.as_ref()))?;
             if let Some((before, after)) = &report.frame_field_values {
                 witness["before"] = serde_json::Value::String(before.clone());
                 witness["after"] = serde_json::Value::String(after.clone());
@@ -4439,9 +2788,7 @@ pub fn temporal_disposition_json(
                         category,
                         basis,
                         Some(false),
-                        Some(Outcome::Undefined {
-                            reason: cause.reason(),
-                        }),
+                        Some(Outcome::undefined(cause.reason())),
                         temporal,
                     )
                 }
@@ -4588,7 +2935,7 @@ fn write_document(
     };
     let correction = correction.as_ref();
     let document = ClauseRunDocument {
-        format: WireFormat::RunResult,
+        format: RunResultFormat,
         disposition: Disposition::of(
             &report.disposition,
             report.counterexample.as_ref(),
@@ -4606,12 +2953,12 @@ fn write_document(
                 .evaluation_consumed
                 .iter()
                 .map(|(kind, consumed)| CounterUsage {
-                    kind: kind.as_str(),
+                    kind: kind.as_str().to_owned(),
                     consumed: *consumed,
                 })
                 .collect(),
         },
-        basis: report.basis.as_str(),
+        basis: report.basis,
         witness,
         extraction,
         ledger,
@@ -4671,17 +3018,14 @@ fn write_document(
 /// FR-641-AC-8: the limits member of a run over `selection`: a `model`
 /// trace's effective `expansion.max_candidates`, and nothing for any other
 /// trace or selection.
-fn run_limits(
-    selection: Option<&super::ClauseRunSelection>,
-) -> Option<BTreeMap<&'static str, String>> {
+fn run_limits(selection: Option<&super::ClauseRunSelection>) -> Option<ModelLimits> {
     match selection? {
         super::ClauseRunSelection::Temporal {
             trace: super::TraceInput::Model { max_candidates, .. },
             ..
-        } => Some(BTreeMap::from([(
-            "expansion.max_candidates",
-            max_candidates.to_string(),
-        )])),
+        } => Some(ModelLimits {
+            max_candidates: max_candidates.to_string(),
+        }),
         _ => None,
     }
 }

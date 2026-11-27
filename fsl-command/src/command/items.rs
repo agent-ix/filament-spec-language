@@ -1329,6 +1329,27 @@ fn invariant_result(
 mod tests {
     use super::*;
 
+    fn read_label(value: &serde_json::Value) -> std::result::Result<(), String> {
+        let bytes = fsl_foundation::canonical_json::encode(value).expect("canonical bytes");
+        fsl_replay::spine::read_native_run_result(&bytes)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    /// FR-267-AC-8: the item-level documents that carry the label. A settled
+    /// invariant result reads as a clause run. The population refusal writes
+    /// `"truth": null`, which the strict reader refuses naming
+    /// `disposition.truth` (an absent member is the form FSpec FR-352 allows).
+    #[ix_trace_rs::trace("FR-267-AC-8")]
+    #[test]
+    fn the_item_documents_with_the_run_result_label_are_read_by_the_strict_reader() {
+        let usage = fsl_semantics::model::observation::AdmissionUsage::default();
+        let settled = invariant_result("success", "evaluate", Some(true), None, &usage);
+        assert_eq!(read_label(&settled), Ok(()));
+        let refusal = read_label(&population_refusal("Order")).expect_err("null truth is refused");
+        assert!(refusal.contains("disposition.truth"), "{refusal}");
+    }
+
     #[test]
     fn internal_item_failure_is_request_fatal() {
         let result = RunResult {

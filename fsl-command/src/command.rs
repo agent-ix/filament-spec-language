@@ -3068,7 +3068,7 @@ fn extraction_record(
     let original = map.original();
     let body = map.body();
     let outcome = extracted.extraction();
-    let segments: Vec<_> = map
+    let segments = map
         .segments()
         .iter()
         .map(|segment| fsl_replay::spine::ExtractionSegment {
@@ -3077,7 +3077,13 @@ fn extraction_record(
             original_start: segment.original.start as u64,
             original_end: segment.original.end as u64,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let segments = fsl_replay::spine::ExtractionSegments::new(segments).ok_or_else(|| {
+        RunCause::ClauseRequest {
+            member: "extraction.map.segments".to_owned(),
+            reason: "an extraction map has at least one segment".to_owned(),
+        }
+    })?;
     let record = fsl_replay::spine::ExtractionRecord {
         original: fsl_replay::spine::ExtractionOriginal {
             authority: original.identity().authority.clone(),
