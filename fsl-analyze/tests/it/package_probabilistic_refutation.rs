@@ -390,6 +390,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     );
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: checked,
             binding,
             provision: compiled.sources().clone(),

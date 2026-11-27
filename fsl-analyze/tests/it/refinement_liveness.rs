@@ -527,6 +527,7 @@ fn the_lasso_names_the_initial_state_it_starts_from() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -554,6 +555,7 @@ fn peeker_run(limits: ModelCheckLimits, cancel: &Cancel) -> RefinementOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits,
+            retained: None,
         },
         cancel,
     )
@@ -718,6 +720,7 @@ fn run_cancel(world: &AuxWorld<'_>, cancel: &Cancel) -> RefinementOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         cancel,
     )

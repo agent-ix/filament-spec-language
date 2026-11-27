@@ -412,6 +412,7 @@ impl World {
                 max_depth: None,
                 limits,
                 seed: None,
+                retained: None,
             },
             &Cancel::new(),
         )?;
