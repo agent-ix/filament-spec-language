@@ -2110,24 +2110,45 @@ fn fair_freedelays_weak_minimum_and_component_projection() {
         component.states.iter().all(|state| state.index() < product.states.len())
             && component.actions.iter().all(|(state, _)| state.index() < product.states.len())
     }));
-    let row_choice = match result.policy[product.states.len()]
+    let row_choices = match result.policy[product.states.len()]
         .as_ref()
         .expect("one policy entry for the row")
     {
         fsl_analyze::exact_probabilistic::SchedulerChoice::Deterministic(
             fsl_analyze::exact_probabilistic::ActionChoice(index),
-        ) => *index,
-        other => panic!("the one-row choice is deterministic: {other:?}"),
+        ) => vec![(*index, ratio(1, 1))],
+        fsl_analyze::exact_probabilistic::SchedulerChoice::Randomized(choices) => choices
+            .iter()
+            .map(|(fsl_analyze::exact_probabilistic::ActionChoice(index), probability)| {
+                (*index, probability.clone())
+            })
+            .collect(),
     };
-    let mut policy_indices = vec![None; product.states.len() + 1];
-    policy_indices[product.states.len()] = Some(row_choice);
     assert_eq!(
-        free_delays_choice(&product, state, &policy_indices),
-        Some(ProductAction::FreeDelays(vec![FreeDelayRow {
-            given: vec![(draw.clone(), 1)],
-            free: vec![(go.clone(), 1)],
-        }]))
+        row_choices
+            .iter()
+            .fold(ratio(0, 1), |sum, (_, probability)| sum.add(probability)),
+        ratio(1, 1)
     );
+    let mut go_probability = ratio(0, 1);
+    let mut wait_probability = ratio(0, 1);
+    for (index, probability) in row_choices {
+        let mut policy_indices = vec![None; product.states.len() + 1];
+        policy_indices[product.states.len()] = Some(index);
+        let Some(ProductAction::FreeDelays(vec![row])) =
+            free_delays_choice(&product, state, &policy_indices)
+        else {
+            panic!("the row policy selects a FreeDelays row choice");
+        };
+        assert_eq!(row.given, vec![(draw.clone(), 1)]);
+        match row.free.as_slice() {
+            [(identity, 1)] if identity == &go => go_probability = go_probability.add(&probability),
+            [(identity, 1)] if identity == &wait => wait_probability = wait_probability.add(&probability),
+            other => panic!("the row policy maps to go or wait: {other:?}"),
+        }
+    }
+    assert!(go_probability > ratio(0, 1));
+    assert_eq!(go_probability.add(&wait_probability), ratio(1, 1));
 
     let mut without_fairness = product.clone();
     without_fairness.fairness.clear();
@@ -2186,12 +2207,18 @@ fn fair_freedelays_multirow_interval_projects_bounds_and_policy() {
         panic!("the fair interval route returns bounds for the multi-row product");
     };
 
-    let expected = [ratio(1, 4), ratio(1, 1), ratio(0, 1)];
     assert_eq!(lower.len(), product.states.len());
     assert_eq!(upper.len(), product.states.len());
-    for (index, expected) in expected.iter().enumerate() {
-        assert!(lower[index].rational() <= *expected, "lower[{index}]={:?}", lower[index]);
-        assert!(upper[index].rational() >= *expected, "upper[{index}]={:?}", upper[index]);
+    for index in 0..product.states.len() {
+        let expected = if index == state.index() {
+            ratio(1, 4)
+        } else if target[index] {
+            ratio(1, 1)
+        } else {
+            ratio(0, 1)
+        };
+        assert!(lower[index].rational() <= expected, "lower[{index}]={:?}", lower[index]);
+        assert!(upper[index].rational() >= expected, "upper[{index}]={:?}", upper[index]);
     }
     assert!(lower[state.index()].rational() >= ratio(1, 5));
     assert_eq!(policy.len(), product.states.len() + 2);
