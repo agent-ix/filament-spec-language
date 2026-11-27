@@ -878,7 +878,11 @@ Not charged, and unbounded for a direct caller: the replay closure paths
 `check_protocol_initial` and `check_protocol_step` when called directly (their
 per-replay transition allowance defaults to `u64::MAX`; `replay_refinement_trace`
 and the timed replay set it, and it is per-replay state on the system, not
-per call). The EN-1 hyper subject precheck (HC-8) charges its subject states
+per call). The model expansion's per-expansion candidate counter (`CandidateCount` in `fsl-eval`'s
+model walk) is not a second allowance: it counts the candidates of one expansion against the
+`expansion.max_candidates` the caller's limits give, starts at zero for each expansion, and ends in
+the expansion stop the case generation settles (FR-752), where the shared `Budget` is cumulative per
+item and ends in a `LimitExceeded`. The EN-1 hyper subject precheck (HC-8) charges its subject states
 to `analysis.retained_bytes` like the product states.
 FR-255-AC-31 is tested for `observation.input_bytes` (a snapshot), for
 `emit.output_bytes` (a clause replay over a model, source route; a package

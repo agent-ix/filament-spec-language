@@ -17,7 +17,7 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use super::walk::{rows_of, sorted_contract_findings, stop, walk_of, Applied, Budget, Row, Walk};
+use super::walk::{rows_of, sorted_contract_findings, stop, walk_of, Applied, CandidateCount, Row, Walk};
 use super::{contracts, frames, Application, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::ExpansionStop;
 
@@ -104,7 +104,7 @@ impl<'a> ModelSystem<'a> {
         &self,
         value_type: &filament_exact::ValueType,
         state: &ModelSimState,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<Option<Vec<filament_exact::Value>>, ExpansionStop> {
         let references: Vec<_> = rows_of(self, state.state())?
             .into_iter()
@@ -165,8 +165,8 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// The candidate budget of one expansion (FR-120 "Post-states").
-    pub(crate) fn budget(&self) -> Budget {
-        Budget::scoped(self.limits.max_candidates, self)
+    pub(crate) fn budget(&self) -> CandidateCount {
+        CandidateCount::scoped(self.limits.max_candidates, self)
     }
 
     /// FR-120's synthesized observation of `state` (FR-120 "Frame and
@@ -250,7 +250,7 @@ impl<'a> ModelSystem<'a> {
         observed: &ModelSimState,
         operation: &OperationRef<'_>,
         select: &dyn Fn(NodeKey) -> bool,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<Applications, ExpansionStop> {
         self.apply_operation_matching(observed, operation, select, None, budget)
     }
@@ -262,7 +262,7 @@ impl<'a> ModelSystem<'a> {
         observed: &ModelSimState,
         operation: &OperationRef<'_>,
         select: &dyn Fn(NodeKey) -> bool,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<Recommendations, ExpansionStop> {
         let walk = walk_of(self, observed, None)?;
         let mut contract = Vec::new();
@@ -305,7 +305,7 @@ impl<'a> ModelSystem<'a> {
         operation: &OperationRef<'_>,
         select: &dyn Fn(NodeKey) -> bool,
         selected_transitions: Option<&std::collections::BTreeSet<ModelTransition>>,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<Applications, ExpansionStop> {
         let walk = walk_of(self, observed, None)?;
         self.apply_walk(&walk, operation, select, selected_transitions, budget, None)
@@ -320,7 +320,7 @@ impl<'a> ModelSystem<'a> {
         operation: &OperationRef<'_>,
         select: &dyn Fn(NodeKey) -> bool,
         selected_transitions: Option<&std::collections::BTreeSet<ModelTransition>>,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
         mut charged: Option<&mut Vec<(ModelTransition, u64)>>,
     ) -> Result<Applications, ExpansionStop> {
         let mut contract = Vec::new();
@@ -363,7 +363,7 @@ impl<'a> ModelSystem<'a> {
         operation: &OperationRef<'_>,
         select: &dyn Fn(NodeKey) -> bool,
         selected_transitions: Option<&std::collections::BTreeSet<ModelTransition>>,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<Vec<ModelTransition>, ExpansionStop> {
         let mut contract = Vec::new();
         let mut successors = Vec::new();
@@ -753,7 +753,7 @@ impl<'a> ModelSystem<'a> {
         operation: &OperationRef<'_>,
         select: &dyn Fn(NodeKey) -> bool,
         selected_transitions: Option<&BTreeSet<ModelTransition>>,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<Arc<Applications>, ExpansionStop> {
         let at = (attempt.to_owned(), selected_transitions.cloned(), false);
         if let Some((AppliedKind::Applications(found, _), charged)) =
@@ -814,7 +814,7 @@ impl<'a> ModelSystem<'a> {
         operation: &OperationRef<'_>,
         select: &dyn Fn(NodeKey) -> bool,
         selected_transitions: Option<&BTreeSet<ModelTransition>>,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<Vec<ModelTransition>, ExpansionStop> {
         let at = (attempt.to_owned(), selected_transitions.cloned(), true);
         if let Some((AppliedKind::Enabled(found), charged)) =
@@ -892,7 +892,7 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::json;
 
-    use super::super::walk::{rows_of, Budget};
+    use super::super::walk::{rows_of, CandidateCount};
     use super::{Applications, OperationRef};
     use crate::simulation::expansion::ExpansionLimit;
     use crate::simulation::sampled::world::{initial, Model, Operation, World};
@@ -956,7 +956,7 @@ mod tests {
         };
         let select = |_| true;
 
-        let mut every = Budget::new(u64::MAX);
+        let mut every = CandidateCount::new(u64::MAX);
         let all = system
             .apply_operation_matching(&state, &operation, &select, None, &mut every)
             .expect("applies");
@@ -968,7 +968,7 @@ mod tests {
         assert_eq!(transitions.len(), 4, "one successor per argument");
         let selected: BTreeSet<ModelTransition> = transitions[1..3].iter().cloned().collect();
 
-        let mut alone = Budget::new(u64::MAX);
+        let mut alone = CandidateCount::new(u64::MAX);
         let fresh = system
             .apply_operation_matching(&state, &operation, &select, Some(&selected), &mut alone)
             .expect("applies");
@@ -983,11 +983,11 @@ mod tests {
                 &operation,
                 &select,
                 None,
-                &mut Budget::new(u64::MAX),
+                &mut CandidateCount::new(u64::MAX),
             )
             .expect("applies");
 
-        let mut exact = Budget::new(charge);
+        let mut exact = CandidateCount::new(charge);
         let restricted = system
             .apply_attempt(
                 "a",
@@ -1007,7 +1007,7 @@ mod tests {
             &operation,
             &select,
             Some(&selected),
-            &mut Budget::new(charge - 1),
+            &mut CandidateCount::new(charge - 1),
         );
         assert_eq!(
             stopped.err().map(|stop| stop.limit),

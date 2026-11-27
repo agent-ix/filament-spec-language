@@ -34,7 +34,7 @@ use super::contracts::{conjunction, operation_conjunction, Conjunction};
 use super::domain::{Domain, Odometer};
 use super::encode::{self, value_enc, values_equal, Typing};
 use super::footprints::ReadCheck;
-use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
+use super::walk::{stop, Applied, CandidateCount, ContractFinding, FindingCase, Row, Selected, Walk};
 use super::{
     handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
     FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
@@ -171,7 +171,7 @@ pub(super) fn identities(
     walk: &Walk<'_, '_>,
     row: &Row,
     application: &Application,
-    budget: &mut Budget,
+    budget: &mut CandidateCount,
     out: &mut Vec<ModelTransition>,
 ) -> Result<(), ExpansionStop> {
     let domains = argument_domains(walk, application)?;
@@ -207,7 +207,7 @@ pub(super) fn apply(
     row: &Row,
     application: &Application,
     clauses: &Selected<'_>,
-    budget: &mut Budget,
+    budget: &mut CandidateCount,
     mut outputs: Outputs<'_>,
 ) -> Result<(), ExpansionStop> {
     let domains = argument_domains(walk, application)?;
@@ -253,7 +253,7 @@ fn apply_argument(
     context: ApplicationContext<'_, '_>,
     args: Vec<(String, Value)>,
     frames: &ArgumentFrames,
-    budget: &mut Budget,
+    budget: &mut CandidateCount,
     outputs: Outputs<'_>,
 ) -> Result<(), ExpansionStop> {
     let ApplicationContext {
@@ -421,7 +421,7 @@ pub(super) fn visit_operation(
     walk: &Walk<'_, '_>,
     declaring: &filament_exact::EffectiveId,
     name: &str,
-    budget: &mut Budget,
+    budget: &mut CandidateCount,
 ) -> Result<(), ExpansionStop> {
     let mut rows: Vec<_> = walk
         .rows
@@ -662,7 +662,7 @@ pub(super) fn precondition_cases(
     row: &Row,
     application: &Application,
     clause: &ClauseInfo,
-    budget: &mut Budget,
+    budget: &mut CandidateCount,
 ) -> Result<Vec<PreconditionCase>, ExpansionStop> {
     let domains = argument_domains(walk, application)?;
     let mut arguments = Odometer::new(domains.iter().map(Domain::len).collect());
@@ -1059,7 +1059,7 @@ struct CompletionContext<'a> {
     candidate: (ModelState, Vec<WrittenSlots>),
     delta: &'a Delta,
     post_references: &'a [ObjectReference],
-    budget: &'a mut Budget,
+    budget: &'a mut CandidateCount,
     contract: &'a mut Vec<ContractFinding>,
     successors: &'a mut Vec<Applied>,
     result_independent: bool,
@@ -1286,7 +1286,7 @@ impl Run<'_, '_, '_> {
     /// time, in canonical order, counting each against the bound.
     fn candidates(
         &self,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
         contract: &mut Vec<ContractFinding>,
         successors: &mut Vec<Applied>,
     ) -> Result<(), ExpansionStop> {
@@ -1298,7 +1298,7 @@ impl Run<'_, '_, '_> {
     /// without an attempt constraint it does not need every post-state.
     fn first_candidate(
         &self,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
         contract: &mut Vec<ContractFinding>,
         successors: &mut Vec<Applied>,
     ) -> Result<bool, ExpansionStop> {
@@ -1309,7 +1309,7 @@ impl Run<'_, '_, '_> {
 
     fn generate_candidates(
         &self,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
         contract: &mut Vec<ContractFinding>,
         successors: &mut Vec<Applied>,
         stop_after_first: bool,
@@ -1359,7 +1359,7 @@ impl Run<'_, '_, '_> {
         deleted: &BTreeSet<(&DeclarationKey, &str)>,
         plan: &Plan<'_>,
         created: &[u128],
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
         contract: &mut Vec<ContractFinding>,
         successors: &mut Vec<Applied>,
     ) -> Result<bool, ExpansionStop> {

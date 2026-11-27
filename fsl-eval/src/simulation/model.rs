@@ -242,7 +242,7 @@ pub use timed::{
     TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal, TimedSystem,
     TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
 };
-pub(crate) use walk::{Applied, Budget};
+pub(crate) use walk::{Applied, CandidateCount};
 
 /// A non-empty, canonically ordered set of admitted claim instances.
 ///

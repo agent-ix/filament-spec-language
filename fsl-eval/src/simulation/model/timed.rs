@@ -2729,7 +2729,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         site: &dyn Fn() -> TimedSite,
     ) -> Result<Vec<Vec<PlaceConstraint>>, TimedStop> {
         let mut alternatives = vec![base];
-        let mut budget = super::walk::Budget::new(self.system.limits.max_candidates);
+        let mut budget = super::walk::CandidateCount::new(self.system.limits.max_candidates);
         for family in families {
             let held = self.held(state, receiver, family.path());
             let mut per_slot = Vec::with_capacity(held);
