@@ -2541,7 +2541,7 @@ fn check_mdp(
                 return Ok(malformed("policy"));
             }
         }
-        let policy_zero_weight = if let Some(weights) = action_weights {
+        let policy_zero_weight_states = if let Some(weights) = action_weights {
             let local_of = mecs[mec]
                 .iter()
                 .enumerate()
@@ -2579,14 +2579,23 @@ fn check_mdp(
                 super::super::bottom_components(&policy_edges, &policy_reverse, &mut |_| {
                     cx.work(1)
                 })?;
-            bottom
-                .iter()
-                .enumerate()
-                .filter(|(_, is_bottom)| **is_bottom)
-                .all(|(class, _)| classes[class].iter().all(|state| state_zero_weight[*state]))
+            let mut zero_weight_states = vec![false; mecs[mec].len()];
+            for (class, is_bottom) in bottom.iter().enumerate() {
+                if *is_bottom && classes[class].iter().all(|state| state_zero_weight[*state]) {
+                    for &state in &classes[class] {
+                        zero_weight_states[state] = true;
+                    }
+                }
+            }
+            zero_weight_states
         } else {
-            false
+            vec![false; mecs[mec].len()]
         };
+        let local_of = mecs[mec]
+            .iter()
+            .enumerate()
+            .map(|(local, state)| (*state, local))
+            .collect::<BTreeMap<_, _>>();
         if component.gain != component.value || first.value != rational(0) {
             return Ok(rejected(
                 ProbabilityCertificateRule::InequalityFails,
@@ -2622,6 +2631,9 @@ fn check_mdp(
                 let selected_policy_action = policy
                     .get(&state)
                     .is_some_and(|selected| selected.contains(&index));
+                let policy_zero_weight = local_of
+                    .get(&state)
+                    .is_some_and(|local| policy_zero_weight_states[*local]);
                 let action_weight =
                     if zero_weight_component[mec] || policy_zero_weight && selected_policy_action {
                         rational(1)

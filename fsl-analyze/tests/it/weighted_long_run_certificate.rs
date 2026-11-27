@@ -9,6 +9,7 @@ use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
 };
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, read_weighted_long_run_probability_certificate,
@@ -51,6 +52,114 @@ fn every_scheduler_reward_weighting_checks_minimum_and_maximum_mec_values() {
         assert_eq!(document.certificate.components[0].value, value, "{name}");
         assert!(accepted(&world, name, &document), "{name}");
     }
+}
+
+/// A zero-weight accepting recurrence remains an available scheduler
+/// alternative even when the same MEC contains a positive-weight rejecting
+/// recurrence.
+#[trace("TC-2177", "FR-199-AC-6")]
+#[test]
+fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
+    use fsl_replay::{LongRunOptimization, LongRunPolicyChoice, ProductAction, Schedule};
+
+    let package = "test/weighted-longrun-mixed-zero-mec";
+    let world = World::new(&Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: Vec::new(),
+        fields: vec![("at_a", prob_world::BOOLEAN.to_owned())],
+        operations: vec![
+            Operation { name: "stay_a", parameters: vec![], modifies: vec![], deletes: false },
+            Operation { name: "to_b", parameters: vec![], modifies: vec!["at_a"], deletes: false },
+            Operation { name: "to_a", parameters: vec![], modifies: vec!["at_a"], deletes: false },
+            Operation { name: "stay_b", parameters: vec![], modifies: vec![], deletes: false },
+        ],
+        body: "pre AtA using v on M::Server::stay_a { self.at_a }\n\
+                pre ToB using v on M::Server::to_b { self.at_a }\n\
+                post AtB using v on M::Server::to_b { self.at_a = false }\n\
+                pre ToA using v on M::Server::to_a { not self.at_a }\n\
+                post AtAAgain using v on M::Server::to_a { self.at_a = true }\n\
+                pre AtBStay using v on M::Server::stay_b { not self.at_a }\n\
+                reward cost on Server::stay_a = 0;\n\
+                reward cost on Server::to_b = 0;\n\
+                reward cost on Server::to_a = 0;\n\
+                reward cost on Server::stay_b = 1;\n\
+                probabilistic Maximum using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.at_a) weighted by cost <= rational(1,1) }\n".to_owned(),
+        initial: serde_json::json!({"at_a":{"boolean":true}}),
+    });
+    let bytes = produce(&world, "Maximum");
+    let mut forged =
+        read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new())
+            .expect("analyzer supplies a structurally valid maximum certificate");
+    assert_eq!(
+        forged.certificate.optimization,
+        LongRunOptimization::Maximum
+    );
+    assert_eq!(forged.certificate.components.len(), 1);
+
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let state_a = system.initial().remove(0);
+    let actions_a = system
+        .actions_with_cancel(&state_a, &Cancel::new())
+        .unwrap()
+        .unwrap();
+    let action_a = actions_a
+        .iter()
+        .find(|action| action.identity.operation == "stay_a")
+        .unwrap();
+    let action_to_b = actions_a
+        .iter()
+        .find(|action| action.identity.operation == "to_b")
+        .unwrap();
+    let state_b = action_to_b.draws[0].successors[0].1.clone();
+    let actions_b = system
+        .actions_with_cancel(&state_b, &Cancel::new())
+        .unwrap()
+        .unwrap();
+    let action_b = actions_b
+        .iter()
+        .find(|action| action.identity.operation == "stay_b")
+        .unwrap();
+
+    let component = &mut forged.certificate.components[0];
+    component.value = ratio(0, 1);
+    component.gain = ratio(0, 1);
+    for bias in &mut component.bias {
+        bias.value = ratio(0, 1);
+    }
+    for value in &mut forged.certificate.values {
+        value.value = ratio(0, 1);
+    }
+    let a_key = forged.certificate.predicate_states[0].clone();
+    let policy = component
+        .policy
+        .as_mut()
+        .expect("scheduler certificate has a policy");
+    let row_a = policy.iter_mut().find(|row| row.state == a_key).unwrap();
+    row_a.choice = LongRunPolicyChoice::Deterministic(ProductAction::Identity(
+        Schedule::of(&system, &action_a.identity).unwrap(),
+    ));
+    let row_b = policy.iter_mut().find(|row| row.state != a_key).unwrap();
+    row_b.choice = LongRunPolicyChoice::Deterministic(ProductAction::Identity(
+        Schedule::of(&system, &action_b.identity).unwrap(),
+    ));
+
+    let encoded =
+        write_weighted_long_run_probability_certificate(&forged, limits(), &Cancel::new())
+            .expect("the false proof remains structurally encodable");
+    let result = check(&world, "Maximum", &encoded, &Cancel::new(), limits()).unwrap();
+    assert!(
+        matches!(
+            &result,
+            ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::InequalityFails,
+                at: ProbabilityCertificateLocus::ProductState(key),
+            }) if *key == a_key
+        ),
+        "false weighted maximum must fail at the zero-weight accepting product state: {result:?}"
+    );
 }
 
 fn claim(name: &str, predicate: &str, bound: &str) -> String {
