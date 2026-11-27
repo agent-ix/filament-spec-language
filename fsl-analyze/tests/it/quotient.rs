@@ -779,7 +779,7 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
     ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
         let mut limits = ModelCheckLimits::default();
         limits.limits.max_transitions = max_transitions;
-        world.run_with_limits(symmetric(), limits, meter(work_units))
+        world.run_with_limits(flagged(Subject::Token), limits, meter(work_units))
     }
 
     fn minimum_work(
@@ -819,7 +819,7 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
         ["b", "b", "b"]
     );
     let world = Flags::new(Subject::Token, "", EVENTUALLY_FIRED);
-    let unrestricted = world.run(symmetric());
+    let unrestricted = world.run(flagged(Subject::Token));
     let counterexample_len = violation(&unrestricted).len();
     let unrestricted = unrestricted.expect("the reduced run checks");
     assert_eq!(counterexample_len, 2);
