@@ -128,13 +128,33 @@ fn nested_analyze_source() -> String {
     )
 }
 
+fn flat_analyze_source() -> String {
+    let terms = std::iter::repeat_n("1", 10_000)
+        .collect::<Vec<_>>()
+        .join(" + ");
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile values = \"filament.value.complete/v1\";\n\
+         profile paths = \"filament.temporal.infinite-trace/v1\";\n\
+         model Queue = \"test/counter\";\n\
+         function total using values(): Integer pure {{ {terms} }}\n\
+         temporal Bounded using paths over (q: Queue::Counter) clock \"model-steps\" on origin {{\n\
+           always holds(q.value <= 2)\n\
+         }}\n"
+    )
+}
+
 fn analyze_request(directory: &Path, source_text: &str) -> PathBuf {
-    std::fs::write(directory.join("workflow.fsl"), source_text).expect("program writes");
-    std::fs::write(
-        directory.join("counter.json"),
+    analyze_request_with_model(
+        directory,
+        source_text,
         include_bytes!("../../fixtures/cli-contract/counter.semantic-ir.json"),
     )
-    .expect("counter model writes");
+}
+
+fn analyze_request_with_model(directory: &Path, source_text: &str, model: &[u8]) -> PathBuf {
+    std::fs::write(directory.join("workflow.fsl"), source_text).expect("program writes");
+    std::fs::write(directory.join("counter.json"), model).expect("counter model writes");
     let start = json!({"format":"filament.state.snapshot/v1",
         "identity":{"authority":"contracts","identity":"queue-start"},
         "observation":"current","model":{"identity":"test/counter"},
@@ -163,6 +183,42 @@ fn analyze_request(directory: &Path, source_text: &str) -> PathBuf {
     path
 }
 
+fn counter_model_with_one_thousand_enums() -> Vec<u8> {
+    let mut model: Value = serde_json::from_slice(include_bytes!(
+        "../../fixtures/cli-contract/counter.semantic-ir.json"
+    ))
+    .expect("counter model fixture is JSON");
+    let constructs = model["constructs"].as_array_mut().expect("constructs");
+    constructs.push(json!({
+        "kind":{"module":"test/counter","name":"variant_type"},
+        "moduleVersion":"1.0.0",
+        "construct":{"identity":"none","shape":"enumeration",
+            "members":{"variants":"required"},
+            "meaning":"filament.meaning.model.variant-type/v1"}
+    }));
+    let types = model["types"].as_array_mut().expect("types");
+    for index in 0..1_000 {
+        let name = format!("SizeEnum{index:04}");
+        let identity = format!("ix://test/counter/{name}");
+        let generated = |suffix: &str| {
+            json!({"generated":{"generatorIdentity":format!("{identity}/{suffix}"),
+                "generatorVersion":"1.0.0",
+                "inputIdentities":[format!("{identity}/{suffix}")]}})
+        };
+        types.push(json!({
+            "identity":identity,"displayName":name,
+            "kind":{"module":"test/counter","name":"variant_type"},
+            "roles":[],"origin":generated("type"),"constraints":[],"extensions":[],
+            "unknownPolicy":"reject",
+            "variants":[
+                {"identity":format!("{identity}/A"),"name":"A","origin":generated("A")},
+                {"identity":format!("{identity}/B"),"name":"B","origin":generated("B")}
+            ]
+        }));
+    }
+    serde_json::to_vec(&model).expect("extended counter model serializes")
+}
+
 fn analyze_with_request_bound(
     path: &Path,
     request_bytes: u64,
@@ -181,15 +237,9 @@ fn analyze_with_request_bound(
     )
 }
 
-/// Analyze admits the nested-source request exactly and rejects one appended
-/// request byte before any item runs.
-#[trace("TC-3242", "FR-620-AC-12")]
-#[test]
-fn analyze_admits_the_thousand_nested_expression_at_its_request_byte_bound() {
-    let directory = tempfile::tempdir().expect("analyze workspace");
-    let path = analyze_request(directory.path(), &nested_analyze_source());
-    let request_bytes = std::fs::metadata(&path).expect("request metadata").len();
-    let result = analyze_with_request_bound(&path, request_bytes)
+fn assert_analyze_request_exact_and_one_byte_over(path: &Path) {
+    let request_bytes = std::fs::metadata(path).expect("request metadata").len();
+    let result = analyze_with_request_bound(path, request_bytes)
         .expect("the request at its exact byte count is admitted");
     assert_eq!(result.exit_code, 0);
     assert_eq!(
@@ -197,10 +247,10 @@ fn analyze_admits_the_thousand_nested_expression_at_its_request_byte_bound() {
         "proved"
     );
 
-    let mut bytes = std::fs::read(&path).expect("request reads");
+    let mut bytes = std::fs::read(path).expect("request reads");
     bytes.push(b' ');
-    std::fs::write(&path, bytes).expect("one byte appends");
-    let error = analyze_with_request_bound(&path, request_bytes)
+    std::fs::write(path, bytes).expect("one byte appends");
+    let error = analyze_with_request_bound(path, request_bytes)
         .err()
         .expect("one byte above the request limit refuses before the item");
     let document = error.outcome_document(fsl_replay::Operation::Analyze);
@@ -211,6 +261,37 @@ fn analyze_admits_the_thousand_nested_expression_at_its_request_byte_bound() {
     assert_eq!(value["category"], "resource_exhausted");
     assert_eq!(value["last_stage"], Value::Null);
     assert_eq!(value["items"], json!([]));
+}
+
+/// Analyze admits the nested-source request exactly and rejects one appended
+/// request byte before any item runs.
+#[trace("TC-3242", "FR-620-AC-12")]
+#[test]
+fn analyze_admits_the_thousand_nested_expression_at_its_request_byte_bound() {
+    let directory = tempfile::tempdir().expect("analyze workspace");
+    let path = analyze_request(directory.path(), &nested_analyze_source());
+    assert_analyze_request_exact_and_one_byte_over(&path);
+}
+
+/// Analyze retains the 10,000-term package request boundary independently of
+/// the analysis engine's item outcome.
+#[trace("TC-3242", "FR-620-AC-13")]
+#[test]
+fn analyze_admits_the_ten_thousand_term_package_at_its_request_byte_bound() {
+    let directory = tempfile::tempdir().expect("analyze workspace");
+    let path = analyze_request(directory.path(), &flat_analyze_source());
+    assert_analyze_request_exact_and_one_byte_over(&path);
+}
+
+/// Analyze admits the 1,000-enum model and keeps its request-byte ceiling
+/// independent of model declaration intake.
+#[trace("TC-3242", "FR-620-AC-14")]
+#[test]
+fn analyze_admits_one_thousand_enums_at_its_request_byte_bound() {
+    let directory = tempfile::tempdir().expect("analyze workspace");
+    let model = counter_model_with_one_thousand_enums();
+    let path = analyze_request_with_model(directory.path(), &nested_analyze_source(), &model);
+    assert_analyze_request_exact_and_one_byte_over(&path);
 }
 
 fn chain_model(prefix: &str, redefines: bool) -> String {
