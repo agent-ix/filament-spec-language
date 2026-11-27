@@ -1627,7 +1627,11 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                         });
                     }
                     Ok(WalkStep::Position { .. }) => {}
-                    Ok(WalkStep::UndecidedSuccessor | WalkStep::Terminal { .. })
+                    Ok(
+                        WalkStep::UndecidedSuccessor
+                        | WalkStep::Terminal { .. }
+                        | WalkStep::TimeLocked,
+                    )
                     | Err(Ended::Undecided) => break,
                     Err(Ended::Halt(halt)) => return Err(halt.into()),
                 }
