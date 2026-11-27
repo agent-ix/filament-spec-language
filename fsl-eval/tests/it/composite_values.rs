@@ -763,7 +763,7 @@ mod checked {
     use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
     use fsl_package::CheckedPackage;
     use fsl_semantics::check::{
-        CheckCause, CheckRefusal, CheckedExpression, Obligation, PackageDeclarations,
+        CheckCause, CheckedExpression, Obligation, PackageDeclarations, SemanticCheckRefusal,
     };
 
     fn name(spelling: &str) -> Expression {
@@ -837,7 +837,7 @@ mod checked {
         types: TypeEnvironment,
         aliases: Vec<(String, ValueType)>,
         functions: Vec<FunctionDeclaration>,
-    ) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+    ) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
         {
             let mut declarations = PackageDeclarations::new(
                 fsl_semantics::check::fixture_source(),
@@ -864,7 +864,7 @@ mod checked {
         parameters: &[(&str, ValueType)],
         expression: &Expression,
         mode: CheckMode,
-    ) -> Result<CheckedExpression, CheckRefusal> {
+    ) -> Result<CheckedExpression, SemanticCheckRefusal> {
         package.graph().check_expression(
             owned(parameters),
             expression,
@@ -895,7 +895,7 @@ mod checked {
         }
     }
 
-    fn cause(result: Result<CheckedExpression, CheckRefusal>) -> CheckCause {
+    fn cause(result: Result<CheckedExpression, SemanticCheckRefusal>) -> CheckCause {
         match result {
             Err(refusal) => *refusal.cause,
             Ok(_) => panic!("a refusal, not a checked expression"),
@@ -1224,7 +1224,7 @@ mod checked {
             literal(0),
         ))
         .unwrap();
-        let only = |result: Result<CheckedPackage, Vec<CheckRefusal>>| match result {
+        let only = |result: Result<CheckedPackage, Vec<SemanticCheckRefusal>>| match result {
             Err(refusals) => match refusals.as_slice() {
                 [refusal] => refusal.cause.as_ref().clone(),
                 other => panic!("one refusal, not {other:?}"),

@@ -2,14 +2,14 @@
 //! FR-1051 mutation registration for the explicit state-graph checker.
 
 use super::*;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use fsl_certificate_mutation::{
-    AllowedMutation, MutationId, MutationKind, Verdict, check_typed_with_adapter,
+    check_typed_with_adapter, AllowedMutation, MutationId, MutationKind, Verdict,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_replay::StateGraphCertificate;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 /// Trace: FR-1051-AC-11, FR-1051-AC-13.

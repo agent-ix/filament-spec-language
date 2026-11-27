@@ -12,7 +12,7 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{HyperCounterexample, HyperCounterexampleKind, HyperOutcome, ModelCheckLimit};
 
 use super::super::{fault, widen, Run, Totals};
-use super::reduction::{charge, Admission, Member, Order, Scope, Stop};
+use super::reduction::{charge, Admission, ClosedOrderMember, Order, Scope, Stop};
 use super::{ConstraintReading, Reading};
 
 struct Open {
@@ -270,7 +270,7 @@ impl Run<'_, '_> {
     fn queue_closed_choices(
         &self,
         choices: Choices,
-        members: &[Member],
+        members: &[ClosedOrderMember],
         selected: bool,
         frontier: &mut Frontier,
         serial: &mut usize,

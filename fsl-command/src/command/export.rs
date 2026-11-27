@@ -639,6 +639,7 @@ fn compile_and_map(
     Ok((mapped, program))
 }
 
+#[ix_trace_rs::string_edge]
 fn finish(
     request: &Request,
     mapped: &Mapped,

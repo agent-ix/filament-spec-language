@@ -5,12 +5,12 @@
 use std::path::Path;
 
 use fsl_command::command;
-use fsl_forms::{DeclarationForm, build_unit};
+use fsl_forms::{build_unit, DeclarationForm};
 use fsl_foundation::SourceIdentity;
-use fsl_replay::{Operation, spine::CompileRefusal};
+use fsl_replay::{spine::CompileRefusal, Operation};
 use fsl_semantics::check::{CheckCause, ProbabilisticCause, WeightOwner};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const MODEL: &[u8] = include_bytes!("../../../fsl-conformance/cases/service-package.json");
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\

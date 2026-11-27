@@ -23,8 +23,8 @@ use fsl_forms::{
 };
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
 use fsl_semantics::check::wire_id::WireGraph;
-use fsl_semantics::check::CheckRefusal;
 use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::check::SemanticCheckRefusal;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::value::{always_roles, native_diagnostics_catalog, DefinitionRole};
 use ix_trace_rs::trace;
@@ -51,10 +51,10 @@ mod bare_world;
 mod body_location_walk;
 mod bytes_operations;
 mod carried_quantity_paths;
-mod class_c;
 mod check_mode;
 mod checked_views;
 mod child_composite;
+mod class_c;
 mod clock_places;
 mod collection_if;
 mod composition;
@@ -2013,7 +2013,7 @@ fn an_empty_package_refuses_during_check() {
             .expect_err("an empty package has no graph to emit");
     assert!(matches!(
         refusals.as_slice(),
-        [CheckRefusal { cause, .. }]
+        [SemanticCheckRefusal { cause, .. }]
             if matches!(cause.as_ref(), fsl_semantics::check::CheckCause::EmptyPackage { .. })
     ));
 }
@@ -2981,7 +2981,7 @@ fn text_function(text_type: &str, literal: &str) -> String {
 }
 
 /// The checked package for `declarations`, or the checker's refusals.
-fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
@@ -4246,7 +4246,7 @@ const VERSION_UNCHANGED: &str =
 fn check_attempt_unit(
     unit: &str,
     with_sub: bool,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-309"),
         "program.native",

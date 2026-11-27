@@ -167,6 +167,7 @@ struct Premise {
 }
 
 impl Transfer<'_> {
+    #[ix_trace_rs::string_edge]
     fn run(&self) -> Result<RunResult> {
         let package = self.checked.package();
         let graph = package.graph();

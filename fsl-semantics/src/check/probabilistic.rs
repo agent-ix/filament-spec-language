@@ -30,7 +30,7 @@
 
 mod claim;
 mod exact;
-pub(crate) use exact::{ExactFault, value as exact_value};
+pub(crate) use exact::{value as exact_value, ExactFault};
 mod model;
 mod node_key;
 
@@ -40,6 +40,7 @@ pub use claim::{
     FractionMeasure, ModelSubjectRef, OverBinding, PackageProbabilityClaimForm, ProbForm,
     ProbScheduler, ReachTarget, Weighting,
 };
+pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
     CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
     PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
@@ -47,7 +48,6 @@ pub use model::{
     ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReadReward, Reward,
     SupportValue, Workload,
 };
-pub(crate) use model::{ProbabilisticInput, Unresolved, check, precondition_reads, site_spans};
 pub use node_key::{ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead, Statement};
 
 use filament_exact::Integer;
@@ -58,12 +58,12 @@ use fsl_forms::{
     ConfidenceItemForm, ConfidenceKey, DelayForm, ExactValueForm, ExactValueKind, ExprNode,
     MeasureForm, ProbabilisticBody, ProbabilisticForm, RandomForm, RewardForm, WorkloadForm,
 };
-use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::Span;
 
 use super::layer::visit_located;
 use super::refusal::{
-    CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, Obligation, StageLimitCause,
+    CheckCause, CheckingLimitKind, CheckingStage, Obligation, SemanticCheckRefusal, StageLimitCause,
 };
 
 /// The largest scale a decimal is expanded at when a confidence range is
@@ -710,8 +710,8 @@ struct Excess {
 /// The limit refusal of an exact value, written or derived, whose measure is
 /// past the configured `s3.rational_bits` (FR-185 "Exact values"). The
 /// refusal names that setting and the configured limit.
-fn limit_refusal(excess: Excess, location: Location) -> CheckRefusal {
-    CheckRefusal {
+fn limit_refusal(excess: Excess, location: Location) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location,
         cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
@@ -726,8 +726,8 @@ fn limit_refusal(excess: Excess, location: Location) -> CheckRefusal {
 /// The limit refusal of an event's horizon, a sum of interval bounds `actual`
 /// past the largest `u64` (FR-186 "Events and measures"; ADR-014 TR-4),
 /// located at the operator whose interval overflowed it.
-fn horizon_refusal(actual: u128, location: Location) -> CheckRefusal {
-    CheckRefusal {
+fn horizon_refusal(actual: u128, location: Location) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location,
         cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
@@ -745,7 +745,7 @@ fn exact_refusal(
     ceiling: u64,
     span: Span,
     location: Location,
-) -> CheckRefusal {
+) -> SemanticCheckRefusal {
     match fault {
         exact::ExactFault::ZeroDenominator => refusal(ProbabilisticCause::ZeroDenominator { span }),
         exact::ExactFault::AboveCeiling { bits } => {
@@ -762,9 +762,9 @@ pub(crate) fn quantity_magnitude(
     magnitude: &ExactValueForm,
     ceiling: u64,
     location: &Location,
-) -> Result<filament_exact::Rational, CheckRefusal> {
+) -> Result<filament_exact::Rational, SemanticCheckRefusal> {
     exact::value(magnitude, ceiling).map_err(|fault| match fault {
-        exact::ExactFault::ZeroDenominator => CheckRefusal {
+        exact::ExactFault::ZeroDenominator => SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(CheckCause::Unproved(Obligation::Nonzero)),
         },
@@ -774,8 +774,8 @@ pub(crate) fn quantity_magnitude(
     })
 }
 
-fn refusal(cause: ProbabilisticCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ProbabilisticCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // A declaration has no expression tree for a `Location` path to
         // walk; `region::DeclarationRegions::refusal_region` reads the
         // cause's own span, so this `Location` is never resolved.

@@ -21,7 +21,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
+use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -565,7 +565,11 @@ fn float_of(float: &str, value: f64) -> Value {
 }
 
 fn smallest_subnormal(float: &str) -> Value {
-    if float == F32 { f32v(1) } else { f64v(1) }
+    if float == F32 {
+        f32v(1)
+    } else {
+        f64v(1)
+    }
 }
 
 fn largest_finite(float: &str) -> Value {

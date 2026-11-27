@@ -8,6 +8,7 @@ use super::{encoding, EmitRefusal};
 /// Order only the reference sets of the protocol layout. This runs before
 /// operand compaction: the targets still hold their complete structural IDs,
 /// so neither graph positions nor node-local operand slots enter comparison.
+#[ix_trace_rs::string_edge]
 pub(super) fn order_protocol_sets(
     operator: &str,
     arguments: &mut [CheckedTerm],

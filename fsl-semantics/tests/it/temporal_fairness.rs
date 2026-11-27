@@ -15,8 +15,8 @@ use fsl_foundation::bound::{DomainKey, DomainKind, TemporalInterval, TemporalUpp
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    check_clauses, Capability, CheckCause, CheckRefusal, CheckedInterval, CheckedTemporalClause,
-    TemporalCause, TemporalProfile, TemporalTraceFamily,
+    check_clauses, Capability, CheckCause, CheckedInterval, CheckedTemporalClause,
+    SemanticCheckRefusal, TemporalCause, TemporalProfile, TemporalTraceFamily,
 };
 use fsl_semantics::family::{ClaimExtent, FamilyContract};
 use ix_trace_rs::trace;
@@ -44,7 +44,7 @@ const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 const CONFIG_VERSION: &str = "Config::ConfigVersion";
 const ATTEMPT_UPDATE: &str = "Config::ConfigVersion::attemptUpdate";
 
-type Outcome = Result<CheckedTemporalClause, StageFailure<CheckRefusal>>;
+type Outcome = Result<CheckedTemporalClause, StageFailure<SemanticCheckRefusal>>;
 
 /// The `ConfigVersion` document, with its one `attemptUpdate` operation.
 fn config_version() -> Vec<u8> {

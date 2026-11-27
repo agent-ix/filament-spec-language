@@ -5,10 +5,10 @@ use filament_checked::key::DeclarationKey;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    SelectedModels, UnitIntakeCause, UnitIntakeRefusal, admit_unit, compile_model_unit_with_causes,
-    package_input,
+    admit_unit, compile_model_unit_with_causes, package_input, SelectedModels, UnitIntakeCause,
+    UnitIntakeRefusal,
 };
-use fsl_semantics::model::key::{RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE, effective_id_of};
+use fsl_semantics::model::key::{effective_id_of, RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE};
 use fsl_semantics::model::normalize::{EffectiveView, ModelRefusalCause, ViewEntry};
 use ix_trace_rs::trace;
 use std::collections::BTreeSet;
@@ -152,21 +152,17 @@ fn most_specific_source_redefinition_retains_hidden_correspondence() {
     assert_ne!(base.effective_id, mid.effective_id);
     for hidden in [base, mid] {
         assert!(!hidden.preimage.derivation.is_empty());
-        assert!(
-            hidden
-                .preimage
-                .derivation
-                .iter()
-                .any(|fact| fact.rule == RULE_REDEFINE)
-        );
-        assert!(
-            !view
-                .links()
-                .unwrap()
-                .expand(&hidden.effective_id, 100)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(hidden
+            .preimage
+            .derivation
+            .iter()
+            .any(|fact| fact.rule == RULE_REDEFINE));
+        assert!(!view
+            .links()
+            .unwrap()
+            .expand(&hidden.effective_id, 100)
+            .unwrap()
+            .is_empty());
     }
 }
 

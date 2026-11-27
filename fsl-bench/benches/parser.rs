@@ -18,8 +18,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fsl_bench::parse::{nested_source, outcome_id, parse, volume_source, ParseOutcome};
 use fsl_bench::widen;
-use std::hint::black_box;
 use ix_trace_rs::trace;
+use std::hint::black_box;
 
 /// Depths either side of today's refusal boundary (4 parses, 5 refuses).
 const DEPTHS: [usize; 7] = [0, 1, 2, 3, 4, 5, 8];

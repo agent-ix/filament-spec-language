@@ -5,9 +5,9 @@
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ix_trace_rs::implements;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Map, Number, Value};
 
 /// The kind of one local certificate mutation.
@@ -730,21 +730,15 @@ mod tests {
         ));
 
         let mutants = mutations(&doc);
-        assert!(
-            mutants
-                .iter()
-                .any(|mutant| mutant.id.kind == MutationKind::RowDropped)
-        );
-        assert!(
-            mutants
-                .iter()
-                .any(|mutant| mutant.id.kind == MutationKind::RowDuplicated)
-        );
-        assert!(
-            mutants
-                .iter()
-                .any(|mutant| mutant.id.kind == MutationKind::KeySwapped)
-        );
+        assert!(mutants
+            .iter()
+            .any(|mutant| mutant.id.kind == MutationKind::RowDropped));
+        assert!(mutants
+            .iter()
+            .any(|mutant| mutant.id.kind == MutationKind::RowDuplicated));
+        assert!(mutants
+            .iter()
+            .any(|mutant| mutant.id.kind == MutationKind::KeySwapped));
         for mutant in mutants
             .iter()
             .filter(|mutant| mutant.id.kind == MutationKind::KeySwapped)

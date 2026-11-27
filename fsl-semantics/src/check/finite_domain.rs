@@ -151,7 +151,7 @@ pub(crate) fn first_unbounded_component(
 
 #[cfg(test)]
 mod tests {
-    use super::{DomainContext, first_unbounded_component};
+    use super::{first_unbounded_component, DomainContext};
     use filament_exact::{
         EffectiveId, Integer, IntegerInterval, OriginalDeclarationKey, RationalDomain, ValueType,
     };

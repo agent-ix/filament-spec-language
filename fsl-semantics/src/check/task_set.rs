@@ -23,7 +23,7 @@
 //! its bound to the time dimension's root unit, and the claim is never
 //! observable because the set is refused.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::BTreeMap;
 
 use filament_exact::{Integer, NodeKey, Origin, PathSegment, Rational, Role};
@@ -31,20 +31,20 @@ use fsl_forms::{
     ArrivalForm, CriticalityForm, ModeSwitchForm, PolicyForm, ReleaseForm, ResponseForm,
     SchedulableForm, SignedQuantityForm, TaskForm, TasksetForm,
 };
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Span;
 
-use super::probabilistic::{ExactFault, exact_value};
+use super::probabilistic::{exact_value, ExactFault};
 use super::refusal::{TaskSetDefect, TaskTimeMember, TemporalCause, TimeUnitCause};
 use super::time_units::{TimeScale, TimeUnits};
 
 mod release;
-pub use release::Release;
 pub(super) use release::check_releases;
+pub use release::Release;
 
 mod mode_switch;
-pub use mode_switch::ModeSwitch;
 pub(super) use mode_switch::check_mode_switches;
+pub use mode_switch::ModeSwitch;
 
 /// One source declaration of the task-set family, kept in source order.
 #[derive(Clone, Debug, Eq, PartialEq)]

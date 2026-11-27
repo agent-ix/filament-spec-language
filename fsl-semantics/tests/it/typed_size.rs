@@ -6,7 +6,7 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CheckedGraph, Obligation, PackageDeclarations,
+    CheckCause, CheckedGraph, Obligation, PackageDeclarations, SemanticCheckRefusal,
 };
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
@@ -17,7 +17,7 @@ fn check_in(
     header: &str,
     declarations: &str,
     mode: CheckMode,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{header}{declarations}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "w17"),
@@ -45,7 +45,7 @@ fn check_in(
 
 const V: &str = "profile v = \"filament.value.complete/v1\";\n";
 
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     check_in(V, declarations, CheckMode::Linked)
 }
 
@@ -61,7 +61,7 @@ fn assert_refused_with(
     declarations: &str,
     code: Code,
     cause: Option<&str>,
-) -> CheckRefusal {
+) -> SemanticCheckRefusal {
     let refusals =
         check_in(header, declarations, CheckMode::Linked).expect_err("the unit is refused");
     let first = refusals.first().expect("a refusal").clone();
@@ -72,7 +72,7 @@ fn assert_refused_with(
     first
 }
 
-fn assert_refused(declarations: &str, code: Code, cause: &str) -> CheckRefusal {
+fn assert_refused(declarations: &str, code: Code, cause: &str) -> SemanticCheckRefusal {
     assert_refused_with(V, declarations, code, Some(cause))
 }
 

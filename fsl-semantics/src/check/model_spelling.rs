@@ -425,15 +425,22 @@ mod tests {
         );
         let mut spellings = ModelSpellings::new(source("a"));
         let package = spellings.add_package(selection("source"));
-        spellings.bind_model(&source("a"), super::super::source_model::ALIAS, Some(package));
+        spellings.bind_model(
+            &source("a"),
+            super::super::source_model::ALIAS,
+            Some(package),
+        );
         spellings.set_names(
             package,
             package_names(
                 super::super::source_model::ALIAS,
-                [("Account", ModelName {
-                    object: Some(object.clone()),
-                    ..ModelName::default()
-                })],
+                [(
+                    "Account",
+                    ModelName {
+                        object: Some(object.clone()),
+                        ..ModelName::default()
+                    },
+                )],
             ),
         );
 
@@ -524,10 +531,8 @@ mod tests {
             Spelled::Other
         );
         assert_eq!(spellings.spelled(Some(&source("a")), "T"), Spelled::Other);
-        assert!(
-            spellings
-                .types(Some(&source("c")), "M::T", &table)
-                .is_empty()
-        );
+        assert!(spellings
+            .types(Some(&source("c")), "M::T", &table)
+            .is_empty());
     }
 }

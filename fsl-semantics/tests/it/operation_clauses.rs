@@ -6,7 +6,7 @@ use filament_semantic_value::call::WrongSnapshotCause;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::location::{ExpressionOwner as Origin, OperationClauseKind};
-use fsl_semantics::check::{CheckCause, CheckRefusal};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal};
 use fsl_semantics::model::refusal::{MemberPath, MemberRoot};
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -25,7 +25,7 @@ const UNIT_BODY: &str = "function same using v(a: Boolean): Boolean pure { a }";
 fn check(
     requires: &[(&str, &str)],
     ensures: &[(&str, &str)],
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     let mut bump = operation("bump", json!([]), None, empty_frame());
     let clauses = |entries: &[(&str, &str)]| {
         entries
@@ -54,14 +54,14 @@ fn check(
 
 fn check_optional_parameter_clause(
     clause: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     check_optional_parameter_clause_with_type(clause, "ix://filament/native/Integer")
 }
 
 fn check_optional_parameter_clause_with_type(
     clause: &str,
     type_ref: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     let mut bump = operation(
         "bump",
         json!([operation_parameter("bump", "amount", type_ref)]),

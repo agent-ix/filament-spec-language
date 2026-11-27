@@ -12,7 +12,7 @@
 //! it; the `time` member's own reading waits on FR-230's facet gate.
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeValueMap, ValueMap, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeValueMap, ValueMap, With,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
