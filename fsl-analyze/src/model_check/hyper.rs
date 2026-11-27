@@ -808,6 +808,47 @@ fn sooner(refused: &mut Option<(usize, UndecidedCause)>, depth: usize, cause: Un
     }
 }
 
+/// Aggregate an HP-3 member's contract findings for the first phase. An
+/// undefined conjunction is a counterexample candidate; a refused-only
+/// conjunction makes the member's successors unknown and settles undecided.
+#[implements("FR-177-AC-7")]
+fn member_contract_candidates(
+    id: ProductStateId,
+    depth: usize,
+    findings: &[HyperFinding],
+) -> Vec<(usize, u8, Candidate)> {
+    let mut candidates = Vec::new();
+    let mut refused = None;
+    for finding in findings {
+        match finding {
+            HyperFinding::MemberUndefined {
+                component,
+                contract,
+                partner,
+            } => candidates.push((
+                depth,
+                0,
+                Candidate::Found(
+                    id,
+                    Found::MemberContract {
+                        component: *component,
+                        contract: contract.clone(),
+                        partner: partner.clone(),
+                    },
+                ),
+            )),
+            HyperFinding::MemberContract => {
+                sooner(&mut refused, depth, UndecidedCause::UndecidedSuccessor)
+            }
+            _ => {}
+        }
+    }
+    if let Some((depth, cause)) = refused {
+        candidates.push((depth, 1, Candidate::Refused(cause)));
+    }
+    candidates
+}
+
 /// The second phase's result for one instance.
 enum Second {
     /// The shortest passing lasso.
@@ -1941,28 +1982,18 @@ impl<'a> Run<'_, 'a> {
                             UndecidedCause::MatchUndetermined,
                         );
                     }
-                    HyperFinding::MemberUndefined {
-                        component,
-                        contract,
-                        partner,
-                    } => offer(
-                        state.depth,
-                        0,
-                        Candidate::Found(
+                    HyperFinding::MemberUndefined { .. } | HyperFinding::MemberContract => {
+                        for (depth, rank, candidate) in member_contract_candidates(
                             id,
-                            Found::MemberContract {
-                                component: *component,
-                                contract: contract.clone(),
-                                partner: partner.clone(),
-                            },
-                        ),
-                    ),
-                    HyperFinding::MemberContract => {
-                        sooner(
-                            &mut refused,
                             state.depth,
-                            UndecidedCause::UndecidedSuccessor,
-                        );
+                            std::slice::from_ref(finding),
+                        ) {
+                            if rank == 0 {
+                                offer(depth, rank, candidate);
+                            } else if let Candidate::Refused(cause) = candidate {
+                                sooner(&mut refused, depth, cause);
+                            }
+                        }
                     }
                     HyperFinding::Enabled { .. } => {}
                 }
@@ -2677,6 +2708,9 @@ impl<'a> Run<'_, 'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// A trace's step of `component` in the joint step `transition`, with the
 /// state key of its post-state; `None` when the component does not move in it.
