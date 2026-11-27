@@ -59,6 +59,7 @@ current `main` head covers this limitation by evaluating the integrated tree.
 | NFR-142-AC-6 | Before deciding, the command prints the PR-head, fetched-main, and merge-base commit SHAs. It reports deterministic overlapping paths and an explicit accept or merge-required verdict. | unit-testing |
 | NFR-142-AC-7 | Documentation states that textual path non-overlap cannot establish semantic compatibility and that the rolling merge-gate check on current `main` covers this limitation. | review |
 | NFR-142-AC-8 | A fresh repository checkout provides `cargo xtask merge-gate-recipe` through its tracked Cargo alias. | unit-testing |
+| NFR-142-AC-9 | When `--preflight` validates recipe selectors, the command invokes `cargo test --no-run --message-format=json` at most once for each selected package, resolves each selector to its test executable, and checks that selector by listing both ordinary and ignored tests from the executable. For every selector that passes preflight, the recipe lines printed to stdout remain identical to a non-preflight invocation for the same paths; existing no-match notes and refusals remain unchanged. | unit-testing |
 
 ## Verification
 

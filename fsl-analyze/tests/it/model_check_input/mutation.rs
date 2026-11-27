@@ -5,7 +5,8 @@ use super::*;
 use filament_exact::Cancel;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::analyze::{
-    AnalyzeLimits, PackageDeadlockSubject, RunInput, TemporalItem, deadlock_model_item,
+    AnalyzeLimits, DeadlineSupply, PackageDeadlockSubject, RunInput, TemporalItem,
+    deadlock_model_item,
 };
 use fsl_certificate_mutation::{Fixture, Verdict, check_document};
 use fsl_replay::{CounterexampleKind, ModelCheckOutcome, ModelTraceSettlement, ModelTraceValue};
@@ -33,7 +34,7 @@ fn counterexample_replay_from_package_bytes_rejects_single_mutations() {
     let source_item = deadlock_model_item(
         &RunInput::source(&world.package),
         &binding,
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &world.provision,
         occurrence,
         &form,
@@ -57,7 +58,7 @@ fn counterexample_replay_from_package_bytes_rejects_single_mutations() {
             &handoff.bytes,
             handoff.supply(),
             world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             occurrence,
             &form,
         )
