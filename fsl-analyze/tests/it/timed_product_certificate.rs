@@ -1644,7 +1644,6 @@ fn elapsed_quantile_at_most_refutes() {
 #[trace("TC-2494", "FR-877-AC-3")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-5")]
 #[test]
-#[ignore = "QSL-3495: a strict claim with another route cause reads that cause (FR-922 sole-cause rule); incomplete until the region process is built"]
 fn elapsed_quantile_at_least_is_certified_over_regions() {
     let world = quantiles();
     let record = settle(&world, "AtLeastOne");
@@ -1664,7 +1663,6 @@ fn elapsed_quantile_at_least_is_certified_over_regions() {
 /// and one raised to a non-negative initial value misses the strict threshold.
 #[trace("TC-2494", "FR-201")]
 #[test]
-#[ignore = "QSL-3495: a strict claim with another route cause reads that cause (FR-922 sole-cause rule); incomplete until the region process is built"]
 fn elapsed_quantile_altered_upper_value_is_rejected() {
     let world = quantiles();
     let lowered = settle_tampered(&world, "AtLeastOne", |certificate| {
@@ -1695,7 +1693,6 @@ fn elapsed_quantile_altered_upper_value_is_rejected() {
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
 #[test]
-#[ignore = "QSL-3495: a strict claim with another route cause reads that cause (FR-922 sole-cause rule); incomplete until the region process is built"]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();
     let record = settle(&world, "Tight");

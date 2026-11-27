@@ -74,7 +74,6 @@ fn two_clocks(invariant: &str) -> World {
 /// instant `y` passes 1 ms.
 #[test]
 #[trace("TC-2491", "FR-922-AC-4")]
-#[ignore = "QSL-3495: a strict claim with another route cause reads that cause (FR-922 sole-cause rule); incomplete until the region process is built"]
 fn a_delay_reaches_the_region_between_two_clocks_integer_crossings() {
     let world = two_clocks("time invariant Bounded when { self.phase < 2 } { self.y <= 3 ms }\n");
     assert_eq!(observed(&world), all_refuted());

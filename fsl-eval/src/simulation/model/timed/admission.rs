@@ -204,29 +204,61 @@ pub enum Admission {
     /// subject's dense runs; the caller establishes that and otherwise reads
     /// [`RegionCause::TimeLock`].
     DigitalIfNoTimeLock,
-    /// Strictness is the claim's only cause, but the table would read it
-    /// [`Admission::DigitalIfNoTimeLock`]: the refined grid walk decides it
-    /// where no time-lock is reachable, and otherwise
-    /// [`RegionCause::TimeLock`] is read.
-    StrictIfNoTimeLock,
     /// Clock regions decide it.
     Region(RegionCause),
 }
 
+/// The strict claims whose second cause the grid walk decides, each with the
+/// dense-oracle rows that pin its verdict (FR-922 interim, QSL-3495). A strict
+/// claim with any other second cause takes that cause's outcome.
+pub const STRICT_GRID_WALK: [(RegionCause, &[&str]); 3] = [
+    (
+        RegionCause::TimeLock,
+        &[
+            "row_3444_two_clock_regions_bounded_minimum_routes",
+            "a_delay_reaches_the_region_between_two_clocks_integer_crossings",
+        ],
+    ),
+    (
+        RegionCause::OtherFormula,
+        &[
+            "row_3468_time_lock_strict_routes",
+            "a_region_delay_instant_is_not_a_predicate_position",
+        ],
+    ),
+    (
+        RegionCause::OtherElapsed,
+        &[
+            "elapsed_quantile_altered_upper_value_is_rejected",
+            "elapsed_quantile_at_least_is_certified_over_regions",
+            "elapsed_quantile_tight_search_refutes",
+        ],
+    ),
+];
+
 /// The row of [`EN5_DIGITAL`] that admits `conditions`, or why none does.
-/// Strictness is read last: it takes the grid walk only when every other
-/// condition of the table admits the claim, and any other cause takes its own
-/// outcome first.
+/// A strict claim takes the grid walk when strictness is its only cause or
+/// its second cause is one of [`STRICT_GRID_WALK`]; any other second cause
+/// takes its own outcome.
 #[implements("FSpec-FR-421-AC-8", "FR-921-AC-5")]
 pub fn en5_admission(conditions: RouteConditions) -> Admission {
     let open = closed_admission(conditions);
     if conditions.closed {
         return open;
     }
+    let walks = |cause| {
+        STRICT_GRID_WALK
+            .iter()
+            .any(|(covered, _)| *covered == cause)
+    };
     match open {
         Admission::Digital => Admission::Region(RegionCause::Strict),
-        Admission::DigitalIfNoTimeLock => Admission::StrictIfNoTimeLock,
-        Admission::StrictIfNoTimeLock | Admission::Region(_) => open,
+        Admission::DigitalIfNoTimeLock if walks(RegionCause::TimeLock) => {
+            Admission::Region(RegionCause::Strict)
+        }
+        Admission::DigitalIfNoTimeLock => open,
+        Admission::Region(cause) if walks(cause) => Admission::Region(RegionCause::Strict),
+        Admission::Region(_) => open,
     }
 }
 
@@ -307,7 +339,7 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    use Admission::{Digital, DigitalIfNoTimeLock, Region, StrictIfNoTimeLock};
+    use Admission::{Digital, DigitalIfNoTimeLock, Region};
     use ClaimForm as F;
     use ReadFrom::{Later, Origin};
 
@@ -424,10 +456,11 @@ mod tests {
         }
     }
 
-    /// A strict claim takes the grid walk only when strictness is its sole
-    /// cause: every other cause of the table (mixed delays, fairness, a form
-    /// or a later position the table does not admit, the time-lock) takes its
-    /// own outcome first.
+    /// A strict claim takes the grid walk when strictness is its only cause or
+    /// its second cause is one a green oracle row pins ([`STRICT_GRID_WALK`]:
+    /// a time-lock, another formula, another elapsed measure). Every other
+    /// second cause (mixed delays, fairness, an unweighted fraction, a delay
+    /// weight, a later position) takes its own outcome.
     #[trace("FSpec-FR-421-AC-10", "FSpec-FR-421-AC-13")]
     #[test]
     fn strictness_is_read_after_every_other_cause() {
@@ -441,7 +474,7 @@ mod tests {
         );
         assert_eq!(
             en5_admission(strict(closed(DelayClass::Free, F::Reachability, Origin))),
-            StrictIfNoTimeLock
+            Region(RegionCause::Strict)
         );
         assert_eq!(
             en5_admission(strict(closed(DelayClass::Mixed, F::Reachability, Origin))),
@@ -464,10 +497,19 @@ mod tests {
             ))),
             Region(RegionCause::UnweightedTimeFraction)
         );
-        assert_eq!(
-            en5_admission(strict(closed(DelayClass::Given, F::OtherFormula, Origin))),
-            Region(RegionCause::OtherFormula)
-        );
+        // The causes a green oracle row pins take the grid walk.
+        for (cause, form) in [
+            (RegionCause::OtherFormula, F::OtherFormula),
+            (RegionCause::OtherElapsed, F::OtherElapsed),
+        ] {
+            assert!(STRICT_GRID_WALK
+                .iter()
+                .any(|(covered, _)| *covered == cause));
+            assert_eq!(
+                en5_admission(strict(closed(DelayClass::Given, form, Origin))),
+                Region(RegionCause::Strict)
+            );
+        }
         assert_eq!(
             en5_admission(strict(closed(
                 DelayClass::Free,

@@ -660,7 +660,6 @@ fn a_drawn_delay_instant_is_not_a_predicate_position() {
 /// A strict guard takes the region route, where `step` fires after 2 ms.
 #[trace("FR-204-AC-21")]
 #[test]
-#[ignore = "QSL-3495: a strict claim with another route cause reads that cause (FR-922 sole-cause rule); incomplete until the region process is built"]
 fn a_region_delay_instant_is_not_a_predicate_position() {
     let world = empty_window_world("under every scheduler", " and self.x > 2 ms", "");
     assert_window_proofs(&world);
