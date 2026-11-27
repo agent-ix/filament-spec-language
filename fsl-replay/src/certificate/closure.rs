@@ -262,6 +262,20 @@ pub enum ClosureRefusal {
     Fault(InternalFault),
 }
 
+impl ClosureRefusal {
+    /// The refusal of a subject that is not simulated. A conflicting identity
+    /// is the admission refusal the engine names (FR-125-AC-9), so the checker
+    /// and the engine name it identically.
+    pub(crate) fn from_not_simulated(refusal: NotSimulated) -> Self {
+        match refusal {
+            NotSimulated::ConflictingIdentity(conflict) => {
+                Self::Admission(Box::new(conflict.admission_failure()))
+            }
+            other => Self::NotSimulated(Box::new(other)),
+        }
+    }
+}
+
 impl From<EncodingRefusal> for ClosureRefusal {
     fn from(_: EncodingRefusal) -> Self {
         Self::Encoding
@@ -478,7 +492,7 @@ fn check_protocol(
             input.evaluator,
             BOUND_POSITIONS,
         )
-        .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
+        .map_err(ClosureRefusal::from_not_simulated)?;
     }
     let subject = &request.subject;
     let live_instances = live_instance_bound(request.max_live_instances);
@@ -665,7 +679,7 @@ fn check_system<S: SubjectSystem>(
             ));
         }
         Err(ItemRefusal::Unbounded(refusal)) => {
-            return Err(ClosureRefusal::NotSimulated(Box::new(refusal)));
+            return Err(ClosureRefusal::from_not_simulated(refusal));
         }
         Err(refusal) => return Err(refusal.into()),
     };

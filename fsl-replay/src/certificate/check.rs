@@ -83,7 +83,7 @@ fn bounded(
 ) -> Result<ModelSystem<'_>, ClosureRefusal> {
     let system = system.map_err(|failure| ClosureRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS)
-        .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
+        .map_err(ClosureRefusal::from_not_simulated)?;
     Ok(system)
 }
 /// A finished check: a rejection or a stop, or a refusal.
