@@ -18,6 +18,7 @@ mod analyze_protocol_subject;
 mod analyze_reduction_cli;
 mod analyze_request_wire;
 mod analyze_state_graph_cli;
+mod analyze_source_universe;
 mod analyze_tp3_package;
 mod analyze_wire;
 mod clause_item;
