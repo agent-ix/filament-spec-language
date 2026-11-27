@@ -184,9 +184,6 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
         } else if name.as_ref() == "probe" {
             seen_helper = true;
         }
-        if after.location != expected {
-            eprintln!("BDUMP row={row_index} before={before:?}\nafter={after:?}\nexpected={:?}", expected);
-        }
         assert_eq!(
             after.location, expected,
             "only entry origin identities change"
