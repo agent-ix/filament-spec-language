@@ -2670,6 +2670,7 @@ mod tests {
     use super::cas_fixture::{failing_compensation, key, CAS, SPEC, UNLIMITED};
     use super::*;
     use crate::refinement::open_protocol_systems;
+    use crate::{ProtocolPathNode, ProtocolPathRef, ProtocolTrace};
 
     /// One concrete step of [`failing_compensation`]: in the candidate graph
     /// replay rebuilds, the rows apply `add` and never `inc`, whose
@@ -2889,10 +2890,10 @@ mod tests {
             candidates: Vec::new(),
             candidate_keys: Vec::new(),
         };
-        let path_ref = crate::refinement::failure::ProtocolPathRef {
+        let path_ref = ProtocolPathRef {
             seed: std::sync::Arc::new(empty_seed),
             tail: Some(std::sync::Arc::new(
-                crate::refinement::failure::ProtocolPathNode {
+                ProtocolPathNode {
                     previous: None,
                     transition: std::sync::Arc::new(expected_first),
                     candidate: std::sync::Arc::new(expected_candidate),
