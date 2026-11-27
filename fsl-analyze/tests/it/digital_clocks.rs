@@ -1607,7 +1607,13 @@ fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
                 limits: ExactProbLimits::default(),
             },
         );
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         let Settlement::Disposed(disposed) = &record.settlement else {
             panic!("{name} ({ownership}): expected an EN-5 disposition, got {record:?}");
         };
