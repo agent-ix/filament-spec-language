@@ -1685,7 +1685,9 @@ mod tests {
         )
         .expect("semantic refusal source exists");
         assert!(
-            semantic_refusal.contains("/// filament:canonical\npub struct SemanticCheckRefusal"),
+            semantic_refusal.contains(
+                "/// filament:canonical\n#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]\n#[error(\"",
+            ) && semantic_refusal.contains("pub struct SemanticCheckRefusal"),
             "the meaning-specific semantic refusal type retains its canonical marker"
         );
     }
