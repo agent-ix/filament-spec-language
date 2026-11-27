@@ -49,7 +49,8 @@ pub(super) fn sample_halt(
         },
         TimedSampleStop::Step(stop) => match Ended::from(*stop) {
             Ended::Halt(halt) => halt,
-            Ended::Undecided => return Ok(None),
+            // Timed windows keep an undefined guard undecided (QSL-3546).
+            Ended::Undecided | Ended::Contract(_) => return Ok(None),
         },
         TimedSampleStop::Race(_) => broken(),
     })

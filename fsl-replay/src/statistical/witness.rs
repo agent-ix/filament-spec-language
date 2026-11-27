@@ -259,7 +259,7 @@ fn stop_code(stop: &SampleStop) -> CatalogCode {
         SampleStop::Cancelled(_) => CANCELLED,
         // A replayed step is one the sampler already took, so an undecided
         // successor there is a broken invariant.
-        SampleStop::UndecidedSuccessor => BROKEN,
+        SampleStop::UndecidedSuccessor | SampleStop::UndefinedContract(_) => BROKEN,
     }
 }
 

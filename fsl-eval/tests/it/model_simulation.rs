@@ -1769,20 +1769,22 @@ fn an_undecided_contract_is_an_undecided_successor() {
             panic!("UndecidedSuccessor (wobble = {wobble})");
         };
         assert_eq!(strip(undecided), expected);
-        assert_eq!(
-            sample_probabilistic(
-                &system,
-                workload,
-                &state,
-                &sampler(),
-                7,
-                0,
-                3,
-                &Cancel::new()
-            )
-            .expect_err("undecided"),
-            SampleStop::UndecidedSuccessor,
-            "wobble = {wobble}"
+        assert!(
+            matches!(
+                sample_probabilistic(
+                    &system,
+                    workload,
+                    &state,
+                    &sampler(),
+                    7,
+                    0,
+                    3,
+                    &Cancel::new()
+                )
+                .expect_err("undefined"),
+                SampleStop::UndefinedContract(_)
+            ),
+            "an undefined contract is no undecided successor (wobble = {wobble})"
         );
     }
     // Without the undecided precondition, `wobble`'s two post-states are

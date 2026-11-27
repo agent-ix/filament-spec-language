@@ -22,6 +22,7 @@ mod long_run_support;
 mod prob_world;
 mod probabilistic_request_support;
 mod ue6_exact;
+mod ue6_statistical;
 mod provider_schema_support;
 mod relation_claims_support;
 mod source_value_support;

@@ -93,6 +93,7 @@ impl SampledReplayRefusal {
                 | SampleStop::Expansion(_)
                 | SampleStop::NotMarkov(_)
                 | SampleStop::UndecidedSuccessor
+                | SampleStop::UndefinedContract(_)
                 | SampleStop::Cancelled(_) => None,
             },
         }

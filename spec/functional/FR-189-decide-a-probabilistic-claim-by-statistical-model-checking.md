@@ -323,6 +323,7 @@ unsupported condition.
 | FR-189-AC-18 | Over AC-17's `Coin` claim with an empty `initial` list and no universe for `coins`, the request is refused `RequiresBound` naming it, never `NoInitialState`. | Test (TC-624) |
 | FR-189-AC-19 | Over FR-125-AC-13's records, an `Animal` under `c` in `animals` and a `Dog` under `c` in `dogs`, a claim over `Animal` is refused `conflicting-identity` naming `c` and both types before any sample is drawn, with no terminal result; with the universe of a third overlapping population removed it is refused `RequiresBound`. | Test (TC-624) |
 | FR-189-AC-20 | A claim under every scheduler over an empty `initial` list is refused `EveryScheduler`, not `NoInitialState`. | Test (TC-624) |
+| FR-189-AC-21 | Over the `Cell` model whose `inc` precondition `undefined_remainder(1 - self.v) >= 0` has no value at the reachable state `v = 1`: a sampled walk that reaches that state (ADR-018 UE-6) settles the claim `Rejected` with an undefined evaluation whose locus is the contract clause `CanInc`, even when the claim `always[0,2] holds(c.v >= 0)` reads only positions that are defined; the walk stops at the undefined conjunction (`SampleStop::UndefinedContract`). A refused conjunction stays an undecided successor. A timed window stays undecided (QSL-3546). | Test (TC-624) |
 
 ## Dependencies
 

@@ -1208,7 +1208,7 @@ fn completed(outcome: Result<StatisticalOutcome, StatisticalRefusal>) -> Statist
     }
 }
 
-fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
+pub(crate) fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
     completed(run(
         world,
         claim,
@@ -2062,12 +2062,13 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
 
 /// Checks FR-189-AC-5 (TC-624 step 5), the undecided-successor clause: over
 /// a cell whose `inc` postcondition divides by zero at a candidate
-/// post-state, the contract conjunction is undecided at the first state, so
-/// the test is Undecided, `UndecidedSuccessor`, with no interval and no
-/// counted sample, and the claim is Undecided.
-#[trace("TC-624", "FR-189-AC-5")]
+/// post-state, the contract conjunction has no value at the first state
+/// (ADR-018 UE-6), so the test is Rejected with the undefined contract, with
+/// no interval, and the claim is Rejected; only a refused conjunction stays
+/// Undecided, `UndecidedSuccessor`.
+#[trace("TC-624", "FR-189-AC-5", "FR-189-AC-21")]
 #[test]
-fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
+fn an_undefined_contract_conjunction_rejects_its_test() {
     let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \
          with alpha 0.01, beta 0.01, indifference 0.1 \
          { probability >= 0.5 [ always[0,3] holds(c.v >= 0) ] }";
@@ -2076,14 +2077,18 @@ fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let verdict = decided(&world, "Safe", StatisticalMethod::Okamoto);
-    let undecided = Decision::Undecided(UndecidedCause::UndecidedSuccessor);
-    assert_eq!(verdict.decision, undecided);
+    assert_eq!(verdict.decision, Decision::Rejected);
     let [test] = &verdict.tests[..] else {
         panic!("one test: {:?}", verdict.tests);
     };
-    assert_eq!(test.decision, undecided);
-    assert_eq!((test.samples, test.interval.clone()), (0, None));
-    assert!(verdict.witnesses.is_empty());
+    assert_eq!(test.decision, Decision::Rejected);
+    assert_eq!(test.interval, None);
+    let undefined = test.undefined.as_ref().expect("the undefined contract");
+    assert!(
+        matches!(undefined.evaluation.site.locus, UndefinedLocus::Contract(_)),
+        "{:?}",
+        undefined.evaluation.site.locus
+    );
 }
 
 /// Checks FR-189-AC-7 (TC-624 step 7): over `Wide`, whose `spin` draws from
