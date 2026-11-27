@@ -648,13 +648,13 @@ impl CheckedFiniteHyperClause {
 }
 
 impl CheckedHyperClause {
-    /// Rebuild a source-free lockstep universal clause from its package facts.
+    /// Rebuild a source-free supported hyper clause from its package facts.
     /// Atom conditions retain only their node keys and slot counts.
     ///
     /// # Errors
     /// Refuses an unsupported profile, malformed arena, unknown alias or
     /// inconsistent atom slot; it never constructs a partial checked clause.
-    #[implements("FR-173-AC-3")]
+    #[implements("FR-173-AC-3", "FR-940-AC-16")]
     pub fn of_package_form(
         form: PackageHyperForm,
         types: &filament_semantic_value::declaration::TypeEnvironment,
@@ -707,11 +707,25 @@ impl CheckedHyperClause {
                 fairness: q.fairness,
             })
             .collect();
-        if quantifiers.is_empty()
-            || quantifiers
-                .iter()
-                .any(|q| !q.is_universal() || !aliases.contains(&q.alias) || !q.fairness.is_empty())
-        {
+        let hyper_form = match quantifiers.as_slice() {
+            [quantifier]
+                if quantifier.kind == QuantifierKind::Exists && quantifier.fairness.is_empty() =>
+            {
+                HyperForm::SingleExistential
+            }
+            quantifiers
+                if !quantifiers.is_empty()
+                    && quantifiers.iter().all(|quantifier| {
+                        quantifier.is_universal()
+                            && aliases.contains(&quantifier.alias)
+                            && quantifier.fairness.is_empty()
+                    }) =>
+            {
+                HyperForm::Universal
+            }
+            _ => return Err(Shape),
+        };
+        if quantifiers.is_empty() || quantifiers.iter().any(|q| !aliases.contains(&q.alias)) {
             return Err(Shape);
         }
         let mut parameters = Vec::with_capacity(form.parameters.len());
@@ -833,7 +847,7 @@ impl CheckedHyperClause {
             align_skip: Vec::new(),
             operators,
             body,
-            form: Some(HyperForm::Universal),
+            form: Some(hyper_form),
             copy_group: form.copy_group,
             claim: TemporalClaim::new(domains, true, true),
             identity,
