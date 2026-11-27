@@ -44,13 +44,28 @@ enum Reads {
 /// `test/vault-other` as `N`, whose subject reads `reads`, for `items`, and
 /// its package request.
 fn world(name: &str, vault: Vault, reads: Reads, terminals: &str, items: &Value) -> World {
+    world_with_items(name, vault, reads, terminals, Some(items))
+}
+
+/// The same source and package world with FR-620's default item selection.
+fn world_without_items(name: &str, vault: Vault, reads: Reads, claims: &str) -> World {
+    world_with_items(name, vault, reads, claims, None)
+}
+
+fn world_with_items(
+    name: &str,
+    vault: Vault,
+    reads: Reads,
+    claims: &str,
+    items: Option<&Value>,
+) -> World {
     let first = hyper_world::document(false, false);
     let other = hyper_world::other_document(&first);
     let unit = hyper_world::unit_text(
         (!matches!(reads, Reads::One)).then_some(&other[..]),
         vault,
         false,
-        terminals,
+        claims,
     );
     let mut snapshots = fsl_semantics::model::observation::DocumentProvision::new();
     let at = [(KEY, (0, 0))];
@@ -82,13 +97,11 @@ fn world(name: &str, vault: Vault, reads: Reads, terminals: &str, items: &Value)
             "formal_revision": 1}}),
         );
     }
-    let path = request_over(
-        &ws,
-        &unit,
-        &first,
-        &[snapshot],
-        json!({"models": models, "items": items}),
-    );
+    let mut extra = json!({"models": models});
+    if let Some(items) = items {
+        extra["items"] = items.clone();
+    }
+    let path = request_over(&ws, &unit, &first, &[snapshot], extra);
     let source = analyze(&path);
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
@@ -203,6 +216,46 @@ fn a_subject_reading_both_models_settles_unsupported_as_the_source_route() {
         source.document()
     );
     assert_equal(&source, &package);
+}
+
+/// A package default run with no requested items must keep the source route's
+/// item list when the hyper subject selects multiple models.
+#[trace("TC-519", "FR-124-AC-12")]
+#[trace("FSpec-FR-368-AC-22")]
+#[test]
+fn a_default_run_over_multiple_models_does_not_invent_deadlock_items() {
+    let world = world_without_items(
+        "package-deadlock-two-models-default",
+        Vault::Terminal,
+        Reads::Both,
+        "temporal Saves using inf over (v: V::Vault) clock \"model-steps\" on origin { always holds(v.h >= 0) }",
+    );
+    let package = world.package_run();
+
+    let source_document = world.source.document();
+    let source_items = source_document["items"].as_array().unwrap();
+    let source_claims: Vec<_> = source_items
+        .iter()
+        .map(|item| item["claim_name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        source_claims,
+        ["Fresh", "Step", "Saves"],
+        "{}",
+        source_document
+    );
+    let package_document = package.document();
+    let package_claims: Vec<_> = package_document["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["claim_name"].as_str().unwrap())
+        .collect();
+    assert!(
+        package_claims == source_claims,
+        "default package run must preserve the source route's items: {}",
+        package_document
+    );
 }
 
 /// A subject that reads the second model alone settles as the source route
