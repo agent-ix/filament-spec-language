@@ -3189,6 +3189,7 @@ impl<'c> Builder<'_, '_, 'c> {
         maximal_end_components_from(&graph, (0..count).collect()).unwrap_or_default()
     }
 
+    #[implements("FR-924-AC-5")]
     fn finish(
         mut self,
         initial: Vec<(u32, Option<ModelInstance>, ProbStateId)>,

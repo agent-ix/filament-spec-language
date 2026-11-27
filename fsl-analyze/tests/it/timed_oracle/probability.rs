@@ -1166,6 +1166,7 @@ fn time_lock_claim(name: &str) -> Row {
 }
 
 /// `Early` reads positions the lock reaches: its `always` holds, value 1.
+#[trace("FSpec-FR-421-AC-8", "FR-924-AC-5")]
 #[test]
 fn row_3468_time_lock_closed_early_routes() {
     assert_routes(&time_lock_claim("Early"));
@@ -1173,6 +1174,7 @@ fn row_3468_time_lock_closed_early_routes() {
 
 /// `Later` waits on the region process (QSL-3495, ADR-038 step 6): the
 /// admission table sends a time-locked free subject to the region route.
+#[trace("FSpec-FR-421-AC-8")]
 #[test]
 #[ignore = "QSL-3495: region MDP decides time-locked free subject; settles incomplete:UnresolvedDynamics until step 6"]
 fn row_3468_time_lock_closed_later_routes() {
@@ -1181,6 +1183,7 @@ fn row_3468_time_lock_closed_later_routes() {
 
 /// Until step 6, `Later` settles the typed `incomplete`, never a verdict: a
 /// wrong answer fails here.
+#[trace("FSpec-FR-421-AC-8")]
 #[test]
 fn row_3468_time_lock_closed_later_settles_incomplete() {
     let mut row = time_lock_claim("Later");
@@ -1192,6 +1195,7 @@ fn row_3468_time_lock_closed_later_settles_incomplete() {
     assert_routes(&row);
 }
 
+#[trace("FSpec-FR-421-AC-8")]
 #[test]
 fn row_3468_time_lock_strict_routes() {
     assert_routes(&time_lock("self.x < 1 ms"));

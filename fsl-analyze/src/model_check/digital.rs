@@ -749,6 +749,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     /// position it reaches on a state time can diverge from, if any. An
     /// undefined position on a time-locked state is left out of the product
     /// and the rest is built.
+    #[implements("FR-239-AC-5", "FR-243-AC-9")]
     fn build(
         &mut self,
         product: &mut Product,
@@ -837,6 +838,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
 
     /// The vertices `at`'s edges create, or the undefined position a step
     /// from it reaches.
+    #[implements("FR-239-AC-5", "FR-243-AC-9")]
     fn expand(
         &mut self,
         product: &mut Product,
@@ -1103,7 +1105,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     /// A finite bad prefix at position 0 when the clause's safety monitor
     /// rejects its initial letter. The GBA route still handles violations
     /// that need an infinite continuation.
-    #[implements("FR-243-AC-8")]
+    #[implements("FR-239-AC-5", "FR-243-AC-8")]
     fn initial_bad_prefix(
         &mut self,
         automaton: &mut PositionAutomaton,

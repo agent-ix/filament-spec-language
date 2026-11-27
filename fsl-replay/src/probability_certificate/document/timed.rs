@@ -1554,6 +1554,7 @@ fn phase_value(phase: &Phase) -> Option<bool> {
 /// RL-7): the declared mapping from the operator's kind, looked up here from
 /// the checker's own reading of the phase. A plain deadline event is an
 /// `eventually` (rejected); a nested formula keeps the rejection.
+#[implements("FR-924-AC-5")]
 fn locked_terminal(phase: &Phase) -> bool {
     use fsl_eval::probabilistic::{DeadlineKind, MonitorVerdict};
     use fsl_eval::simulation::model::LOCKED_RUN_TERMINAL;
