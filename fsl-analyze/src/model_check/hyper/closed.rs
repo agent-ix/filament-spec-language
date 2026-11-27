@@ -461,6 +461,11 @@ impl Run<'_, '_> {
             ClosedStop::Executions { limit } => {
                 Ok(exhausted(ModelCheckLimit::MaxStates, widen(limit), totals))
             }
+            ClosedStop::Undefined { .. } => Err(HyperRefusal::ClosedUndefined.into()),
+            ClosedStop::Refused => Ok(HyperOutcome::Undecided {
+                cause: UndecidedCause::UndecidedSuccessor,
+                stats: totals.stats(),
+            }),
             ClosedStop::Expansion(stop) => {
                 let component = self.slots.iter().position(|slot| *slot == index);
                 Ok(match self.expansion_ending(component, stop)? {

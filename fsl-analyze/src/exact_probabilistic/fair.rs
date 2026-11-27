@@ -163,6 +163,20 @@ pub fn maximal_fair_end_components(
     fair_components(product, &graph, &graph, fairness)
 }
 
+/// The maximal fair end components of `graph` restricted to the `allowed`
+/// states, with a constraint's enabledness read from every action of the
+/// unrestricted graph. This is FR-200's `U` for an infimum: `allowed` holds the
+/// non-target states, so a component that runs through a target is none.
+#[implements("FR-200-AC-2", "FR-200-AC-5")]
+pub(super) fn fair_components_within(
+    product: &ProbProduct,
+    graph: &Graph<'_>,
+    allowed: &[bool],
+) -> Result<Vec<FairEndComponent>, FairProductError> {
+    let restricted = graph_restricted_to(graph, allowed);
+    fair_components(product, &restricted, graph, &product.fairness)
+}
+
 /// The maximal fair end components of `product` restricted to the `allowed`
 /// states, a constraint still being enabled by every action of the whole
 /// product. A fair infimum avoids its target by staying in one of these
@@ -174,8 +188,7 @@ pub(super) fn maximal_fair_end_components_within(
     allowed: &[bool],
 ) -> Result<Vec<FairEndComponent>, FairProductError> {
     let graph = Graph::new(product)?;
-    let restricted = graph_restricted_to(&graph, allowed);
-    fair_components(product, &restricted, &graph, &product.fairness)
+    fair_components_within(product, &graph, allowed)
 }
 
 fn fair_components(
@@ -413,7 +426,7 @@ fn fair_reachability(
         .unwrap_or_else(|| all_non_target.clone());
     let allowed = &until_domain;
     let components = if objective == UnboundedObjective::Min {
-        maximal_fair_end_components_within(product, allowed)?
+        fair_components_within(product, &graph, allowed)?
     } else {
         maximal_fair_end_components(product, &product.fairness)?
     };

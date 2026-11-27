@@ -10,7 +10,8 @@ use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_replay::statistical::{OnEachRead, SubjectLimits};
 use fsl_replay::{
-    check_probability_certificate_document, on_each_outcome, replay_on_each_witness,
+    check_probability_certificate_document_as_with_work_scope, on_each_outcome_with_work_scope,
+    replay_on_each_witness_with_work_scope,
     ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome, ProbabilisticCounterexample,
     ProbabilityDocumentLimits,
 };
@@ -21,6 +22,7 @@ use super::{
     EngineReport, ExactReport, ProductRefusal, ProductRequest, Refusal,
 };
 
+#[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
 pub(super) fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -30,6 +32,7 @@ pub(super) fn run(
     let simulation = request.subject.simulation.clone();
     let probabilistic = simulation.input.probabilistic;
     let limits = request.limits;
+    let work = filament_exact::WorkScope::new(simulation.meter);
     let meter = simulation.meter;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
@@ -49,13 +52,14 @@ pub(super) fn run(
         Err(failure) => return build_refusal(ProductRefusal::Admission(failure), subject),
     };
     let claims = probabilistic.claims();
-    let outcome = match on_each_outcome(
+    let outcome = match on_each_outcome_with_work_scope(
         &system,
         claims,
         &item,
         document_limits,
         limits.max_witness_paths,
         cancel,
+        Some(&work),
     ) {
         Ok(outcome) => outcome,
         Err(error) => return failure(error, &limits, subject),
@@ -63,13 +67,15 @@ pub(super) fn run(
     match outcome {
         OnEachOutcome::NoInstance => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
         OnEachOutcome::Holds { document } => {
-            let checked = check_probability_certificate_document(
+            let checked = check_probability_certificate_document_as_with_work_scope(
                 &system,
                 claims,
                 &item,
                 &document,
+                fsl_replay::CertificateRole::Claim,
                 document_limits,
                 cancel,
+                &work,
             );
             let certificate = match &checked {
                 Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(accepted)) => {
@@ -84,7 +90,7 @@ pub(super) fn run(
             if let Some(tamper) = tamper_witness {
                 tamper(&mut witness);
             }
-            let replayed = match replay_on_each_witness(
+            let replayed = match replay_on_each_witness_with_work_scope(
                 &system,
                 claims,
                 &item,
@@ -92,6 +98,7 @@ pub(super) fn run(
                 document_limits,
                 limits.max_witness_paths,
                 cancel,
+                Some(&work),
             ) {
                 Ok(replayed) => replayed,
                 Err(fsl_replay::ProbabilityDocumentError::Unsupported) => return super::not_yet(),

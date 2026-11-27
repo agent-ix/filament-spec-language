@@ -193,8 +193,8 @@ pub use timed::{
     TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
     TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
     TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, sample_timed,
-    sample_timed_from, sample_timed_race,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, advance_timed,
+    sample_timed, sample_timed_from, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
 
@@ -707,6 +707,8 @@ pub enum NativeCandidateEvent<'a> {
     Undetermined {
         /// The invocation being evaluated.
         transition: &'a ModelTransition,
+        /// The name of the contract clause that was not decided.
+        clause: &'a str,
         /// The closed native outcome classification.
         outcome: &'a ClauseOutcome,
     },

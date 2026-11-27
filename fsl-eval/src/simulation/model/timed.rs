@@ -34,6 +34,8 @@ use std::sync::Arc;
 use filament_exact::{EffectiveId, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::UndefinedReason;
 use filament_semantic_value::model_transition::ModelTransition;
+use filament_semantic_value::location::ExpressionLocation;
+use ix_trace_rs::implements;
 
 use fsl_semantics::check::{
     CheckedTimedPredicate, ClockConstraint, ClockId, ClockOp, ElementBinding, ModelTimeSource,
@@ -455,6 +457,11 @@ pub enum TimedSite {
         /// The postcondition's name.
         clause: String,
     },
+    /// A `terminal when` predicate.
+    Terminal {
+        /// The model declaration's selection identity.
+        model: String,
+    },
 }
 
 /// Why a timed move could not be decided.
@@ -503,6 +510,12 @@ pub struct UndecidedReading {
     pub object: Option<ObjectReference>,
     /// Why it had none, when it was undefined.
     pub cause: Option<UndefinedCause>,
+    /// The transition whose data contract was undefined, when the finding
+    /// came from model expansion.
+    pub transition: Option<ModelTransition>,
+    /// The source expression that had no value, when its checker retained a
+    /// source location.
+    pub location: Option<ExpressionLocation>,
 }
 
 impl TimedStop {
@@ -515,6 +528,23 @@ impl TimedStop {
             site,
             object,
             cause,
+            transition: None,
+            location: None,
+        }))
+    }
+
+    fn undecided_at(
+        site: TimedSite,
+        object: Option<ObjectReference>,
+        cause: UndefinedCause,
+        location: Option<ExpressionLocation>,
+    ) -> Self {
+        Self::Undecided(Box::new(UndecidedReading {
+            site,
+            object,
+            cause: Some(cause),
+            transition: None,
+            location,
         }))
     }
 }
@@ -1590,8 +1620,8 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             PredicateReading::True => Ok(true),
             PredicateReading::False => Ok(false),
             PredicateReading::Undefined { cause, .. } if absent(&cause) => Ok(false),
-            PredicateReading::Undefined { cause, .. } => {
-                Err(TimedStop::undecided(site(), object.cloned(), Some(cause)))
+            PredicateReading::Undefined { cause, location } => {
+                Err(TimedStop::undecided_at(site(), object.cloned(), cause, location))
             }
             PredicateReading::Refused(_) => {
                 Err(TimedStop::undecided(site(), object.cloned(), None))
@@ -1864,6 +1894,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     ///
     /// [`TimedStop`] when the state cannot be expanded or a guard part's
     /// predicate has no truth value.
+    #[implements("FR-852-AC-9", "FR-852-AC-13")]
     pub fn guarded_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
         self.within_max_clocks(state)?;
         if self.free_delay {
@@ -1878,6 +1909,21 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             Some(&post_presence),
             Some(&self.clock_selectors),
         )?;
+        if let Some(contract) = expansion
+            .findings
+            .iter()
+            .find_map(|finding| finding.undefined_contract())
+        {
+            return Err(TimedStop::Undecided(Box::new(UndecidedReading {
+                site: TimedSite::Guard {
+                    clause: contract.clause.clone(),
+                },
+                object: None,
+                cause: Some(contract.cause),
+                transition: contract.guard_of,
+                location: self.system.state_clause_locus(&contract.clause),
+            })));
+        }
         let mut steps = Vec::new();
         for vector in enabled {
             // Each binding of the operation's `Clock` parameters to places
@@ -2893,10 +2939,11 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         match reading {
             PredicateReading::True => Ok(true),
             PredicateReading::False => Ok(false),
-            PredicateReading::Undefined { cause, .. } => Err(TimedStop::undecided(
+            PredicateReading::Undefined { cause, location } => Err(TimedStop::undecided_at(
                 site(),
                 Some(object.clone()),
-                Some(cause.clone()),
+                cause.clone(),
+                location.clone(),
             )),
             PredicateReading::Refused(_) => {
                 Err(TimedStop::undecided(site(), Some(object.clone()), None))
