@@ -768,6 +768,7 @@ impl Library {
             deadlock_freedom: false,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
             seed: None,
         }
     }

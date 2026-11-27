@@ -826,6 +826,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
     );
     let run = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding,
             provision: world.provision.clone(),
