@@ -445,6 +445,9 @@ fn instancing_refusal(failure: NoClaimInstances) -> StatisticalRefusal {
     if let NoClaimInstances::NotSimulated(NotSimulated::RequiresBound(bound)) = failure {
         return StatisticalRefusal::RequiresBound(bound);
     }
+    if let NoClaimInstances::NotSimulated(NotSimulated::ConflictingIdentity(conflict)) = failure {
+        return StatisticalRefusal::Admission(Box::new(conflict.admission_failure()));
+    }
     match instance_stop(failure) {
         InstanceStop::Inconclusive(InconclusiveCause::NoInitialState) => {
             StatisticalRefusal::NoTest

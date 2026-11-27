@@ -365,6 +365,10 @@ impl From<crate::simulation::model::NoClaimInstances> for Refusal {
     fn from(failure: crate::simulation::model::NoClaimInstances) -> Self {
         use crate::simulation::model::NoClaimInstances;
         match failure {
+            // FR-315 row 7: the conflict is the subject's admission refusal.
+            NoClaimInstances::NotSimulated(NotSimulated::ConflictingIdentity(conflict)) => {
+                Self::SubjectAdmission(Box::new(conflict.admission_failure()))
+            }
             NoClaimInstances::NotSimulated(refusal) => Self::RequiresBound(refusal),
             NoClaimInstances::NoInitialState => Self::NoInitialState,
             NoClaimInstances::NoInstance => Self::NoInstance,
