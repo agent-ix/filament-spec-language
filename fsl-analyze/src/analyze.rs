@@ -3062,9 +3062,14 @@ pub fn test_support_state_graph_item<'a>(
     let item = state_graph_item::state_graph_item(
         analysis, binding, limits, provision, key, index, form, method,
     )?;
-    analyze_items(engines, vec![item], cancel)
-        .into_iter()
-        .next()
+    analyze_items(
+        engines,
+        vec![item],
+        cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .into_iter()
+    .next()
 }
 
 /// The caller's requiredness for one request index.
