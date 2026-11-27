@@ -211,11 +211,10 @@ impl BarePackage<'_> {
             }
             quantifiers.push((kind, members.len() > 3));
         }
-        let aligned = group_member(&node.body, "align_skip")
+        let aligned = !group_member(&node.body, "align_skip")
             .and_then(members)
             .ok_or_else(|| malformed(claim))?
-            .len()
-            > 0;
+            .is_empty();
         let preliminary = HyperForm::classify_package_facts(&quantifiers, aligned, true);
         if preliminary.unsupported_reason().is_some() {
             return Ok(preliminary.unsupported_reason());
