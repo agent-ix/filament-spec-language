@@ -337,7 +337,13 @@ impl ModelCheckItem<'_> {
                     }
                 };
                 let over = &clause.over().1;
-                let bindings = system.instances(over).map_err(ItemRefusal::Unbounded)?;
+                // FR-125: the one derive of the claim's instances. A claim
+                // with none lists none here; the engine settles the typed
+                // empty case (`NoInitialState`, `NoInstance`) itself.
+                let bindings = system
+                    .claim_bindings(over)
+                    .map_err(ItemRefusal::Unbounded)?
+                    .into_instances();
                 if bindings.len() > MAX_ATOMS {
                     return Err(ItemRefusal::TooManyBindings {
                         count: bindings.len(),

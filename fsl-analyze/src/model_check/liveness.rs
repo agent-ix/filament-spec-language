@@ -106,7 +106,9 @@ use fsl_eval::fairness::{
     analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
+use fsl_eval::simulation::model::{
+    check_model_bounds, EmptyClaim, ModelFinding, ModelSimState, ModelSystem,
+};
 use fsl_eval::simulation::protocol::{
     protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
     ProtocolTransition,
@@ -135,8 +137,8 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
-    ModelCheckRequest, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES,
+    atom_refusal, claim_bindings, empty_cause, not_simulated, precheck, refuse_capture_read,
+    Admitted, ModelCheckRefusal, ModelCheckRequest, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
 use super::fair_walk::{fairness_constraints, tree_path, FairModel};
@@ -213,7 +215,6 @@ pub(super) fn check(
     };
     let meter = request.subject.simulation.meter;
     let max_candidates = request.subject.simulation.expansion.max_candidates;
-    let no_initial = request.subject.simulation.initial.is_empty();
     let system = ModelSystem::new(request.subject.simulation.clone())
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
@@ -233,7 +234,9 @@ pub(super) fn check(
     // The instances are the keys of the universes of the populations that
     // admit the clause's `over` type (FR-125 Instancing); under symmetry one
     // per orbit, run under its stabiliser (FR-151 "Instances").
-    let instances = system.instances(&clause.over().1).map_err(not_simulated)?;
+    let claim = claim_bindings(&system, &clause.over().1)?;
+    let empty = claim.empty();
+    let instances = claim.into_instances();
     refuse_capture_read(request.item)?;
     let bindings: Vec<Binding> = if symmetric {
         reduce::instance_groups(Some(&instances), &group)
@@ -275,7 +278,7 @@ pub(super) fn check(
             constraint: request.reductions.constraint.as_deref(),
             retained,
             root_cancelled,
-            no_initial,
+            empty,
             certify: Certify {
                 instances: &|| {
                     request.item.instances_for(
@@ -382,9 +385,10 @@ where
             .iter()
             .any(|member| member.origin() == FairnessOrigin::Memory))
     .then_some(full_fairness.as_slice());
-    let bindings: Vec<Binding> = model
-        .instances(&clause.over().1)
-        .map_err(not_simulated)?
+    let claim = claim_bindings(model, &clause.over().1)?;
+    let empty = claim.empty();
+    let bindings: Vec<Binding> = claim
+        .into_instances()
         .into_iter()
         .map(|instance| Binding {
             instance,
@@ -410,7 +414,7 @@ where
             constraint: options.constraint,
             retained: options.retained,
             root_cancelled,
-            no_initial: simulation.initial.is_empty(),
+            empty,
             certify: Certify {
                 instances: &|| {
                     item.instances_for(
@@ -461,7 +465,9 @@ struct Bound<'r, S: LiveSubject> {
     /// The item's `analysis.retained_bytes` allowance, one for all bindings.
     retained: &'r Budget,
     root_cancelled: Option<CancelCause>,
-    no_initial: bool,
+    /// Why the clause has no instance (FR-125-AC-13), settled before any
+    /// binding is explored.
+    empty: Option<EmptyClaim>,
     certify: Certify<'r>,
 }
 
@@ -499,9 +505,9 @@ fn decide_bindings<S: LiveSubject>(
             ));
         }
     }
-    if bound.no_initial {
+    if let Some(empty) = bound.empty {
         return Ok(ModelCheckOutcome::Undecided {
-            cause: UndecidedCause::NoInitialState,
+            cause: empty_cause(empty),
             stats: totals.stats(),
         });
     }

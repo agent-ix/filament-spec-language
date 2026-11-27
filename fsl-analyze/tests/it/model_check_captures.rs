@@ -49,8 +49,16 @@ fn each(guard: &str) -> String {
 
 /// The run of the world's one clause through its production letters.
 fn run(world: &World, limits: ModelCheckLimits) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-    let system =
-        ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation).expect("the subject admits");
+    run_over(world, limits, world.subject(&["c"], UNLIMITED))
+}
+
+/// [`run`] over `subject`, the world's subject or a variant of it.
+fn run_over(
+    world: &World,
+    limits: ModelCheckLimits,
+    subject: fsl_eval::model_subject::ModelSubject<'_>,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    let system = ModelSystem::new(subject.simulation.clone()).expect("the subject admits");
     let node = &world.package.graph().temporal_clauses()[0];
     let letters = system.clause_letters(node).expect("the clause has letters");
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&world.package);
@@ -58,7 +66,7 @@ fn run(world: &World, limits: ModelCheckLimits) -> Result<ModelCheckOutcome, Mod
         ModelCheckRequest {
             workers: 1,
             temporal_clock_selections: &temporal_clock_selections,
-            subject: world.subject(&["c"], UNLIMITED),
+            subject,
             item: ModelCheckItem::Clause {
                 clause: node.clause(),
                 letters: &letters,
@@ -207,6 +215,51 @@ fn a_holds_read_of_a_capture_is_refused_before_exploration() {
         &format!("{UNREAD}eventually[0,1] holds(c.value = 3)"),
     );
     assert!(run(&unread, ModelCheckLimits::default()).is_ok());
+}
+
+/// FR-337-AC-12 and FR-125-AC-13 (guard): the capture refusal comes before
+/// the empty-claim outcome, so a clause that reads a capture over a subject
+/// with an empty `initial` list is refused `CaptureRead`, not settled
+/// `NoInitialState`; a clause that reads none settles `NoInitialState`.
+#[trace("TC-1267", "FR-337-AC-12", "FR-125-AC-13")]
+#[test]
+fn a_capture_read_is_refused_before_the_no_initial_state_outcome() {
+    let no_initial = |world: &World| {
+        let mut subject = world.subject(&["c"], UNLIMITED);
+        subject.simulation.initial = Vec::new();
+        run_over(world, ModelCheckLimits::default(), subject)
+    };
+    for (profile, reads, reads_none) in [
+        (
+            BOUNDED,
+            "capture n: Int[0, 3] = c.value; eventually[0,1] holds(c.value >= n)",
+            "eventually[0,1] holds(c.value = 3)",
+        ),
+        (
+            INFINITE,
+            "capture n: Int[0, 3] = c.value; always holds(c.value >= n)",
+            "always holds(c.value >= 0)",
+        ),
+    ] {
+        let read = world(profile, &each("true"), reads);
+        let refusal = no_initial(&read).expect_err("a capture is read");
+        assert!(
+            matches!(refusal, ModelCheckRefusal::CaptureRead { .. }),
+            "{profile}: {refusal:?}"
+        );
+        let unread = world(profile, &each("true"), reads_none);
+        let outcome = no_initial(&unread).expect("checked");
+        assert!(
+            matches!(
+                outcome,
+                ModelCheckOutcome::Undecided {
+                    cause: fsl_replay::UndecidedCause::NoInitialState,
+                    ..
+                }
+            ),
+            "{profile}: {outcome:?}"
+        );
+    }
 }
 
 /// FR-337-AC-14: the activation's footprint holds `Counter::value` with the

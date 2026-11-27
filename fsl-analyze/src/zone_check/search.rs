@@ -964,14 +964,16 @@ fn reads_unreduced_graph<S>(
             if fsl_eval::automaton::invariant_atom(clause).is_some() {
                 false
             } else {
-                let instances = request
-                    .subject
-                    .system()
-                    .instances(&clause.over().1)
-                    .map_err(not_simulated)?;
+                // One derivation of the instances (FR-125); none to read
+                // is an item `check_timed_model` settles undecided.
+                let instances = match request.subject.system().claim_instances(&clause.over().1) {
+                    Ok(instances) => instances.as_slice().len(),
+                    Err(NoClaimInstances::NotSimulated(error)) => return Err(not_simulated(error)),
+                    Err(NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance) => 0,
+                };
                 flat_window(
                     clause,
-                    instances.len(),
+                    instances,
                     request.subject.tick_period().cloned(),
                     request.limits.max_automaton_states,
                 )?

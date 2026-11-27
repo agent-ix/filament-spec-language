@@ -97,7 +97,8 @@ use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
 use fsl_eval::simulation::model::{
-    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
+    check_model_bounds, ClaimBindings, ClauseOutcome, EmptyClaim, ModelFinding, ModelSimState,
+    ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
     activates_on_each, check_package_protocol_bounds, check_protocol_bounds, live_instance_bound,
@@ -864,6 +865,7 @@ fn check_safety(
     } else {
         (Vec::new(), None)
     };
+    let mut empty = None;
     if let (
         Item::Clause {
             bindings,
@@ -878,13 +880,15 @@ fn check_safety(
         }
         // FR-125: the instances come from the subject's universes; a
         // certified proof's are those its certificate's translations carry.
+        let claim = claim_bindings(&system, &clause.over().1)?;
+        empty = claim.empty();
         *bindings = if certified {
             instances
                 .iter()
                 .filter_map(|instance| instance.binding.clone())
                 .collect()
         } else {
-            system.instances(&clause.over().1).map_err(not_simulated)?
+            claim.into_instances()
         };
         listed.clone_from(bindings);
         if let Some(cap) = cap {
@@ -937,6 +941,14 @@ fn check_safety(
         return Ok(ModelCheckOutcome::Stopped {
             cause: IncompleteCause::Cancelled { source },
             limit: None,
+            stats: run.stats(),
+        });
+    }
+    // A clause settles the typed empty claim here (FR-125-AC-13); an item
+    // with no `over` has no initial state or one implicit instance.
+    if let Some(empty) = empty {
+        return Ok(ModelCheckOutcome::Undecided {
+            cause: empty_cause(empty),
             stats: run.stats(),
         });
     }
@@ -1137,6 +1149,7 @@ pub(crate) fn check_protocol_retaining(
     } else {
         (Vec::new(), None)
     };
+    let mut empty = None;
     if let (
         Item::Clause {
             bindings,
@@ -1149,13 +1162,15 @@ pub(crate) fn check_protocol_retaining(
         if certified {
             *canonical = bounded_translations(&instances);
         }
+        let claim = claim_bindings(&model, &clause.over().1)?;
+        empty = claim.empty();
         *bindings = if certified {
             instances
                 .iter()
                 .filter_map(|instance| instance.binding.clone())
                 .collect()
         } else {
-            model.instances(&clause.over().1).map_err(not_simulated)?
+            claim.into_instances()
         };
     }
     refuse_capture_read(request.item)?;
@@ -1163,6 +1178,7 @@ pub(crate) fn check_protocol_retaining(
         item: &item,
         instances: &instances,
         root_cancelled,
+        empty,
         no_initial,
         limits: request.limits,
         workers: request.workers,
@@ -1469,6 +1485,9 @@ struct ProtocolRun<'r> {
     item: &'r Item<'r>,
     instances: &'r [Instance],
     root_cancelled: Option<filament_exact::CancelCause>,
+    /// Why a clause has no instance (FR-125-AC-13); `None` for an item with
+    /// none to read, which settles through `no_initial` and its instance count.
+    empty: Option<EmptyClaim>,
     no_initial: bool,
     limits: ModelCheckLimits,
     workers: usize,
@@ -1572,6 +1591,12 @@ impl ProtocolRun<'_> {
             return Ok(ModelCheckOutcome::Stopped {
                 cause: IncompleteCause::Cancelled { source },
                 limit: None,
+                stats: run.stats(),
+            });
+        }
+        if let Some(empty) = self.empty {
+            return Ok(ModelCheckOutcome::Undecided {
+                cause: empty_cause(empty),
                 stats: run.stats(),
             });
         }
@@ -1695,7 +1720,14 @@ fn check_reduced(
     let symmetric = !reductions.symmetry.is_empty();
     let plans = match request.item {
         ModelCheckItem::Clause { clause, .. } => {
-            let mut bindings = system.instances(&clause.over().1).map_err(not_simulated)?;
+            let claim = claim_bindings(&system, &clause.over().1)?;
+            if let Some(empty) = claim.empty() {
+                return Ok(ModelCheckOutcome::Undecided {
+                    cause: empty_cause(empty),
+                    stats: RunStats::default(),
+                });
+            }
+            let mut bindings = claim.into_instances();
             listed.clone_from(&bindings);
             if let Some(cap) = cap {
                 bindings.truncate(cap);
@@ -2201,6 +2233,26 @@ pub(super) fn precheck(
         }
     }
     Ok(Admitted::Group(group))
+}
+
+/// FR-125: the `over` instances of a clause, from `ModelSystem::claim_bindings`.
+/// A subject with no initial state or no instance is the typed
+/// [`ClaimBindings::Empty`]; the run settles it as `NoInitialState` or
+/// `NoInstance` at its own point in FR-125-AC-13's order, after the
+/// refusals and the cancellation that precede it.
+pub(super) fn claim_bindings(
+    system: &ModelSystem<'_>,
+    over: &filament_exact::ValueType,
+) -> Result<ClaimBindings, ModelCheckRefusal> {
+    system.claim_bindings(over).map_err(not_simulated)
+}
+
+/// The undecided cause of a claim with no instance (FR-125-AC-13).
+pub(super) fn empty_cause(empty: EmptyClaim) -> UndecidedCause {
+    match empty {
+        EmptyClaim::NoInitialState => UndecidedCause::NoInitialState,
+        EmptyClaim::NoInstance => UndecidedCause::NoInstance,
+    }
 }
 
 /// FR-336 and FR-125: an unbounded root, or an admitting population with no

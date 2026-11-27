@@ -258,6 +258,55 @@ impl ClaimInstances {
     }
 }
 
+/// FR-125 "Instancing": why a claim over a simulable subject has no instance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EmptyClaim {
+    /// The subject has no initial state.
+    NoInitialState,
+    /// No initial record admits a key in the overlapping populations.
+    NoInstance,
+}
+
+/// The `over` instances of a claim for a route that settles the empty case
+/// itself, at the point its own order of outcomes puts it (FR-125-AC-13).
+///
+/// The empty case is a typed [`EmptyClaim`], not an empty list: a route that
+/// reads [`Self::instances`] still sees the empty slice, and one that settles
+/// reads [`Self::empty`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClaimBindings {
+    /// At least one instance, in the canonical order.
+    Instances(ClaimInstances),
+    /// No instance, and why.
+    Empty(EmptyClaim),
+}
+
+impl ClaimBindings {
+    /// The instances in canonical order; none for an empty claim.
+    pub fn instances(&self) -> &[ModelInstance] {
+        match self {
+            Self::Instances(instances) => instances.as_slice(),
+            Self::Empty(_) => &[],
+        }
+    }
+
+    /// The instances in canonical order; none for an empty claim.
+    pub fn into_instances(self) -> Vec<ModelInstance> {
+        match self {
+            Self::Instances(instances) => instances.0,
+            Self::Empty(_) => Vec::new(),
+        }
+    }
+
+    /// Why the claim has no instance, or `None` when it has one.
+    pub fn empty(&self) -> Option<EmptyClaim> {
+        match self {
+            Self::Instances(_) => None,
+            Self::Empty(empty) => Some(*empty),
+        }
+    }
+}
+
 /// Why a claim has no non-empty admitted instance set.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum NoClaimInstances {
@@ -2715,6 +2764,26 @@ impl<'a> ModelSystem<'a> {
             return Err(NoClaimInstances::NoInstance);
         }
         Ok(ClaimInstances(instances))
+    }
+
+    /// The `over` instances of a claim, from [`Self::claim_instances`], for a
+    /// caller that settles the two instancing outcomes itself: a subject with
+    /// no initial state or no instance is the typed [`ClaimBindings::Empty`],
+    /// never an empty list.
+    ///
+    /// # Errors
+    ///
+    /// The [`NotSimulated`] of [`Self::claim_instances`].
+    #[implements("FR-125-AC-13")]
+    pub fn claim_bindings(&self, over: &ValueType) -> Result<ClaimBindings, NotSimulated> {
+        match self.claim_instances(over) {
+            Ok(instances) => Ok(ClaimBindings::Instances(instances)),
+            Err(NoClaimInstances::NotSimulated(error)) => Err(error),
+            Err(NoClaimInstances::NoInitialState) => {
+                Ok(ClaimBindings::Empty(EmptyClaim::NoInitialState))
+            }
+            Err(NoClaimInstances::NoInstance) => Ok(ClaimBindings::Empty(EmptyClaim::NoInstance)),
+        }
     }
 
     /// The first of FR-125's outcomes a parameter of object type `object`
