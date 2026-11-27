@@ -9,6 +9,7 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_package::CheckedPackage;
+use fsl_replay::CertificationPolicy;
 use fsl_replay::ToolFailure;
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 pub use fsl_replay::{
@@ -63,6 +64,10 @@ impl ProviderResults {
 
 /// Run the caller's negotiated items over its checked package, source bytes
 /// and subject binding. This boundary chooses no engine and reads no file.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the public boundary takes the checked subject, its items, the engines and the caller's limits, cancellation and certification policy"
+)]
 pub fn run(
     package: &CheckedPackage,
     binding: &SubjectBinding<'_>,
@@ -71,6 +76,7 @@ pub fn run(
     engines: &Engines,
     limits: &AnalyzeLimits,
     cancel: &Cancel,
+    certification: CertificationPolicy,
 ) -> ProviderResults {
     let run = crate::analyze::RunInput::source(package);
     match analyze_bound(
@@ -83,6 +89,7 @@ pub fn run(
             engines,
             limits,
             cancel,
+            certification,
         },
     ) {
         Ok(staged) => {

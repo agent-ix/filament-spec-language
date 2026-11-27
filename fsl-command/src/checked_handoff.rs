@@ -58,6 +58,7 @@ use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
     CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
 };
+use ix_trace_rs::implements;
 
 use crate::emit_checked_v2::{self, Compiled};
 
@@ -66,15 +67,19 @@ pub use inventory::{Inventory, InventoryReadError, InventoryRow, InventorySource
 pub use selection::{Selection, SelectionAxis, SelectionReadError, SelectionRefusal};
 
 /// The format of `selection.json`.
-pub const SELECTION_FORMAT: &str = "filament.checked-handoff.selection/1";
+pub const SELECTION_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffSelection.as_str();
 
 /// The format of `inventory.json`.
-pub const INVENTORY_FORMAT: &str = "filament.checked-handoff.inventory/1";
+pub const INVENTORY_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffInventory.as_str();
 
 /// The format of `mutations/manifest.json`.
-pub const MUTATIONS_FORMAT: &str = "filament.checked-handoff.mutations/1";
+pub const MUTATIONS_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffMutations.as_str();
 
-const DEPENDENCIES_FORMAT: &str = "filament.checked-handoff.dependencies/1";
+const DEPENDENCIES_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffDependencies.as_str();
 
 #[derive(serde::Serialize)]
 struct DependencyManifest<'a> {
@@ -753,6 +758,7 @@ fn read_evidence(compiled: &Compiled) -> Result<CheckedPackageEvidence, Error> {
     acquire_evidence(compiled).map(|(evidence, _)| evidence)
 }
 
+#[implements("FR-640-AC-17")]
 fn acquire_evidence(
     compiled: &Compiled,
 ) -> Result<(CheckedPackageEvidence, BTreeMap<String, DependencyArtifact>), Error> {
@@ -764,37 +770,21 @@ fn acquire_evidence(
     let mut evidence = compiled.emitted.evidence().clone();
     supply_documents(&mut evidence, &documents, "the unit")?;
     let root = compiled.checked.package();
-    let mut held = BTreeMap::new();
-    let mut pending = vec![root];
-    while let Some(package) = pending.pop() {
-        for (identity, dependency) in package.dependencies() {
-            if held
-                .insert(identity.as_str().to_owned(), dependency.as_ref())
-                .is_none()
-            {
-                pending.push(dependency);
-            }
-        }
-    }
     let mut artifacts: BTreeMap<String, DependencyArtifact> = BTreeMap::new();
-    for (identity, dependency) in held {
-        let emission = dependency
-            .remembered_emission()
-            .ok_or_else(|| Error::Dependency {
-                identity: identity.clone(),
-                detail: "the checked acquisition retained no library emission".to_owned(),
-            })?
-            .clone();
-        let selected = fsl_semantics::library::LibraryName::new(&identity).map_err(|error| {
-            Error::Dependency {
-                identity: identity.clone(),
-                detail: error.to_string(),
-            }
-        })?;
+    // The root's closure, each library as the root linked it.
+    for selected in root.dependency_selections().keys() {
+        let identity = selected.as_str().to_owned();
+        let emission =
+            root.dependency_emission(selected)
+                .cloned()
+                .ok_or_else(|| Error::Dependency {
+                    identity: identity.clone(),
+                    detail: "the checked acquisition retained no library emission".to_owned(),
+                })?;
         let package = compiled
             .checked
             .admitted_libraries()
-            .shared_package(&selected)
+            .shared_package(selected)
             .ok_or_else(|| Error::Dependency {
                 identity: identity.clone(),
                 detail: "the checked acquisition retained no library admission".to_owned(),

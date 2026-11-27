@@ -727,7 +727,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -794,7 +794,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-codegen"
 version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-contract-codegen?rev=a3d87f313c2d72bdece60357e3ebbd1ab2350982#a3d87f313c2d72bdece60357e3ebbd1ab2350982"
+source = "git+https://github.com/agent-ix/filament-contract-codegen?rev=c2db8337b9a2db1a0070f43bc1aad3fdc00944a8#c2db8337b9a2db1a0070f43bc1aad3fdc00944a8"
 dependencies = [
  "filament-contract-ir",
  "filament-contract-model",
@@ -821,7 +821,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-ir"
 version = "0.1.5"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=26682a703462647d4eb2938c06d84f5d9ab032d1#26682a703462647d4eb2938c06d84f5d9ab032d1"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=2b255764cc0d8ac1d192c60733f4f83ece5b71f4#2b255764cc0d8ac1d192c60733f4f83ece5b71f4"
 dependencies = [
  "filament-contract-model",
  "ix-trace-rs",
@@ -833,7 +833,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=26682a703462647d4eb2938c06d84f5d9ab032d1#26682a703462647d4eb2938c06d84f5d9ab032d1"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=2b255764cc0d8ac1d192c60733f4f83ece5b71f4#2b255764cc0d8ac1d192c60733f4f83ece5b71f4"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -1221,7 +1221,6 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "fsl-foundation",
- "fsl-package",
  "fsl-semantics",
  "ix-trace-rs",
 ]
@@ -2684,7 +2683,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3013,7 +3012,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3484,7 +3483,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

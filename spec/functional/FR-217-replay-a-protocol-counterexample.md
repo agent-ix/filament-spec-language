@@ -89,6 +89,10 @@ causes, and the report counts as a refutation only then.
 - The executor SHALL read such an `activate` as enabled wherever it reads
   enabledness, the lasso fairness check included, as FR-209 reads it
   (ADR-018 FA-2).
+- The executor SHALL, before it runs a step, admit the subject's capacity
+  bindings (FSpec FR-785) and apply FR-215's requires-bound pre-check over the
+  roots of the model and the protocol, by one rule for a replay from source and
+  from package bytes.
 - The executor SHALL read the fairness set, scheduler constraints included,
   from the recompiled clause.
 - The executor SHALL refuse a `send` step without a `send_record`, and any
@@ -157,6 +161,7 @@ causes, and the report counts as a refutation only then.
 | FR-217-AC-7 | Under a bounded profile, a fair protocol lasso whose loop has one counted step replays to `inconclusive` with cause `NoValue`, and the same lasso made unfair for a scheduler constraint refuses `invalid_runtime_input`/`invalid-value` as unfair. | Test (TC-662) |
 | FR-217-AC-8 | FR-209-AC-6's lasso, which holds one live instance at a time, replays to `reproduced-with-evaluated-witness` with `max_live_instances` 1 and with it unset (3). A hand-built prefix over FR-209-AC-1's protocol holding two `activate(Tick)` steps before any `finish` re-executes with `max_live_instances` 2, and with 1 refuses `invalid_runtime_input`/`invalid-value` at the second `activate`. FR-209-AC-7's lasso, whose loop is the `attempt(set)` self-loop at the instance-limited state after `activate(Tick)`, with `activate` enabled at every loop state and never taken, replays to `reproduced-with-evaluated-witness` under `max_live_instances` 1. Replay reads that `activate` as enabled, and it is in no fairness class (FR-212), so the loop is fair and is not refused as unfair. | Test (TC-1230) |
 | FR-217-AC-9 | Over ADR-025 §10's `SB` under `sc`, with `constraint Edge using v on M::Cell at current { edge_value(self.v) }`, where `function edge_value using v(n: Integer): Boolean pure { 6 mod (1 - n) >= 0 }` has its body checked under `CheckMode::Kernel` and the Linked constraint calls it (FR-495-AC-3, FR-952), named by the request and §10's claim, the run settles `Violated` with cause `UndefinedEvaluation`: `Edge` holds at the initial state (both cells at 0) and is undefined at the first reached state with a cell at 1, so the counterexample is one store step (`Sx` or `Sy`) with `where.locus` naming `Edge` and cause `division-by-zero`. It replays through a request that selects no reduction to `reproduced-with-evaluated-witness` with that `UndefinedEvaluation` value. The same payload with its store removed, which ends at the initial state where `Edge` holds, and with `cause` changed to another reason, each settle `inconclusive`, `ReplayParity`. | Test (TC-662) |
+| FR-217-AC-10 | A protocol counterexample replayed over a subject with an unbounded root refuses with the `requires-bound` refusal of FR-215's pre-check and runs no step, from source and from package bytes. | Test (TC-662) |
 
 ## Dependencies
 

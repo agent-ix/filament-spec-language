@@ -279,6 +279,7 @@ pub fn run_state_graph(world: &World, symmetric: bool) -> Result<Work, AxisError
             max_depth: None,
             limits,
             seed: None,
+            retained: None,
         },
         &Cancel::new(),
     )

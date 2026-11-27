@@ -217,6 +217,7 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
             .clone(),
     };
     let make_run = || AnalyzeRun {
+        selections: &[],
         package: &package,
         binding: binding.clone(),
         provision: SourceProvision::single(package.graph().source(), source.as_bytes()),
@@ -238,6 +239,7 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
         ],
         engines: &engines,
         limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+        certification: Default::default(),
     };
     let mismapped = [(
         RequestIndex::new(1),

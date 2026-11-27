@@ -391,6 +391,7 @@ fn package_state_graph_value(
                 ..ModelCheckLimits::default()
             },
             seed: None,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -413,6 +414,7 @@ fn package_state_graph_value(
         &Engines::fsl().expect("the linked engines admit"),
         vec![item],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .into_iter()
     .next()
@@ -474,6 +476,7 @@ fn source_state_graph_run(
             ..ModelCheckLimits::default()
         },
         seed: None,
+        retained: None,
     };
     check_state_graph(request, &Cancel::new()).expect("the source state graph runs")
 }
@@ -1503,6 +1506,7 @@ fn settled_records(world: &Two) -> [fsl_analyze::analyze::AnalyzeRecord; 2] {
             &Engines::fsl().expect("the layer-A manifests register"),
             vec![run],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     })
@@ -1647,6 +1651,7 @@ fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_jso
     );
     settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding,
             provision: SourceProvision::single(
@@ -1656,6 +1661,7 @@ fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_jso
             items: resolved,
             engines: &engines,
             limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),

@@ -16,7 +16,7 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
         // The owning envelope reader retains malformed-envelope diagnostics.
         return Ok(());
     };
-    if envelope.format != "native-run/1" {
+    if envelope.format != fsl_foundation::wire_format::WireFormat::RunRequest.as_str() {
         return Ok(());
     }
     struct Provisions {

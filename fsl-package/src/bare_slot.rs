@@ -19,7 +19,7 @@ use filament_contract_model::{
 use filament_exact::{NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
-use fsl_semantics::check::{ProtocolSite, RelatedSide, protocol_site};
+use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
 use ix_trace_rs::implements;
 
 use crate::bare::{BarePackage, IdentityWitnessRefusal};
@@ -27,15 +27,15 @@ use crate::checked_v2::wire_graph;
 use crate::equality_file::EqualityWitnessRefusal;
 use crate::protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 use crate::protocol_view::{
-    ControlOperation, ViewRefusal, argument, control_operation, control_site_path, group_member,
-    integer, reference, text,
+    argument, control_operation, control_site_path, group_member, integer, reference, text,
+    ControlOperation, ViewRefusal,
 };
 use crate::reader_protocol_projection::{
-    BareWalker, FunctionSelector, ReaderProtocolProjection, TypeError, TypeReader, UnsupportedView,
-    WalkFailure, node_value_type,
+    node_value_type, BareWalker, FunctionSelector, ReaderProtocolProjection, TypeError, TypeReader,
+    UnsupportedView, WalkFailure,
 };
 use crate::source_operation::SourceOperationClause;
-use crate::wire_form::{WireTag, has_tag};
+use crate::wire_form::{has_tag, WireTag};
 
 type Node = CheckedSemanticNodeV2;
 

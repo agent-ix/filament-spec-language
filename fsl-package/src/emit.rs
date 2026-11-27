@@ -35,7 +35,6 @@ use filament_contract_model::{
     OperationBodyRow, ProtocolCorrelationProvenance, ProtocolCorrelationRow, ProtocolForm,
     ScalarTypeForm, StateForm, ValueForm,
 };
-use serde::Deserialize;
 
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
@@ -2779,33 +2778,48 @@ fn application_operator(operator: Operator) -> ApplicationOperator {
     }
 }
 
+/// Contract IR FR-038-AC-644: the operation of an application, written from the typed
+/// form and read back through the IR's strict reader.
+#[implements("IR-FR-038-AC-644")]
 fn operation_term(
     ids: &StructuralIds,
     operation: &fsl_semantics::check::Operation,
 ) -> Result<filament_contract_model::CheckedApplicationOperation, EmitRefusal> {
-    use serde_json::json;
-    let laws = |laws: &[OperationLaw]| {
+    use filament_contract_model as ir;
+    let laws = |laws: &[OperationLaw]| -> Result<Vec<ir::CheckedOperationLaw>, EmitRefusal> {
         laws.iter()
             .map(|law| {
-                json!({
-                    "role": law.role.as_str(),
-                    "definition": law.definition,
+                Ok(ir::CheckedOperationLaw {
+                    role: ir::LawRole::from_wire(law.role.as_str()).ok_or_else(|| {
+                        encoding("an operation law role is outside the IR vocabulary")
+                    })?,
+                    definition: ir::CheckedArtifactRef {
+                        authority: law.definition.authority.as_str().into(),
+                        identity: law.definition.identity.as_str().into(),
+                    },
                 })
             })
-            .collect::<Vec<_>>()
+            .collect()
     };
     let mode = |mode: Option<&fsl_semantics::check::OperationMode>| {
-        mode.map(|mode| match mode {
-            fsl_semantics::check::OperationMode::Rounding(value) => {
-                json!({"kind":"rounding", "value":value.as_str()})
-            }
-            fsl_semantics::check::OperationMode::TextProfile(value) => {
-                json!({"kind":"text_profile", "value":value.as_str()})
-            }
-            fsl_semantics::check::OperationMode::Absence(value) => {
-                json!({"kind":"absence", "value":value.as_str()})
-            }
+        mode.map(|mode| {
+            let (kind, value) = match mode {
+                fsl_semantics::check::OperationMode::Rounding(value) => {
+                    ("rounding", value.as_str())
+                }
+                fsl_semantics::check::OperationMode::TextProfile(value) => {
+                    ("text_profile", value.as_str())
+                }
+                fsl_semantics::check::OperationMode::Absence(value) => ("absence", value.as_str()),
+            };
+            Ok::<_, EmitRefusal>(ir::CheckedOperationMode {
+                kind: ir::OperationModeKind::from_wire(kind).ok_or_else(|| {
+                    encoding("an operation mode kind is outside the IR vocabulary")
+                })?,
+                value: value.into(),
+            })
         })
+        .transpose()
     };
     let leaves = operation
         .leaves()
@@ -2816,151 +2830,220 @@ fn operation_term(
                 .iter()
                 .map(|segment| match segment {
                     fsl_semantics::check::LeafSegment::Field(name) => {
-                        format!("field:{}", name.as_str())
+                        format!("field:{}", name.as_str()).into()
                     }
                     fsl_semantics::check::LeafSegment::Position(position) => {
-                        format!("position:{position}")
+                        format!("position:{position}").into()
                     }
                     fsl_semantics::check::LeafSegment::Inner => "inner".into(),
                     fsl_semantics::check::LeafSegment::Member(name) => {
-                        format!("member:{}", name.as_str())
+                        format!("member:{}", name.as_str()).into()
                     }
                     fsl_semantics::check::LeafSegment::Recursion(depth) => {
-                        format!("recursion:{depth}")
+                        format!("recursion:{depth}").into()
                     }
                 })
-                .collect::<Vec<_>>();
-            json!({"path":path, "laws":laws(&leaf.laws), "mode":mode(leaf.mode.as_ref())})
+                .collect::<Vec<Box<str>>>();
+            Ok(ir::CheckedOperationLeaf {
+                path,
+                laws: laws(&leaf.laws)?,
+                mode: mode(leaf.mode.as_ref())?,
+            })
         })
-        .collect::<Vec<_>>();
-    let member = operation
-        .member()
-        .map(|value| member_value(ids, value))
-        .transpose()?;
-    filament_contract_model::CheckedApplicationOperation::deserialize(json!({
-        "identity": operation.identity(), "laws": laws(operation.laws()),
-        "mode": mode(operation.mode()), "member": member, "leaves": leaves,
-    }))
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+    let (member, execution_point) = match operation.member() {
+        Some(value) => {
+            let (member, point) = member_value(ids, value)?;
+            (Some(member), point)
+        }
+        None => (None, None),
+    };
+    ir::CheckedApplicationOperation::from_form(&ir::CheckedApplicationOperationForm {
+        identity: operation.identity().into(),
+        laws: laws(operation.laws())?,
+        mode: mode(operation.mode())?,
+        member,
+        execution_point,
+        leaves,
+    })
     .map_err(encoding)
 }
 
-fn member_value(ids: &StructuralIds, member: &Member) -> Result<serde_json::Value, EmitRefusal> {
-    use serde_json::json;
-    Ok(match member {
+/// The typed member of an operation, with the state clause's execution point
+/// that the wire writes inside the member (IR FR-038-AC-644; FR-105-AC-12 for
+/// the point).
+#[implements("IR-FR-038-AC-644", "FR-105-AC-12")]
+fn member_value(
+    ids: &StructuralIds,
+    member: &Member,
+) -> Result<
+    (
+        filament_contract_model::CheckedOperationMember,
+        Option<filament_contract_model::ExecutionPoint>,
+    ),
+    EmitRefusal,
+> {
+    use filament_contract_model as ir;
+    let integer = |value: u64| filament_exact::Integer::from(value);
+    let rational = |value: &filament_exact::Rational| ir::CheckedOperationRational {
+        numerator: value.numerator().clone(),
+        denominator: value.denominator().clone(),
+    };
+    let end = |closed: bool| {
+        if closed {
+            ir::CheckedIntervalEnd::Closed
+        } else {
+            ir::CheckedIntervalEnd::Open
+        }
+    };
+    let mut point = None;
+    let typed = match member {
         Member::Field {
             declaration,
             name,
             explicit_deref,
             population,
-        } => {
-            let mut member = json!({
-                "kind":"field",
-                "declaration":node_id(ids, declaration),
-                "name":name.as_str()
-            });
-            if let Some(population) = population {
-                member["population"] = json!(node_id(ids, population));
-            }
-            if let Some(explicit_deref) = explicit_deref {
-                let read_form = if *explicit_deref {
-                    "explicit_deref"
+        } => ir::CheckedOperationMember::Field {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+            read_form: explicit_deref.map(|explicit| {
+                if explicit {
+                    ir::CheckedFieldReadForm::ExplicitDeref
                 } else {
-                    "bare"
-                };
-                member["read_form"] = json!(read_form);
-            }
-            member
-        }
+                    ir::CheckedFieldReadForm::Bare
+                }
+            }),
+            population: population
+                .as_ref()
+                .map(|population| node_id(ids, population)),
+        },
         Member::Position {
             declaration,
             position,
-        } => json!({"kind":"position","declaration":node_id(ids, declaration),"position":position}),
-        Member::Element { declaration } => {
-            json!({"kind":"element","declaration":node_id(ids, declaration)})
-        }
+        } => ir::CheckedOperationMember::Position {
+            declaration: node_id(ids, declaration),
+            position: integer(*position),
+        },
+        Member::Element { declaration } => ir::CheckedOperationMember::Element {
+            declaration: node_id(ids, declaration),
+        },
         Member::RelationshipEnd {
             declaration,
             name,
             destination_type,
             population,
-        } => {
-            let mut record = json!({"kind":"relationship_end","declaration":node_id(ids, declaration),"name":name.as_str(),"destination_type":node_id(ids, destination_type)});
-            if let Some(population) = population {
-                record["population"] = json!(node_id(ids, population));
-            }
-            record
-        }
-        Member::Operation { declaration, name } => {
-            json!({"kind":"operation","declaration":node_id(ids, declaration),"name":name.as_str()})
-        }
-        Member::History { declaration, name } => {
-            json!({"kind":"history","declaration":node_id(ids, declaration),"name":name.as_str()})
-        }
-        Member::TypeArgument { declaration, alias } => {
-            let mut member =
-                json!({"kind":"type_argument","declaration":node_id(ids, declaration)});
-            if let Some(alias) = alias {
-                member["alias"] = json!({"package": alias.package, "node": alias.node});
-            }
-            member
-        }
-        Member::ProfileOperator { operator } => {
-            json!({"kind":"profile_operator","operator":operator.as_str()})
-        }
+        } => ir::CheckedOperationMember::RelationshipEnd {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+            destination_type: node_id(ids, destination_type),
+            population: population
+                .as_ref()
+                .map(|population| node_id(ids, population)),
+        },
+        Member::Operation { declaration, name } => ir::CheckedOperationMember::Operation {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+        },
+        Member::History { declaration, name } => ir::CheckedOperationMember::History {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+        },
+        Member::TypeArgument { declaration, alias } => ir::CheckedOperationMember::TypeArgument {
+            declaration: node_id(ids, declaration),
+            alias: alias.as_ref().map(|alias| ir::CheckedTypeArgumentAlias {
+                package: alias.package.as_str().into(),
+                node: alias.node.as_str().into(),
+            }),
+        },
+        Member::ProfileOperator { operator } => ir::CheckedOperationMember::ProfileOperator {
+            operator: Some(operator.as_str().into()),
+        },
         Member::StateClause {
             execution_point, ..
         } => {
             let clause = member
                 .state_clause_wire_kind()
+                .and_then(ir::StateClauseKind::from_wire)
                 .ok_or_else(|| encoding("a state clause member has no checked wire kind"))?;
-            let mut record = json!({"kind":"state_clause","clause":clause});
-            if let Some(point) = execution_point {
-                record["execution_point"] = json!(point.point());
-            }
-            record
+            point = execution_point.as_ref().map(|point| point.point().clone());
+            ir::CheckedOperationMember::StateClause { clause }
         }
-        Member::TemporalInterval { interval } => json!({
-            "kind":"temporal_interval",
-            "interval":interval.map(|interval| json!({
-                "lower":interval.lower().to_string(),
-                "upper": match interval.upper() {
-                    fsl_foundation::bound::TemporalUpper::Finite(value) => Some(value.to_string()),
+        Member::TemporalInterval { interval } => ir::CheckedOperationMember::TemporalInterval {
+            interval: interval.map(|interval| ir::CheckedOperationInterval::Integer {
+                lower: integer(interval.lower()),
+                upper: match interval.upper() {
+                    fsl_foundation::bound::TemporalUpper::Finite(value) => Some(integer(value)),
                     fsl_foundation::bound::TemporalUpper::Open => None,
                 },
-            })),
-        }),
-        Member::TimedInterval(timed) => {
-            let rational = |value: &filament_exact::Rational| {
-                json!({
-                    "numerator":value.numerator().to_string(),
-                    "denominator":value.denominator().to_string(),
-                })
-            };
-            json!({"kind":"temporal_interval","interval":{
-                "lower":rational(&timed.lower),
-                "lower_end":if timed.lower_closed {"closed"} else {"open"},
-                "upper":timed.upper.as_ref().map(rational),
-                "upper_end":if timed.upper_closed {"closed"} else {"open"},
-            }})
-        }
+            }),
+        },
+        Member::TimedInterval(timed) => ir::CheckedOperationMember::TemporalInterval {
+            interval: Some(ir::CheckedOperationInterval::Timed {
+                lower: rational(&timed.lower),
+                upper: timed.upper.as_ref().map(rational),
+                lower_end: end(timed.lower_closed),
+                upper_end: end(timed.upper_closed),
+            }),
+        },
         Member::Fairness {
             kind,
             granularity,
             target,
-        } => json!({
-            "kind":"fairness",
-            "fairness_kind":match kind { filament_semantic_value::fairness::FairnessKind::Weak => "weak", filament_semantic_value::fairness::FairnessKind::Strong => "strong" },
-            "granularity":match granularity { filament_semantic_value::fairness::FairnessGranularity::Whole => "whole", filament_semantic_value::fairness::FairnessGranularity::Each => "each" },
-            "target":match target {
-                fsl_semantics::value::FairnessTarget::Operation { declaration, name } => json!({"kind":"operation", "declaration":node_id(ids, declaration), "name":name.as_str()}),
-                fsl_semantics::value::FairnessTarget::ProtocolRoot { node } => json!({"kind":"protocol_root", "node":node_id(ids, node)}),
-                fsl_semantics::value::FairnessTarget::AttemptNode { node } => json!({"kind":"attempt_node", "node":node_id(ids, node)}),
-                fsl_semantics::value::FairnessTarget::ParallelBranch { parallel, branch } => json!({"kind":"parallel_branch", "parallel":node_id(ids, parallel), "branch":branch.as_str()}),
-                fsl_semantics::value::FairnessTarget::CompensationTemplate { node } => json!({"kind":"compensation_template", "node":node_id(ids, node)}),
-                fsl_semantics::value::FairnessTarget::HybridTransition { declaration, name } => json!({"kind":"hybrid_transition", "declaration":node_id(ids, declaration), "name":name.as_str()}),
-            }
-        }),
-    })
+        } => ir::CheckedOperationMember::Fairness {
+            fairness_kind: match kind {
+                filament_semantic_value::fairness::FairnessKind::Weak => {
+                    ir::CheckedFairnessKind::Weak
+                }
+                filament_semantic_value::fairness::FairnessKind::Strong => {
+                    ir::CheckedFairnessKind::Strong
+                }
+            },
+            granularity: match granularity {
+                filament_semantic_value::fairness::FairnessGranularity::Whole => {
+                    ir::CheckedFairnessGranularity::Whole
+                }
+                filament_semantic_value::fairness::FairnessGranularity::Each => {
+                    ir::CheckedFairnessGranularity::Each
+                }
+            },
+            target: match target {
+                fsl_semantics::value::FairnessTarget::Operation { declaration, name } => {
+                    ir::CheckedFairnessTarget::Operation {
+                        declaration: node_id(ids, declaration),
+                        name: name.as_str().into(),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::ProtocolRoot { node } => {
+                    ir::CheckedFairnessTarget::ProtocolRoot {
+                        node: node_id(ids, node),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::AttemptNode { node } => {
+                    ir::CheckedFairnessTarget::AttemptNode {
+                        node: node_id(ids, node),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::ParallelBranch { parallel, branch } => {
+                    ir::CheckedFairnessTarget::ParallelBranch {
+                        parallel: node_id(ids, parallel),
+                        branch: branch.as_str().into(),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::CompensationTemplate { node } => {
+                    ir::CheckedFairnessTarget::CompensationTemplate {
+                        node: node_id(ids, node),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::HybridTransition { declaration, name } => {
+                    ir::CheckedFairnessTarget::HybridTransition {
+                        declaration: node_id(ids, declaration),
+                        name: name.as_str().into(),
+                    }
+                }
+            },
+        },
+    };
+    Ok((typed, point))
 }
 
 /// FR-576: the `operation_bodies` rows of `graph`, sourced from the checked
@@ -5470,9 +5553,12 @@ fn write_external_keys(
                     .dependencies()
                     .get(vacant.key())
                     .ok_or(EmitRefusal::SourceMapInvariant)?;
-                // The dependency's own bytes, held to `limits.output_bytes`
-                // by `emit_checked`, give its graph order.
-                let emission = emit_checked(dependency, limits)?;
+                // The dependency's linked bytes, held to
+                // `limits.output_bytes`, give its graph order.
+                let emission = match emit_linked_dependency(package, vacant.key(), limits) {
+                    Some(linked) => linked?,
+                    None => emit_checked(dependency, limits)?,
+                };
                 let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
                     emission.package().bytes(),
                 )
@@ -5511,15 +5597,16 @@ fn dependency_selections(package: &CheckedPackage) -> Vec<CheckedDependencySelec
         .collect()
 }
 
-/// The caller-selected clocks used by this package's dependency closure, in
-/// ascending byte order of clock name.
+/// The caller-selected clocks used by this package's dependency closure, as
+/// it linked each library, in ascending byte order of clock name.
+#[implements("FR-640-AC-17")]
 fn dependency_clock_selections(
     package: &CheckedPackage,
 ) -> Option<Vec<CheckedDependencyClockSelection>> {
     let mut selections = BTreeMap::new();
-    let mut pending: Vec<_> = package.dependencies().values().map(AsRef::as_ref).collect();
-    while let Some(dependency) = pending.pop() {
-        if let Some(emission) = dependency.remembered_emission() {
+    let mut pending: Vec<_> = package.dependencies().iter().collect();
+    while let Some((identity, dependency)) = pending.pop() {
+        if let Some(emission) = package.dependency_emission(identity) {
             for binding in emission.temporal_rows().bindings() {
                 if !is_model_binding_name(&binding.clock_name) {
                     selections
@@ -5528,7 +5615,7 @@ fn dependency_clock_selections(
                 }
             }
         }
-        pending.extend(dependency.dependencies().values().map(AsRef::as_ref));
+        pending.extend(dependency.dependencies().iter());
     }
     (!selections.is_empty()).then(|| {
         selections
@@ -5560,9 +5647,10 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// (`CheckedGraph::region`, FR-096).
 ///
 /// A package emitted before (by this function or
-/// [`emit_checked_with_cancel`]) returns its remembered emission: a checked
-/// package does not change, so a dependency reached again, or a caller that
-/// emits what the lifecycle already emitted, does not emit it twice.
+/// [`emit_checked_with_cancel`]) returns its remembered emission, so a
+/// dependency reached again, or a caller that emits what the lifecycle already
+/// emitted, does not emit it twice. A successful abstraction binding changes
+/// the package and drops that emission ([`CheckedPackage::bind_abstraction`]).
 ///
 /// `limits` is the caller's ceiling on the package's canonical bytes
 /// (`emit.output_bytes`); a remembered emission longer than it is refused
@@ -5570,9 +5658,23 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     if let Some(emission) = package.remembered_emission() {
-        return remembered_within(emission, limits, package.graph());
+        return remembered_within(&emission, limits, package.graph());
     }
     emit_checked_with_cancel(package, &Cancel::new(), limits)
+}
+
+/// The emission of the library `identity` that `package` linked
+/// ([`CheckedPackage::dependency_emission`]), held to `limits` as
+/// [`emit_checked`] holds a remembered one; `None` when `identity` is not in
+/// the closure `package` linked.
+#[implements("FR-640-AC-17")]
+pub fn emit_linked_dependency(
+    package: &CheckedPackage,
+    identity: &fsl_semantics::library::LibraryName,
+    limits: EmitLimits,
+) -> Option<Result<Emission, EmitRefusal>> {
+    let (graph, emission) = package.linked_dependency(identity)?;
+    Some(remembered_within(emission, limits, graph))
 }
 
 /// A remembered `emission`, when its canonical bytes fit `limits`.
@@ -7201,10 +7303,10 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let (requirement_rows, path_condition_frames, renumbered) =
+    let (requirement_rows, path_condition_frames, renumbered, synthetics) =
         value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
-        value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+        value_validity_requirements::ordinals::relabel_term_data(&renumbered, &synthetics, data);
     }
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
@@ -8381,13 +8483,13 @@ fn emit_package_nodes(
         &source_map,
     )?;
     meter.charge(&claim_names)?;
-    let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
+    let mut equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
-    let equality_fact_witness_rows = equality_fact_witness_rows(
+    let mut equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
         &producer_node_ids,
         &nodes,
@@ -8404,16 +8506,22 @@ fn emit_package_nodes(
         &source_keys,
         &mut meter,
     )?;
-    if let Some(data) = &mut checked_term_data {
-        if value_validity.renumbering.renumbers() {
-            let mut row_ids = emitted_node_ids.clone();
-            row_ids.extend(
-                producer_node_ids
-                    .iter()
-                    .map(|(key, id)| (key.clone(), id.clone())),
-            );
+    if value_validity.renumbering.renumbers() {
+        let mut row_ids = emitted_node_ids.clone();
+        row_ids.extend(
+            producer_node_ids
+                .iter()
+                .map(|(key, id)| (key.clone(), id.clone())),
+        );
+        if let Some(data) = &mut checked_term_data {
             value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
+        value_validity.renumbering.relabel_equality_rows(
+            &row_ids,
+            &mut equality_producer_identity_rows,
+            &mut equality_fact_witness_rows,
+            &source_map,
+        );
     }
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
@@ -11095,9 +11203,13 @@ impl ForeignNodes {
             return Ok(foreign);
         }
         for (identity, dependency) in package.dependencies() {
-            let emission = emit_checked(dependency, limits)?;
+            let emission = match emit_linked_dependency(package, identity, limits) {
+                Some(linked) => linked?,
+                None => emit_checked(dependency, limits)?,
+            };
             // The positions are read from the dependency's own bytes, which
-            // `emit_checked` has just held to `limits.output_bytes`; that
+            // the link-time emission (or fallback) has held to
+            // `limits.output_bytes`; that
             // ceiling bounds this parse. The parse itself is not charged to
             // any budget, and its JSON tree is dropped when the positions
             // are read.

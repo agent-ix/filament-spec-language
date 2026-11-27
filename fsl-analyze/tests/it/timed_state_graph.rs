@@ -360,8 +360,6 @@ fn digital_clocks_decline_the_forms_over_a_fractional_trap() {
 #[trace("TC-2412", "FR-852-AC-12")]
 #[trace("TC-2412", "FR-852-AC-17")]
 #[trace("TC-2412", "FR-852-AC-25")]
-#[trace("TC-2412", "FR-852-AC-16")]
-#[trace("TC-2412", "FR-852-AC-24")]
 #[test]
 fn timed_state_graph_routes_refute_an_undefined_guard() {
     let guard = "q(2 - self.phase) >= 0";
@@ -926,12 +924,26 @@ fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness(
 /// request reader names no population of a unit's own, so the binding is
 /// given directly. The selected domain package holds no object.
 fn settle_over_base(claim: &str, item: Value) -> Value {
+    let limits = fsl_analyze::analyze::AnalyzeLimits::published(
+        fsl_analyze::analyze::DeadlineSupply::Unbounded,
+    );
+    let (document, _) = settle_over_base_with(claim, item, limits, false).expect("a settled run");
+    document["items"][0].clone()
+}
+
+/// [`settle_over_base`] under `limits`, the whole document or the refusal;
+/// `stated` hands the run the item as the caller stated it.
+fn settle_over_base_with(
+    claim: &str,
+    item: Value,
+    limits: fsl_analyze::analyze::AnalyzeLimits,
+    stated: bool,
+) -> Result<(Value, u8), fsl_analyze::analyze::document::AnalyzeDocumentError> {
     use crate::timed_world::{world_over, DENSE};
     use fsl_analyze::analyze::document::{
         analyze_document, resolve_items, AnalyzeRun, ItemSelection, SubjectSelection,
     };
-    use fsl_analyze::analyze::DeadlineSupply;
-    use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision, SubjectBinding};
+    use fsl_analyze::analyze::{Engines, SourceProvision, SubjectBinding};
     use fsl_eval::simulation::model::PopulationUniverse;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
     use fsl_semantics::model::observation::document_reference;
@@ -1001,22 +1013,22 @@ fn settle_over_base(claim: &str, item: Value) -> Value {
         &registry,
         std::slice::from_ref(&source),
         &binding,
-        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
+        &limits,
     );
-    let (document, _) = analyze_document(
+    analyze_document(
         AnalyzeRun {
+            selections: if stated { &selections } else { &[] },
             package: &world.package,
             binding,
             provision: SourceProvision::single(&source, &world.unit),
             items,
             engines: &engines,
-            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),
     )
-    .expect("a settled run");
-    document["items"][0].clone()
 }
 
 /// FR-125 "Instancing"'s written binding of the held `Derived` under `c` for
@@ -1036,6 +1048,43 @@ fn the_admitted_derived() -> Value {
             "path": ["model", "object_type", "ix://source/package/Base"]
         }
     })
+}
+
+/// QSL-3553 (FR-255-AC-25): the library path refuses a timed item that states
+/// `temporal.limits.max_states` when the caller also set
+/// `zone_check.max_symbolic_states`, as the command does, and with the same
+/// item position and setting.
+#[trace("FR-255-AC-25")]
+#[test]
+fn the_library_refuses_a_timed_item_limit_the_caller_also_set() {
+    use fsl_analyze::analyze::document::AnalyzeDocumentError;
+    use fsl_analyze::analyze::{AnalyzeLimits, AnalyzeRefusal, DeadlineSupply};
+    let item = json!({"claim": "AnyBase", "temporal": {"limits": {"max_states": 2}}});
+    let mut limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    assert!(limits
+        .engines
+        .set(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5));
+    let refused = settle_over_base_with(BASE_POSSIBLE, item.clone(), limits, true)
+        .expect_err("the item and the caller state one bound twice");
+    let AnalyzeDocumentError::Refused(AnalyzeRefusal::EngineConflict { position, setting }) =
+        refused
+    else {
+        panic!("an engine conflict, not {refused:?}");
+    };
+    assert_eq!(position, 0);
+    assert_eq!(setting, fsl_foundation::Setting::ZoneCheckMaxSymbolicStates);
+    // The caller's bound alone, or the item's alone, settles.
+    let mut caller_only = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    caller_only
+        .engines
+        .set(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5);
+    settle_over_base_with(
+        BASE_POSSIBLE,
+        json!({"claim": "AnyBase"}),
+        caller_only,
+        true,
+    )
+    .expect("a caller bound alone settles");
 }
 
 const BASE_POSSIBLE: &str = "possible AnyBase using v over (c: Base) { true }\n";
@@ -1482,6 +1531,21 @@ fn check_listing(
     ef_nodes: &[usize],
     max_certificate_edges: u64,
 ) -> fsl_replay::ZoneCertificateVerdict {
+    decide_listing(one_guard, claim, ef_nodes, max_certificate_edges, |_| {}).0
+}
+
+/// [`check_listing`] after `forge` has changed the certificate, with the
+/// checker's decision on the claim's form beside its verdict.
+fn decide_listing(
+    one_guard: &str,
+    claim: &str,
+    ef_nodes: &[usize],
+    max_certificate_edges: u64,
+    forge: impl FnOnce(&mut fsl_replay::ZoneCertificate<fsl_route::deadlock::ItemObligation<()>>),
+) -> (
+    fsl_replay::ZoneCertificateVerdict,
+    Option<fsl_replay::StateGraphCertificateDecision>,
+) {
     use filament_exact::{Cancel, Integer};
     use fsl_analyze::zone_check::{explore_timed_state_graph, Bound, ZoneCheckLimits};
     use fsl_eval::simulation::model::TimedSystem;
@@ -1557,7 +1621,7 @@ fn check_listing(
     let over = system
         .bound_reference(claim.over().expect("over").object.clone(), &instance)
         .expect("bound c");
-    let certificate = fsl_replay::ZoneCertificate {
+    let mut certificate = fsl_replay::ZoneCertificate {
         obligation: ItemObligation {
             subject: (),
             kind: ObligationKind::StateGraphAuthored(
@@ -1588,7 +1652,8 @@ fn check_listing(
         refinement: None,
         task_product: None,
     };
-    fsl_replay::check_zone_certificate(
+    forge(&mut certificate);
+    fsl_replay::check_state_graph_certificate(
         fsl_replay::ZoneCertificateRequest {
             simulation: world.request(),
             model: "M",
@@ -1647,6 +1712,26 @@ fn the_checker_rejects_a_node_level_closure() {
         ),
         fsl_replay::ZoneCertificateVerdict::Accepted
     );
+}
+
+/// The coverage checks reject under the rule a violated form also reports, so
+/// only the checker's decision says that the claim is false. With `one` never
+/// run, phase 1 never reaches `done`: the honest listing is a violation. The
+/// same listing with its edges removed covers no successor and decides
+/// nothing.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FSpec-FR-712-AC-2")]
+#[test]
+fn a_coverage_rejection_is_no_state_graph_decision() {
+    use fsl_replay::{CertificateRule, StateGraphCertificateDecision};
+    let (verdict, decision) = decide_listing("false", ALWAYS_DONE, &[2], u64::MAX, |_| {});
+    assert_eq!(rule(verdict), CertificateRule::SuccessorMissing);
+    assert_eq!(decision, Some(StateGraphCertificateDecision::Violated));
+    let (verdict, decision) = decide_listing("false", ALWAYS_DONE, &[2], u64::MAX, |forged| {
+        forged.edges.clear();
+    });
+    assert_eq!(rule(verdict), CertificateRule::SuccessorMissing);
+    assert_eq!(decision, None);
 }
 
 /// The checker's own `unique path` and `possible`, and its budget.
@@ -2151,5 +2236,657 @@ fn a_digital_probability_binding_names_the_admitted_member_type() {
             &item["counterexample"]["binding"]
         };
         assert_eq!(*binding, the_admitted_derived(), "{item}");
+    }
+}
+/// A timed RPC unit with one undefined source. `U-P` makes the claim target
+/// undefined at phase 2; the other variants make a subject-side predicate
+/// undefined at the same reachable state.
+fn fr852_gap_undefined_unit(source: &str) -> String {
+    let q = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+    let profile = "profile d = \"filament.value.integer-division.truncating/v1\";\n";
+    let base = match source {
+        "U-G" => unit(true).replace(
+            "not self.inflight and (self.phase = 2 or self.phase = 3)",
+            "q(2 - self.phase) >= 0",
+        ),
+        "U-T" => unit(false) + "\nterminal Done using v on M when { q(2 - self.phase) >= 0 };\n",
+        "U-C" => unit(true).replacen(
+            "pre SendIdle",
+            "constraint C using v on M::Call at current { q(2 - self.phase) >= 0 }\npre SendIdle",
+            1,
+        ),
+        "U-P" => unit(true),
+        _ => panic!("known undefined source variant: {source}"),
+    };
+    let with_function = base.replacen("pre SendIdle", &format!("{q}pre SendIdle"), 1);
+    let with_profile = with_function.replacen("model M = ", &format!("{profile}model M = "), 1);
+    if source == "U-P" {
+        with_profile + "\npossible UndefinedTarget using v over (c: M::Call) { c.phase = 2 and q(2 - c.phase) > 0 }\n\
+         always possible UndefinedAlways using v over (c: M::Call) { q(2 - c.phase) >= 0 }\n\
+         unique path UndefinedUnique using v over (c: M::Call) from (c.phase = 3) to (q(2 - c.phase) >= 0);\n"
+    } else {
+        with_profile
+            + "\nalways possible UndefinedAlways using v over (c: M::Call) { c.phase = 2 }\n\
+         unique path UndefinedUnique using v over (c: M::Call) from (c.phase = 3) to (c.phase = 2);\n"
+    }
+}
+
+fn fr852_gap_request_item(variant: &str, claim: &str, options: Option<Value>) -> Value {
+    let mut item = json!({"claim": claim});
+    if let Some(options) = options {
+        item["options"] = options;
+    }
+    if variant == "U-C" {
+        item["reductions"] = json!({"constraint": "C"});
+    }
+    item
+}
+
+struct Fr852GapRun {
+    items: Vec<Value>,
+    records: Vec<fsl_analyze::analyze::AnalyzeRecord>,
+    wire_loci: Vec<Value>,
+}
+
+impl Fr852GapRun {
+    fn item(&self, index: usize) -> Value {
+        self.items[index].clone()
+    }
+
+    fn record(&self, index: usize) -> &fsl_analyze::analyze::AnalyzeRecord {
+        &self.records[index]
+    }
+
+    fn wire_locus(&self, index: usize) -> &Value {
+        &self.wire_loci[index]
+    }
+}
+
+fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
+    use fsl_analyze::analyze::{
+        test_support_state_graph_item, AnalyzeLimits, DeadlineSupply, Engines, RunInput,
+        SourceProvision, SubjectBinding, TemporalItem,
+    };
+    use fsl_foundation::RequestIndex;
+
+    let body = source
+        .split_once("model M = \"test/timed\";\n")
+        .map(|(_, body)| body)
+        .expect("the fixture carries its model declaration");
+    let profiles = if source.contains("profile d =") {
+        format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        )
+    } else {
+        crate::zone_search::TIMED.to_owned()
+    };
+    let world = crate::timed_world::world_with_mode(
+        &crate::zone_search::rpc_document(),
+        &profiles,
+        body,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    let request = world.request();
+    let package = &world.package;
+    let phase_two_initial = items.as_array().is_some_and(|selections| {
+        selections.len() == 1
+            && selections[0]["claim"] == "UndefinedTarget"
+            && selections[0]["options"]["method"] == "digital-clocks"
+    });
+    let mut snapshots = world.snapshots.clone();
+    if phase_two_initial {
+        let snapshot = snapshots
+            .values_mut()
+            .next()
+            .expect("the U-P fixture has one initial snapshot");
+        let mut document: Value =
+            serde_json::from_slice(snapshot).expect("the initial snapshot is valid JSON");
+        document["populations"][0]["objects"][0]["fields"]["phase"] = json!({"integer": "2"});
+        *snapshot = serde_json::to_vec(&document).expect("the phase-2 snapshot serializes");
+    }
+    let input = RunInput::source(package);
+    let binding = SubjectBinding {
+        packages: request.packages,
+        snapshots: &snapshots,
+        initial: request.initial,
+        universes: request.universes,
+    };
+    let source_ref = package.graph().source();
+    let provision = SourceProvision::single(source_ref, &world.unit);
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    let engines = Engines::fsl().expect("the layer-A engines register");
+    let selections = items
+        .as_array()
+        .expect("the scenario supplies item selections");
+    let wire_loci = selections
+        .iter()
+        .map(|selection| {
+            let name = selection["claim"]
+                .as_str()
+                .expect("each selection names its claim");
+            let claim = package
+                .graph()
+                .state_graph_claim(name)
+                .expect("the checked package contains the selected claim");
+            let occurrence = claim.occurrence().expect("the claim has an occurrence");
+            json!({
+                "node": fsl_foundation::node_wire::node_key_to_json(occurrence.node())
+                    .expect("the claim node has an FR-364 wire spelling"),
+                "occurrence": {
+                    "role": occurrence.origin().role().as_str(),
+                    "ordinal": occurrence.origin().ordinal(),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    let records = selections
+        .iter()
+        .enumerate()
+        .map(|(index, selection)| {
+            let name = selection["claim"]
+                .as_str()
+                .expect("each selection names its claim");
+            let claim = package
+                .graph()
+                .state_graph_claim(name)
+                .expect("the checked package contains the selected claim");
+            let key = claim.occurrence().expect("the claim has an occurrence");
+            let mut form = TemporalItem::default();
+            if let Some(constraint) = selection["reductions"]["constraint"].as_str() {
+                form.reductions.constraint = Some(constraint.to_owned());
+            }
+            let method = selection["options"]["method"].as_str();
+            test_support_state_graph_item(
+                &engines,
+                &input,
+                &binding,
+                limits,
+                &provision,
+                key,
+                RequestIndex::new(index),
+                &form,
+                method,
+                &filament_exact::Cancel::new(),
+            )
+            .expect("the selected state-graph claim builds an item")
+        })
+        .collect::<Vec<_>>();
+    let items = records
+        .iter()
+        .map(|record| {
+            let outcome = if let Some(graph) = &record.state_graph {
+                let terminal = record.terminal().expect("the graph item is terminal");
+                let backend = terminal
+                    .backend()
+                    .expect("the graph item names its backend")
+                    .clone();
+                fsl_analyze::analyze::analyze_item(
+                    terminal,
+                    &[fsl_analyze::analyze::ItemCounterexample {
+                        request_index: record.request_index,
+                        backend,
+                        counterexample: fsl_analyze::analyze::Counterexample::StateGraph(
+                            graph.clone(),
+                        ),
+                        wire: Ok(Value::Null),
+                    }],
+                )
+                .expect("the analyzed graph writes FR-286 and FR-393 evidence")
+            } else {
+                record
+                    .outcome_item(package)
+                    .expect("the analyzed claim writes an outcome")
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "the outcome carries FR-286 and FR-393 evidence: {error}; {record:?}"
+                        )
+                    })
+            };
+            serde_json::to_value(outcome).expect("the outcome serializes")
+        })
+        .collect();
+    Fr852GapRun {
+        items,
+        records,
+        wire_loci,
+    }
+}
+
+fn fr852_gap_assert_undefined_record(
+    item: &Value,
+    expected_locus: &str,
+    expected_position: u64,
+    record: &fsl_analyze::analyze::AnalyzeRecord,
+) {
+    assert_eq!(item["result"], "refuted", "{item}; {record:?}");
+    let graph = record
+        .state_graph
+        .as_ref()
+        .expect("the state-graph item settled its full record");
+    assert_eq!(
+        graph.record.label,
+        fsl_replay::ResultLabel::Refuted,
+        "{graph:?}"
+    );
+    assert_eq!(
+        graph.record.basis,
+        fsl_replay::SettlementBasis::DecisiveCounterexample,
+        "{graph:?}"
+    );
+    assert_eq!(
+        graph.record.execution,
+        fsl_replay::Execution::Completed,
+        "a completed refutation includes successful replay: {graph:?}"
+    );
+    assert!(graph.counterexample.is_some(), "FR-393 evidence: {graph:?}");
+    let evidence = &item["counterexample"]["undefined"];
+    assert_eq!(evidence["type"], "undefined-evaluation", "{item}");
+    assert_eq!(evidence["cause"], "division-by-zero", "{item}");
+    assert_eq!(evidence["where"]["position"], expected_position, "{item}");
+    assert!(evidence["where"]["state_key"]["key"].is_string(), "{item}");
+    let wire_locus = evidence["where"]["locus"]
+        .as_object()
+        .expect("FR-393 where.locus is an object");
+    assert!(wire_locus.contains_key("node"), "{item}");
+    assert!(wire_locus["occurrence"].is_object(), "{item}");
+    assert!(wire_locus["occurrence"]["role"].is_string(), "{item}");
+    assert!(wire_locus["occurrence"]["ordinal"].is_number(), "{item}");
+    match expected_locus {
+        "target" => assert!(evidence["where"]["predicate"].is_string(), "{item}"),
+        "guard" => assert!(evidence["where"]["transition"].is_object(), "{item}"),
+        "terminal" | "constraint" => {
+            assert!(evidence["where"].get("transition").is_none(), "{item}")
+        }
+        _ => panic!("known undefined locus: {expected_locus}"),
+    }
+}
+
+/// FR-852-AC-16 and AC-24: at adapter level, not the command route, EN-6
+/// reports U-P target undefinedness for both forms with FR-393 evidence.
+#[trace("TC-2412", "FR-852-AC-16")]
+#[trace("TC-2412", "FR-852-AC-24")]
+#[test]
+fn fr852_gap_zone_route_refutes_undefined_target_for_always_and_unique() {
+    let source = fr852_gap_undefined_unit("U-P");
+    let run = fr852_gap_analyze(
+        "fr852-gap-zone-target",
+        &source,
+        json!([
+            {"claim": "UndefinedAlways"},
+            {"claim": "UndefinedUnique"}
+        ]),
+    );
+    for (index, item) in [run.item(0), run.item(1)].into_iter().enumerate() {
+        fr852_gap_assert_undefined_record(&item, "target", 2, run.record(index));
+        assert!(
+            run.record(index)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-6"),
+            "{:?}",
+            run.record(index)
+        );
+        assert!(
+            run.record(index)
+                .state_graph
+                .as_ref()
+                .is_some_and(|graph| graph.counterexample.is_some()),
+            "{:?}",
+            run.record(index)
+        );
+    }
+}
+
+/// FR-852-AC-18/19/26/27: at adapter level, not the command route, EN-6
+/// settles U-T and U-C for both forms with FR-393 undefined evidence.
+#[trace("TC-2412", "FR-852-AC-18")]
+#[trace("TC-2412", "FR-852-AC-19")]
+#[trace("TC-2412", "FR-852-AC-26")]
+#[trace("TC-2412", "FR-852-AC-27")]
+#[test]
+fn fr852_gap_zone_route_refutes_undefined_terminal_and_constraint() {
+    for (variant, claim, locus, name) in [
+        ("U-T", "UndefinedAlways", "terminal", "terminal-always"),
+        ("U-C", "UndefinedAlways", "constraint", "constraint-always"),
+        ("U-T", "UndefinedUnique", "terminal", "terminal-unique"),
+        ("U-C", "UndefinedUnique", "constraint", "constraint-unique"),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-zone-{name}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(variant, claim, None)]),
+        );
+        let item = run.item(0);
+        fr852_gap_assert_undefined_record(&item, locus, 2, run.record(0));
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-6"),
+            "{:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0)
+                .state_graph
+                .as_ref()
+                .is_some_and(|graph| graph.counterexample.is_some()),
+            "{:?}",
+            run.record(0)
+        );
+    }
+}
+
+/// FR-852-AC-12..15: at adapter level, not the command route, EN-1's
+/// digital-clocks method settles each source with FR-393 evidence and replay.
+#[trace("TC-2412", "FR-852-AC-12")]
+#[trace("TC-2412", "FR-852-AC-13")]
+#[trace("TC-2412", "FR-852-AC-14")]
+#[trace("TC-2412", "FR-852-AC-15")]
+#[test]
+fn fr852_gap_digital_clocks_refutes_all_undefined_sources() {
+    for (variant, claim, locus, name, position) in [
+        ("U-P", "UndefinedTarget", "target", "target", 0),
+        ("U-G", "ReplyPossible", "guard", "guard", 2),
+        ("U-T", "ReplyPossible", "terminal", "terminal", 2),
+        ("U-C", "ReplyPossible", "constraint", "constraint", 2),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-digital-{name}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(
+                variant,
+                claim,
+                Some(json!({"method": "digital-clocks"}))
+            )]),
+        );
+        let item = run.item(0);
+        fr852_gap_assert_undefined_record(&item, locus, position, run.record(0));
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-1"),
+            "{:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0)
+                .state_graph
+                .as_ref()
+                .is_some_and(|graph| graph.counterexample.is_some()),
+            "{:?}",
+            run.record(0)
+        );
+    }
+}
+
+/// FR-852-AC-20..23 and AC-28..31: at adapter level, not the command route,
+/// EN-1 returns the exact digital-clocks decline for each source and form.
+#[trace("TC-2412", "FR-852-AC-20")]
+#[trace("TC-2412", "FR-852-AC-21")]
+#[trace("TC-2412", "FR-852-AC-22")]
+#[trace("TC-2412", "FR-852-AC-23")]
+#[trace("TC-2412", "FR-852-AC-28")]
+#[trace("TC-2412", "FR-852-AC-29")]
+#[trace("TC-2412", "FR-852-AC-30")]
+#[trace("TC-2412", "FR-852-AC-31")]
+#[test]
+fn fr852_gap_digital_clocks_declines_unsupported_forms_for_all_sources() {
+    for (variant, claim, requested_form, expected_name) in [
+        (
+            "U-P",
+            "UndefinedAlways",
+            "always-possible",
+            "always-possible",
+        ),
+        (
+            "U-G",
+            "UndefinedAlways",
+            "always-possible",
+            "always-possible",
+        ),
+        (
+            "U-T",
+            "UndefinedAlways",
+            "always-possible",
+            "always-possible",
+        ),
+        (
+            "U-C",
+            "UndefinedAlways",
+            "always-possible",
+            "always-possible",
+        ),
+        ("U-P", "UndefinedUnique", "unique-path", "unique-path"),
+        ("U-G", "UndefinedUnique", "unique-path", "unique-path"),
+        ("U-T", "UndefinedUnique", "unique-path", "unique-path"),
+        ("U-C", "UndefinedUnique", "unique-path", "unique-path"),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-decline-{variant}-{requested_form}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(
+                variant,
+                claim,
+                Some(json!({"method": "digital-clocks"}))
+            )]),
+        );
+        let item = run.item(0);
+        assert!(item.to_string().contains("not_digitisable"), "{item}");
+        assert!(item.to_string().contains(expected_name), "{item}");
+        assert!(
+            matches!(
+                &run.record(0).settlement,
+                fsl_analyze::analyze::Settlement::Terminal(_)
+            ),
+            "the EN-1 request settles its decline: {:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-1"),
+            "the decline uses the EN-1 backend: {:?}",
+            run.record(0)
+        );
+        assert!(
+            run.record(0).state_graph.is_none(),
+            "a declined form does not search: {:?}",
+            run.record(0)
+        );
+    }
+}
+
+/// FR-852-AC-18/19/26/27: the full FR-364 wire locus identifies the selected
+/// claim occurrence for both terminal-predicate and state-constraint cases.
+#[trace("TC-2412", "FR-852-AC-18")]
+#[trace("TC-2412", "FR-852-AC-19")]
+#[trace("TC-2412", "FR-852-AC-26")]
+#[trace("TC-2412", "FR-852-AC-27")]
+#[test]
+fn fr852_gap_zone_records_name_the_selected_claim_occurrence() {
+    for (variant, claim, locus, name) in [
+        ("U-T", "UndefinedAlways", "terminal", "terminal-always"),
+        ("U-C", "UndefinedAlways", "constraint", "constraint-always"),
+        ("U-T", "UndefinedUnique", "terminal", "terminal-unique"),
+        ("U-C", "UndefinedUnique", "constraint", "constraint-unique"),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-zone-locus-{name}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(variant, claim, None)]),
+        );
+        let item = run.item(0);
+        fr852_gap_assert_undefined_record(&item, locus, 2, run.record(0));
+        assert_eq!(
+            item["counterexample"]["undefined"]["where"]["locus"],
+            *run.wire_locus(0),
+            "FR-364 names the selected claim's full occurrence: {item}"
+        );
+    }
+}
+
+/// FR-852-AC-18/19/26/27: the low-level EN-6 decision retains a distinct
+/// typed source location for the terminal predicate and selected constraint.
+#[trace("TC-2412", "FR-852-AC-18")]
+#[trace("TC-2412", "FR-852-AC-19")]
+#[trace("TC-2412", "FR-852-AC-26")]
+#[trace("TC-2412", "FR-852-AC-27")]
+#[test]
+fn fr852_gap_zone_decision_distinguishes_terminal_and_constraint_loci() {
+    for (variant, claim_name, source_locus) in [
+        ("U-T", "UndefinedAlways", "terminal"),
+        ("U-C", "UndefinedAlways", "constraint"),
+        ("U-T", "UndefinedUnique", "terminal"),
+        ("U-C", "UndefinedUnique", "constraint"),
+    ] {
+        let source = fr852_gap_undefined_unit(variant);
+        let body = source
+            .split_once("model M = \"test/timed\";\n")
+            .map(|(_, body)| body)
+            .expect("the timed fixture has its model declaration");
+        let profiles = format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        );
+        let world = crate::timed_world::world_with_mode(
+            &crate::zone_search::rpc_document(),
+            &profiles,
+            body,
+            filament_semantic_value::checking::CheckMode::Kernel,
+        );
+        let system = world.system();
+        let timed = fsl_eval::simulation::model::TimedSystem::new(&system, "M")
+            .expect("the source selects a timed model");
+        let zones = fsl_analyze::zone_check::explore_timed_state_graph(
+            &timed,
+            fsl_analyze::zone_check::ZoneCheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .expect("zone exploration reaches the undefined state");
+        let claim = world
+            .package
+            .graph()
+            .state_graph_claim(claim_name)
+            .expect("the source package has the requested state-graph claim");
+        let parameter = claim.over().expect("the claim is over a call");
+        let instance = system
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
+            .expect("enumerate claim instances")
+            .into_iter()
+            .next()
+            .expect("one call instance");
+        let over = system
+            .bound_reference(parameter.object.clone(), &instance)
+            .expect("bind the claim instance");
+        let constraint = (variant == "U-C").then_some("C");
+        let decision = fsl_analyze::zone_check::decide_timed_state_graph_with_constraint(
+            &timed,
+            &zones,
+            claim,
+            Some(&over),
+            constraint,
+            fsl_analyze::zone_check::ZoneCheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .expect("decide the state-graph item");
+        let fsl_analyze::zone_check::TimedStateGraphDecision::Undefined { reading, .. } = decision
+        else {
+            panic!("the undefined source refutes the item: {decision:?}");
+        };
+        let expected_location = match source_locus {
+            "terminal" => {
+                let terminal = fsl_package::resolve_terminals(&world.package)
+                    .expect("the source terminal resolves")
+                    .into_iter()
+                    .find(|terminal| terminal.name == "Done")
+                    .expect("the source declares Done");
+                let model = fsl_eval::simulation::model::TerminalModel::new(
+                    terminal.package,
+                    terminal.model,
+                )
+                .with_ordinal(terminal.ordinal);
+                system.terminal_locus(&model)
+            }
+            "constraint" => system.state_clause_locus("C"),
+            _ => panic!("known source locus: {source_locus}"),
+        };
+        if source_locus == "terminal" {
+            let terminal = fsl_package::resolve_terminals(&world.package)
+                .expect("the source terminal resolves")
+                .into_iter()
+                .find(|terminal| terminal.name == "Done")
+                .expect("the source declares Done");
+            let expected_site = fsl_eval::simulation::model::TimedSite::Terminal {
+                model: terminal.package.to_owned(),
+            };
+            let terminal_reading = zones
+                .undefined
+                .iter()
+                .find(|entry| entry.reading.site == expected_site)
+                .expect("the zone graph retains the terminal-predicate source");
+            assert_eq!(
+                terminal_reading.reading.location, expected_location,
+                "the terminal reading names its declared predicate"
+            );
+        }
+        assert_eq!(
+            reading.locus, expected_location,
+            "the typed undefined reading names its {source_locus} expression: {reading:?}"
+        );
+    }
+}
+
+/// FR-852-AC-20..23 and AC-28..31: the exact digital-clock refusal result is
+/// `declined`, with cause `invalid-input`, for every undefined source/form.
+#[trace("TC-2412", "FR-852-AC-20")]
+#[trace("TC-2412", "FR-852-AC-21")]
+#[trace("TC-2412", "FR-852-AC-22")]
+#[trace("TC-2412", "FR-852-AC-23")]
+#[trace("TC-2412", "FR-852-AC-28")]
+#[trace("TC-2412", "FR-852-AC-29")]
+#[trace("TC-2412", "FR-852-AC-30")]
+#[trace("TC-2412", "FR-852-AC-31")]
+#[test]
+fn fr852_gap_digital_clocks_declines_with_invalid_input_for_all_sources() {
+    for (variant, claim, form) in [
+        ("U-P", "UndefinedAlways", "always-possible"),
+        ("U-G", "UndefinedAlways", "always-possible"),
+        ("U-T", "UndefinedAlways", "always-possible"),
+        ("U-C", "UndefinedAlways", "always-possible"),
+        ("U-P", "UndefinedUnique", "unique-path"),
+        ("U-G", "UndefinedUnique", "unique-path"),
+        ("U-T", "UndefinedUnique", "unique-path"),
+        ("U-C", "UndefinedUnique", "unique-path"),
+    ] {
+        let run = fr852_gap_analyze(
+            &format!("fr852-gap-decline-result-{variant}-{form}"),
+            &fr852_gap_undefined_unit(variant),
+            json!([fr852_gap_request_item(
+                variant,
+                claim,
+                Some(json!({"method": "digital-clocks"}))
+            )]),
+        );
+        let item = run.item(0);
+        assert_eq!(item["result"], "declined", "{item}");
+        assert_eq!(item["cause"]["kind"], "invalid-input", "{item}");
+        assert_eq!(item["cause"]["code"], "invalid_runtime_input", "{item}");
+        assert!(item.to_string().contains("not_digitisable"), "{item}");
+        assert!(item.to_string().contains(form), "{item}");
+        assert!(run.record(0).state_graph.is_none(), "{:?}", run.record(0));
+        assert!(
+            run.record(0)
+                .terminal()
+                .and_then(|terminal| terminal.backend())
+                .is_some_and(|backend| backend.as_str() == "en-1"),
+            "the decline uses the EN-1 backend: {:?}",
+            run.record(0)
+        );
     }
 }
