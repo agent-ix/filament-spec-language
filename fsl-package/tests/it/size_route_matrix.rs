@@ -7,6 +7,7 @@ use fsl_semantics::check::PackageDeclarations;
 use ix_trace_rs::trace;
 
 const NESTED: usize = 1_000;
+const FLAT_TERMS: usize = 10_000;
 
 fn nested_source() -> String {
     format!(
@@ -56,6 +57,17 @@ fn enum_source() -> String {
     }
     source.push_str("function ready using v(): Boolean pure { true }\n");
     source
+}
+
+fn flat_source() -> String {
+    let terms = std::iter::repeat_n("1", FLAT_TERMS)
+        .collect::<Vec<_>>()
+        .join(" + ");
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function total using v(): Integer pure {{ {terms} }}\n"
+    )
 }
 
 fn checked_package(source_text: &str) -> CheckedPackage {
@@ -220,6 +232,48 @@ fn i2_reads_one_thousand_enum_declarations_at_its_counted_boundaries() {
     assert_eq!(limit.setting(), fsl_foundation::Setting::I2InputBytes);
     assert_eq!(limit.configured_bound(), (package_bytes.len() - 1) as u64);
     assert_eq!(limit.actual(), package_bytes.len() as u128);
+}
+
+/// I2 reads the 10,000-term checked package at its encoded byte and node
+/// counts, and returns the typed node limit one below the count.
+#[trace("TC-3242", "FR-264-AC-11")]
+#[test]
+fn i2_reads_the_ten_thousand_term_package_at_its_counted_node_bound() {
+    let package = checked_package(&flat_source());
+    let emit = EmitLimits::new(1 << 32);
+    let emission = fsl_package::emit_checked(&package, emit).expect("the package emits");
+    let package_bytes = emission.package().bytes();
+    let wire: serde_json::Value = serde_json::from_slice(package_bytes).expect("package JSON");
+    let node_count = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes")
+        .len();
+    let domain = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the empty model closure admits");
+    let identity =
+        fsl_semantics::library::LibraryName::new("qsl-3570").expect("a library identity");
+    let mut limits = V2ReadLimits::bounded(1 << 24);
+    limits.artifact_bytes = package_bytes.len();
+    limits.nodes = node_count as u64;
+    let read =
+        fsl_package::read_evaluation_package(&package, identity.clone(), &domain, limits, emit)
+            .expect("I2 admits the package at exact byte and node counts");
+    assert_eq!(read.admitted().name(), "qsl-3570");
+    assert_eq!(read.canonical_bytes(), package_bytes);
+
+    limits.nodes = (node_count - 1) as u64;
+    let refusal = fsl_package::read_evaluation_package(&package, identity, &domain, limits, emit)
+        .err()
+        .expect("I2 refuses one node below the package count");
+    let fsl_package::ImportViewRefusal::Read { refusal, .. } = refusal else {
+        panic!("expected the typed I2 node limit, got {refusal:?}");
+    };
+    let fsl_foundation::diagnostic::StageFailure::Limit(limit) = *refusal else {
+        panic!("expected StageFailure::Limit, got {refusal:?}");
+    };
+    assert_eq!(limit.setting(), fsl_foundation::Setting::I2Nodes);
+    assert_eq!(limit.configured_bound(), (node_count - 1) as u64);
+    assert_eq!(limit.actual(), node_count as u128);
 }
 
 /// I2 reads both 1,000-link checked packages without changing their canonical
