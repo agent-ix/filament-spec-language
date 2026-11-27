@@ -3585,8 +3585,16 @@ impl<'a> Lowering<'a> {
 
     /// The node of the declared composite `declaration` (FR-092-AC-12): its
     /// checked type node's id.
+    #[implements("FR-092-AC-12", "FR-096-AC-25")]
     pub(crate) fn composite_node(&mut self, declaration: NodeKey) -> Result<NodeKey, CheckRefusal> {
-        let location = generated_location();
+        let location = self
+            .scope
+            .types()
+            .composite(declaration.clone())
+            .filter(|_| declaration.package() == self.package_name)
+            .map_or_else(generated_location, |composite| {
+                type_declaration(composite.name())
+            });
         let node = self.composite_type_node(declaration, &location)?;
         require_admitted(node, &location)
     }
