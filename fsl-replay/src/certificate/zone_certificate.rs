@@ -2761,7 +2761,10 @@ impl<O> Checker<'_, '_, O> {
                     rows.push((block, None, Some(key), None));
                 }
             }
-            Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
+            Taken::Protocol(_)
+            | Taken::ProtocolTraces(_)
+            | Taken::ProtocolPathRefs(_)
+            | Taken::Failing => {}
         }
         // Rows over one physical clock block with the same guard share its
         // truth value. Keep every row ordinal while splitting once.

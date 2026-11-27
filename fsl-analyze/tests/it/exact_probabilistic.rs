@@ -17,8 +17,8 @@ use fsl_analyze::exact_probabilistic::{
     UndefinedRead,
 };
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::ScheduledIdentity;
+use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{ModelCheckLimit, ModelCheckLimits};
@@ -2107,8 +2107,14 @@ fn fair_freedelays_weak_minimum_and_component_projection() {
         "weak fairness to go must not be reset at the evaluator's row dispatch"
     );
     assert!(result.components.iter().all(|component| {
-        component.states.iter().all(|state| state.index() < product.states.len())
-            && component.actions.iter().all(|(state, _)| state.index() < product.states.len())
+        component
+            .states
+            .iter()
+            .all(|state| state.index() < product.states.len())
+            && component
+                .actions
+                .iter()
+                .all(|(state, _)| state.index() < product.states.len())
     }));
     let row_choices = match result.policy[product.states.len()]
         .as_ref()
@@ -2119,9 +2125,11 @@ fn fair_freedelays_weak_minimum_and_component_projection() {
         ) => vec![(*index, ratio(1, 1))],
         fsl_analyze::exact_probabilistic::SchedulerChoice::Randomized(choices) => choices
             .iter()
-            .map(|(fsl_analyze::exact_probabilistic::ActionChoice(index), probability)| {
-                (*index, probability.clone())
-            })
+            .map(
+                |(fsl_analyze::exact_probabilistic::ActionChoice(index), probability)| {
+                    (*index, probability.clone())
+                },
+            )
             .collect(),
     };
     assert_eq!(
@@ -2146,7 +2154,9 @@ fn fair_freedelays_weak_minimum_and_component_projection() {
         assert_eq!(row.given, vec![(draw.clone(), 1)]);
         match row.free.as_slice() {
             [(identity, 1)] if identity == &go => go_probability = go_probability.add(&probability),
-            [(identity, 1)] if identity == &wait => wait_probability = wait_probability.add(&probability),
+            [(identity, 1)] if identity == &wait => {
+                wait_probability = wait_probability.add(&probability)
+            }
             other => panic!("the row policy maps to go or wait: {other:?}"),
         }
     }
@@ -2165,7 +2175,10 @@ fn fair_freedelays_weak_minimum_and_component_projection() {
     )
     .expect("unrestricted exact reachability");
     assert_eq!(result.values.len(), without_fairness.states.len());
-    assert_eq!(result.values[state.index()], ExtRational::Finite(ratio(0, 1)));
+    assert_eq!(
+        result.values[state.index()],
+        ExtRational::Finite(ratio(0, 1))
+    );
     let stay_component = result
         .components
         .iter()
@@ -2192,20 +2205,24 @@ fn fair_freedelays_multirow_interval_projects_bounds_and_policy() {
         ],
     );
 
-    let UnboundedOutcome::Bounds { lower, upper, policy, .. } =
-        decide_fair_reachability_threshold(
-            &product,
-            &target,
-            &ratio(1, 5),
-            &ExactProbLimits {
-                precision_bits: 4,
-                max_precision_bits: 16,
-                max_rational_bits: 1,
-                ..ExactProbLimits::default()
-            },
-            &Cancel::new(),
-        )
-        .expect("valid two-row fair interval product")
+    let UnboundedOutcome::Bounds {
+        lower,
+        upper,
+        policy,
+        ..
+    } = decide_fair_reachability_threshold(
+        &product,
+        &target,
+        &ratio(1, 5),
+        &ExactProbLimits {
+            precision_bits: 4,
+            max_precision_bits: 16,
+            max_rational_bits: 1,
+            ..ExactProbLimits::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("valid two-row fair interval product")
     else {
         panic!("the fair interval route returns bounds for the multi-row product");
     };
@@ -2220,8 +2237,16 @@ fn fair_freedelays_multirow_interval_projects_bounds_and_policy() {
         } else {
             ratio(0, 1)
         };
-        assert!(lower[index].rational() <= expected, "lower[{index}]={:?}", lower[index]);
-        assert!(upper[index].rational() >= expected, "upper[{index}]={:?}", upper[index]);
+        assert!(
+            lower[index].rational() <= expected,
+            "lower[{index}]={:?}",
+            lower[index]
+        );
+        assert!(
+            upper[index].rational() >= expected,
+            "upper[{index}]={:?}",
+            upper[index]
+        );
     }
     assert!(lower[state.index()].rational() >= ratio(1, 5));
     assert_eq!(policy.len(), product.states.len() + 2);

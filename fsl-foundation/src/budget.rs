@@ -110,7 +110,7 @@ impl Budget {
         self.poll()?;
         let bound = self.bound(setting);
         self.counters.consumed[setting.index()]
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 used.checked_add(amount).filter(|total| *total <= bound)
             })
             .map(drop)

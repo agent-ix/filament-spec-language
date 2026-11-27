@@ -1171,7 +1171,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     /// is classified first, once, by the timed outcome layer: a subject with
     /// no admitted behaviour has no counterexample either, so no claim
     /// product is built over it.
-    #[implements("FR-125-AC-7", "FR-232-AC-3", "FR-243-AC-8")]
+    #[implements("FR-125-AC-7", "FR-232-AC-3", "FR-240-AC-4", "FR-243-AC-8")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
         let initial_states = self.timed().initial().len();
