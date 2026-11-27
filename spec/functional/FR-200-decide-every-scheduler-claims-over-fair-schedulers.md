@@ -18,7 +18,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-199
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-204
-    type: depends_on
+    type: references
 ---
 # FR-200: Decide every-scheduler claims over fair schedulers
 
