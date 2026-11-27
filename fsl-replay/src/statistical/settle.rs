@@ -189,6 +189,9 @@ pub fn settle_statistical(
                 required: Some(required.clone()),
             })),
             StatisticalStop::Expansion(stop) => expansion_stop(stop, subject),
+            StatisticalStop::IdleTailUndecided(stop) => StatisticalRecord::of(
+                TerminalValue::Incomplete(IncompleteCause::IdleTailUndecided(stop.clone())),
+            ),
             StatisticalStop::AutomatonStates { value } => {
                 StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::MaxAutomatonStates,
@@ -216,6 +219,11 @@ pub fn settle_statistical(
                     UnavailabilityCause::NotStochastic {
                         state: state.clone(),
                         identity: identity.clone(),
+                    }
+                }
+                StatisticalUnsupported::NotStochasticIdleTail { state } => {
+                    UnavailabilityCause::NotStochasticIdleTail {
+                        state: state.clone(),
                     }
                 }
                 StatisticalUnsupported::TimeLockedSample { state } => {

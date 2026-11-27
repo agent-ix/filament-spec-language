@@ -93,7 +93,7 @@ pub(super) fn read_observation_inputs(
     if observation_override.is_some() && requested_limits.is_some() {
         return Err(invalid(
             "observation_limits",
-            "request member and RequestOverrides::observation were both supplied",
+            "request member and an observation limit override were both supplied",
         ));
     }
     if request

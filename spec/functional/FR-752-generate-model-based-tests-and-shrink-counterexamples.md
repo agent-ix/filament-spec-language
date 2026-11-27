@@ -72,6 +72,11 @@ pub fn run_model_based_test(
   `AnalyzeLimits`: exploration defaults are 10000000 states and 100000000
   transitions, `expansion.max_candidates` defaults to 200000, the trace-step limit defaults to 16777216, and the distinct
   model-domain `position_limit` defaults to 10000.
+- A direct `model_based_test` request member is run with the
+  `expansion.max_candidates` default 200000, the `simulation.max_steps` in
+  force, and with the caller's accounting
+  limits, `accounting.work_units` defaulting to 1000000; the command route
+  SHALL pass these and no fixed value of its own (FR-255).
 - The entry SHALL build the run's model system itself. For a clause over a
   state model it builds FR-120's `ModelSystem` from the package and the
   subject, giving it the size-bounded domain of each root with no finite
@@ -173,10 +178,32 @@ pub fn run_model_based_test(
   exploration, SHALL use the request's `ExpansionLimits.max_candidates` as a
   local per-expansion ceiling. When a candidate's charge would exceed that
   ceiling, FR-120 SHALL stop before allocating its successor and return no
-  partial successor set as completed. When an expansion reaches that ceiling,
-  FR-752 SHALL settle the run `incomplete` with cause
+  partial successor set as completed. A stopped expansion SHALL NOT end the
+  run's case generation: partition search, the sampled trace up to the stopped
+  state, later cases and coverage exploration go on with what the run holds.
+  A run in which an expansion reached that ceiling and which retains no
+  counterexample SHALL settle `incomplete` with cause
   `limit-reached{limit: max_candidates, value, setting: expansion.max_candidates}`,
-  with `value` equal to the configured bound.
+  with `value` equal to the configured bound. A retained counterexample SHALL
+  settle the run `refuted` whether or not an expansion of the run reached the
+  ceiling, and each operation the stopped coverage exploration left open is
+  `uncovered` with reason `undetermined`, limit `candidates` and that bound as
+  its value.
+- A sampled trace is truncated when an expansion of its final state stopped
+  (at the candidate ceiling, at a simulation or accounting limit) before the
+  trace held `max_trace_length` steps, or when `simulation.max_steps`, below
+  the requested `max_trace_length`, cut it while its final state had a
+  successor or a stopped expansion. A temporal clause SHALL NOT be judged
+  under closed finite-trace semantics on a truncated trace: it is read as a
+  prefix of an unknown continuation, so it fails the case only when every
+  continuation violates the clause, and a shrink candidate of such a trace is
+  read the same way. A run that retains no counterexample and in which a
+  trace was truncated SHALL settle `incomplete`: for a stopped expansion with
+  that limit's `limit-reached` cause, and for the step setting with
+  `limit-reached{limit: max_steps, value, setting: simulation.max_steps}`.
+- A precondition or postcondition clause whose own case expansion of one
+  state reaches the candidate ceiling SHALL skip that state and go on with the
+  others, under the same two settlements.
 - Partition cases SHALL be built as FSpec FR-190 "Partitions" states: in the
   domain through the shortest enabled prefix the coverage exploration finds,
   or as refusal cases through the native admission that guards the root.
@@ -271,6 +298,12 @@ pub fn run_model_based_test(
 | FR-752-AC-12 | Over package `test/no-initial`, whose successful `NoInitial` model declares only `cells: Population<Cell>` of record value type `ix://test/no-initial/Cell` with `value: Int[0,1]`, the Cell declaration's model node key is `{package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0}` by FR-322. With `universe_snapshot` row `cells` `complete: true` and object keys `[c1,c2]`, a state-clause model-based-test request with no initial snapshots, seed 7, `max_cases` 100 and `max_trace_length` 8 settles `tested`; every case's initial state belongs to the four-state product domain `{((c1,0),(c2,0)),((c1,0),(c2,1)),((c1,1),(c2,0)),((c1,1),(c2,1))}`, and reachability uses that same domain. The first seeded initial state is the uniform draw at FR-190 `step` 0, `choice` 0; repeated equal requests produce byte-equal records. No other object key or population is present. In a separate refusal fixture, the model declares `cells` followed by class-P root `unbounded_cells`, both of `Cell`, and the snapshot has `cells` complete with `[c1,c2]` and `unbounded_cells` `complete: false` with no objects. That request returns `Err(ModelBasedTestRefusal { member: "subject", code: "requires_bound", cause: "requires-bound", details: {domains: [{key: DomainKey::Population {member_type: {package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0}, ordinal: 1}, kind: Population(None)}]} })` before any case runs. | Test (TC-3018) |
 | FR-752-AC-13 | For the holding-claim fixture from FR-753-AC-7, the successful package `example/config-version` has model `Config::ConfigVersion` with fields `x: Int[0,1000]` and `y: Int[0,1000]`; the complete initial snapshot contains objects `root` and `child`, each with `x = 0` and `y = 0`; and operation `ix://example/config-version/ConfigVersion/attemptUpdate` independently modifies both fields. Its two-receiver successor domain contains 2,004,002 candidates (two receivers × 1001 `x` values × 1001 `y` values). A `model_based_test` plan step with no caller candidate override receives `AnalyzeLimits.expansion.max_candidates = 200000`, `simulation.max_states = 10000000`, `simulation.max_transitions = 100000000`, `simulation.max_steps = 16777216` and `position_limit = 10000`. An expansion that would exceed 200000 candidates stops before allocating the over-limit candidate, returns no partial successor set, and settles the plan step `incomplete` with cause `limit-reached{limit: max_candidates, value: 200000, setting: expansion.max_candidates}`; the plan exit is 22. | Test |
 | FR-752-AC-14 | The measured holding-claim fixture has a successful `example/config-version` package, `Config::ConfigVersion` fields `x: Int[0,1000]` and `y: Int[0,1000]`, both independently modified by `ix://example/config-version/ConfigVersion/attemptUpdate`, and a complete snapshot containing objects `root` and `child` with both fields 0. Its `Ready { true }` model-based-test plan uses seed 7, bound 20 and `max_trace_length` 8. In the debug test profile, the same exact filtered direct integration-test binary was run once at each configured ceiling under a 12 GiB virtual-memory cap (`ulimit -v 12582912`); each run reported one passed test and 1255 filtered tests. At `expansion.max_candidates = 50000`, `/usr/bin/time -v` reported peak RSS 355896 kB and wall time 1:50.52 (test duration 110.48 s); the test reached `used = max_candidates = 50000` at the candidate-limit branch 121 times. At `expansion.max_candidates = 200000`, `/usr/bin/time -v` reported peak RSS 1078156 kB and wall time 10:32.00 (test duration 631.83 s); the test reached `used = max_candidates = 200000` at that branch 121 times. In the 200000 observation, the plan reported status `passed`, 20 generated and 20 passed cases, partial operation coverage with `attemptUpdate` uncovered at candidate limit value 200000, and `cause: null`; this observed result does not assert that the required over-limit `incomplete` settlement in AC-13 is already implemented. From these two capped measurements, the slope is `(1078156 - 355896) / 150000 = 4.81507 kB` per configured candidate, with an intercept of approximately 115143 kB. Linear extrapolation predicts 3726443 kB (about 3.55 GiB) at 750000 and 4930209 kB (about 4.70 GiB) at 1000000; 4 GiB is 4194304 kB. The selected plan-step default is 200000, directly measured below 4 GiB; 750000 is a projection and 1000000 projects above the threshold. | Analysis |
+| FR-752-AC-15 | A direct `model_based_test` request member run with no caller setting gives the entry `expansion.max_candidates` 200000 and `accounting.work_units` 1000000. With the caller override `accounting.work_units=5` the run stops at that bound, settling `incomplete` with a `limit-reached` cause naming `work_units`, value 5 and setting `accounting.work_units`. | Test |
+| FR-752-AC-16 | AC-13's holding-claim fixture, run as a direct `model_based_test` request member with no caller candidate setting, settles `incomplete` with cause `limit-reached{limit: max_candidates, value: 200000, setting: expansion.max_candidates}`. | Test |
+| FR-752-AC-17 | AC-13's holding-claim fixture with the clause body `false` in place of the holding claim, run with no caller candidate setting, settles `refuted` with a 1-minimal, replay-reproduced counterexample of zero invocations, and its `attemptUpdate` operation is `uncovered` with reason `undetermined`, limit `candidates` and value 200000; this holds for a direct `model_based_test` request member and for a `model_based_test` plan step. | Test |
+| FR-752-AC-18 | Over a counter with `value` in `Int[0, 5]` incremented one step at a time, the temporal clause `always[0,5] holds(c.value <= 5)` under the false-extension profile, run with `expansion.max_candidates` below what an expansion of its initial state needs, settles `incomplete` with cause `limit-reached{limit: max_candidates, value, setting: expansion.max_candidates}` and no counterexample; the same holds for `eventually[0,5] holds(c.value >= 4)`. | Test |
+| FR-752-AC-19 | Over the same counter, `eventually[0,5] holds(c.value >= 4)` with requested `max_trace_length` 8 and `simulation.max_steps` 2 settles `incomplete` with cause `limit-reached{limit: max_steps, value: 2, setting: simulation.max_steps}` and no counterexample; with `simulation.max_steps` 8 it settles as with no step setting. | Test |
+| FR-752-AC-20 | A precondition clause over two initial states, one whose case expansion exceeds `expansion.max_candidates` and one within it whose precondition evaluates undefined, settles `refuted`; with the undefined state absent the run settles `incomplete` naming `expansion.max_candidates`. | Test |
 
 ## Dependencies
 

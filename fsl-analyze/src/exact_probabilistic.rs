@@ -112,20 +112,22 @@ pub(crate) fn observe_path_search() {
 pub(crate) use build::BudgetedProductError;
 pub use build::build_product;
 #[cfg(feature = "test-support")]
-pub use build::{BudgetedProductError, build_product_with_key_budget};
+pub use build::{
+    BudgetedProductError, build_product_with_key_budget, build_product_with_work_scope,
+};
 pub(crate) use build::{
-    admit_in_scope, automaton_refusal, build_retaining_monitor, build_retaining_monitor_in_scope,
-    build_retaining_monitor_with_budget, build_retaining_monitor_with_budget_in_scope,
+    admit_in_scope, automaton_refusal, build_retaining_monitor_in_scope,
+    build_retaining_monitor_with_budget_in_scope,
 };
 pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use digital::model_constraints;
 pub(crate) use fair::bottom_components;
 pub use fair::{
+    ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
+    FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
     decide_fair_reachability, deterministic_policy_is_fair, induced_fair_randomized_chain,
-    maximal_fair_end_components, ActionChoice, FairBoundedResult, FairEndComponent,
-    FairExpectedRewardResult, FairLongRunResult, FairProductError, FairRandomizedWitness,
-    FairUnboundedResult, SchedulerChoice,
+    maximal_fair_end_components,
 };
 pub use fair_interval::decide_fair_reachability_threshold;
 pub(crate) use finite_horizon::round as round_probability;
@@ -134,7 +136,7 @@ pub use finite_horizon::{
 };
 pub(crate) use finite_horizon::{QualifiedFhError, decide_measure_exact};
 pub use fsl_replay::FreeDelayRow;
-pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
+pub use reward_interval::{ExpectedRewardOutcome, decide_expected_reward_threshold};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 #[cfg(feature = "test-support")]
@@ -278,13 +280,12 @@ impl ProbKey {
     /// Every product-key member is encoded, including absent controls for
     /// unbounded digital forms. The model member is the full encoded model
     /// and clock state; no Rust `Debug` representation participates.
+    #[implements("FR-125-AC-9")]
     pub fn digital_cycle_identity(&self) -> String {
         let mut identity = String::from("filament.probability-digital-cycle-state/v1;");
         match &self.binding {
             Some(binding) => {
                 identity.push_str("binding=some;");
-                cycle_identity_field(&mut identity, binding.population.package.as_bytes());
-                cycle_identity_field(&mut identity, binding.population.node.as_bytes());
                 cycle_identity_field(&mut identity, binding.key.as_bytes());
             }
             None => identity.push_str("binding=none;"),

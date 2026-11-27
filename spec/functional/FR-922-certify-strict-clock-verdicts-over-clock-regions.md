@@ -13,6 +13,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-752
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-421
+    type: depends_on
 ---
 # FR-922: Certify strict-clock verdicts over clock regions
 
@@ -26,11 +30,9 @@ wrong value once a constraint is strict: a guard `x > 1` excludes the delay 1
 that digital clocks would take, so the strict case has its own route and its
 own certificate.
 
-When a timed claim is a bounded-window formula that FR-204 Admission "Route"
-does not give the digital MDP, EN-5 SHALL decide it over the region MDP in
-the same way, with a `route: "region"` document, even when every constraint
-is closed: its value can turn on a position being absent from a window,
-which integer time stamps cannot always arrange (FR-204-AC-26).
+When FR-204 Admission "Route" does not give a claim the digital MDP, EN-5
+SHALL decide it over the region MDP in the same way, with a `route: "region"`
+document, even when every constraint is closed (FR-204-AC-26, ADR-038).
 
 ## Use case
 
@@ -64,9 +66,8 @@ unsound, and the checker rejects a certificate that states it.
   between corners, whose minimum and maximum are the dense infimum and
   supremum.
 - The checker SHALL refuse `ObjectiveMismatch` for a digital document over a
-  claim the region route decides (a strict constraint, or a bounded-window
-  form FR-204 Admission "Route" sends to regions), and for a region document
-  over a claim the digital route decides.
+  claim the region route decides (FR-204 Admission "Route"), and for a region
+  document over a claim the digital route decides.
 
 ## Acceptance Criteria
 
@@ -75,6 +76,7 @@ unsound, and the checker rejects a certificate that states it.
 | FR-922-AC-1 | `Retx` with the guard `self.x > 1 ms` over every scheduler: `Deadline` at 0.99 settles `proved`, `ExactValue{99/100}`, with a `region` document the checker accepts; `Max` (`probability <= 0.999`) settles `proved`, `ExactValue{999/1000}`, with a `region` document the checker accepts. | Test (TC-2491) |
 | FR-922-AC-2 | AC-1's `Deadline` document with `route` set to `"digital"` is refused `ObjectiveMismatch`; the `Max` `exact` certificate with every value replaced by the corresponding value of the `>= 1 ms` guard's digital product, initial value `9999/10000`, is rejected `InequalityFails`, and the tampered item settles `inconclusive`, `CertificateRejected`. | Test (TC-2491) |
 | FR-922-AC-3 | `MeanTime` with the guard `self.x > 1 ms` settles its maximum `20/9 ms` with a `boundary-region` document the checker accepts; the minimum is the infimum `10/9 ms`. | Test (TC-2491) |
+| FR-922-AC-4 | Interim, until the symbolic region MDP of ADR-038 RL-3 replaces the grid walk (QSL-3495): RL-3 gives a grid walk no exactness, and this criterion claims none; it pins that the walk does not step over a region on the subjects below, whose stated values are derived by hand for dense time. Subject A: clocks `x` and `y`; `first` is guarded `self.phase = 0 and self.x > 0 ms and self.x < 1 ms`, sets `phase` 1 and resets `x`; `third` is guarded `self.phase = 1 and self.x < 1 ms and self.y > 1 ms` and sets `late`; `y <= 3 ms` while `phase < 2`. Over every scheduler `eventually[0 ms, 4 ms] holds(late)` has maximum 1 (`first` at 0.5 ms, `third` at 1.2 ms) and minimum 0 (`third` never taken): `probability <= 0.999`, `probability <= 0.5` and `probability >= 0.001` each settle `refuted`. Subject B: `first` is guarded `self.x > 0 ms`, `third` as before, with `y < 1 ms` while `phase = 0` and `x < 1 ms` while `phase = 1`, so time diverges only through `third`: `probability >= 0.5` settles `proved`, `ExactValue{1}`. Subject C is B with `x <= 1 ms` in the guard of `third` and in the invariant, with the same result. | Test (TC-2491) |
 
 ## Dependencies
 

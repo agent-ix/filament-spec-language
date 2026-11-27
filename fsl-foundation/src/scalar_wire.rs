@@ -6,11 +6,13 @@ use filament_exact::{
     Integer, IntegerDecimalBudget, IntegerDecimalBudgetError, IntegerDecimalError, UnitId,
 };
 use quire_canonical::{Error, Sink, Writer};
+use ix_trace_rs::implements;
 
 /// Write the canonical decimal-string integer under a caller's admitted capacity.
 ///
 /// # Errors
 /// The caller's decimal budget, byte bound or allocation may refuse conversion.
+#[implements("FR-120-AC-4", "FR-120-AC-16")]
 pub fn integer<S: Sink + ?Sized>(
     value: &Integer,
     max_bytes: u64,
@@ -24,6 +26,7 @@ pub fn integer<S: Sink + ?Sized>(
 ///
 /// # Errors
 /// The same decimal budget, byte bound and allocation refusals as [`integer`].
+#[implements("FR-120-AC-4", "FR-120-AC-16")]
 pub fn integer_text(
     value: &Integer,
     max_bytes: u64,
@@ -60,6 +63,7 @@ pub fn integer_text(
 ///
 /// # Errors
 /// Structural unit failure or any refusal of the canonical writer/integer callback.
+#[implements("FR-120-AC-16")]
 pub fn unit<S: Sink + ?Sized>(
     unit: Option<&UnitId>,
     writer: &mut Writer<'_, S>,

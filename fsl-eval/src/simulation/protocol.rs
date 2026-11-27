@@ -55,6 +55,7 @@ use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{CheckedActivation, CheckedProtocol};
 use fsl_semantics::family::ClaimExtent;
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use crate::fairness::{Constraint, Identity};
@@ -1071,6 +1072,7 @@ pub fn explore_protocol<M: MemoryModel>(
 
 /// The `over` parameter's value: the reference to `over`'s key in its
 /// declared type's universe.
+#[implements("FR-125-AC-9")]
 pub(crate) fn over_value(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
@@ -1094,7 +1096,7 @@ pub(crate) fn over_value(
         return Err(refused());
     }
     model
-        .bound_reference(object_type.clone(), over)
+        .written_reference(object_type.clone(), over)
         .map(Value::Reference)
         .map_err(|_| refused())
 }
@@ -1698,6 +1700,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     ///
     /// # Errors
     /// Refuses an unsupported proof form or a target without an admitted proof.
+    #[implements("FR-125-AC-9")]
     pub fn new_package_with_loop_proof(
         model: ModelSystem<'a>,
         subject: &'a ProtocolSubject<'a>,
@@ -1766,7 +1769,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 }
                 BoundedDomain::single(Value::Reference(
                     model
-                        .bound_reference(object_type.clone(), &subject.over)
+                        .written_reference(object_type.clone(), &subject.over)
                         .map_err(|_| ProtocolRefusal::fault("a-package-over-reference-resolves"))?,
                 ))
             }
@@ -1953,7 +1956,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     .map_err(|_| refused())?;
                 let mut objects = instances
                     .iter()
-                    .map(|instance| self.model.bound_reference(role.object.clone(), instance))
+                    .map(|instance| self.model.written_reference(role.object.clone(), instance))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|_| refused())?;
                 objects.sort();

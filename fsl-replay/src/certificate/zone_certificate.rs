@@ -897,6 +897,7 @@ struct Refined<'c, 'a> {
 /// `item` or the recompiled one, the subject does not admit, its timed
 /// reading does not build, the item is not supported, or a reading has no
 /// value.
+#[implements("FR-245-AC-1")]
 pub fn check_zone_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -975,6 +976,7 @@ fn package_state_graph_identity(
 
 /// FR-245: check a refinement certificate whose concrete subject admits
 /// arbitrary free delays and has no concrete clock placements (FR-900-AC-5).
+#[implements("FR-900-AC-5")]
 pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -1799,6 +1801,14 @@ impl<O> Checker<'_, '_, O> {
     }
 
     /// The `Malformed` members, in member order.
+    #[implements(
+        "FR-245-AC-2",
+        "FR-245-AC-7",
+        "FR-245-AC-8",
+        "FR-245-AC-9",
+        "FR-245-AC-12",
+        "FSpec-FR-418-AC-10"
+    )]
     fn members(&self) -> Step<(), O> {
         let certificate = self.certificate;
         if certificate.scale <= Integer::zero() {

@@ -581,7 +581,7 @@ fn load_buffering_warnings(
                 return Err(None);
             };
             let reference = model
-                .bound_reference(object_type.clone(), &subject.over)
+                .written_reference(object_type.clone(), &subject.over)
                 .map_err(|_| None)?;
             let capacities = fsl_eval::simulation::protocol::Capacities::admit_input(
                 input,
@@ -960,7 +960,8 @@ impl Row {
                     | IncompleteCause::ResourceExhausted
                     | IncompleteCause::UnresolvedDynamics
                     | IncompleteCause::CertificateUnchecked
-                    | IncompleteCause::PrecisionBudget { .. } => None,
+                    | IncompleteCause::PrecisionBudget { .. }
+                    | IncompleteCause::IdleTailUndecided(_) => None,
                 };
                 Self::incomplete(cause, limit_reached)
             }

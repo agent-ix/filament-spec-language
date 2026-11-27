@@ -224,7 +224,7 @@ fn check_universal_atoms_and_certificate<'a>(
             .expect("source letters");
     let parameter = &clause.parameters()[0];
     let instance = package_system
-        .instances(&ValueType::Reference(parameter.population.object()))
+        .instances(&ValueType::Reference(parameter.object.clone()))
         .expect("instances")
         .into_iter()
         .next()

@@ -19,6 +19,8 @@ use fsl_eval::simulation::{StateKey, SymmetryGroup, TransitionSystem};
 use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, CheckedModelRelation, CopyGroup, HyperForm};
+use fsl_semantics::model::state::StateModel;
+use ix_trace_rs::implements;
 
 mod relation;
 pub use relation::{
@@ -29,6 +31,7 @@ pub use relation::{
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
 use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
 use super::{CertificateLocus, CertificateRule};
+use crate::shared_wire::state_key_text;
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
 
 /// The full canonical tuple and property key, including HP-3 witness members.
@@ -44,9 +47,8 @@ impl serde::Serialize for ProductStateKey {
 }
 
 pub(super) fn product_key_wire(key: &StateKey) -> Result<serde_json::Value, ProductClosureRefusal> {
-    use base64::Engine as _;
     use serde_json::json;
-    let encode = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let encode = |bytes: &[u8]| state_key_text(&StateKey::from_canonical_bytes(bytes.to_vec()));
     let value: serde_json::Value = serde_json::from_slice(key.as_bytes())
         .map_err(|_| ProductClosureRefusal::Input("product-key"))?;
     let pair = value
@@ -219,6 +221,7 @@ pub struct ModelRelationClosureRequest<'a> {
 /// # Errors
 ///
 /// Refuses invalid original inputs or a reconstruction invariant failure.
+#[implements("FR-163-AC-6")]
 pub fn check_model_relation_closure(
     request: &ModelRelationClosureRequest<'_>,
     certificate: &ProductClosureCertificate,
@@ -266,12 +269,33 @@ impl<'a> PackageHyperClosureRequest<'a> {
         meter: ScalarLimits,
         position_limit: u64,
     ) -> Result<Self, ProductClosureRefusal> {
-        let form = package
+        let mut form = package
             .hyper_clause_form(occurrence)
             .map_err(|_| ProductClosureRefusal::Input("package-hyper-form"))?;
         let world = package
             .world()
             .map_err(|_| ProductClosureRefusal::Input("package-world"))?;
+        if !form.parameters.is_empty() {
+            // Every subject of a package clause names the package's one set
+            // of model selections.
+            let simulation = &subjects
+                .first()
+                .ok_or(ProductClosureRefusal::Input("package-hyper-subject"))?
+                .simulation;
+            let selections = simulation.input.model_inputs();
+            let selections = match simulation.input.clock_declarations {
+                Some(table) => selections.with_clock_declaration_table(table),
+                None => selections,
+            };
+            let model = StateModel::new(
+                selections,
+                simulation.input.types,
+                simulation.packages,
+                simulation.normalization,
+            )
+            .map_err(|failure| ProductClosureRefusal::Admission(Box::new(failure)))?;
+            form.bind_populations(&model);
+        }
         let clause = CheckedHyperClause::of_package_form(form, world.types(), position_limit)
             .map_err(|_| ProductClosureRefusal::Input("package-hyper-clause"))?;
         package
@@ -317,6 +341,7 @@ impl HyperOriginals<'_, '_> {
 ///
 /// # Errors
 /// Preserves original-input and product reconstruction refusals.
+#[implements("FR-163-AC-1")]
 pub fn check_package_hyper_closure(
     request: &PackageHyperClosureRequest<'_>,
     certificate: &ProductClosureCertificate,
@@ -342,6 +367,9 @@ pub enum ProductClosureRefusal {
     /// The supplied subject or binding does not admit.
     #[error("hyper certificate input does not admit: {0}")]
     Input(&'static str),
+    /// A subject's model does not admit.
+    #[error("hyper certificate model does not admit: {0}")]
+    Admission(Box<fsl_semantics::model::observation::AdmissionFailure>),
     /// The product could not be constructed or expanded.
     #[error("hyper certificate recomputation failed: {0}")]
     Recompute(&'static str),
@@ -431,7 +459,9 @@ fn complete_hyper_scope(
             .get(slot)
             .ok_or(ProductClosureRefusal::Input("parameter-subject"))?;
         let instances = system
-            .hyper_instances(&parameter.population)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         domains.push(
             instances
@@ -473,6 +503,7 @@ fn complete_hyper_scope(
 /// # Errors
 ///
 /// Returns a refusal when the original program or its model inputs do not admit.
+#[implements("FR-163-AC-1")]
 pub fn check_product_closure(
     request: &ProductClosureRequest<'_>,
     certificate: &ProductClosureCertificate,
@@ -596,7 +627,9 @@ fn check(
             .get(slot(parameter.alias.as_str())?)
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
         let admitted = system
-            .hyper_instances(&parameter.population)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         let found = admitted
             .into_iter()

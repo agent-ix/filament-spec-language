@@ -427,6 +427,46 @@ struct Taken {
     rewards: Vec<(Identifier, Value)>,
 }
 
+/// The step [`take_step`] selects at `at`, with the choice indices it drew.
+pub(crate) struct DrawnStep {
+    pub(crate) transition: TransitionId,
+    pub(crate) choices: Vec<u32>,
+    pub(crate) random: Vec<Value>,
+    pub(crate) probability: Rational,
+    pub(crate) rewards: Vec<(Identifier, Value)>,
+}
+
+/// FR-408's step among `actions` at `at`, for a caller that has already
+/// restricted them to what its state enables (a tick subject's clocks).
+#[allow(
+    clippy::result_large_err,
+    reason = "FR-188 pins SampleStop::NotMarkov(NotMarkov), whose scheduled identity carries a receiver reference"
+)]
+pub(crate) fn take_enabled_step(
+    system: &ModelSystem<'_>,
+    workload: &Workload,
+    actions: &[Action],
+    state: &StateKey,
+    at: StepAt,
+) -> Result<DrawnStep, SampleStop> {
+    let mut draws = StepDraws {
+        seed: at.seed,
+        trace: at.trace,
+        step: at.step,
+        choice: 0,
+        choices: Vec::new(),
+        digests: 0,
+    };
+    let taken = take_step(system, workload, actions, state, &mut draws)?;
+    Ok(DrawnStep {
+        transition: taken.transition,
+        choices: draws.choices,
+        random: taken.random,
+        probability: taken.probability,
+        rewards: taken.rewards,
+    })
+}
+
 /// The step `draws` selects among `actions`, the enabled actions of the
 /// state whose canonical key is `state`.
 #[allow(

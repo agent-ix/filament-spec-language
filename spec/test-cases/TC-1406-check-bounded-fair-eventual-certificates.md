@@ -56,8 +56,10 @@ producer; equal fair/unfair values do not imply equal full product keys.
    requirements, including deep structural declaration and long text
    inputs. Do not simulate cancellation by fixed poll counts. Exercise
    unsupported temporal/workload/reward/timed/multi-initial/multi-binding/
-   post-state/refutation forms, Bounds/PrecisionBudget and zero direct
-   instances. Preserve undefined evaluation without substituting zero.
+   post-state/refutation forms, Bounds/PrecisionBudget and an initial
+   state with no admitted `over` instance at direct claim binding, the
+   checker and the direct EN-5 item. Preserve undefined evaluation
+   without substituting zero.
 
 Executable assertions SHALL carry criterion attributes such as
 `#[trace("TC-1406", "FR-201-AC-48")]`; this procedure writes no matrix.
@@ -77,7 +79,8 @@ Executable assertions SHALL carry criterion attributes such as
   false equality/rank/coverage and malformed transport with existing
   precise rules/loci, and refuses conflicting identity before enumeration.
   No policy, fair-MEC claim or new key component is fabricated.
-- Step 4 preserves each actual typed cause without accepted truth. Zero
-  instances retain UnsupportedBinding/unsupported with no invented
-  evidence. No all-expansion AC-30 or external transition/private-reader/
-  ordinary interpreter allocation guarantee is implied.
+- Step 4 preserves each actual typed cause without accepted truth. With
+  an initial state and no admitted instance, all three give `NoInstance`
+  as FR-201 "Instancing outcomes" states. No all-expansion AC-30 or
+  external transition/private-reader/ordinary interpreter allocation
+  guarantee is implied.

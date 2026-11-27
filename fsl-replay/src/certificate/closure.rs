@@ -132,9 +132,10 @@ impl Serialize for ProductStateRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use base64::Engine as _;
         let mut object = serializer.serialize_struct("ProductStateRef", 2)?;
-        let model_state =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.model_state.as_bytes());
-        object.serialize_field("model_state", &model_state)?;
+        object.serialize_field(
+            "model_state",
+            &crate::shared_wire::state_key_text(&self.model_state),
+        )?;
         let octets = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(self.automaton_state.as_bytes());
         object.serialize_field("automaton_state", &octets)?;
@@ -320,6 +321,7 @@ pub fn check_closure(
 /// [`ClosureRefusal`] as [`check_closure`] returns it, and
 /// [`ClosureRefusal::NotLiveness`] when the item is not a TP-4 clause. A
 /// refusal is never an acceptance.
+#[implements("FR-339-AC-1")]
 pub fn check_components(
     request: &CertificateRequest<'_>,
     certificate: &ComponentCertificate,
@@ -417,6 +419,7 @@ pub struct ProtocolCertificateRequest<'a> {
 ///
 /// [`ClosureRefusal`] as [`check_closure`] returns it, and
 /// [`ClosureRefusal::Protocol`] when the protocol system does not build.
+#[implements("FR-338-AC-21", "FR-338-AC-22", "FR-338-AC-26")]
 pub fn check_protocol_closure(
     request: &ProtocolCertificateRequest<'_>,
     certificate: &ClosureCertificate,
@@ -435,6 +438,7 @@ pub fn check_protocol_closure(
 ///
 /// [`ClosureRefusal`] as [`check_protocol_closure`] and [`check_components`]
 /// return it.
+#[implements("FR-339-AC-7")]
 pub fn check_protocol_components(
     request: &ProtocolCertificateRequest<'_>,
     certificate: &ComponentCertificate,

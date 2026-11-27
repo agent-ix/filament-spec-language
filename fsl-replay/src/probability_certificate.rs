@@ -765,9 +765,9 @@ pub struct ExactProbabilityAcceptance {
 struct CheckedInitialValues {
     values: Vec<(u32, Option<Rational>)>,
     // The instance each entry of `values` was read for, in the same order.
-    bindings: Vec<Option<crate::ExactBinding>>,
+    bindings: Vec<Option<ObjectReference>>,
     // The `on each` object beside an `over` binding, in the same order.
-    instances: Vec<Option<crate::ExactBinding>>,
+    instances: Vec<Option<ObjectReference>>,
 }
 
 impl ExactProbabilityAcceptance {
@@ -803,13 +803,13 @@ impl ExactProbabilityAcceptance {
             .map(|coverage| coverage.values.as_slice())
     }
 
-    pub(crate) fn initial_bindings(&self) -> Option<&[Option<crate::ExactBinding>]> {
+    pub(crate) fn initial_bindings(&self) -> Option<&[Option<ObjectReference>]> {
         self.initial_values
             .as_ref()
             .map(|coverage| coverage.bindings.as_slice())
     }
 
-    pub(crate) fn initial_instances(&self) -> Option<&[Option<crate::ExactBinding>]> {
+    pub(crate) fn initial_instances(&self) -> Option<&[Option<ObjectReference>]> {
         self.initial_values
             .as_ref()
             .map(|coverage| coverage.instances.as_slice())
@@ -1622,6 +1622,7 @@ pub struct ClaimBinding {
 /// [`ExactProbabilityGraphError::ExtentLimit`] when the universe is unbounded or
 /// its classification reached its limit; [`ExactProbabilityGraphError::ExpansionRefused`]
 /// when the subject cannot otherwise enumerate or reference them.
+#[implements("FR-125-AC-9")]
 pub fn claim_binding(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -1647,7 +1648,7 @@ pub fn claim_binding(
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
     let reference = system
-        .bound_reference(object.clone(), &instance)
+        .written_reference(object.clone(), &instance)
         .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
     Ok(Some(ClaimBinding {
         instance,

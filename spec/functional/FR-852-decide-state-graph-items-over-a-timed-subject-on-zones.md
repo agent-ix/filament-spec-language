@@ -32,7 +32,8 @@ A `possible`, `always possible` or `unique path` item over a timed model
 subject SHALL have its selected engine decide over the subject's timed state graph, as FSpec
 FR-712 defines it: by EN-6 through symbolic zone search, or, when the item
 names `options.method` `digital-clocks` and the subject is closed, by EN-1
-over the digitized subject (FR-243), as FR-632 routes a timed temporal item.
+over the digitized subject (FR-243), as FR-632 routes a timed temporal item,
+where EN-1 decides `possible` only (FR-243).
 EN-6 SHALL advertise the three state-graph forms in its FSpec FR-331
 `state_graph_forms`, and EN-1 keeps advertising them (FR-628), so
 negotiation routes each item by its `method`, and the item settles `proved` or
@@ -48,8 +49,8 @@ by one of the two routes FR-632 gives every timed item. Without
 `options.method`, or with `zones`, EN-6 decides it on its zone graph. With
 `digital-clocks`, EN-1 decides it over the integer-clock reading of the closed
 subject (FR-243), with basis `exhaustive`; digitization keeps
-the clocks, and over a closed subject it gives the zone verdict, so the route
-is a cross-check of the zone result. `method` is a provider option EN-1
+the clocks, and for a `possible` claim over a closed subject it gives the
+zone verdict, so the route is a cross-check of the zone result. `method` is a provider option EN-1
 publishes as `digital-clocks` and EN-6 as `zones`, so one item reaches one
 engine. The same items over an untimed subject go to EN-1 (FR-628).
 
@@ -86,12 +87,20 @@ and `exploration`.
 - **Zone undefined evaluation.** While EN-6 decides a timed state-graph item using zones, it SHALL apply FSpec FR-391-AC-10, FR-391-AC-11 and FR-391-AC-14 to each explored state.
 - **Zone refuting-evidence order.** When zone exploration finds a trap, path pair, or undefined evaluation, EN-6 SHALL select evidence from the earliest node in FR-391's canonical breadth-first node order.
 - **Zone same-node precedence.** When zone exploration finds both undefined evaluation and trap or path-pair evidence at that same earliest node, EN-6 SHALL select the undefined-evaluation evidence.
-- **Digital undefined evaluation.** When EN-1 decides a timed state-graph item through `digital-clocks`, it SHALL apply FR-168's undefined-evaluation rules to each explored state of the digitized timed graph.
-- **Digital refuting-evidence order.** When digital-clock exploration finds a trap, path pair, or undefined evaluation, EN-1 SHALL select evidence from the earliest node in FR-168's canonical breadth-first node order.
-- **Digital same-node precedence.** When digital-clock exploration finds both undefined evaluation and trap or path-pair evidence at that same earliest node, EN-1 SHALL select the undefined-evaluation evidence.
+- **Digital undefined evaluation.** When EN-1 decides a `possible` claim through `digital-clocks`, it SHALL apply FR-168's undefined-evaluation rules to each explored state of the digitized timed graph. EN-1 declines `always possible` and `unique path` for this route, as FR-243 states.
+- **Digital refuting-evidence order.** When digital-clock exploration of a `possible` claim finds a trap or undefined evaluation, EN-1 SHALL select evidence from the earliest node in FR-168's canonical breadth-first node order.
+- **Digital same-node precedence.** When digital-clock exploration of a `possible` claim finds both undefined evaluation and trap evidence at that same earliest node, EN-1 SHALL select the undefined-evaluation evidence.
 - **Undefined settlement.** When a claim predicate, subject guard, `terminal when` predicate, or selected state constraint evaluates undefined at a reachable state, the selected engine SHALL settle every affected item as `refuted`, with basis `decisive-counterexample` and cause `undefined-evaluation`, unless an earlier trap or path pair decides the item under the stated refuting-evidence order.
 - **Undefined evidence.** When the selected engine settles an item for undefined evaluation, it SHALL carry FR-393 undefined-evaluation evidence whose canonical path reaches the deciding state and whose `where` names the state key, expression locus, the FR-181 transition identity for a guard, and the catalogued undefined-value reason.
-- **Undefined expression readings.** EN-1 and EN-6 SHALL NOT treat an undefined guard as a disabled transition or an undefined `terminal when` predicate as a non-terminal node. The same rules apply to `possible`, `always possible` and `unique path`, even when `possible` has a witness.
+- **Undefined expression readings.** EN-1 and EN-6 SHALL NOT treat an undefined guard as a disabled transition or an undefined `terminal when` predicate as a non-terminal node. These rules apply to every form decided by the selected engine; EN-1's `digital-clocks` route decides `possible` only.
+- **Deciding.** On zones, EN-6 SHALL decide each claim instance by FSpec FR-712:
+  `possible` by forward zone reachability of `P`; `always possible` by the
+  backward fixpoint of `EF P` over zones, compared with the forward reachable
+  zones where `Q` holds; `unique path` by counting realizable discrete-step
+  sequences on the zone graph. On `digital-clocks`, EN-1 SHALL decide a
+  `possible` instance by FSpec FR-712 over the digitized timed state graph,
+  with basis `exhaustive` and integer delays that replay, and SHALL decline
+  `always possible` and `unique path` (FR-243).
 - **Witness and counterexample.** A `possible` proof carries, for each
   initial state, a witness path; an `always possible` refutation carries a
   path to a reachable state where `Q` holds and from which no `P` state is
@@ -134,7 +143,7 @@ The undefined-evaluation cases below use this subject with a selected integer-di
 | FR-852-AC-3 | `unique path OneReply using v over (c: M::Call) from (c.phase = 0) to (c.phase = 2);` settles `refuted` with a cycle through `reset`, and over the subject with `reset` removed settles `proved`. | Test (TC-2412) |
 | FR-852-AC-4 | AC-1's `Replied` item with `backend` `en-1` and no `options.method` settles `unsupported` with `unsupported_projection`/`unsupported-requested-capability`, exit 21; with `temporal.limits.max_states` 1 it settles `incomplete` `LimitReached{max_states}`, exit 22. | Test (TC-2412) |
 | FR-852-AC-5 | `Engines::fsl()`'s `en-6` registration lists `possible`, `always-possible` and `unique-path` in `state_graph_forms`. | Test (TC-2412) |
-| FR-852-AC-6 | AC-1's `Replied` and `Late` items with `options.method` `digital-clocks` settle the same verdicts on backend `en-1`, the proof with basis `exhaustive` and witness delays that are integers and replay; `Engines::fsl()`'s `en-1` registration lists the three state-graph forms. | Test (TC-2412) |
+| FR-852-AC-6 | AC-1's `Replied` and `Late` items with `options.method` `digital-clocks` settle the same verdicts on backend `en-1`, the proof with basis `exhaustive` and witness delays that are integers and replay; `Engines::fsl()`'s `en-1` registration lists `possible` only in its state-graph forms. | Test (TC-2412) |
 | FR-852-AC-7 | Over the Zeno-only variant of AC-1's subject (time invariant `x <= 0 ms` at every state, every infinite path zero-delay), `possible Replied` on `en-6` settles `proved` with a witness and a zone `certificate` that carries no `admitted` member and is accepted (FR-244-AC-7, FR-245-AC-11), and `possible Late` (the item whose predicate is `c.phase = 3`, the `TimedOut` state) settles `refuted`; neither is refused by backend candidate selection as `invalid_capability`/`inconsistent-candidates` or for a missing divergence witness, and a certificate given an `admitted` member settles `inconclusive`, `certificate-rejected`, `malformed`. | Test (TC-3030) |
 | FR-852-AC-8 | In variant `U-P`, EN-6's `possible` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 evidence naming the `phase = 2` state and `division-by-zero`. | Test |
 | FR-852-AC-9 | In variant `U-G`, EN-6's `possible` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state, guard locus, and `Reset` transition identity, and cause `division-by-zero`. | Test |
@@ -148,18 +157,18 @@ The undefined-evaluation cases below use this subject with a selected integer-di
 | FR-852-AC-17 | In variant `U-G`, EN-6's `always possible` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state, guard locus, and `Reset` transition identity, and cause `division-by-zero`. | Test |
 | FR-852-AC-18 | In variant `U-T`, EN-6's `always possible` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and terminal-predicate locus, no transition identity, and cause `division-by-zero`. | Test |
 | FR-852-AC-19 | In variant `U-C`, EN-6's `always possible` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and constraint locus, no transition identity, and cause `division-by-zero`. | Test |
-| FR-852-AC-20 | In variant `U-P`, EN-1's `always possible` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 evidence naming the `phase = 2` state and `division-by-zero`. | Test |
-| FR-852-AC-21 | In variant `U-G`, EN-1's `always possible` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state, guard locus, and `Reset` transition identity, and cause `division-by-zero`. | Test |
-| FR-852-AC-22 | In variant `U-T`, EN-1's `always possible` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and terminal-predicate locus, no transition identity, and cause `division-by-zero`. | Test |
-| FR-852-AC-23 | In variant `U-C`, EN-1's `always possible` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and constraint locus, no transition identity, and cause `division-by-zero`. | Test |
+| FR-852-AC-20 | In variant `U-P`, EN-1 declines an `always possible` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
+| FR-852-AC-21 | In variant `U-G`, EN-1 declines an `always possible` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
+| FR-852-AC-22 | In variant `U-T`, EN-1 declines an `always possible` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
+| FR-852-AC-23 | In variant `U-C`, EN-1 declines an `always possible` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
 | FR-852-AC-24 | In variant `U-P`, EN-6's `unique path` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 evidence naming the `phase = 2` state and `division-by-zero`. | Test |
 | FR-852-AC-25 | In variant `U-G`, EN-6's `unique path` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state, guard locus, and `Reset` transition identity, and cause `division-by-zero`. | Test |
 | FR-852-AC-26 | In variant `U-T`, EN-6's `unique path` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and terminal-predicate locus, no transition identity, and cause `division-by-zero`. | Test |
 | FR-852-AC-27 | In variant `U-C`, EN-6's `unique path` route settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and constraint locus, no transition identity, and cause `division-by-zero`. | Test |
-| FR-852-AC-28 | In variant `U-P`, EN-1's `unique path` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 evidence naming the `phase = 2` state and `division-by-zero`. | Test |
-| FR-852-AC-29 | In variant `U-G`, EN-1's `unique path` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state, guard locus, and `Reset` transition identity, and cause `division-by-zero`. | Test |
-| FR-852-AC-30 | In variant `U-T`, EN-1's `unique path` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and terminal-predicate locus, no transition identity, and cause `division-by-zero`. | Test |
-| FR-852-AC-31 | In variant `U-C`, EN-1's `unique path` route with `options.method` `digital-clocks` settles `refuted`, `decisive-counterexample`, cause `undefined-evaluation`, with FR-393 `where` naming the `phase = 2` state and constraint locus, no transition identity, and cause `division-by-zero`. | Test |
+| FR-852-AC-28 | In variant `U-P`, EN-1 declines a `unique path` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
+| FR-852-AC-29 | In variant `U-G`, EN-1 declines a `unique path` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
+| FR-852-AC-30 | In variant `U-T`, EN-1 declines a `unique path` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
+| FR-852-AC-31 | In variant `U-C`, EN-1 declines a `unique path` item with `options.method` `digital-clocks` as unsupported under FR-243. | Test |
 
 ## Dependencies
 

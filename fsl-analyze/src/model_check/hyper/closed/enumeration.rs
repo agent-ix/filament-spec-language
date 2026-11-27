@@ -187,6 +187,28 @@ impl Run<'_, '_> {
                         let expanded = system
                             .successors(state)
                             .map_err(|stop| Stop::Expansion(component, stop))?;
+                        // A contract conjunction with no value is no disabled
+                        // step (ADR-018 UE-6); a refused one leaves the
+                        // successors unknown.
+                        if expanded
+                            .findings
+                            .iter()
+                            .any(|finding| finding.undefined_contract().is_some())
+                        {
+                            return Err(Stop::Refused(Box::new(
+                                super::HyperRefusal::ClosedUndefined.into(),
+                            )));
+                        }
+                        if expanded
+                            .findings
+                            .iter()
+                            .any(fsl_eval::simulation::model::ModelFinding::is_refused_contract)
+                        {
+                            return Err(Stop::Outcome(Box::new(HyperOutcome::Undecided {
+                                cause: fsl_replay::UndecidedCause::UndecidedSuccessor,
+                                stats: totals.stats(),
+                            })));
+                        }
                         let mut options = Vec::with_capacity(expanded.successors.len());
                         for (transition, state) in expanded.successors {
                             charge(meter, self.cancel)?;

@@ -18,6 +18,7 @@ use fsl_replay::{
 };
 use fsl_route::request::ExtentClassification;
 use fsl_semantics::check::Capability;
+use ix_trace_rs::implements;
 
 use super::super::super::{schedule_item, AnalyzeItem, ClaimItem, ItemOptions};
 use super::super::{candidate_list, invalid_kind, unknown_option, ItemSelection, ResolvedClaim};
@@ -166,6 +167,7 @@ fn unit_name(package: &BarePackage<'_>, unit: &CheckedNodeId) -> String {
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// A `schedulability` item over the claim at `declaration` and
     /// `ordinal`, as the source route's `resolve_schedule_claim` resolves it.
+    #[implements("FR-246-AC-4")]
     pub(super) fn schedule(
         &self,
         index: RequestIndex,
@@ -238,6 +240,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 max_cases: None,
                 max_task_product_work: limits.and_then(|limits| limits.max_task_product_work),
                 max_check_work: limits.and_then(|limits| limits.max_check_work),
+                max_states: limits.and_then(|limits| limits.max_states),
+                max_transitions: limits.and_then(|limits| limits.max_transitions),
                 trace: None,
                 traces: None,
                 recording: None,

@@ -3,7 +3,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use base64::Engine as _;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -19,7 +18,7 @@ use super::{
     ModelRelationClosureRequest, ProductClosure, ProductClosureCertificate, ProductClosureCheck,
     ProductClosureRefusal,
 };
-use crate::outcome::{TimedStateWire, TimedTransitionWire};
+use crate::shared_wire::{state_key_text, StateLocus, TransitionIdentity};
 use crate::{
     CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause, ModelCheckLimit,
     ModelCheckLimits,
@@ -42,7 +41,7 @@ pub struct HyperTransitionEdge {
 #[derive(Serialize)]
 struct EdgeWire<K> {
     pre_state: K,
-    transition: TimedTransitionWire,
+    transition: TransitionIdentity<'static>,
     post_state: K,
     result: Option<serde_json::Value>,
 }
@@ -52,7 +51,7 @@ impl HyperTransitionEdge {
     fn wire<K>(&self, state: impl Fn(&StateKey) -> K) -> serde_json::Result<EdgeWire<K>> {
         Ok(EdgeWire {
             pre_state: state(&self.pre_state),
-            transition: TimedTransitionWire::from(&self.transition),
+            transition: TransitionIdentity::owned(self.transition.clone()),
             post_state: state(&self.post_state),
             result: self
                 .result
@@ -67,14 +66,10 @@ impl HyperTransitionEdge {
 /// in the closure's `states` (FR-163).
 impl Serialize for HyperTransitionEdge {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.wire(key_text)
+        self.wire(state_key_text)
             .map_err(serde::ser::Error::custom)?
             .serialize(serializer)
     }
-}
-
-fn key_text(key: &StateKey) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())
 }
 
 /// Complete applicable edges of one execution, in canonical edge order.
@@ -99,7 +94,7 @@ pub struct HyperSubjectClosure {
 }
 
 fn serialize_states<S: Serializer>(states: &[StateKey], serializer: S) -> Result<S::Ok, S::Error> {
-    let keys: Vec<_> = states.iter().map(key_text).collect();
+    let keys: Vec<_> = states.iter().map(state_key_text).collect();
     keys.serialize(serializer)
 }
 
@@ -118,7 +113,7 @@ impl Serialize for HyperTransitionTuple {
         let transitions = self
             .transitions
             .iter()
-            .map(|edge| edge.wire(|key| TimedStateWire::from(key)))
+            .map(|edge| edge.wire(|key| StateLocus::from(key)))
             .collect::<serde_json::Result<Vec<_>>>()
             .map_err(serde::ser::Error::custom)?;
         let mut object = serializer.serialize_struct("HyperTransitionTuple", 1)?;
@@ -538,5 +533,34 @@ pub(super) fn check(
         if !advanced {
             return Ok(ProductClosureCheck::Accepted);
         }
+    }
+}
+
+#[cfg(test)]
+mod written_edge_tests {
+    use super::HyperTransitionEdge;
+    use filament_semantic_value::model_transition::ModelTransition;
+    use fsl_eval::simulation::StateKey;
+    use ix_trace_rs::trace;
+
+    /// FR-120-AC-40: an HP-1 certificate edge writes a name identity as the
+    /// bare name.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn an_edge_writes_a_name_identity_as_the_name() {
+        let edge = HyperTransitionEdge {
+            pre_state: StateKey::from_canonical_bytes(b"1".to_vec()),
+            transition: ModelTransition::new(
+                r#""tick""#.to_owned(),
+                None,
+                Vec::new(),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .expect("a canonical transition"),
+            post_state: StateKey::from_canonical_bytes(b"2".to_vec()),
+            result: None,
+        };
+        let written = serde_json::to_value(&edge).expect("an edge spells");
+        assert_eq!(written["transition"]["operation"], "tick");
     }
 }

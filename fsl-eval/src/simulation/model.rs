@@ -89,7 +89,7 @@ use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{OperationKey, PopulationDomain};
+use fsl_semantics::check::OperationKey;
 use fsl_semantics::family::ClassifyFailure;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::clause_observation::Observation;
@@ -123,7 +123,7 @@ impl ModelKeyBudget for UnmeteredModelKeyBudget {
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
-use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
+use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
 use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
@@ -707,6 +707,8 @@ pub enum NativeCandidateEvent<'a> {
     Undetermined {
         /// The invocation being evaluated.
         transition: &'a ModelTransition,
+        /// The name of the contract clause that was not decided.
+        clause: &'a str,
         /// The closed native outcome classification.
         outcome: &'a ClauseOutcome,
     },
@@ -988,6 +990,56 @@ impl ModelSystem<'_> {
 /// One element-count member of a pure-clock collection: the object type
 /// holding it, the member, and the count's `min` and `max`.
 pub(crate) type ClockCount = (DeclarationKey, StateField, u64, Option<u64>);
+
+/// The type of the member record an initial state admits for each key of each
+/// bounded population's object universe. FR-125 gives a universe key one type
+/// across the subject's initial states and every bounded population. Equal
+/// keys in two object universes (unrelated type hierarchies) name two objects.
+///
+/// # Errors
+///
+/// `conflicting-identity` for two records of one universe key with different
+/// types; an admission failure for a record with no reference.
+#[implements("FR-125-AC-9")]
+fn admitted_types(
+    model: &StateModel,
+    universes: &BTreeMap<DeclarationKey, Vec<String>>,
+    initial: &[ModelSimState],
+) -> Result<BTreeMap<(UniverseId, String), DeclarationKey>, AdmissionFailure> {
+    let mut admitted = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
+    for state in initial {
+        for (population, objects) in &state.state().populations {
+            if !universes.contains_key(population) {
+                continue;
+            }
+            for (key, object) in objects {
+                let universe = model
+                    .object_reference(&object.type_identity, key)?
+                    .universe()
+                    .clone();
+                let identity = (universe, key.clone());
+                match admitted.get(&identity) {
+                    Some(first_type) if first_type != &object.type_identity => {
+                        return Err(refused(
+                            Code::InvalidRuntimeInput,
+                            "conflicting-identity",
+                            &[
+                                ("key", key.clone()),
+                                ("first_type", first_type.node.clone()),
+                                ("second_type", object.type_identity.node.clone()),
+                            ],
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        admitted.insert(identity, object.type_identity.clone());
+                    }
+                }
+            }
+        }
+    }
+    Ok(admitted)
+}
 
 fn refused(code: Code, cause: &'static str, fields: &[(&'static str, String)]) -> AdmissionFailure {
     AdmissionFailure::Refused(Box::new(record(code, cause, fields)))
@@ -1505,44 +1557,10 @@ impl<'a> ModelSystem<'a> {
             initial.push(ModelSimState::anchored(state, anchor));
         }
 
-        // FR-125 gives an object universe's key one type across the subject's
-        // initial states and every bounded population. Do this before
-        // reference bindings or any instance is formed: otherwise one
+        // Before reference bindings or any instance is formed: otherwise one
         // reference could denote different objects depending on which
-        // population or initial snapshot supplied the row. Equal keys in two
-        // object universes (unrelated type hierarchies) name two objects.
-        let mut admitted_types = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
-        for state in &initial {
-            for (population, objects) in &state.state().populations {
-                if !universes.contains_key(population) {
-                    continue;
-                }
-                for (key, object) in objects {
-                    let universe = model
-                        .object_reference(&object.type_identity, key)?
-                        .universe()
-                        .clone();
-                    let identity = (universe, key.clone());
-                    match admitted_types.get(&identity) {
-                        Some(first_type) if first_type != &object.type_identity => {
-                            return Err(refused(
-                                Code::InvalidRuntimeInput,
-                                "conflicting-identity",
-                                &[
-                                    ("key", key.clone()),
-                                    ("first_type", first_type.node.clone()),
-                                    ("second_type", object.type_identity.node.clone()),
-                                ],
-                            ));
-                        }
-                        Some(_) => {}
-                        None => {
-                            admitted_types.insert(identity, object.type_identity.clone());
-                        }
-                    }
-                }
-            }
-        }
+        // population or initial snapshot supplied the row.
+        let admitted_types = admitted_types(&model, &universes, &initial)?;
 
         let reference_bindings = if let Some(package) = input.source_package() {
             ReferenceBindings::bind(
@@ -2490,6 +2508,7 @@ impl<'a> ModelSystem<'a> {
     /// with no universe, before any instance is listed (FR-120 "Bounds");
     /// [`NotSimulated::Extent`] when that classification stops or a
     /// population's identity text does not encode.
+    #[implements("FR-125-AC-19", "FR-125-AC-20")]
     pub fn instances(&self, over: &ValueType) -> Result<Vec<ModelInstance>, NotSimulated> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
@@ -2516,37 +2535,29 @@ impl<'a> ModelSystem<'a> {
         Ok(instances)
     }
 
-    /// FR-172 Object parameters: the instances of a hyper clause parameter,
-    /// one per key of the universe of the one population `domain` it resolves
-    /// to, in universe order, whether or not an initial state holds the key.
-    /// `self` is the system of the parameter's alias. No other population
-    /// contributes a key, whatever its member types.
+    /// Every key a hyper parameter of object type `object` may name in an
+    /// identity or an encoding (FR-315 `instance-binding`): each of its
+    /// [`Self::instances`]; for a subject whose initial list is empty,
+    /// every key of the universes of the overlapping populations, since the
+    /// item then settles `NoInitialState`.
     ///
     /// # Errors
     ///
-    /// [`NotSimulated::RequiresBound`] when that population has no universe;
-    /// [`NotSimulated::Extent`] when this system's model has no one population
-    /// that is `domain`, and as [`Self::instances`].
-    pub fn hyper_instances(
-        &self,
-        domain: &PopulationDomain,
-    ) -> Result<Vec<ModelInstance>, NotSimulated> {
-        let resolved = self.model.resolved_population(domain).ok_or_else(|| {
-            NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
-                "model-simulation",
-                "parameter-population",
-            )))
-        })?;
+    /// As [`Self::instances`].
+    #[implements("FR-315-AC-59")]
+    pub fn hyper_bindable(&self, object: &EffectiveId) -> Result<Vec<ModelInstance>, NotSimulated> {
+        if !self.initial_base.is_empty() {
+            return self.instances(&ValueType::Reference(object.clone()));
+        }
         let mut seen = BTreeSet::new();
-        let instances = self
-            .universe_members_where(&|population| population.key == resolved)?
+        Ok(self
+            .universe_members(object)?
             .filter(|(_, key)| seen.insert(*key))
             .map(|(population, key)| ModelInstance {
                 population: population.clone(),
                 key: key.to_owned(),
             })
-            .collect();
-        Ok(instances)
+            .collect())
     }
 
     /// [`Self::universe_members_where`] the populations that overlap the
@@ -2849,13 +2860,14 @@ impl<'a> ModelSystem<'a> {
     /// The reference a binding of `instance`, for a parameter of object type
     /// `declared`, is written as (FR-125 "Instancing"): the universe of
     /// `declared`, the type of the member record an initial state admits for
-    /// the key in that universe, and the key. A key with no such record,
-    /// which a hyper parameter's instance may have, is written with `declared`.
+    /// the key in that universe, and the key. Only a subject whose initial
+    /// list is empty, which admits no key, writes `declared`.
     ///
     /// # Errors
     ///
-    /// As [`Self::bound_reference`].
-    #[implements("FR-125-AC-9")]
+    /// As [`Self::bound_reference`]; a fault for a key no initial state of a
+    /// non-empty initial list admits.
+    #[implements("FR-125-AC-9", "FR-125-AC-19")]
     pub fn written_reference(
         &self,
         declared: EffectiveId,
@@ -2864,7 +2876,10 @@ impl<'a> ModelSystem<'a> {
         let declared = self.bound_reference(declared, instance)?;
         let identity = (declared.universe().clone(), instance.key.clone());
         let Some(admitted) = self.admitted_types.get(&identity) else {
-            return Ok(declared);
+            if self.initial_base.is_empty() {
+                return Ok(declared);
+            }
+            return Err(InternalFault::new("model-simulation", "bound-key-admitted"));
         };
         self.model
             .object_reference(admitted, &instance.key)
@@ -3711,6 +3726,9 @@ pub struct SampledDraw {
     pub coverage: crate::simulation::Coverage,
     /// The meter's refusal, when it stopped the run.
     pub stopped: Option<filament_exact::Incomplete>,
+    /// For each trace, the budget its final stopped expansion ran out of;
+    /// `None` for a trace that no expansion stopped or whose stop names none.
+    pub stop_limits: Vec<Option<ExpansionLimit>>,
 }
 
 /// FSL FR-634's sampled runs over `system`: `runs.samples` traces drawn by
@@ -3743,12 +3761,14 @@ pub fn sample_model_runs(
         .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
         .collect();
     let mut traces = Vec::new();
+    let mut stop_limits = Vec::new();
     let mut stopped = None;
     for trace in 0..runs.samples {
         if poll() {
             break;
         }
-        let drawn = sample_request_until(
+        let mut stop_limit = None;
+        let drawn = crate::simulation::sample::sample_request_using_observed(
             system,
             SampleRequest {
                 domains: &roots,
@@ -3760,14 +3780,24 @@ pub fn sample_model_runs(
                 max_steps: runs.max_steps,
                 identity: identity_limits(),
             },
-            |_| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
+            |_, _| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
                 Ok(()) => false,
                 Err(incomplete) => {
                     stopped = Some(incomplete);
                     true
                 }
             },
+            |state, _| expand(system, state, identity_limits()),
+            |observation| {
+                if let crate::simulation::sample::SampleExpansion::Stopped(stop) =
+                    &observation.expansion
+                {
+                    stop_limit = stop.limit;
+                }
+                crate::simulation::sample::ObserverDecision::Continue
+            },
         )?;
+        stop_limits.push(stop_limit);
         let retained = std::iter::once(&drawn.initial)
             .chain(drawn.steps.iter().map(|step| &step.key))
             .map(|key| length_amount(key.as_bytes().len()))
@@ -3790,6 +3820,7 @@ pub fn sample_model_runs(
         traces,
         coverage,
         stopped,
+        stop_limits,
     })
 }
 

@@ -3,6 +3,7 @@
 //! package evidence, then independently recompute the reported outcome.
 
 use filament_exact::{Cancel, Identifier};
+use ix_trace_rs::implements;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{self as checked, ScheduleClaim as CheckedScheduleClaim};
 
@@ -52,6 +53,7 @@ pub enum CertificateRefusal {
 
 /// Recompile the request, read the task set and claim at `claim`, and
 /// independently check the evidence in exact rationals (FR-248).
+#[implements("FR-248-AC-1")]
 pub fn check_closed_form(
     request: ReplayRequest,
     item: &fsl_package::ObligationIdentity,

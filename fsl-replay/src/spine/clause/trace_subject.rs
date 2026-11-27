@@ -152,6 +152,7 @@ pub fn run_trace_subject_clause(
         package_name: &request.package_name,
         sources: &sources,
         progress_capacity: request.limits.progress.covered_positions,
+        emit: request.limits.package.emit(),
     };
     Ok(run_subject(
         &run,
@@ -205,6 +206,7 @@ pub fn run_package_trace_subject(request: &PackageTraceSubjectRequest<'_>) -> Cl
         package_name: request.package.emitted_package_name().unwrap_or_default(),
         sources: request.sources,
         progress_capacity: 0,
+        emit: crate::spine::PackageLimits::default().emit(),
     };
     run_subject(
         &run,

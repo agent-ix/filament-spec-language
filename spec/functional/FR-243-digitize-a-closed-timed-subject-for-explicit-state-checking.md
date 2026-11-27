@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
 ---
 # FR-243: Route timed items to the zone engine or the digital-clock route
 
@@ -23,10 +25,12 @@ relationships:
 The request writer SHALL route every non-probabilistic timed item (TT-1 to
 TT-4, the deadlock-freedom item and the time-lock-freedom item) to EN-6's
 zone search (FR-239), so a timed invariant is proved by `Holds` with a CF-1
-certificate (ADR-026 EZ-10). Only a probabilistic claim over a timed
-subject that names `exact` evidence takes the digital-clock route, EN-5's
-reading of a closed subject through integer-valued clocks (ADR-028 TA-1 to
-TA-3, FR-204), whose results settle by FR-203.
+certificate (ADR-026 EZ-10). Two kinds of item are read through
+integer-valued clocks: a probabilistic claim over a timed subject that names
+`exact` evidence goes to EN-5, which decides it on digital clocks or on clock
+regions as ADR-038's route admission table states (ADR-028 TA-1 to TA-3,
+FR-204), and its results settle by FR-203; and a `temporal-satisfaction` item
+that names `options.method` `digital-clocks` goes to EN-1 ("Behavior").
 
 ## Use case
 
@@ -42,7 +46,7 @@ decided on the digital-clock route with an exact value.
 
 ## Outputs
 
-- The routed engine for the item: EN-6, EN-5's digital-clock route for an exact probabilistic claim, or EN-1 over the digital-clock reading for a `temporal-satisfaction` item that names `options.method` `digital-clocks`.
+- The routed engine for the item: EN-6, EN-5 for an exact probabilistic claim, or EN-1 over the digital-clock reading for a `temporal-satisfaction` item that names `options.method` `digital-clocks`.
 
 ## Behavior
 
@@ -62,18 +66,111 @@ decided on the digital-clock route with an exact value.
   verdict; EZ-10's default route is unchanged, and EN-6 still never
   digitises (FR-239).
 - EN-1's digital-clock route SHALL check, before any search, that the
-  subject's constraints and the claim's intervals are all closed, the case
-  in which digitisation preserves the dense-time verdict. When one is
-  strict, the route SHALL decline: the item settles `declined`
-  `invalid-input` naming the strict constraint or interval, with
-  `settled_by` `result` and `backend` `en-1`, and no search runs.
+  subject is closed and that digitisation preserves the item's dense-time
+  verdict. The subject is closed when every clock constraint of its guards
+  and time invariants is non-strict. When it is not, or the claim carries a
+  strict (open or half-open) interval, the route SHALL decline the item
+  `invalid-input` naming the strict constraint or interval.
+- The **normal form** of a temporal claim is the normal form of the claim
+  itself, not of its negation: `implies` and `iff` expanded and every
+  negation pushed to the atoms. Each occurrence of an operator or atom in it
+  keeps the source span it came from. A temporal claim is **digitisable**
+  when, in the normal form of the claim:
+  - (a) every timed interval is closed;
+  - (b) no atom reads a clock;
+  - (c) at most one occurrence of `eventually`, `until`, `once` or `since`
+    carries an interval other than `[0, *]`;
+  - (d) each such occurrence's interval has lower bound 0 or no upper bound;
+  - (e) no such occurrence is inside the operand of any `eventually` or
+    `once`, an operand of any `until` or `since`, or the left operand of any
+    `release` or `triggered`; and
+  - (f) when the claim declares a fairness constraint, the subject has no
+    clock constraint.
+
+  EN-1's digital-clock route SHALL decline a claim that is not digitisable
+  `invalid-input`, naming the one part that fails the rule and that rule.
+- EN-1's digital-clock route SHALL choose the named part as follows. The
+  occurrences of the normal form are read in the source order of the claim:
+  by the start of their source spans, and of two with the same start, the
+  longer span first. Occurrences with one source span, which `iff` expansion
+  can make, are read together. The first source span with an occurrence that
+  breaks one of (a) to (e) is named, with the first rule in (a) to (e) order
+  that any occurrence with that span breaks; (c) is broken by every counted
+  occurrence after the first in that order. When (a) to (e) hold and (f) does
+  not, the first `fair` constraint the claim declares, in source order, is
+  named, with rule (f).
+- When EN-1's digital-clock route declines a claim that is not digitisable or
+  a state-graph form, it SHALL carry the diagnostic member `not_digitisable`,
+  an object `{rule, span: {start, end}}` (FSpec FR-272): `span` is the byte
+  range, in the claim's source unit, of the named part, or of the claim's
+  declaration for a state-graph form, and `rule` is one of the spellings
+  below. No other decline carries the member. A strict interval is declined
+  by the strict-constraint rule above before (a) is read, and that decline
+  carries no `not_digitisable`.
+- Of the state-graph forms (FR-852), EN-1's digital-clock route SHALL decide
+  `possible` and SHALL decline `always possible` and `unique path`
+  `invalid-input` naming the form: each quantifies over every reachable
+  timed state, and an integer-clock reading does not visit them all.
+- Every decline by EN-1's digital-clock route settles `declined` with
+  `settled_by` `result` and `backend` `en-1`, and no search runs. A decline
+  for a claim that is not digitisable, or for a state-graph form, carries the
+  catalogued cause `invalid_runtime_input`/`invalid-value`. EN-6, the route
+  of an item whose `options.method` is absent or `zones`, decides such an
+  item.
 - When a `probabilistic-satisfaction` item over a timed subject names
-  `exact` evidence, the request writer SHALL route it to EN-5's
-  digital-clock route (FR-204); when it names `statistical` evidence, to
+  `exact` evidence, the request writer SHALL route it to EN-5
+  (FR-204); when it names `statistical` evidence, to
   EN-4 (FR-254).
 - The route SHALL be a function of the capability kind, the requested
   evidence kind and the item's `options` alone, negotiated against the
   published manifests, so one item always reaches one engine.
+
+The `not_digitisable` rule spellings are a closed set:
+
+| `rule` | What is declined |
+|--------|------------------|
+| `clock-atom` | (b) |
+| `second-bounded-operator` | (c) |
+| `two-sided-interval` | (d) |
+| `nested-bounded-operator` | (e) |
+| `fairness-over-clock-constraint` | (f) |
+| `always-possible` | an `always possible` item |
+| `unique-path` | a `unique path` item |
+
+### Decision: digitise only what one rounding preserves
+
+Digitisation rounds every time stamp of a dense behaviour to an integer with
+one rounding threshold. For a closed subject every threshold gives a
+behaviour of the subject. A claim's verdict carries over only when a
+violating dense behaviour has some threshold whose rounded behaviour also
+violates it. "Some later position lies in a closed window" holds under every
+threshold, as does a statement about every later position. "Every position
+within the interval `I` of one position holds" needs the positions outside
+`I` to stay outside it, which one threshold gives when `I` is bounded on one
+side only. A two-sided `I`, two such statements, or one read at many
+positions can need two thresholds at once. In the two-step subject of
+FR-243-AC-5, `first` at a time strictly between 0 and 1 leaves no position in
+`[1, 2]`, and no integer time stamps reproduce that.
+
+Rule (b): rounding keeps non-strict clock comparisons only, and a negated
+clock atom is a strict one.
+
+Rule (f): fairness asks whether an operation is enabled at every instant. A
+disabled constrained operation can be a strict region such as `x > b`, which
+the integer grid can miss. Take an operation `loop`, guarded by `x <= 1 ms`,
+that resets `x`, the time invariant `x <= 1 ms`, and an operation `t`,
+guarded by `x >= 1 ms`, that reaches a quiescent state `done`. Taking `loop`
+every half millisecond never enables `t`, so that behaviour is fair under
+`strong t` and refutes `eventually holds(done)`; every integer-clock
+behaviour that diverges without `t` enables `t` again and again, so none of
+them is fair.
+
+Why (a) to (e) suffice is argument A of ADR-038 (a closed comparison survives
+every threshold, Kwiatkowska, Norman, Parker and Sproston 2006, Lemma 17); it
+covers this temporal route only and no probabilistic claim.
+
+The rule is conservative: it declines some claims that digitisation would
+preserve.
 
 ## Acceptance Criteria
 
@@ -83,10 +180,14 @@ decided on the digital-clock route with an exact value.
 | FR-243-AC-2 | ADR-028 §15.5's `Deadline` over `Retx` with `exact` evidence routes to EN-5's digital-clock route and settles `proved`, `ExactValue{99/100}` (FR-204-AC-1); with `statistical` evidence it routes to EN-4. | Test (TC-698) |
 | FR-243-AC-3 | ADR-026 §9's retry model, with strict constraints, routes `always holds(not retried)` to EN-6 and is refuted (FR-239-AC-2); the all-closed `Rpc` routes the same claim kind to EN-6 too. | Test (TC-698) |
 | FR-243-AC-4 | `NoLateReply` over the all-closed `Rpc` with `T = 4 ms` and `options.method` `digital-clocks` routes to EN-1's explicit-state search over the integer-clock reading and settles `proved`, basis `exhaustive`, as the zone route proves it; the same item over ADR-026 §9's strict-constraint retry model settles `declined` `invalid-input` with `settled_by` `result` and `backend` `en-1`, and no search runs; with `options.method` absent it negotiates to EN-6. | Test (TC-2290) |
+| FR-243-AC-5 | Over the two-step closed subject (`first`, taken by `x <= 1 ms`, resets `x`; `second` is taken at exactly `x = 2 ms`), `eventually[1 ms, 2 ms] holds(c.phase >= 0)`, `holds(c.phase >= 0) until[1 ms, 2 ms] holds(c.phase >= 0)`, `eventually[0 ms, 0 ms] eventually[1 ms, 2 ms] holds(c.phase >= 0)` and `eventually (holds(c.phase = 0) and eventually[1 ms, 2 ms] holds(c.phase >= 0))` are each refuted by EN-6 and declined `invalid-input` by EN-1 with `not_digitisable` naming the rule and the failing operator's span, never `proved`; `eventually[0 ms, 2 ms] holds(c.phase >= 1)` and `always (holds(c.phase = 1) implies eventually[0 ms, 2 ms] holds(c.phase = 2))` are proved by both. | Test (TC-2290) |
+| FR-243-AC-6 | An `always possible` and a `unique path` item with `options.method` `digital-clocks` are declined `invalid-input` with `not_digitisable` naming the form, with `backend` `en-1`, and no search runs; a `possible` item is decided. | Test (TC-2412) |
+| FR-243-AC-7 | Over the two-step closed subject, a temporal claim that declares a fairness constraint is declined `invalid-input` by EN-1 with `not_digitisable` rule `fairness-over-clock-constraint` and the span of the claim's first `fair` constraint in source order, and no search runs. | Test (TC-2290) |
 
 ## Dependencies
 
-- ADR-026 §8 EZ-10, §8.1 CF-4; ADR-028 TA-1 to TA-3 (EN-5's digital route).
+- ADR-026 §8 EZ-10, §8.1 CF-4; ADR-028 TA-1 to TA-3 (EN-5's digital route);
+  ADR-038 (route admission).
 - [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md),
   [FR-235](FR-235-settle-a-timed-verdict-as-a-terminal-record.md),
   [FR-238](FR-238-represent-zones-as-difference-bound-matrices.md),

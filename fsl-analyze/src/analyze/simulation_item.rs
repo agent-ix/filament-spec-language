@@ -14,11 +14,13 @@ use fsl_eval::simulation::model::{
     enumerate_model, sample_model_runs, ClauseOutcome, ModelFinding, ModelSystem, SampledRuns,
 };
 use fsl_eval::simulation::{
-    Coverage, EnumerationBounds, EnumerationEnd, NotSimulated, StateKey, BOUND_POSITIONS,
+    Coverage, EnumerationBounds, EnumerationEnd, ExpansionLimit, NotSimulated, StateKey,
+    StopReason, BOUND_POSITIONS,
 };
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::{RequestIndex, Setting};
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -189,7 +191,12 @@ pub(crate) enum SimulationFault {
 }
 
 /// The `{category, cause}` of a run that ended at `end`.
-fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Option<Value>) {
+fn ending(
+    end: &EnumerationEnd,
+    settings: &SimulationSelection,
+    system: &ModelSystem<'_>,
+    limits: &AnalyzeLimits,
+) -> (Category, Option<Value>) {
     // FSpec FR-181 "Simulation bounds and their published defaults": each
     // bound is reported with its FR-461 setting name.
     let limit = |limit: &str, setting: &str, value: u64| {
@@ -229,10 +236,39 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
             Category::Incomplete,
             Some(json!({"kind": "cancelled", "code": "cancelled"})),
         ),
-        EnumerationEnd::Stopped(cause) => (
+        EnumerationEnd::Stopped(_, limit)
+            if expansion_stop_cause(*limit, system, limits).is_some() =>
+        {
+            (
+                Category::Incomplete,
+                expansion_stop_cause(*limit, system, limits),
+            )
+        }
+        EnumerationEnd::Stopped(cause, _) => (
             fsl_foundation::diagnostic::category_of(cause).unwrap_or(Category::InternalFailure),
             Some(json!({"code": cause.code(), "kind": cause.cause()})),
         ),
+    }
+}
+
+/// The FR-634 cause of an expansion stopped at `limit`: the `limit-reached`
+/// naming the budget it ran out of, its setting and its value. `None` for a
+/// stop that names no budget.
+fn expansion_stop_cause(
+    limit: Option<ExpansionLimit>,
+    system: &ModelSystem<'_>,
+    limits: &AnalyzeLimits,
+) -> Option<Value> {
+    match limit? {
+        ExpansionLimit::MaxCandidates => {
+            Some(json!({"kind": "limit-reached", "limit": "max_candidates",
+            "setting": "expansion.max_candidates", "value": limits.expansion.max_candidates}))
+        }
+        ExpansionLimit::EvaluationMeter(kind) => {
+            Some(json!({"kind": "limit-reached", "limit": kind.as_str(),
+            "setting": format!("accounting.{}", kind.as_str()),
+            "value": crate::plan_search::accounting_limit(system, kind)}))
+        }
     }
 }
 
@@ -241,13 +277,12 @@ fn state_value(key: &StateKey) -> Result<Value, SimulationFault> {
     serde_json::from_slice(key.as_bytes()).map_err(|_| SimulationFault::Fault)
 }
 
-/// A transition identity's typed canonical form.
+/// A trace step's written transition, spelled as FR-120 writes every one.
+#[implements("FR-120-AC-40")]
 fn transition_value(
     transition: &filament_semantic_value::model_transition::ModelTransition,
 ) -> Result<Value, SimulationFault> {
-    let bytes = quire_canonical::to_vec(transition, quire_canonical::Limits::new(u64::MAX))
-        .map_err(|_| SimulationFault::Fault)?;
-    serde_json::from_slice(&bytes).map_err(|_| SimulationFault::Fault)
+    fsl_replay::task_source_transition_wire(transition).map_err(|_| SimulationFault::Fault)
 }
 
 fn coverage_value(coverage: &Coverage) -> Value {
@@ -429,7 +464,7 @@ fn enumerate(
             Ok(if state.oversized {
                 json!({"position": at})
             } else {
-                json!({"state_key": base64url(&state.key)})
+                json!({"state_key": fsl_replay::shared_wire::state_key_text(&state.key)})
             })
         })
         .collect::<Result<Vec<_>, SimulationFault>>()?;
@@ -437,7 +472,7 @@ fn enumerate(
         // A cut list of traces leaves the run incomplete whatever else
         // stopped it.
         Some(cause) => (Category::Incomplete, Some(cause)),
-        None => ending(&run.end, settings),
+        None => ending(&run.end, settings, system, limits),
     };
     if let Some(cause) = cause {
         document.insert("cause".to_owned(), cause);
@@ -522,13 +557,6 @@ fn clause_cause(outcome: &ClauseOutcome) -> Value {
     }
 }
 
-/// The unpadded base64url spelling of a state key, FR-621's spelling, which
-/// the document writer reads back into the state it names.
-fn base64url(key: &StateKey) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())
-}
-
 fn sample(
     system: &ModelSystem<'_>,
     settings: &SimulationSelection,
@@ -602,7 +630,27 @@ fn sample(
         written.push(trace);
     }
     let drawn = u64::try_from(written.len()).unwrap_or(u64::MAX);
+    // FR-634 "Stopped expansion": a written trace that ended at a stopped
+    // expansion before it held `max_steps` steps is a prefix, so the item is
+    // incomplete; one that already holds `max_steps` steps is complete.
+    let max_steps = settings.max_steps();
+    let stopped_expansion = draw
+        .traces
+        .iter()
+        .zip(&draw.stop_limits)
+        .take(written.len())
+        .find_map(|(trace, limit)| {
+            let ended_stopped = trace
+                .provenance
+                .as_ref()
+                .is_some_and(|provenance| matches!(provenance.stopped, StopReason::Stopped(_)));
+            (trace.steps.len() < max_steps && ended_stopped)
+                .then(|| expansion_stop_cause(*limit, system, limits))
+                .flatten()
+        });
     let (category, cause) = if let Some(cause) = cut {
+        (Category::Incomplete, Some(cause))
+    } else if let Some(cause) = stopped_expansion {
         (Category::Incomplete, Some(cause))
     } else if oversized {
         (
@@ -694,3 +742,31 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod written_step_tests {
+    use super::transition_value;
+    use filament_semantic_value::model_transition::ModelTransition;
+    use ix_trace_rs::trace;
+
+    /// FR-120-AC-40: a simulation item's trace step writes its `operation` as
+    /// every writer does.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_trace_step_writes_a_name_identity_as_the_name() {
+        let object = r#"{"node":"ix://a/b/C/d","package":"a/b"}"#;
+        for (identity, written) in [(r#""tick""#, "tick"), (object, object)] {
+            let transition = ModelTransition::new(
+                identity.to_owned(),
+                None,
+                Vec::new(),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .expect("a canonical transition");
+            let Ok(wire) = transition_value(&transition) else {
+                panic!("a step spells: {identity}");
+            };
+            assert_eq!(wire["operation"], written, "{identity}");
+            assert_eq!(wire["type"], "transition");
+        }
+    }
+}

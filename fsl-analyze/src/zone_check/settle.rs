@@ -109,7 +109,8 @@ impl ZoneCheckRecord {
             | IncompleteCause::ResourceExhausted
             | IncompleteCause::UnresolvedDynamics
             | IncompleteCause::CertificateUnchecked
-            | IncompleteCause::PrecisionBudget { .. } => None,
+            | IncompleteCause::PrecisionBudget { .. }
+            | IncompleteCause::IdleTailUndecided(_) => None,
         };
         Self {
             limit_reached,

@@ -41,7 +41,7 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::ReductionKind;
+use fsl_foundation::{ReductionKind, Setting};
 use fsl_replay::{
     AppliedReduction, CounterexampleKind, Lasso, NonZeno, ReductionCause, SymmetryBrokenCause,
     SymmetryRefusal, TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus,
@@ -84,11 +84,12 @@ pub struct ZoneCheckLimits {
 
 impl Default for ZoneCheckLimits {
     fn default() -> Self {
+        let default = |setting: Setting| setting.default_bound().unwrap_or(0);
         Self {
-            max_symbolic_states: 1 << 20,
-            max_symbolic_transitions: 1 << 24,
-            max_automaton_states: 1 << 20,
-            max_zone_bytes: 1 << 30,
+            max_symbolic_states: default(Setting::ZoneCheckMaxSymbolicStates),
+            max_symbolic_transitions: default(Setting::ZoneCheckMaxSymbolicTransitions),
+            max_automaton_states: default(Setting::ZoneCheckMaxAutomatonStates),
+            max_zone_bytes: default(Setting::ZoneCheckMaxZoneBytes),
         }
     }
 }

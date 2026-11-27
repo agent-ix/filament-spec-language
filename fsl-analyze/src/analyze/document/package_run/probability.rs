@@ -7,11 +7,13 @@ use fsl_package::CheckedNodeId;
 use fsl_route::request::ExtentClassification;
 use fsl_route::{EvidenceKind, ItemEvidence};
 use fsl_semantics::check::Capability;
+use ix_trace_rs::implements;
 
 use super::super::{candidate_list, invalid_kind, unknown_option, ItemSelection, ResolvedClaim};
 use super::{ClaimReads, PackageRunError, Resolution};
 
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
+    #[implements("FR-940-AC-39")]
     pub(super) fn probability(
         &self,
         index: RequestIndex,
@@ -167,9 +169,8 @@ pub(super) fn item<'a>(
                     super::super::super::Refusal::Failed(super::super::super::items::BROKEN),
                 );
             };
-            let mut simulation =
-                super::super::super::request::simulation(&model, &binding, &limits);
-            simulation.expansion.max_candidates = 1_000_000;
+            let simulation =
+                super::super::super::request::probability_simulation(&model, &binding, &limits);
             super::super::super::exact::run_package_exact(
                 crate::exact_probabilistic::ProductRequest {
                     subject: fsl_eval::model_subject::ModelSubject {

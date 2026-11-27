@@ -5,7 +5,21 @@ type: FR
 relationships:
   - target: ix://agent-ix/filament-spec-language/US-029
     type: implements
-  - target: ix://agent-ix/filament-specification/FR-800 filament-specification/FR-802 filament-specification/FR-803 filament-specification/FR-804 filament-specification/FR-808 filament-specification/FR-809 filament-spec-language/FR-755
+  - target: ix://agent-ix/filament-specification/FR-800
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-802
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-803
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-804
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-808
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-809
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-755
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
 ---
 # FR-1012: Search plans with exact costs, policy monitors and the canonical plan order
@@ -20,6 +34,8 @@ FSL's plan search in `fsl-analyze` SHALL implement FSpec FR-800 to FR-804, FR-80
 - The reported plan and every count SHALL be those of FSpec FR-801's canonical sequential exploration ("Exploration order": layers by step count, nodes within a layer by accumulated per-step sum then representative prefix in FSpec FR-804's step order, successors in step order, and its fixed charge order), whatever the worker count.
 - Over a timed grammar the search SHALL implement FSpec FR-808: tick steps of delay 0, dense-time steps of an exact delay then an invocation over FSpec FR-418's region abstraction, concrete delays at the least point or the open-bound midpoint, and an unattained infimum reported `feasible` with its exact `bound`; every `delay` and `elapsed` is written as FSpec FR-181's unit-bearing quantity in the model's time unit.
 - Over a probabilistic grammar the search SHALL implement FSpec FR-809: open-loop actions with drawn arguments, adversarial choice, nodes holding the exact state distribution, and `probability` and the expected objective computed as exact rationals.
+- The plan search SHALL keep, for each policy clause, one monitor for each admitted key of the clause's `over` type (FR-125 "Instancing").
+- A plan keeps a policy only when every one of that policy's monitors accepts it (FSpec FR-803).
 - Every reported plan SHALL replay natively before it is written (FR-755).
 - A state at which a model invariant is violated SHALL be inadmissible and never part of a plan. A state at which an invariant cannot be decided SHALL NOT be expanded; if the search excluded any state for that reason, it SHALL settle `incomplete` with cause `invariant-undetermined` naming the invariant, carrying the best plan found that does not pass through such a state, and SHALL NOT settle `optimal` or `infeasible` or write a certificate. A certificate check that re-derives such a state SHALL end with the same cause, not a certificate rejection, and a plan that passes through such a state is not admissible evidence at replay.
 
@@ -30,6 +46,8 @@ terminal-stutter closure. Other checked positive-length shapes retain an
 explicit unsupported result until implemented. Captures, general liveness
 and FR-1012-AC-1 remain required subsequent increments; this staged boundary
 does not change their acceptance obligations.
+
+- A contract conjunction of a reachable state's expansion that has no value, an undefined precondition guard or postcondition included, SHALL stop the search `incomplete` with the cause `contract-undefined` naming the conjunction's clause, and never `optimal`, `feasible` or `infeasible` (ADR-018 UE-6): it is not a disabled invocation. No plan is reported, whether or not it passes through the state, and none is certified: an undefined conjunction on the way means no plan is a claim (UE-6). When a search both prunes a state for an undetermined invariant and meets such a conjunction, `contract-undefined` SHALL be the cause, since the conjunction's refutation (UE-6) outranks an undecided invariant. The certificate check SHALL reject a certificate whose entry's expansion has such a conjunction with the same cause, on the expansion and native routes alike.
 
 ## Acceptance Criteria
 
@@ -42,7 +60,10 @@ does not change their acceptance obligations.
 | FR-1012-AC-5 | Over FSpec's published `probabilistic-try` fixture the goal `Reach.final.done` gives `optimal` `retry` (FSpec FR-809-AC-1), and `maximize Reach.probability` over lengths 1 to 2 using only `try` gives `optimal` `try, try` with `objective.value` the Rational `3/4` (FR-809-AC-2). | Test (TC-2862) |
 | FR-1012-AC-6 | Over FSpec's published `counter` fixture, `limits` `{"max_states": 2}` gives `incomplete` with `explored.states` 2 and `explored.work` 6 and plan `null`, and `{"max_work": 1}` gives `explored.states` 1 and `explored.work` 1 (FSpec FR-801-AC-8), each byte-identical across two runs. | Test (TC-2862) |
 | FR-1012-AC-7 | Over a model whose invariant is undetermined at every state from some value up, a goal reachable only through such a state gives `incomplete` with cause `invariant-undetermined` naming the invariant, plan `null` and no certificate, never `infeasible`; a goal reached before the first such state gives `incomplete` carrying that plan, never `optimal`; and a plan substituted through such a state is not reported. | Test (TC-2862) |
+| FR-1012-AC-8 | Over a `Counter` with the policy `always holds(c.value != 4)`, a goal `true` and the domain `Int[0, 0]`: with the universe `[a, b]`, `a` at 0 and `b` at 0, the result is `optimal` with the empty plan; with `b` at 4 it is `infeasible`, although `a`'s monitor accepts; with the universe `[a, z]`, `a` at 0 and no object under `z`, it is `optimal` with the empty plan. | Test (TC-2862) |
+| FR-1012-AC-9 | A contract conjunction with no value at a reachable state, an undefined precondition guard included, is never read as a disabled step (ADR-018 UE-6). Over `counter` with the added precondition `q(2 - self.value) >= 0` of `inc`, `function q using v(x: Integer): Integer pure { 6 mod x }` checked under `CheckMode::Kernel`, whose guard has no value at the reachable value 2, a goal reachable through that value and a goal reachable only past it each give `incomplete` with cause `contract-undefined` naming the clause, never `optimal`, `feasible` or `infeasible`, with no certificate reported as accepted; and a certificate whose entry's expansion has such a conjunction is rejected with that cause. | Test (TC-2862) |
 
 ## Dependencies
 
-- FR-800 filament-specification/FR-802 filament-specification/FR-803 filament-specification/FR-804 filament-specification/FR-808 filament-specification/FR-809 filament-spec-language/FR-755 (filament-specification).
+- FSpec FR-800, FR-802, FR-803, FR-804, FR-808 and FR-809 (plan search).
+- FR-755 (native plan replay) and FR-125 "Instancing" (admitted keys).

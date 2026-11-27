@@ -32,7 +32,9 @@
 //! stutter forever (FR-231's idle tail). A fair cycle through every
 //! acceptance set, a position and a divergent vertex is a violation, found
 //! by FR-126's fairness kernels; none, over every `over` instance, is a
-//! proof with basis `exhaustive` (FR-235).
+//! proof with basis `exhaustive` (FR-235), unless the subject admits no fair
+//! time-divergent behaviour at all, which is `inconclusive`
+//! `no-admitted-behaviour` (FR-232 and FR-240 "Vacuity").
 //!
 //! **Counterexamples.** The canonical lasso is written with its exact
 //! delays, whole units as rationals, its loop repeated until each clock it
@@ -61,6 +63,7 @@ use fsl_replay::{
 use fsl_semantics::check::{
     CaptureSite, CheckedInterval, CheckedTemporalClause, ClockOp, FormulaNode,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 
@@ -977,6 +980,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     }
 
     /// The decision over every instance (FR-240, FR-126).
+    #[implements("FR-232-AC-3")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
         let instances = system
@@ -1011,11 +1015,9 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 self.non_zeno = Some(NonZeno::Assumed);
             }
         }
-        // FR-240 "Vacuity": a proof under fairness needs a fair
-        // time-divergent behaviour or a quiescent state.
-        if let (false, Some(instance)) =
-            (self.request.clause.fairness().is_empty(), instances.first())
-        {
+        // FR-240 and FR-232 "Vacuity": a proof needs a fair time-divergent
+        // behaviour or a quiescent state, with or without a declared fairness.
+        if let Some(instance) = instances.first() {
             let mut product = Product::default();
             self.build(&mut product, automaton, true, instance)?;
             let tail = product.vertices.iter().any(|vertex| vertex.tail);

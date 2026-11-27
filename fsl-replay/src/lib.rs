@@ -118,6 +118,7 @@ mod refinement_query;
 mod request;
 mod result;
 mod scalar;
+pub mod shared_wire;
 pub mod source_inventory;
 pub mod spine;
 mod spine_eval_api;
@@ -128,6 +129,7 @@ mod timed;
 pub mod value_check;
 mod witness;
 mod witness_entry_name;
+mod written_operation;
 
 use fsl_package::{ModelIdentity, ObligationIdentity};
 
@@ -457,7 +459,6 @@ pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use outcome::undefined_reason;
-pub use outcome::verdict_bound_wire;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,
@@ -495,26 +496,43 @@ pub use probability_certificate::{
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,
     check_probability_certificate_document, check_probability_certificate_document_as,
     check_probability_certificate_package, check_probability_certificate_source, claim_binding,
+    check_probability_certificate_document_as_with_work_scope,
     conditional_measure_probability_certificate, cyclic_mdp_probability_certificate_document,
-    cyclic_mdp_reward_probability_certificate_document, digital_key_clocks,
+    cyclic_mdp_reward_probability_certificate_document,
+    cyclic_mdp_probability_certificate_document_with_work_scope,
+    cyclic_mdp_reward_probability_certificate_document_with_work_scope, digital_key_clocks,
     digital_probability_product_key, long_run_probability_certificate_document,
+    long_run_probability_certificate_document_with_work_scope,
     measure_probability_certificate_document, measure_probability_objective,
+    measure_probability_certificate_document_with_work_scope,
     measure_probability_product_key, on_each_has_instance, on_each_outcome,
+    on_each_outcome_with_work_scope,
+    partial_lower_probability_proof_document, partial_lower_probability_proof_document_with_work_scope,
+    probabilistic_claim_identity,
     partial_lower_measure_probability_certificate_document,
-    partial_lower_probability_proof_document, probabilistic_claim_identity,
+    partial_lower_measure_probability_certificate_document_with_work_scope,
     probabilistic_formula_monitor_context, probability_certificate_document,
-    probability_proof_document, read_long_run_probability_certificate,
+    probability_proof_document, probability_proof_document_with_work_scope,
+    read_long_run_probability_certificate,
     read_measure_probability_certificate, read_probability_certificate,
     read_probability_proof_document, read_weighted_long_run_probability_certificate,
-    region_probability_product_key, replay_on_each_witness, replay_probabilistic_undefined,
+    region_probability_product_key, replay_on_each_witness,
+    replay_on_each_witness_with_work_scope, replay_probabilistic_undefined,
+    replay_probabilistic_undefined_with_work_scope,
     replay_probabilistic_witness, replay_probabilistic_witness_from_package,
+    replay_probabilistic_witness_from_package_with_work_scope,
+    replay_probabilistic_witness_with_work_scope,
     vacuous_measure_probability_certificate_document,
+    vacuous_measure_probability_certificate_document_with_work_scope,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document_with_work_scope,
     write_measure_probability_certificate, write_value_bounds_measure_certificate,
     write_probability_certificate,
-    write_probability_proof_document, write_timed_fair_probability_certificate,
+    write_probability_proof_document, write_probability_proof_document_with_work_scope,
+    write_timed_fair_probability_certificate,
     write_value_bounds_certificate,
-    write_value_bounds_proof_document, write_weighted_long_run_probability_certificate,
+    write_value_bounds_proof_document, write_value_bounds_proof_document_with_work_scope,
+    write_weighted_long_run_probability_certificate,
     ActivationPhase, ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput,
     CertificateRole, DigitalTail, ExactProbabilityAcceptance, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue,
@@ -551,8 +569,7 @@ pub use proof_result::{
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
     read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
     BackendProviderSource, BoundsExploration, BoundsMethod, Certification, DeclineCode,
-    EmptyEnvelopeSet, ExactBinding, ExactBound, ExactEntry, ExactOrBounds, ExactRational,
-    Extremum, FslOnlyCause,
+    EmptyEnvelopeSet, ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
     IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
     PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
     ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, ReportedInconclusiveCause,

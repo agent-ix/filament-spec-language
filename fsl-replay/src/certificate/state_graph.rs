@@ -96,6 +96,7 @@ pub struct StateGraphCertificateRequest<'a> {
 /// the `over` binding is no instance of the subject, the subject has no
 /// initial state, or a state cannot be encoded. A refusal is never an
 /// acceptance.
+#[implements("FR-169-AC-9")]
 pub fn check_state_graph(
     request: &StateGraphCertificateRequest<'_>,
     certificate: &StateGraphCertificate,

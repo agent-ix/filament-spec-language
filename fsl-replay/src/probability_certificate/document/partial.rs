@@ -88,11 +88,10 @@ pub(super) fn explored_subject(
 }
 
 /// [`probability_proof_document`], ranking the states `certificate` names
-/// alone and naming for an acyclic `eventually` those in that graph alone, or,
-/// where `max_states` stops the whole graph, the document of a `lower` proof
-/// over the states `certificate` names and their successors (FR-1042
-/// "Document"). Over that part an `eventually` takes the cyclic chain base,
-/// ranking each named state by its distance to a named target through named
+/// alone, or, where `max_states` stops the whole graph, the document of a
+/// `lower` proof over the states `certificate` names and their successors
+/// (FR-1042 "Document"). Over that part an `eventually` takes the cyclic chain
+/// base, ranking each named state by its distance to a named target through named
 /// states of positive value; an expected reward takes the acyclic profile,
 /// ranked by height in that part. This does not grant acceptance.
 #[implements("FR-1042-AC-25", "FR-1042-AC-26")]
@@ -104,6 +103,48 @@ pub fn partial_lower_probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    partial_lower_probability_proof_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+/// Produce a partial lower proof while charging the caller's item work scope.
+#[implements("FR-203-AC-29")]
+pub fn partial_lower_probability_proof_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    partial_lower_probability_proof_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn partial_lower_probability_proof_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     // Both attempts share one arithmetic and retained-storage scope.
     let (whole, mut meter, mut storage) = super::mdp::probability_proof_document_spending(
         system,
@@ -112,6 +153,7 @@ pub fn partial_lower_probability_proof_document(
         certificate,
         limits,
         cancel,
+        work,
     );
     let exhausted = match whole {
         Err(
@@ -120,16 +162,9 @@ pub fn partial_lower_probability_proof_document(
                 ..
             },
         ) => error,
-        // The checker's graph can fit `max_states` where the explored model
-        // did not: an `eventually` graph stops at its targets.
+        // The whole document fits where the explored model did not: its graph
+        // stops at the targets, and so do its values.
         Ok(mut proof) => {
-            let claim = bind_claim(claims, item, cancel)?;
-            if !proof.document().cyclic_dtmc
-                && matches!(claim.scheduler, ProbScheduler::Workload(_))
-                && is_eventual_reach(claim)
-            {
-                proof.keep_graph_values();
-            }
             proof.rank_named_rows();
             return Ok(proof);
         }

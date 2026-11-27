@@ -2174,3 +2174,30 @@ fn operation_weight_is_shared_among_tied_identities() {
         &[ratio(17, 36), ratio(5, 12)],
     );
 }
+
+/// FR-125 "Instancing": an instance is identified by its key alone, so the
+/// identity of a cycle state does not depend on which population listed the
+/// bound key first.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_cycle_state_identity_names_the_bound_instance_by_key_alone() {
+    let identity = |population: &str, key: &str| {
+        fsl_analyze::exact_probabilistic::ProbKey {
+            binding: Some(fsl_eval::model_subject::ModelInstance {
+                population: filament_checked::key::DeclarationKey {
+                    package: "test/link".to_owned(),
+                    node: population.to_owned(),
+                },
+                key: key.to_owned(),
+            }),
+            model: b"state".to_vec(),
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            certificate_state: None,
+        }
+        .digital_cycle_identity()
+    };
+    assert_eq!(identity("first", "m"), identity("second", "m"));
+    assert_ne!(identity("first", "m"), identity("first", "n"));
+}

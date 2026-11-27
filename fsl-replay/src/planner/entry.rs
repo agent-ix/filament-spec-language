@@ -22,6 +22,7 @@
 //! `unknown_required_feature`/`unsupported-feature` at the point in the
 //! reading order where it is read.
 
+use crate::shared_wire::{StateLocus, WireDefectKind};
 use filament_contract_model::Std001Code;
 use filament_exact::CancelCause;
 use fsl_foundation::{BackendId, Code, RequestIndex};
@@ -675,6 +676,11 @@ const INCOMPLETE: Table = &[
     ),
     ("bounded-search-incomplete", &["reason"], &[]),
     ("precision-budget", &["lower", "upper"], &[]),
+    (
+        crate::statistical::IdleTailUndecided::CAUSE,
+        &["reason", "state"],
+        &[],
+    ),
     ("cancelled", &["source"], &[]),
     ("timed-out", &[], &[]),
 ];
@@ -689,7 +695,8 @@ const UNSUPPORTED: Table = &[
         &["post_state_count", "post_states", "state", "transition"],
         &[],
     ),
-    ("not-stochastic", &["identity", "state"], &[]),
+    // Exactly one of `identity` and `idle_tail` (`check_not_stochastic`).
+    ("not-stochastic", &["state"], &["identity", "idle_tail"]),
     ("time-locked-sample", &["state"], &[]),
     ("total-above-draw-range", &["total"], &[]),
     ("zero-weight-component", &["component"], &[]),
@@ -776,13 +783,27 @@ fn member_of<'a>(
         .ok_or_else(|| Defect::missing(child(base, name)))
 }
 
+/// FSpec FR-331: a `not-stochastic` cause names either the identity at fault
+/// or an idle tail, never both or neither, and `idle_tail` is `true`.
+fn check_not_stochastic(members: &Map<String, Value>) -> Result<(), Defect> {
+    match (members.get("identity"), members.get("idle_tail")) {
+        (Some(_), None) | (None, Some(Value::Bool(true))) => Ok(()),
+        (None, None) => Err(Defect::missing("/cause/identity".to_owned())),
+        (Some(_), Some(_)) => Err(Defect::unknown("/cause/idle_tail".to_owned())),
+        (None, Some(_)) => Err(Defect::invalid("/cause/idle_tail".to_owned())),
+    }
+}
+
 #[ix_trace_rs::string_edge]
 fn read_cause(result: ResultValue, value: &Value) -> Result<CauseValue, Defect> {
     match result {
         ResultValue::Inconclusive => read_inconclusive(value).map(CauseValue::Inconclusive),
         ResultValue::Incomplete => read_incomplete(value),
         ResultValue::Unsupported => {
-            let (_, name) = typed_object(value, "cause", UNSUPPORTED)?;
+            let (members, name) = typed_object(value, "cause", UNSUPPORTED)?;
+            if name == "not-stochastic" {
+                check_not_stochastic(members)?;
+            }
             match name {
                 "confidence-beyond-precision" => Ok(CauseValue::Unsupported(
                     UnavailabilityCause::ConfidenceBeyondPrecision,
@@ -959,14 +980,18 @@ fn read_task_search(value: &Value) -> Result<TaskSearchEvidence, Defect> {
         let state_object = state
             .as_object()
             .ok_or_else(|| Defect::wrong_kind(state_base.clone()))?;
-        check_task_members(state_object, &["key"], &state_base)?;
-        let state_key = state
-            .get("key")
-            .ok_or_else(|| Defect::missing(format!("{base}/state/key")))?;
-        let state_key = read_text(state_key, &format!("{base}/state/key"))?;
-        if !is_base64url(&state_key) {
-            return Err(Defect::invalid(format!("{base}/state/key")));
-        }
+        check_task_members(state_object, &StateLocus::MEMBERS, &state_base)?;
+        let state_key = StateLocus::read(state)
+            .map_err(|defect| {
+                let at = format!("{state_base}{}", defect.pointer);
+                match defect.kind {
+                    WireDefectKind::Missing => Defect::missing(at),
+                    WireDefectKind::UnknownMember => Defect::unknown(at),
+                    WireDefectKind::WrongKind => Defect::wrong_kind(at),
+                    WireDefectKind::Invalid | WireDefectKind::UnknownVariant => Defect::invalid(at),
+                }
+            })?
+            .key_text();
         let depth = object
             .get("depth")
             .ok_or_else(|| Defect::missing(format!("{base}/depth")))?;
@@ -1469,13 +1494,4 @@ fn assemble(
         limit_reached,
         task_search: rest.task_search,
     })
-}
-
-/// Whether `text` is FSpec FR-331's `Base64Url`: RFC 4648 section 5, no
-/// padding, zero unused trailing bits (the strict decoder refuses the rest).
-fn is_base64url(text: &str) -> bool {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(text)
-        .is_ok()
 }

@@ -17,14 +17,20 @@
 
 use std::collections::BTreeMap;
 
-use filament_contract_model::{CheckedNodeId, CheckedNodeOwner};
+use filament_contract_model::{
+    CheckedNodeId, CheckedNodeOwner, CheckedSemanticNodeV2, SelectedSourceObjectMember,
+};
 use filament_exact::{EffectiveId, Integer, IntegerInterval, ValueType};
+use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::{
     object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
     SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
-use fsl_semantics::model::domain_package::DomainPackage;
+use fsl_semantics::model::domain_package::{DomainPackage, ValueTypeRef};
+use ix_trace_rs::implements;
 
+use crate::checked_v2::wire_graph;
+use crate::reader_protocol_projection::{declared_value_type, TypeError, TypeReader};
 use crate::BarePackage;
 
 /// A package's source-object rows do not describe a source model.
@@ -69,6 +75,15 @@ pub enum SourceModelFault {
         /// The row's node.
         node: CheckedNodeId,
     },
+    /// Reading a row's parameter types broke an invariant admission
+    /// established. An admitted package does not give this fault.
+    #[error("the parameter types of a source-object row are not readable from the package")]
+    ParameterTypeFault {
+        /// The row's node.
+        node: CheckedNodeId,
+        /// The broken invariant.
+        fault: InternalFault,
+    },
 }
 
 impl SourceModelFault {
@@ -78,7 +93,8 @@ impl SourceModelFault {
             Self::UnknownSupertype { node, .. }
             | Self::MalformedOperation { node, .. }
             | Self::UnownedObject { node, .. }
-            | Self::UnreadParameter { node, .. } => node,
+            | Self::UnreadParameter { node, .. }
+            | Self::ParameterTypeFault { node, .. } => node,
         }
     }
 }
@@ -245,12 +261,36 @@ impl BarePackage<'_> {
     /// # Errors
     ///
     /// A [`SourceModelFault`] when the rows do not describe such packages.
+    #[implements("FR-740-AC-6")]
     pub fn source_model(&self) -> Result<SourceModel, SourceModelFault> {
         let units = self.source_units()?;
-        let Ok((supply, _)) = self.witness() else {
+        let Ok((supply, identities)) = self.witness() else {
             return Ok(SourceModel::default());
         };
         let rows = supply.identities.source_objects();
+        let Some(first) = units.iter().find_map(|unit| unit.nodes.first()) else {
+            return Ok(SourceModel::default());
+        };
+        let package = self.package();
+        let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .map(|node| (&node.node_id, node))
+            .collect();
+        let graph = wire_graph(package).map_err(|_| SourceModelFault::ParameterTypeFault {
+            node: first.clone(),
+            fault: InternalFault::new("FR-390", "bare-package-has-structural-keys"),
+        })?;
+        let object_ids = self.source_object_effective_ids()?;
+        let types = TypeReader {
+            admitted: package,
+            identities,
+            nodes: &nodes,
+            graph: &graph,
+            projections: self.exact_type_projections(),
+            source_object_ids: Some(&object_ids),
+        };
         let mut model = SourceModel::default();
         for mut unit in units {
             let unit_rows = unit.rows.iter().map(|&index| &rows[index]);
@@ -268,32 +308,15 @@ impl BarePackage<'_> {
                     let mut parameters = Vec::with_capacity(operation.parameters.len());
                     let mut readable = true;
                     for parameter in &operation.parameters {
-                        let value_type = match &parameter.type_node {
-                            None if operation.clock_parameters.contains(&parameter.name) => {
-                                Some(None)
+                        let clock = operation.clock_parameters.contains(&parameter.name);
+                        let read = row_parameter(&types, parameter, clock).map_err(|fault| {
+                            SourceModelFault::ParameterTypeFault {
+                                node: node.clone(),
+                                fault,
                             }
-                            None => parameter
-                                .member_type
-                                .as_deref()
-                                .and_then(|rendering| {
-                                    rendered_scalar(rendering, &parameter.collections)
-                                })
-                                .map(Some),
-                            Some(node) => self
-                                .exact_type_projections()
-                                .get(node)
-                                .and_then(|projection| projection.as_ref().ok())
-                                .map(|projection| Some(projection.value_type().clone())),
-                        };
-                        match value_type.zip(multiplicity_of(&parameter.collections)) {
-                            Some((value_type, multiplicity)) => {
-                                parameters.push(SourceRowParameter {
-                                    name: parameter.name.to_string(),
-                                    optional: parameter.optional,
-                                    multiplicity,
-                                    value_type,
-                                })
-                            }
+                        })?;
+                        match read {
+                            Some(read) => parameters.push(read),
                             None => {
                                 readable = false;
                                 model.unread.push(UnreadSourceParameter {
@@ -327,6 +350,50 @@ impl BarePackage<'_> {
         }
         Ok(model)
     }
+}
+
+/// The parameter a row's member entry states: a data entry's type is the one
+/// its type node declares, any other entry is a `Clock` parameter or renders
+/// its type. `None` for a type a reader does not rebuild.
+///
+/// # Errors
+///
+/// A named fault when the type node breaks an invariant admission established.
+#[implements("FR-740-AC-6")]
+fn row_parameter(
+    types: &TypeReader<'_>,
+    parameter: &SelectedSourceObjectMember,
+    clock: bool,
+) -> Result<Option<SourceRowParameter>, InternalFault> {
+    let name = || parameter.name.to_string();
+    if let Some(node) = &parameter.type_node {
+        return match declared_value_type(types, node) {
+            Ok(declared) => Ok(Some(SourceRowParameter::declared(
+                name(),
+                parameter.optional,
+                &declared,
+            ))),
+            Err(TypeError::Unsupported) => Ok(None),
+            Err(TypeError::Fault(fault)) => Err(fault),
+        };
+    }
+    let value_type = if clock {
+        Some(ValueTypeRef::Clock)
+    } else {
+        parameter
+            .member_type
+            .as_deref()
+            .and_then(|rendering| rendered_scalar(rendering, &parameter.collections))
+            .map(|element| ValueTypeRef::Resolved(Box::new(element)))
+    };
+    Ok(value_type
+        .zip(multiplicity_of(&parameter.collections))
+        .map(|(value_type, multiplicity)| SourceRowParameter {
+            name: name(),
+            optional: parameter.optional,
+            multiplicity,
+            value_type,
+        }))
 }
 
 /// The original checked declaration identity of a source object admitted by
