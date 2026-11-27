@@ -355,6 +355,7 @@ fn expression(
                             declaration,
                             name,
                             read_form,
+                            ..
                         }) => encode(
                             b"field",
                             &[
