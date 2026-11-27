@@ -469,6 +469,18 @@ pub enum SimulationRefusal {
         /// The request's refinement.
         request: String,
     },
+    /// The request's refinement is not one the checked source package
+    /// declares: the checker reads the package's own refinement, never one
+    /// the producer built (FR-1051 "No producer objects").
+    #[error(
+        "stale_dependency/content-mismatch: the checked package declares no refinement {request} (certificate: {certificate})"
+    )]
+    Undeclared {
+        /// The refinement the certificate names.
+        certificate: String,
+        /// The request's refinement.
+        request: String,
+    },
     /// A subject did not open, the subject has no initial state, a state
     /// has no canonical encoding, or an invariant broke.
     #[error(transparent)]
@@ -497,13 +509,29 @@ pub fn check_simulation_certificate(
             request: request.refinement.name().to_owned(),
         });
     }
+    // On the source route the checker reads the refinement the checked
+    // package declares, not the one the request carries; the request's one
+    // only names it. The package route has no source package: its refinement
+    // is read from the admitted package by the caller (QSL-3551 follow-up).
+    let declared: &dyn crate::RefinementRead = match request.concrete.source_package() {
+        Some(package) => package
+            .graph()
+            .refinements()
+            .iter()
+            .find(|declared| declared.name() == request.refinement.name())
+            .ok_or_else(|| SimulationRefusal::Undeclared {
+                certificate: certificate.refinement.clone(),
+                request: request.refinement.name().to_owned(),
+            })?,
+        None => request.refinement,
+    };
     let budgets = Budgets::of(&request.concrete);
     let RefinementSystems {
         concrete,
         abstract_system,
         ..
     } = open_systems(
-        request.refinement,
+        declared,
         &request.concrete,
         request.abstract_package,
         request.abstract_initial.clone(),
@@ -531,7 +559,7 @@ pub fn check_simulation_certificate(
         return Err(ClosureRefusal::NoInitialState.into());
     }
     let mut run = Run {
-        refinement: request.refinement,
+        refinement: declared,
         concrete: &concrete,
         abstract_system: &abstract_system,
         certificate,
