@@ -154,7 +154,7 @@ fn analyze_request(directory: &Path, source_text: &str) -> PathBuf {
     analyze_request_with_model(
         directory,
         source_text,
-        include_bytes!("../../fixtures/cli-contract/counter.semantic-ir.json"),
+        include_bytes!("../fixtures/cli-contract/counter.semantic-ir.json"),
     )
 }
 
@@ -191,7 +191,7 @@ fn analyze_request_with_model(directory: &Path, source_text: &str, model: &[u8])
 
 fn counter_model_with_one_thousand_enums() -> Vec<u8> {
     let mut model: Value = serde_json::from_slice(include_bytes!(
-        "../../fixtures/cli-contract/counter.semantic-ir.json"
+        "../fixtures/cli-contract/counter.semantic-ir.json"
     ))
     .expect("counter model fixture is JSON");
     let constructs = model["constructs"].as_array_mut().expect("constructs");
@@ -227,11 +227,11 @@ fn counter_model_with_one_thousand_enums() -> Vec<u8> {
 
 fn counter_model_with_one_thousand_links(redefines: bool) -> Vec<u8> {
     let mut model: Value = serde_json::from_slice(include_bytes!(
-        "../../fixtures/cli-contract/counter.semantic-ir.json"
+        "../fixtures/cli-contract/counter.semantic-ir.json"
     ))
     .expect("counter model fixture is JSON");
     let types = model["types"].as_array_mut().expect("types");
-    for index in 0..=1_000 {
+    for index in 0_u64..=1_000 {
         let name = format!("Link{index:04}");
         let identity = format!("ix://test/counter/{name}");
         let generated = |suffix: &str| {
@@ -267,9 +267,35 @@ fn counter_model_with_one_thousand_links(redefines: bool) -> Vec<u8> {
     serde_json::to_vec(&model).expect("extended counter model serializes")
 }
 
+fn counter_model_with_unbounded_sequence() -> Vec<u8> {
+    let mut model: Value = serde_json::from_slice(include_bytes!(
+        "../fixtures/cli-contract/counter.semantic-ir.json"
+    ))
+    .expect("counter model fixture is JSON");
+    let counter = model["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == "ix://test/counter/Counter")
+        .expect("Counter type");
+    counter["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(json!({
+            "identity":"ix://test/counter/Counter/values","name":"values",
+            "typeRef":"ix://filament/native/Integer","presence":"required","nullable":false,
+            "defaultKind":"none",
+            "multiplicity":{"lower":0,"upper":null,"ordered":true,"unique":false},
+            "origin":{"generated":{"generatorIdentity":"ix://test/counter/Counter/values",
+                "generatorVersion":"1.0.0",
+                "inputIdentities":["ix://test/counter/Counter/values"]}}
+        }));
+    serde_json::to_vec(&model).expect("sequence-capable counter model serializes")
+}
+
 fn analyze_with_request_bound(
     path: &Path,
-    request_bytes: u64,
+    request_bytes: usize,
 ) -> Result<command::RunResult, Box<command::RunError>> {
     command::analyze_with_providers_and_limits(
         path,
@@ -286,7 +312,8 @@ fn analyze_with_request_bound(
 }
 
 fn assert_analyze_request_exact_and_one_byte_over(path: &Path) {
-    let request_bytes = std::fs::metadata(path).expect("request metadata").len();
+    let request_bytes = usize::try_from(std::fs::metadata(path).expect("request metadata").len())
+        .expect("request size fits usize");
     let result = analyze_with_request_bound(path, request_bytes)
         .expect("the request at its exact byte count is admitted");
     assert_eq!(result.exit_code, 0);
@@ -353,6 +380,101 @@ fn analyze_admits_both_thousand_link_models_at_the_request_byte_bound() {
         let path = analyze_request_with_model(directory.path(), &analyze_source(""), &model);
         assert_analyze_request_exact_and_one_byte_over(&path);
     }
+}
+
+/// Analyze admits an unbounded sequence field carrying exactly 100,000
+/// ordered values, and its observation-value ceiling remains independently
+/// typed at one value under.
+#[trace("TC-3242", "FR-620-AC-16")]
+#[test]
+fn analyze_admits_one_hundred_thousand_observation_values_at_their_bound() {
+    let directory = tempfile::tempdir().expect("analyze workspace");
+    std::fs::write(
+        directory.path().join("workflow.fsl"),
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile paths = \"filament.temporal.infinite-trace/v1\";\n\
+         model Queue = \"test/counter\";\n\
+         temporal Bounded using paths over (q: Queue::Counter) clock \"model-steps\" on origin {\n\
+           always holds(size(q.values) = 100000)\n\
+         }\n",
+    )
+    .expect("program writes");
+    let values = (0..100_000)
+        .map(|value| json!({"integer":value.to_string()}))
+        .collect::<Vec<_>>();
+    let start = json!({"format":"filament.state.snapshot/v1",
+        "identity":{"authority":"contracts","identity":"queue-sequence-start"},
+        "observation":"current","model":{"identity":"test/counter"},
+        "anchor":{"kind":"initialization","name":"queue-sequence-start"},
+        "populations":[{"population":"ix://test/counter/counters","complete":true,
+            "objects":[{"key":"queue-east","type":"ix://test/counter/Counter",
+                "fields":{"value":{"integer":"0"},"values":{"sequence":values}}}]}]});
+    std::fs::write(
+        directory.path().join("start.json"),
+        serde_json::to_vec(&start).expect("sequence snapshot serializes"),
+    )
+    .expect("sequence snapshot writes");
+    let request = json!({"format":"native-analyze/1","request":{
+        "program":{"source":{"file":"workflow.fsl","authority":"contracts",
+            "identity":"qsl-3570-sequence","document":"SizeMatrixSequence","formal_revision":1}},
+        "models":[{"format":"semantic-ir/2.0.0","source":{"file":"counter.json",
+            "authority":"contracts","identity":"counter-sequence-reference",
+            "document":"CounterSequenceInput","formal_revision":1}}],
+        "documents":[{"file":"start.json"}],"items":[{"claim":"Bounded"}],
+        "limits":{"observation":{"values":100001}}}});
+    std::fs::write(
+        directory.path().join("counter.json"),
+        counter_model_with_unbounded_sequence(),
+    )
+    .expect("sequence-capable counter model writes");
+    let path = directory.path().join("analyze.json");
+    let request = serde_json::to_vec(&request).expect("sequence analyze request serializes");
+    std::fs::write(&path, &request).expect("sequence analyze request writes");
+    let request_bytes = request.len();
+    let result = analyze_with_request_bound(&path, request_bytes)
+        .expect("the 100,000-value observation admits at the exact observation bound");
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.value.as_value()["items"][0]["record"]["result"],
+        "proved"
+    );
+
+    let mut over = request.clone();
+    over.push(b' ');
+    std::fs::write(&path, over).expect("one request byte appends");
+    let error = analyze_with_request_bound(&path, request_bytes)
+        .err()
+        .expect("one request byte over remains a whole-document refusal");
+    let document = error.outcome_document(fsl_replay::Operation::Analyze);
+    let value: Value = serde_json::from_slice(
+        &document
+            .to_bytes()
+            .expect("request-limit outcome serializes"),
+    )
+    .expect("request-limit outcome is JSON");
+    assert_eq!(error.category().exit_code(), 22);
+    assert_eq!(value["category"], "resource_exhausted");
+    assert_eq!(value["last_stage"], Value::Null);
+    assert_eq!(value["items"], json!([]));
+
+    let mut below: Value = serde_json::from_slice(&request).expect("request parses");
+    below["request"]["limits"]["observation"]["values"] = json!(100_000);
+    let below = serde_json::to_vec(&below).expect("one-under request serializes");
+    assert_eq!(
+        below.len(),
+        request.len(),
+        "request byte ceiling is independent"
+    );
+    std::fs::write(&path, below).expect("one-under observation limit writes");
+    let result = analyze_with_request_bound(&path, request_bytes)
+        .expect("the observation limit is an item-level typed result");
+    assert_eq!(result.exit_code, 22);
+    let result = result.value.as_value();
+    let rendered = result.to_string();
+    assert!(rendered.contains("stage_limit_exceeded"), "{rendered}");
+    assert!(rendered.contains("observation.values"), "{rendered}");
+    assert!(rendered.contains("100000"), "{rendered}");
+    assert!(rendered.contains("100001"), "{rendered}");
 }
 
 fn chain_model(prefix: &str, redefines: bool) -> String {
