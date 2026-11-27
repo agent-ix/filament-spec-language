@@ -51,6 +51,7 @@ use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 use super::super::capability::Capability;
 use super::super::check::{bind_parameters, Scope, StateContext, Typer};
@@ -1701,6 +1702,7 @@ impl Pass<'_, '_> {
     /// A temporal event: bounded, with only interval operators (ADR-018
     /// TP-2), its horizon and the predicate of each `holds` atom.
     #[allow(clippy::too_many_arguments)] // these are the checker inputs and output accumulators
+    #[implements("FR-194-AC-4")]
     fn formula(
         &mut self,
         claim: &ClaimCx<'_>,
@@ -1750,6 +1752,15 @@ impl Pass<'_, '_> {
                 return None;
             }
         };
+        for (_, node) in formula.iter() {
+            if let TemporalNodeForm::AggregateAtom(atom) = node {
+                // A probabilistic event is checked over its model subject.
+                // Aggregates over that subject have no checked aggregate
+                // payload for package emission; refuse them here instead of
+                // letting the lowerer report a missing typed term.
+                causes.push(TemporalCause::AggregateModelSubject { span: atom.span });
+            }
+        }
         if timed_reader.is_some() && formula.iter().any(|(_, node)| {
             matches!(
                 node,
