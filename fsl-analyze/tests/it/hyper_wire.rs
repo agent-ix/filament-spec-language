@@ -32,7 +32,7 @@ fn analyze_hyper_single_existential_holds_and_refutes() {
         if exit == 0 {
             assert_eq!(run.item(0)["record"]["certification"], "certified");
             assert!(
-                run.item(0)["record"]["evidence"]["paths"][0]["loop_entry"].is_string(),
+                run.item(0)["record"]["evidence"][0]["paths"][0]["loop_entry"].is_string(),
                 "{}",
                 run.document()
             );
@@ -692,9 +692,9 @@ fn analyze_event_position_single_existential_is_proved_or_trapped() {
         assert_eq!(label(&item), expected, "{}", run.document());
         if exit == 0 {
             assert_eq!(item["record"]["basis"]["type"], "exhaustive", "{item}");
-            assert_eq!(item["record"]["evidence"]["arm"], "witness", "{item}");
+            assert_eq!(item["record"]["evidence"][0]["arm"], "witness", "{item}");
             assert_eq!(
-                item["record"]["evidence"]["paths"][0]["path"]["steps"]
+                item["record"]["evidence"][0]["paths"][0]["path"]["steps"]
                     .as_array()
                     .map(Vec::len),
                 Some(2),

@@ -282,7 +282,7 @@ fn the_source_item_binds_only_an_admitted_key() {
         assert_eq!(label(&item), "proved", "{}", run.document());
         assert_eq!(run.exit, 0, "{}", run.document());
         assert_eq!(
-            item["record"]["evidence"]["instance"],
+            item["record"]["evidence"][0]["instance"],
             bound_v(thing_reference("l", "Lamp")),
             "{}",
             run.document()
@@ -425,6 +425,50 @@ fn every_overlapping_population_gives_instances() {
         false,
     );
     assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+}
+
+/// FSpec FR-396-AC-12 and FR-393 `ItemEvidence`: a proved single-existential
+/// item over two instances writes `evidence` as an array of two `witness`
+/// arms in instance order, each naming its own instance, on both routes; a
+/// refuted item keeps one counterexample and no array.
+#[trace("TC-3219", "FR-396-AC-12")]
+#[test]
+fn a_proved_single_existential_item_writes_one_witness_arm_per_instance() {
+    let either = "(present(lookup<M::Thing>(M::P1, v) absent empty) \
+                  or present(lookup<M::Thing>(M::P2, v) absent empty))";
+    for packaged in [false, true] {
+        let run = Pets::TWO.analyze(
+            &format!("hyper-item-evidence-{packaged}"),
+            &exists("Thing", &always(either)),
+            claim(),
+            packaged,
+        );
+        let item = run.item(0);
+        assert_eq!(label(&item), "proved", "{}", run.document());
+        let arms = item["record"]["evidence"].as_array().expect("an array");
+        assert_eq!(arms.len(), 2, "{}", run.document());
+        assert!(arms.iter().all(|arm| arm["arm"] == "witness"), "{arms:?}");
+        assert_eq!(
+            arms.iter().map(|arm| arm["instance"].clone()).collect::<Vec<_>>(),
+            [
+                bound_v(thing_reference("d", "Lamp")),
+                bound_v(thing_reference("a", "Switch"))
+            ],
+            "{}",
+            run.document()
+        );
+    }
+    let in_p1 = "present(lookup<M::Thing>(M::P1, v) absent empty)";
+    let run = Pets::TWO.analyze(
+        "hyper-item-evidence-refuted",
+        &exists("Thing", &always(in_p1)),
+        claim(),
+        false,
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{}", run.document());
+    assert!(item["record"]["evidence"].is_null(), "{}", run.document());
+    assert!(item["counterexample"].is_object(), "{}", run.document());
 }
 
 /// FR-172-AC-11 and FR-176-AC-7: an object type no population overlaps checks
