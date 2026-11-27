@@ -5,7 +5,8 @@ use super::*;
 use filament_exact::Cancel;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::analyze::{
-    AnalyzeLimits, DeadlineSupply, PackageDeadlockSubject, RunInput, TemporalItem, deadlock_model_item,
+    AnalyzeLimits, DeadlineSupply, PackageDeadlockSubject, RunInput, TemporalItem,
+    deadlock_model_item,
 };
 use fsl_certificate_mutation::{Fixture, Verdict, check_document};
 use fsl_replay::{CounterexampleKind, ModelCheckOutcome, ModelTraceSettlement, ModelTraceValue};

@@ -105,10 +105,11 @@ fn check_fixture(claim_name: &str, route: &str) {
     )
     .expect("the timed state graph is explored");
     let decision = crate::zone_check::decide_timed_state_graph(
-        &system,
+        &timed,
         &graph,
         claim,
         Some(&over),
+        crate::zone_check::ZoneCheckLimits::default(),
         &Cancel::new(),
     )
     .expect("the timed state graph claim is decided");
