@@ -620,14 +620,21 @@ computes it.
   of the disjunction of its dual `witness and guard` candidates. These rules
   are applied once per position; a delay advances candidate clocks but does
   not read operands or add a candidate.
-- **Normalization and finiteness.** The past-state wrapper's `r` is normalized
-  by the residual rules above. Candidate equality includes occurrence,
-  region clock, witness and guard, so repeated positions with equal residual
-  state merge. Each candidate expires after its finite interval upper end;
-  the region route has a finite refined digital lattice over that horizon.
-  Thus the number of candidate ages and residual combinations is finite, also
-  through zero-time cycles and idle-tail stutters. EN-5 and FR-921 SHALL apply
-  this normalization independently.
+- **Normalization and finiteness.** The `past-state` wrapper represents an
+  active formula residual only. If its normalized `r` is `accept` or `reject`,
+  the wrapper is replaced by that decision and its candidate table is removed;
+  neither a later position nor a delay can change that decision. Otherwise,
+  candidate equality includes occurrence, region clock, witness and guard, so
+  repeated positions with equal residual state merge. Each candidate expires
+  after its finite interval upper end. For past occurrences with a non-punctual
+  interval (`lower < upper`), the region route refines the finite set of
+  interval endpoints and model delay constants; candidates in the same
+  fractional class with equal witness and guard are represented once. The
+  finite product bound and the corresponding independent checker rule are
+  stated in FR-204-AC-21 and FR-921. EN-5 and FR-921 SHALL apply this
+  normalization independently. Punctual past occurrences are outside this
+  finite-residual rule pending the typed incomplete-result contract tracked by
+  QSL-3609.
 - **Delay.** A delay move advances every obligation clock as a model clock;
   an obligation whose elapsed time passes its interval's upper end becomes
   `["reject"]` (`eventually`, `until`) or `["accept"]` (`always`,
@@ -654,10 +661,10 @@ are in canonical order.
 | `always[0,2] P`, `P = true` then `false` | `["window",["always","0","0","0"]]` | `["window",["reject"]]` |
 | `P until[0,2] Q`, `P,Q = true,false` then `true,true` | `["window",["until","0","0","0"]]` | `["window",["accept"]]` |
 | `P release[0,2] Q`, `P,Q = false,true` then `true,false` | `["window",["release","0","0","0"]]` | `["window",["reject"]]` |
-| `eventually[0,2] once[0,2] P`, `P = false` then `true` | `["window",["past-state",["eventually","0","0","0"],[["once","1",[["0","0",["reject"],["accept"]]]]]]]` | `["window",["past-state",["accept"],[["once","1",[["0","0",["accept"],["accept"]],["1","0",["reject"],["accept"]]]]]]]` |
-| `always[0,2] historically[0,2] P`, `P = true` then `false` | `["window",["past-state",["always","0","0","0"],[["historically","1",[["0","0",["accept"],["accept"]]]]]]]` | `["window",["past-state",["reject"],[["historically","1",[["0","0",["reject"],["accept"]],["1","0",["accept"],["accept"]]]]]]]` |
-| `eventually[0,2] (P since[1,2] Q)`, `P,Q = true,true` then `true,false` | `["window",["past-state",["eventually","0","0","0"],[["since","1",[["0","0",["accept"],["accept"]]]]]]]` | `["window",["past-state",["accept"],[["since","1",[["0","0",["reject"],["accept"]],["1","0",["accept"],["accept"]]]]]]]` |
-| `always[0,2] (P triggered[1,2] Q)`, `P,Q = false,false` then `false,true` | `["window",["past-state",["always","0","0","0"],[["triggered","1",[["0","0",["accept"],["accept"]]]]]]]` | `["window",["past-state",["reject"],[["triggered","1",[["0","0",["reject"],["accept"]],["1","0",["accept"],["accept"]]]]]]]` |
+| `eventually[0,2] once[0,2] P`, `P = false` then `false` | `["window",["past-state",["eventually","0","0","0"],[["once","1",[["0","0",["reject"],["accept"]]]]]]]` | `["window",["past-state",["eventually","0","1","0"],[["once","1",[["0","0",["reject"],["accept"]],["1","0",["reject"],["accept"]]]]]]]` |
+| `always[0,2] historically[0,2] P`, `P = true` then `true` | `["window",["past-state",["always","0","0","0"],[["historically","1",[["0","0",["accept"],["accept"]]]]]]]` | `["window",["past-state",["always","0","1","0"],[["historically","1",[["0","0",["accept"],["accept"]],["1","0",["accept"],["accept"]]]]]]]` |
+| `eventually[0,2] (P since[1,2] Q)`, `P,Q = true,false` then `true,true` | `["window",["past-state",["eventually","0","0","0"],[["since","1",[["0","0",["reject"],["accept"]]]]]]]` | `["window",["past-state",["eventually","0","1","0"],[["since","1",[["0","0",["reject"],["accept"]],["1","0",["accept"],["accept"]]]]]]]` |
+| `always[0,2] (P triggered[1,2] Q)`, `P,Q = false,true` then `false,true` | `["window",["past-state",["always","0","0","0"],[["triggered","1",[["0","0",["accept"],["accept"]]]]]]]` | `["window",["past-state",["always","0","1","0"],[["triggered","1",[["0","0",["accept"],["accept"]],["1","0",["accept"],["accept"]]]]]]]` |
 
 For delay-only transitions, use `eventually[0,3] once[0,1] P` with `P =
 false` at position zero. No model-position letter is read during the two
@@ -675,7 +682,7 @@ occurrence is a child of a future obligation: its candidate memory is updated
 at each position where that child is started, and its entry is part of the
 enclosing `past-state` residual.
 
-#### Past operators in the idle tail
+#### Non-punctual past operators in the idle tail
 
 The idle-tail value calculation SHALL reason about scheduler-realizable
 position placements, not treat an arbitrary stutter as an existential
@@ -688,35 +695,19 @@ witness. The past-operator placement relations are:
 | `p since_I q` | A witness `x <= y` with `y - x` in `I`, `q` true at `x`, and `p` true at every position `z` with `x < z <= y`. |
 | `p triggered_I q` | The dual falsifying relation for `(not p) since_I (not q)`, including its guard positions. |
 
-All differences use exact region membership, including equality at a closed
-punctual endpoint. For example, when `P` is true in the idle tail,
-`eventually[0,2] once[1,1] P` has value 1 for a scheduler that places
-observations at times 0 and 1: the pair has difference exactly 1. A single
-observation anywhere in `[0,2]` is not sufficient. A scheduler with no
-observation after time 0 gives value 0. Therefore the maximum and minimum
-tail values are 1 and 0 respectively.
-
-Let `m` be the number of syntax nodes in the checked formula. To decide a
-tail-entry residual containing past operators, EN-5 and FR-921 SHALL search
-finite placements of at most `2m + 1` new tail observation positions in the
-bounded horizon. The already-read prefix positions represented by the entry's
-past memory are fixed inputs to the search, not chosen placements. Each
-interval occurrence contributes only its selected witness (or
-falsifying witness); `until` and `since` additionally contribute a position
-at which their left guard fails when one exists. The bound follows by
-induction over the checked formula: Boolean children partition its syntax
-nodes, a unary interval occurrence adds at most one selected position, and a
-binary interval occurrence adds at most a witness and a guard-breaking
-position. Universal operators are checked through their NNF dual's
-falsifying witness. Any unmarked tail stutter has the same model letter as
-the idle state; if it changes a nested subformula's result, it is itself a
-witness or guard-breaking position of that subformula and is marked by the
-induction. The search checks each marked timestamp relation against the
-actual idle-tail delay transitions and includes the exact interval endpoints;
-it does not materialize one candidate for every unmarked stutter. Each finite
-placement extends to a time-diverging tail by positive delays after the last
-marked position. This gives an exact finite tail decision while keeping the
-ordinary product residual finite.
+For non-punctual intervals, an idle tail's predicate letter is fixed by its
+quiescent state. EN-5 and FR-921 SHALL compute the tail extrema from scheduler
+placements on the finite digital-clock grid induced by the formula's closed
+endpoints, the current candidate clocks, and the model's delay constants.
+Within each fractional class, the algorithm retains at most one observation:
+an additional observation in the same class repeats the same model letter and
+cannot change the truth of a non-punctual past relation after the retained
+candidate has established that class's witness or guard value. The algorithm
+checks exact closed-bound membership at each selected grid point and extends
+the final placement by positive delays to a time-diverging tail. The checker
+constructs its own grid and candidate summary from FR-196 and verifies the
+same extrema. This bound applies only to the fixed-letter idle tail; it does
+not claim a finite history summary for punctual past occurrences.
 
 #### Idle tail of a timed window monitor
 
@@ -1393,9 +1384,8 @@ result.
 | FR-196-AC-17 | Under `filament.temporal.event-position.false-extension/v1`, EN-5 builds the bounded formula product with its FR-338 monitor for the reachability/v1 subset FR-201 admits: `eventually[0,2] holds(P)` over FR-201-AC-13's horizon-2 model settles with its exact value `3/4`, and `always[0,1] holds(P)` over FR-201-AC-16's model has minimum `1/4` and maximum `3/4`, accepted at those bounds. Each product reads a formula position once at its model state and applies the event-position false-extension closure at terminal model states; EN-5 does not substitute the timed-deadline monitor or refuse these admitted forms as `unsupported` or `not-yet-implemented`. | Test |
 | FR-196-AC-18 | For a conditional reading whose reset process is built from a model with more than one canonical initial root, every product key in that reset process has the ninth `root` member equal to that root's zero-based index in FR-101 canonical initial-root order, including states reached after convergence and reset edges. For a single-root model, and for any model without a reset process, the key is exactly the existing eight-member canonical array with its existing RFC 8785 bytes. | Test |
 | FR-196-AC-19 | Over `Retx` of FR-204-AC-1, for `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)` on the region route, the behaviour whose first attempt at 1 ms is delivered reaches a quiescent running state `q` whose residual is `["and",["always","0","1","0"],["eventually","1","0","0"],["eventually","1","1","0"]]`. The product has no `"idle-ready"` or `"idle-delayed"` state; `q`'s idle-tail alternative is one move to the decided state with `q`'s key and `tail` `"idle-entry"`. Its tail value is `0` for the minimum, decided at layer `L_0` (a delay past 2 ms with no stutter rejects), and `1` for the maximum, decided at layer `L_5` (stutters at 2, 3, 4, 5 and 6 ms; no tail with fewer stutters accepts). EN-5 and FR-921's checker give these values for that key in the minimum's and the maximum's documents, and the overall values remain FR-204-AC-21's minimum `0` and maximum `99/100`. A document with that row's value changed is rejected `InequalityFails` at that key. For the maximum's item (`probability <= 0.99`), let `N` be the run's count of item 6 recorded by an instrumented run with the default limits; with `exact_prob.max_states` set to `N - 1` the item stops `Incomplete(LimitReached{MaxStates, N - 1, exact_prob.max_states})` with no truth value and no certificate, and with `N` it settles `proved` as FR-204-AC-21 states; the producer and the checker record the same `N`. Stop (c) is not exercised (see the rule's unproved list). | Test |
-| FR-196-AC-20 | For each of `eventually`, `always`, `until`, `release`, `once`, `historically`, `since` and `triggered` with a closed timed interval, the position-zero initialization and position-one transition produce the truth values and exact canonical bytes in the byte-level examples table above. In the delay-only example, each delay advances existing future and past clocks without reading operands or adding candidates, and a candidate is removed after its upper end. Candidate order and duplicate merging follow the specified JCS normalization. | Test |
-| FR-196-AC-21 | For each of the eight interval operators in AC-20, EN-5 and FR-921 independently reconstruct the residual from the checked formula and the same observed prefix and emit byte-identical canonical monitor members. Changing one past candidate's age, witness or guard in an otherwise well-formed certificate is rejected at that product key. | Test |
-| FR-196-AC-22 | For an idle-tail entry with no prior position at the punctual target, constant `P = true`, and residual `eventually[0,2] once[1,1] P`, the maximum is 1 using scheduler-realizable positions at 0 and 1, while the minimum is 0 when no post-entry observation is placed. A single position in `[0,2]` does not witness the past `once`; the canonical proof checks the exact pair difference and the finite placement bound without allocating one candidate per arbitrary stutter. | Test |
+| FR-196-AC-20 | For each of `eventually`, `always`, `until`, `release`, `once`, `historically`, `since` and `triggered` with a closed non-punctual timed interval, the position-zero initialization and position-one transition produce the truth values and exact canonical bytes in the byte-level examples table above. A decided `past-state` wrapper canonicalizes to its absorbing decision without candidate memory. In the delay-only example, each delay advances existing future and past clocks without reading operands or adding candidates, and a candidate is removed after its upper end. Candidate order and duplicate merging follow the specified JCS normalization. | Test |
+| FR-196-AC-21 | For each of the eight non-punctual interval operators in AC-20, EN-5 and FR-921 independently reconstruct the residual from the checked formula and the same observed prefix and emit byte-identical canonical monitor members. Changing one past candidate's age, witness or guard in an otherwise well-formed certificate is rejected at that product key. The rejection is an inconclusive `CertificateRejected` settlement with the canonical `ProbabilityProductState` locus of the mutated row. | Test |
 
 ## Dependencies
 
