@@ -154,24 +154,24 @@ fn a_recording_conformance_proof_is_withheld_when_certification_is_required() {
     );
     assert_eq!(label(&required), "inconclusive", "{required}");
 
-    let engine = |name: &str, required: bool, delivery: &str| {
+    let engine = |name: &str, required: bool, delivery: &str, receive: bool| {
         let ws = Workspace::new(name);
         let extra = json!({"items": [{"claim": "Flow", "kind": "global-conformance"}],
             "require_certified": required});
-        let protocol = order_protocol(false).replace("exactly-once-premise", delivery);
+        let protocol = order_protocol(receive).replace("exactly-once-premise", delivery);
         analyze(&litmus_request(&ws, &protocol, extra)).item(0)
     };
     // At-most-once and no `requires temporal`: the core closure check covers
     // every obligation, so the proof is `certified` and unchanged.
-    let closed = engine("require-1052-9-engine", true, "at-most-once");
+    let closed = engine("require-1052-9-engine", true, "at-most-once", false);
     assert_eq!(closed["record"]["certification"], "certified", "{closed}");
     assert_eq!(closed["global"]["label"], "proved", "{closed}");
     assert_eq!(
         closed,
-        engine("require-1052-9-engine-default", false, "at-most-once")
+        engine("require-1052-9-engine-default", false, "at-most-once", false)
     );
     // FR-896-AC-11: an `exactly-once-premise` channel is not read by the
     // closure check, so the proof is `uncertified` and withheld.
-    let premise = engine("require-1052-9-premise", true, "exactly-once-premise");
+    let premise = engine("require-1052-9-premise", true, "exactly-once-premise", true);
     assert_eq!(premise["global"]["label"], "inconclusive", "{premise}");
 }

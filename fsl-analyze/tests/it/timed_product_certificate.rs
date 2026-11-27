@@ -748,11 +748,17 @@ fn a_workload_infinity_with_racing_free_delays_is_not_yet_certified() {
 #[trace("TC-639", "FR-204-AC-24")]
 #[test]
 fn a_workload_infinity_with_a_closing_free_window_is_not_yet_certified() {
-    is_not_yet_certifiable(&uncertified_race(
-        "",
-        " and self.x <= 0 ms",
-        "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
-    ));
+    // Refused under the refusal's own code (`ClosesBeforeFiring`): a free
+    // delay under the workload is not decided (FR-203-AC-17), and the least
+    // expected time may be 1 ms, not infinity.
+    is_unsupported_with(
+        &uncertified_race(
+            "",
+            " and self.x <= 0 ms",
+            "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
+        ),
+        "workload-free-delay-window-closes",
+    );
 }
 
 const NEVER: &str = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
