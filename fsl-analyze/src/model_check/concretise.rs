@@ -114,9 +114,14 @@ mod tests {
             .expect("the canonical root lifts again");
         system.share_evaluation_meter(meter(6));
         for (transition, target, permutation) in &path {
-            exact_lift
-                .edge(transition, target, permutation)
-                .expect("three lifted edges use exactly six work units");
+            match exact_lift.edge(transition, target, permutation) {
+                Ok(()) => {}
+                Err(LiftStop::Expansion(_)) => {
+                    panic!("three lifted edges use exactly six work units")
+                }
+                Err(LiftStop::Transitions) => panic!("the lift has three transition units"),
+                Err(LiftStop::Refusal(_)) => panic!("the canonical path lifts"),
+            }
         }
         assert_eq!(exact_lift.charged(), 3);
     }
