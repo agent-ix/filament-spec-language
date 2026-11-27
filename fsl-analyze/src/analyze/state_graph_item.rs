@@ -659,6 +659,8 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     )
 }
 
+type DigitalPredicateValues = (Vec<bool>, Vec<(usize, fsl_replay::GraphUndefined)>);
+
 /// EN-6's timed state-graph route. The zone certificate is checked by the
 /// qualified core before this result is reported; a refutation is accepted
 /// only when that checker re-derives the form's failed condition.
@@ -671,7 +673,7 @@ fn digital_predicate_values(
     role: PredicateRole,
     over: Option<&ObjectReference>,
     cancel: &Cancel,
-) -> Result<(Vec<bool>, Vec<(usize, fsl_replay::GraphUndefined)>), ()> {
+) -> Result<DigitalPredicateValues, ()> {
     if predicate.is_constant_true() {
         return Ok((vec![true; nodes.len()], Vec::new()));
     }

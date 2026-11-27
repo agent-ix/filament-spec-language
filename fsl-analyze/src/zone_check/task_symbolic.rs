@@ -672,8 +672,8 @@ impl<'t, 's, 'a, 'c> Explorer<'t, 's, 'a, 'c> {
     }
 
     fn pin_dead(&self, zone: &mut Dbm, info: &LocationInfo) -> Done<()> {
-        for clock in 1..self.dim {
-            if !info.live[clock] {
+        for (clock, live) in info.live[..self.dim].iter().enumerate().skip(1) {
+            if !live {
                 zone.reset(clock, &BigInt::zero())?;
             }
         }
