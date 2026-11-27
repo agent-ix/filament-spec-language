@@ -16,15 +16,16 @@ use fsl_analyze::statistical::{
     DEFAULT_MAX_WITNESSES,
 };
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::TransitionId;
 use fsl_eval::simulation::model::{ExpansionLimits, TimedSystem};
+use fsl_eval::simulation::model::{TimedSampleDisagreement, TransitionId};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    replay_sampled_witness, Confidence, Decision, MeasureValue, StatisticalLimit,
-    StatisticalLimits, StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
-    StatisticalUnsupported, StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
+    replay_sampled_witness, Confidence, Decision, MeasureValue, SampledParity,
+    SampledWitnessReplay, StatisticalLimit, StatisticalLimits, StatisticalMethod,
+    StatisticalOutcome, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
+    StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
 };
 use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
 use fsl_replay::SymmetryRefusal;
@@ -1734,38 +1735,242 @@ fn timed_sampling_settles_the_configured_step_limit() {
     ));
 }
 
-/// FR-254-AC-4 (TC-709): reaching a local time-lock before the horizon makes
-/// the run unsupported, with no witness retained.
-#[trace("TC-709", "FR-254-AC-4")]
-#[test]
-fn timed_sampling_settles_a_local_time_lock_without_a_witness() {
-    let world = timed_world_with(
+/// The `Lock` model: `go` moves `phase` 0 to 1 at 1/2 ms and the invariant
+/// `x <= 1 ms` then time-locks the run at 1 ms.
+fn lock_world(claim: &str) -> crate::timed_world::World {
+    timed_world_with(
         &[("go", &["phase"])],
-        "pre Waiting using v on M::Call::go { self.phase = 0 }\n\
-         post Locked using v on M::Call::go { self.phase = 1 }\n\
-         time invariant Lock when { self.phase = 1 } { self.x <= 1 ms }\n\
-         delay M::Call::go ~ discrete { rational(1, 2) ms: 1 };\n\
-         workload Even on M { weight Call::go = 1; }\n\
-         probabilistic Goes using ev on M over (c: M::Call) under Even on origin\n\
-             with alpha 0.4, beta 0.4, indifference 0.1\n\
-             { probability >= 0.5 [ eventually[0 ms, 3 ms] holds(c.phase = 1) ] }\n",
-    );
-    let outcome = run_timed_method(
-        &world,
-        "Goes",
-        StatisticalMethod::Sprt,
-        7,
-        fsl_replay::statistical::TimedSampling::default(),
-        1,
+        &format!(
+            "pre Waiting using v on M::Call::go {{ self.phase = 0 }}\n\
+             post Locked using v on M::Call::go {{ self.phase = 1 }}\n\
+             time invariant Lock when {{ self.phase = 1 }} {{ self.x <= 1 ms }}\n\
+             delay M::Call::go ~ discrete {{ rational(1, 2) ms: 1 }};\n\
+             workload Even on M {{ weight Call::go = 1; }}\n\
+             {}",
+            window_claim(claim)
+        ),
     )
-    .expect("a local time-lock is an unsupported sampling outcome");
+}
+
+/// The timed state `go` reaches at 1/2 ms, after delaying to the invariant's
+/// bound `x = 1 ms`.
+fn locked_state(world: &crate::timed_world::World) -> fsl_eval::simulation::StateKey {
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("the subject is timed");
+    let initial = timed.initial().remove(0);
+    let delayed = timed
+        .delay(&initial, &ratio(1, 2))
+        .expect("the delay reads")
+        .expect("the delay is admissible");
+    let (_, after) = timed.steps(&delayed).expect("the steps read").remove(0);
+    let locked = timed
+        .delay(&after, &ratio(1, 2))
+        .expect("the delay reads")
+        .expect("the delay reaches the bound");
+    timed.state_key(&locked).expect("the state encodes")
+}
+
+/// FR-254-AC-4: each sample ends at the time-lock and is read over its
+/// positions. The position stamped 1/2 ms is in phase 1, `always` over those
+/// positions holds where they satisfy it, and a measure the run never
+/// completes is censored.
+#[trace("TC-709", "FR-254-AC-4", "FSpec-FR-420-AC-7")]
+#[test]
+fn a_time_locked_sample_is_read_over_the_positions_it_has() {
+    for (claim, estimate, decision) in [
+        (
+            "probability <= 0.5 [eventually[0 ms, 2 ms] holds(c.phase = 1)]",
+            1,
+            Decision::Rejected,
+        ),
+        (
+            "probability >= 0.5 [eventually[1 ms, 2 ms] holds(c.phase = 1)]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "probability >= 0.5 [always[1 ms, 2 ms] holds(c.phase = 0)]",
+            1,
+            Decision::Accepted,
+        ),
+        (
+            "probability >= 0.5 [elapsed from holds(c.phase = 1) until holds(c.phase = 0) within 2 ms <= 2 ms]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 2 ms <= 1]",
+            1,
+            Decision::Accepted,
+        ),
+    ] {
+        assert_eq!(
+            measured(&lock_world(claim)),
+            (Some(ratio(estimate, 1)), decision),
+            "{claim}"
+        );
+    }
+}
+
+/// FR-254-AC-4: how a fraction reads a time-locked run is not decided, so the
+/// item is unsupported at the locked state and keeps no witness.
+#[trace("TC-709", "FR-254-AC-4", "FSpec-FR-420-AC-7")]
+#[test]
+fn a_fraction_over_a_time_locked_sample_is_unsupported() {
+    for claim in [
+        "mean of (fraction holds(c.phase = 1) over [0, 2 ms]) <= 0.5",
+        "mean of (fraction holds(c.phase = 1) over [0, 2 ms] weighted by delay) <= 0.5",
+    ] {
+        let world = lock_world(claim);
+        let expected = locked_state(&world);
+        match probe(&world) {
+            StatisticalOutcome::Unsupported {
+                cause: StatisticalUnsupported::TimeLockedSample { state },
+                ..
+            } => assert_eq!(state, expected, "{claim}"),
+            other => panic!("{claim}: {other:?}"),
+        }
+    }
+}
+
+/// FSpec FR-420-AC-4: `send` draws 5 ms alone, which the window `[0, 4]` of
+/// its invariant holds no mass of, so nobody races and delay is bounded: the
+/// run is time-locked at its initial position.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-4")]
+#[test]
+fn a_bounded_delay_with_no_mass_in_any_window_is_a_time_lock() {
+    let world = |claim: &str| {
+        timed_world_with(
+            &[("send", &["phase"])],
+            &format!(
+                "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+                 post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+                 time invariant Held when {{ self.phase = 0 }} {{ self.x <= 4 ms }}\n\
+                 delay M::Call::send ~ discrete {{ 5 ms: 1 }};\n\
+                 workload Even on M {{ weight Call::send = 1; }}\n\
+                 {}",
+                window_claim(claim)
+            ),
+        )
+    };
+    assert_eq!(
+        measured(&world(
+            "probability <= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 1)]"
+        )),
+        (Some(ratio(0, 1)), Decision::Accepted)
+    );
     assert!(matches!(
-        outcome,
+        probe(&world(
+            "mean of (fraction holds(c.phase = 1) over [0, 8 ms]) <= 0.5"
+        )),
         StatisticalOutcome::Unsupported {
             cause: StatisticalUnsupported::TimeLockedSample { .. },
             ..
         }
     ));
+}
+
+/// An exponential delay over the bounded window of an invariant is conditioned
+/// on that window (FSpec FR-420), so it always fires before the invariant ends.
+#[trace("FSpec-FR-420-AC-2")]
+#[test]
+fn an_exponential_delay_over_a_bounded_window_is_conditioned_on_the_window() {
+    let world = timed_world_with(
+        &[("send", &["phase"])],
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             time invariant Held when {{ self.phase = 0 }} {{ self.x <= 4 ms }}\n\
+             delay M::Call::send ~ exponential(rational(1, 1000));\n\
+             workload Even on M {{ weight Call::send = 1; }}\n\
+             {}",
+            window_claim("probability >= 0.5 [eventually[0 ms, 4 ms] holds(c.phase = 1)]")
+        ),
+    );
+    // The law is conditioned on `[0, 4 ms]`, so every sample sends within it.
+    assert_eq!(measured(&world), (Some(ratio(1, 1)), Decision::Accepted));
+}
+
+/// `A` is `send` (`phase = 1`), `B` is `reply` (`phase = 2`) 3 ms later. The
+/// elapsed clock starts at `A` (FSpec FR-753), so the measure is 3 ms and not
+/// censored by `within 4 ms`, whether `A` is before or after 4 ms.
+#[trace("FR-254-AC-3", "FR-254-AC-9")]
+#[test]
+fn a_sampled_elapsed_window_starts_at_the_first_activating_position() {
+    let measure = "elapsed from holds(c.phase = 1) until holds(c.phase = 2) within 4 ms";
+    let read = |send_ms, claim: String| measured(&window_world(send_ms, Some(3), "", &claim));
+    assert_eq!(
+        [
+            read(3, format!("probability >= 0.5 [ {measure} >= 4 ms ]")),
+            read(3, format!("quantile 0.5 of ({measure}) <= 3 ms")),
+            read(5, format!("probability <= 0.5 [ {measure} >= 4 ms ]")),
+        ],
+        [
+            (Some(ratio(0, 1)), Decision::Rejected),
+            (Some(ratio(1, 1)), Decision::Accepted),
+            (Some(ratio(0, 1)), Decision::Accepted),
+        ]
+    );
+}
+
+/// FR-254-AC-2 and AC-9: the writer's window and the replay's are one rule.
+/// `A` holds from 5 ms and `B` from 8 ms, past `within 4 ms` of time zero, so
+/// the witness has both steps and replays; with one delay changed it does
+/// not.
+#[trace("TC-709", "FR-254-AC-2", "FR-254-AC-9")]
+#[test]
+fn an_elapsed_witness_replays_over_the_window_that_starts_at_a() {
+    let world = window_world(
+        5,
+        Some(3),
+        "",
+        "probability >= 0.5 [elapsed from holds(c.phase = 1) until holds(c.phase = 2) within 4 ms <= 2 ms]",
+    );
+    let verdict = completed(Ok(probe(&world)));
+    assert_eq!(verdict.decision, Decision::Rejected);
+    let witness = &verdict.witnesses[0];
+    let delays: Vec<_> = witness
+        .steps
+        .iter()
+        .map(|step| step.delay.clone())
+        .collect();
+    assert_eq!(delays, [Some(ratio(5, 1)), Some(ratio(3, 1))]);
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("a timed subject");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Probe")
+        .expect("the claim checks");
+    let workload = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .workload("Even")
+        .expect("the workload checks");
+    let cancel = Cancel::new();
+    let mut reader = witness_reader(&system, &world.package, claim, &sampler(), &cancel)
+        .expect("the timed claim is readable");
+    let replay = WitnessReplay {
+        system: &system,
+        timed: Some(&timed),
+        workload,
+        provenance: &verdict.provenance,
+        cancel: &cancel,
+    };
+    assert_eq!(
+        replay_sampled_witness(&replay, witness, &mut reader),
+        Ok(SampledWitnessReplay::Reproduced)
+    );
+    let mut altered = witness.clone();
+    altered.steps[1].delay = Some(ratio(2, 1));
+    assert_eq!(
+        replay_sampled_witness(&replay, &altered, &mut reader),
+        Ok(SampledWitnessReplay::Inconclusive(
+            SampledParity::TimedDraw(TimedSampleDisagreement::Step { step: 1 })
+        ))
+    );
 }
 
 /// Checks FR-193-AC-1 (TC-628 step 1): the `2 ms` claim with seed 7 and
@@ -3305,15 +3510,60 @@ fn a_tick_subject_is_sampled_without_a_race_and_reads_its_stutter_positions() {
 #[test]
 fn an_idle_tail_reading_every_completion_agrees_on_is_decided() {
     for (rewards, claim, holds, decision) in [
-        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]", 1, Decision::Accepted),
-        ("", "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]", 0, Decision::Rejected),
-        ("", "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25", 1, Decision::Rejected),
-        ("", "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25", 0, Decision::Accepted),
-        (SEND_COST, "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25", 0, Decision::Accepted),
-        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]", 0, Decision::Rejected),
-        ("", "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]", 0, Decision::Rejected),
-        ("", "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]", 0, Decision::Rejected),
-        ("", "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]", 1, Decision::Accepted),
+        (
+            "",
+            "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] >= rational(2, 5)]",
+            1,
+            Decision::Accepted,
+        ),
+        (
+            "",
+            "probability >= 0.5 [fraction holds(c.phase = 1) over [0, 5 ms] <= rational(2, 5)]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "mean of (fraction holds(c.phase = 0 or c.phase = 1) over [0, 5 ms]) <= 0.25",
+            1,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "mean of (fraction holds(c.phase = 2) over [0, 5 ms]) <= 0.25",
+            0,
+            Decision::Accepted,
+        ),
+        (
+            SEND_COST,
+            "mean of (fraction holds(c.phase = 1) over [0, 5 ms] weighted by cost) <= 0.25",
+            0,
+            Decision::Accepted,
+        ),
+        (
+            "",
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 1) within 5 ms >= 2]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "probability >= 0.5 [steps from holds(c.phase = 0) until holds(c.phase = 2) within 5 ms <= 3]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "probability >= 0.5 [eventually[3 ms, 5 ms] holds(c.phase = 0)]",
+            0,
+            Decision::Rejected,
+        ),
+        (
+            "",
+            "probability >= 0.5 [always[3 ms, 5 ms] holds(c.phase = 1)]",
+            1,
+            Decision::Accepted,
+        ),
     ] {
         assert_eq!(
             measured(&window_world(2, None, rewards, claim)),
@@ -3545,4 +3795,331 @@ fn a_falling_fraction_on_a_dense_idle_tail_is_read_over_every_completion() {
             "{claim}"
         );
     }
+}
+
+/// `send` moves `phase` 0 to 1 and `reply` moves it to 2, 3 ms each, under an
+/// `on each` claim, its snapshot holding the objects `keys`.
+fn on_each_timed_world(keys: &[&str]) -> crate::timed_world::World {
+    let body = format!(
+        "{}\npre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+         post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+         pre Reply using v on M::Call::reply {{ self.phase = 1 }}\n\
+         post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+         delay M::Call::send ~ discrete {{ 3 ms: 1 }};\n\
+         delay M::Call::reply ~ discrete {{ 3 ms: 1 }};\n\
+         workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+         probabilistic Probe using ev on M under Even on each (c: M::Call) when (c.phase = 0)\n\
+             with alpha 0.4, beta 0.4, indifference 0.05\n\
+             {{ probability >= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 2)] }}\n",
+        crate::timed_world::DENSE
+    );
+    crate::timed_world::world_over(
+        &crate::timed_world::document(&["x"], &[("send", &["phase"]), ("reply", &["phase"])]),
+        "profile ev = \"filament.temporal.timed/v1\";\n",
+        &body,
+        keys,
+    )
+}
+
+/// The record the FR-280 provider entry settles `Probe` with.
+fn served(world: &crate::timed_world::World) -> fsl_replay::statistical::StatisticalRecord {
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Probe")
+        .expect("the claim checks");
+    fsl_analyze::statistical::provider::serve_request(
+        StatisticalRequest {
+            workers: 1,
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: sampler(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 0,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("a terminal record")
+}
+
+/// FR-875-AC-5: an `on each` statistical item over a nonempty instance set is
+/// unsupported at the profile boundary through the FR-280 provider entry, as
+/// through `fsl analyze`, and is no broken invariant.
+#[trace("TC-3211", "FR-875-AC-5")]
+#[test]
+fn the_provider_entry_refuses_an_on_each_claim_at_the_profile_boundary() {
+    let record = served(&on_each_timed_world(&["c"]));
+    assert_eq!(
+        (record.value, record.diagnostic),
+        (
+            TerminalValue::Unsupported(fsl_replay::UnavailabilityCause::Disposition),
+            Some(filament_semantic_value::catalog::CatalogCode::new(
+                "unsupported_construct",
+                "not-yet-implemented"
+            ))
+        )
+    );
+}
+
+/// FR-875-AC-1: over an empty instance set the same entry settles
+/// `no-instance`.
+#[trace("FR-875-AC-1")]
+#[test]
+fn the_provider_entry_settles_an_on_each_claim_over_no_instance() {
+    let record = served(&on_each_timed_world(&[]));
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
+    );
+}
+
+/// The estimate and decision of `Probe` at delay grid `2^-q`; `q = 0` draws
+/// every grid value as `u = 0`.
+fn measured_at_grid(world: &crate::timed_world::World, q: u32) -> (Option<Rational>, Decision) {
+    let sampling = fsl_replay::statistical::TimedSampling {
+        q,
+        ..Default::default()
+    };
+    let verdict = completed(run_timed_method(
+        world,
+        "Probe",
+        StatisticalMethod::Okamoto,
+        7,
+        sampling,
+        1,
+    ));
+    (verdict.estimate, verdict.decision)
+}
+
+/// `send`'s window is `(2 ms, 4 ms]`, so every draw is in it, every sample
+/// sends and the event has probability 1.
+#[trace("FSpec-FR-420-AC-2")]
+#[test]
+fn a_delay_drawn_over_an_open_window_end_stays_in_the_window() {
+    for law in ["uniform", "exponential(rational(1, 1))"] {
+        let world = timed_world_with(
+            &[("send", &["phase"])],
+            &format!(
+                "pre Send using v on M::Call::send {{ self.phase = 0 and self.x > 2 ms }}\n\
+                 post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+                 time invariant Held when {{ self.phase = 0 }} {{ self.x <= 4 ms }}\n\
+                 delay M::Call::send ~ {law};\n\
+                 workload Even on M {{ weight Call::send = 1; }}\n\
+                 {}",
+                window_claim("probability >= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 1)]")
+            ),
+        );
+        for q in [0, 1, 64] {
+            assert_eq!(
+                measured_at_grid(&world, q),
+                (Some(ratio(1, 1)), Decision::Accepted),
+                "{law} at q = {q}"
+            );
+        }
+    }
+}
+
+/// `send`'s window is `[0, 2 ms)` and `uniform[2 ms, 6 ms]` has no mass in
+/// it, so only `reply` races, at 3 ms.
+#[trace("FSpec-FR-420-AC-2", "FSpec-FR-420-AC-4")]
+#[test]
+fn a_law_with_no_mass_before_an_excluded_end_does_not_race() {
+    let world = timed_world_with(
+        &[("send", &["phase"]), ("reply", &["phase"])],
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 and self.x < 2 ms }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             pre Reply using v on M::Call::reply {{ self.phase = 0 }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::send ~ uniform[2 ms, 6 ms];\n\
+             delay M::Call::reply ~ discrete {{ 3 ms: 1 }};\n\
+             workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+             {}",
+            window_claim("probability >= 0.5 [eventually[0 ms, 8 ms] holds(c.phase = 2)]")
+        ),
+    );
+    for q in [0, 64] {
+        assert_eq!(
+            measured_at_grid(&world, q),
+            (Some(ratio(1, 1)), Decision::Accepted),
+            "q = {q}"
+        );
+    }
+}
+
+/// `send` and `reply` are each enabled at `x = 1 ms` and at `x = 3 ms` only,
+/// and the first to fire disables the other.
+fn two_point_world(law: &str, claim: &str, indifference: &str) -> crate::timed_world::World {
+    let claim =
+        window_claim(claim).replace("indifference 0.05", &format!("indifference {indifference}"));
+    let points = "(self.x = 1 ms or self.x = 3 ms)";
+    timed_world_with(
+        &[("send", &["phase"]), ("reply", &["phase"])],
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 and {points} }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             pre Reply using v on M::Call::reply {{ self.phase = 0 and {points} }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::send ~ {law};\n\
+             delay M::Call::reply ~ {law};\n\
+             workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+             {}",
+            claim
+        ),
+    )
+}
+
+/// The first race of trace `trace` from the initial state.
+fn first_race(
+    world: &crate::timed_world::World,
+    trace: u64,
+    q: u32,
+) -> fsl_eval::simulation::model::TimedRace {
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("a timed subject");
+    let workload = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .workload("Even")
+        .expect("the workload checks");
+    let at = fsl_eval::simulation::ChoicePoint {
+        seed: 7,
+        trace,
+        step: 0,
+        choice: 0,
+    };
+    let initial = timed.initial().remove(0);
+    fsl_eval::simulation::model::sample_timed_race(&timed, &initial, workload, at, q)
+        .expect("the race samples")
+}
+
+/// Each of two laws over the points `1 ms` and `3 ms` draws 1 ms with
+/// probability 1/2 at its own choice index, so the first delay is above 2 ms
+/// with probability `1/2 · 1/2` and the event has probability 3/4.
+#[trace("FSpec-FR-420-AC-2")]
+#[test]
+fn two_laws_over_points_draw_independently() {
+    for law in ["uniform", "discrete { 1 ms: 1, 3 ms: 1 }"] {
+        // Indifference 0.01 takes 4582 samples, so the band below is more than
+        // seven standard deviations either side of 3/4.
+        let world = two_point_world(
+            law,
+            "probability >= 0.65 [eventually[0 ms, 2 ms] not holds(c.phase = 0)]",
+            "0.01",
+        );
+        for q in [0, 64] {
+            let (estimate, decision) = measured_at_grid(&world, q);
+            let estimate = estimate.expect("an estimate");
+            assert!(
+                estimate > ratio(7, 10) && estimate < ratio(4, 5),
+                "{law} at q = {q}: {estimate:?}"
+            );
+            assert_eq!(decision, Decision::Accepted, "{law} at q = {q}");
+        }
+        // Two delay choices (0 and 1), then the tie-break (2) where they
+        // draw one delay: the step has probability 1/4, or 1/4 · 1/2.
+        let mut seen = [false; 2];
+        for q in [0, 64] {
+            for trace in 0..32 {
+                let race = first_race(&world, trace, q);
+                let step = &race.steps[0];
+                match step.choices.as_slice() {
+                    [0 | 1] => {
+                        assert_eq!(step.probability, ratio(1, 4), "{law} {trace}");
+                        assert_eq!(step.delay, ratio(1, 1), "{law} {trace}");
+                        seen[0] = true;
+                    }
+                    [0 | 1, 2] => {
+                        assert_eq!(step.probability, ratio(1, 8), "{law} {trace}");
+                        seen[1] = true;
+                    }
+                    other => panic!("{law} {trace}: choices {other:?}"),
+                }
+            }
+        }
+        assert_eq!(seen, [true, true], "{law}: both an untied and a tied race");
+    }
+}
+
+/// `uniform[2 ms, 2 ms]` draws 2 ms with no choice, so two of them tie at
+/// choice 0 and the step has the workload's probability 1/2.
+#[trace("FSpec-FR-420-AC-2")]
+#[test]
+fn a_law_over_one_delay_consumes_no_choice() {
+    let world = timed_world_with(
+        &[("send", &["phase"]), ("reply", &["phase"])],
+        &format!(
+            "pre Send using v on M::Call::send {{ self.phase = 0 }}\n\
+             post Sent using v on M::Call::send {{ self.phase = 1 }}\n\
+             pre Reply using v on M::Call::reply {{ self.phase = 0 }}\n\
+             post Replied using v on M::Call::reply {{ self.phase = 2 }}\n\
+             delay M::Call::send ~ uniform[2 ms, 2 ms];\n\
+             delay M::Call::reply ~ uniform[2 ms, 2 ms];\n\
+             workload Even on M {{ weight Call::send = 1; weight Call::reply = 1; }}\n\
+             {}",
+            window_claim("probability >= 0.25 [eventually[0 ms, 4 ms] holds(c.phase = 1)]")
+        ),
+    );
+    for q in [0, 64] {
+        let race = first_race(&world, 0, q);
+        assert_eq!(race.steps[0].delay, ratio(2, 1), "q = {q}");
+        assert_eq!(race.steps[0].choices, [0], "q = {q}");
+        assert_eq!(race.steps[0].probability, ratio(1, 2), "q = {q}");
+    }
+}
+
+/// A kept witness of two point laws replays: the replay draws each delay at
+/// the choice index the sample did.
+#[trace("TC-709", "FR-254-AC-2")]
+#[test]
+fn a_witness_over_two_point_laws_replays() {
+    let world = two_point_world(
+        "uniform",
+        "probability >= 0.25 [eventually[0 ms, 4 ms] holds(c.phase = 1)]",
+        "0.05",
+    );
+    let verdict = completed(Ok(probe(&world)));
+    let witness = &verdict.witnesses[0];
+    assert!(
+        witness.path_probability == ratio(1, 4) || witness.path_probability == ratio(1, 8),
+        "{:?}",
+        witness.path_probability
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("a timed subject");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Probe")
+        .expect("the claim checks");
+    let workload = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .workload("Even")
+        .expect("the workload checks");
+    let cancel = Cancel::new();
+    let mut reader = witness_reader(&system, &world.package, claim, &sampler(), &cancel)
+        .expect("the timed claim is readable");
+    let replay = WitnessReplay {
+        system: &system,
+        timed: Some(&timed),
+        workload,
+        provenance: &verdict.provenance,
+        cancel: &cancel,
+    };
+    assert_eq!(
+        replay_sampled_witness(&replay, witness, &mut reader),
+        Ok(SampledWitnessReplay::Reproduced)
+    );
 }
