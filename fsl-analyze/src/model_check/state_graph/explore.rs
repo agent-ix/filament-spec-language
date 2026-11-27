@@ -45,23 +45,22 @@ use fsl_eval::simulation::{
 };
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
-    ClosureCertificate, CounterexampleKind, GraphUndefined, ItemRefusal, ModelCheckLimit,
-    ModelCheckLimits, ModelCheckOutcome, ModelStep, OpenCause, ProductStateRef, ReductionCause,
-    IncompleteCause, RunEnd, RunStats, TemporalCounterexample, UndecidedCause,
-    UndefinedEvaluation, UndefinedLocus,
-    UndefinedSite,
+    ClosureCertificate, CounterexampleKind, GraphUndefined, IncompleteCause, ItemRefusal,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelStep, OpenCause, ProductStateRef,
+    ReductionCause, RunEnd, RunStats, TemporalCounterexample, UndecidedCause, UndefinedEvaluation,
+    UndefinedLocus, UndefinedSite,
 };
 
 use super::super::ample::Por;
 use super::{
-    Budgets, ExploredStateGraph, GraphEdge, GraphNode, GraphStats, Halt, InstanceView, NodeIndex,
-    PredicateLabel, cancelled, expansion_stop, stopped,
+    cancelled, expansion_stop, stopped, Budgets, ExploredStateGraph, GraphEdge, GraphNode,
+    GraphStats, Halt, InstanceView, NodeIndex, PredicateLabel,
 };
-use crate::model_check::ModelCheckRefusal;
 use crate::model_check::check::{fault, widen, EN1_STATE_OVERHEAD_BYTES};
+use crate::model_check::initial::{admit_initial, Refused};
+use crate::model_check::ModelCheckRefusal;
 use fsl_foundation::budget::{Budget, BudgetStop};
 use fsl_foundation::Setting;
-use crate::model_check::initial::{Refused, admit_initial};
 
 /// Why keying one initial state failed.
 enum Keying {

@@ -621,11 +621,9 @@ fn original_model_field_keys_define_one_value_across_both_environments() {
             ["alpha", "total", "zebra"],
             "original-key order opposes the authored field order"
         );
-        assert!(
-            types
-                .admits(&ValueType::Composite(key.clone()), &value)
-                .expect("membership")
-        );
+        assert!(types
+            .admits(&ValueType::Composite(key.clone()), &value)
+            .expect("membership"));
     }
     let wanted = slot(
         &package,

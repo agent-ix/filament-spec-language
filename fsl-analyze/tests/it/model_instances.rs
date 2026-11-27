@@ -20,8 +20,8 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ModelCheckRequest, SingleExistentialRequest, StateGraphItem,
-    StateGraphRequest, check_model, check_single_existential, check_state_graph,
+    check_model, check_single_existential, check_state_graph, ModelCheckRefusal, ModelCheckRequest,
+    SingleExistentialRequest, StateGraphItem, StateGraphRequest,
 };
 use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
@@ -34,23 +34,23 @@ use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
-use fsl_replay::{CertificateRequest, ClosureCertificate, ClosureRefusal, check_closure};
+use fsl_replay::{check_closure, CertificateRequest, ClosureCertificate, ClosureRefusal};
+use fsl_replay::{
+    settle_existential, ProductClosureClause, ProductClosureRefusal, ProductClosureRequest,
+    ResultLabel, StateGraphMethod,
+};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
-use fsl_replay::{
-    ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ResultLabel,
-    StateGraphMethod, settle_existential,
-};
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::analyze_cli_support::{Workspace, analyze, label, request_over};
-use crate::counter::{UNLIMITED, declarations_in, declarations_with_model_profile, unit_text_in};
+use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::counter::{declarations_in, declarations_with_model_profile, unit_text_in, UNLIMITED};
 
 pub(crate) const PACKAGE: &str = "test/things";
 
@@ -122,7 +122,7 @@ fn level(upper: u64) -> Json {
 }
 
 /// The domain package with `populations`, each `(name, member types)`.
-fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
+pub(crate) fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
     let constructs: Vec<Json> = [
         ("object_type", meaning::OBJECT_TYPE),
         ("population", meaning::POPULATION),
@@ -179,7 +179,7 @@ pub(crate) type Held<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 pub(crate) struct World {
     pub(crate) document: Vec<u8>,
     pub(crate) package: CheckedPackage,
-    packages: fsl_semantics::model::intake::PackageInput,
+    pub(crate) packages: fsl_semantics::model::intake::PackageInput,
     pub(crate) snapshots: fsl_semantics::model::observation::DocumentProvision,
     pub(crate) initial: Vec<DocumentRef>,
 }
@@ -616,6 +616,76 @@ fn excluded_keys_are_initially_unadmitted_and_deduplicated_in_instance_order() {
     );
 }
 
+/// FR-125-AC-10: the metered policy listing takes the same instances as
+/// `ModelSystem::instances`: population then universe order across `P1` and
+/// `P2`, a key listed by both once at its first occurrence, and no key an
+/// initial record does not admit.
+#[trace("TC-520", "FR-125-AC-10")]
+#[test]
+fn metered_instances_cross_populations_in_order_and_take_a_repeated_key_once() {
+    use filament_exact::{Meter, ScalarLimits};
+
+    let unlimited = ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    };
+    let check = |held: &[Held<'_>], listed: &[(&str, &[&str])], expected: &[ModelInstance]| {
+        let world = world(&[P1, P2], held);
+        let package = world.formula("Thing", "always holds(true)");
+        let system = ModelSystem::new(world.subject(&package, universes(listed)).simulation)
+            .expect("the bounded subject admits");
+        let [clause] = package.graph().temporal_clauses() else {
+            panic!("one temporal clause");
+        };
+        let over = &clause.clause().over().1;
+        assert_eq!(system.instances(over).expect("instances"), expected);
+        assert_eq!(
+            system
+                .instances_with_meter(over, &mut Meter::new(unlimited))
+                .expect("the metered listing succeeds"),
+            expected
+        );
+    };
+    check(
+        &[
+            ("P1", &[("d", "Lamp"), ("c", "Switch")]),
+            ("P2", &[("b", "Lamp"), ("a", "Switch")]),
+        ],
+        &[("P1", &["d", "c"]), ("P2", &["b", "a"])],
+        &[
+            instance("P1", "d"),
+            instance("P1", "c"),
+            instance("P2", "b"),
+            instance("P2", "a"),
+        ],
+    );
+    check(
+        &[
+            ("P1", &[("d", "Lamp"), ("c", "Switch")]),
+            ("P2", &[("c", "Switch"), ("a", "Switch")]),
+        ],
+        &[("P1", &["d", "c"]), ("P2", &["c", "a"])],
+        &[
+            instance("P1", "d"),
+            instance("P1", "c"),
+            instance("P2", "a"),
+        ],
+    );
+    check(
+        &[("P1", &[("d", "Lamp")]), ("P2", &[("a", "Switch")])],
+        &[("P1", &["d", "u"]), ("P2", &["u", "a"])],
+        &[instance("P1", "d"), instance("P2", "a")],
+    );
+}
+
 /// FR-125-AC-15: a state-graph claim uses the same ordered instances as a
 /// temporal claim over AC-10's populations, and both expose the same excluded
 /// universe keys.
@@ -931,17 +1001,15 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ],
     );
     let (agreeing_package, _) = agreeing.clause("Animal");
-    assert!(
-        ModelSystem::new(
-            agreeing
-                .subject(
-                    &agreeing_package,
-                    universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
-                )
-                .simulation,
-        )
-        .is_ok()
-    );
+    assert!(ModelSystem::new(
+        agreeing
+            .subject(
+                &agreeing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .is_ok());
     assert_eq!(
         agreeing.instances(
             "Animal",

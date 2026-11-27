@@ -15,8 +15,8 @@ use fsl_foundation::bound::{InvalidTimedInterval, TimedInterval};
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    check_clauses, CheckCause, CheckRefusal, CheckedInterval, CheckedTemporalClause,
-    ModelTimeBinding, ModelTimeSource, PackageDeclarations, TemporalCause, TemporalProfile,
+    check_clauses, CheckCause, CheckedInterval, CheckedTemporalClause, ModelTimeBinding,
+    ModelTimeSource, PackageDeclarations, SemanticCheckRefusal, TemporalCause, TemporalProfile,
     TemporalTraceFamily, TimeSourceKind, TimeUnitCause, TimedPropertyForm,
 };
 use fsl_semantics::family::{FamilyContract, UnsupportedItem};
@@ -46,7 +46,7 @@ const UNITS: &str = "dimension Time;\n\
      unit ms : Time = rational(1, 1000) * s;\n\
      unit m : Length = rational(1, 1);\n";
 
-type Outcome = Result<CheckedTemporalClause, StageFailure<CheckRefusal>>;
+type Outcome = Result<CheckedTemporalClause, StageFailure<SemanticCheckRefusal>>;
 
 fn document() -> Vec<u8> {
     config_version_document(

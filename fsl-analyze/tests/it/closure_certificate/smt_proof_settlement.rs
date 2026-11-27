@@ -2,13 +2,13 @@
 
 use std::{ffi::OsString, num::NonZeroUsize, path::Path, time::Duration};
 
-use filament_contract_codegen::smt::ProcessLimits;
 use filament_contract_codegen::smt::temporal::{
-    TemporalSmtProofResult, run_and_settle_temporal_smt_proof,
+    run_and_settle_temporal_smt_proof, TemporalSmtProofResult,
 };
+use filament_contract_codegen::smt::ProcessLimits;
 use filament_exact::Cancel;
 use fsl_analyze::analyze::document::{
-    AnalyzeRun, ResolvedClaim, ResolvedItem, SubjectSelection, settle_run_with_smt_proofs,
+    settle_run_with_smt_proofs, AnalyzeRun, ResolvedClaim, ResolvedItem, SubjectSelection,
 };
 use fsl_analyze::analyze::{
     AnalyzeLimits, ClaimItem, DeadlineSupply, Engines, ItemForm, ItemOptions, SourceProvision,

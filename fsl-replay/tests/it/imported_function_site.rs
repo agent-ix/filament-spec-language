@@ -9,10 +9,10 @@
 
 use filament_exact::ScalarLimits;
 use fsl_replay::{
-    CallSite, CallSiteRefusal, Code, DeclineCode, DependencyInput, FunctionSite, Identifier,
-    ImportedFunctionName, InputSettlement, LibraryName, ProofRefusalCause, QualifiedName,
-    ReplayLimits, ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire, SourceIdentity,
-    StateEnvironment, SuppliedLibrary, TerminalValue, WitnessValue, call_site, replay,
+    call_site, replay, CallSite, CallSiteRefusal, Code, DeclineCode, DependencyInput, FunctionSite,
+    Identifier, ImportedFunctionName, InputSettlement, LibraryName, ProofRefusalCause,
+    QualifiedName, ReplayLimits, ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
+    SourceIdentity, StateEnvironment, SuppliedLibrary, TerminalValue, WitnessValue,
 };
 use fsl_replay::{CanonicalAssignment, EvaluatedValue};
 use ix_trace_rs::trace;
@@ -363,11 +363,9 @@ fn a_library_without_a_direct_import_refuses_unknown_import() {
         assert_eq!(named, &selection);
         assert_eq!(package.as_str(), "fixture");
         assert_eq!(refusal.code(), Code::MissingImport);
-        assert!(
-            refusal
-                .to_string()
-                .starts_with("missing_import/missing-selection")
-        );
+        assert!(refusal
+            .to_string()
+            .starts_with("missing_import/missing-selection"));
         let one = fsl_replay::OutcomeDiagnostic::from_call_site_refusal(&refusal);
         let document = fsl_replay::OutcomeDocument::new(
             fsl_replay::Operation::Check,
@@ -432,11 +430,9 @@ fn an_undeclared_or_unimportable_function_refuses_paired_with_the_library() {
     };
     assert_eq!(package.as_str(), "test/units");
     assert_eq!(absent.code(), Code::MissingDeclaration);
-    assert!(
-        absent
-            .to_string()
-            .starts_with("missing_declaration/missing-name")
-    );
+    assert!(absent
+        .to_string()
+        .starts_with("missing_declaration/missing-name"));
 
     let unimportable =
         selected(&unit, vec![library], &imported("test/units", "pick")).expect_err("refused");
@@ -445,11 +441,9 @@ fn an_undeclared_or_unimportable_function_refuses_paired_with_the_library() {
     };
     assert_eq!(package.as_str(), "test/units");
     assert_eq!(unimportable.code(), Code::IllTyped);
-    assert!(
-        unimportable
-            .to_string()
-            .starts_with("ill_typed/operator-ineligible")
-    );
+    assert!(unimportable
+        .to_string()
+        .starts_with("ill_typed/operator-ineligible"));
     for refusal in [&absent, &unimportable] {
         assert!(matches!(
             TerminalValue::from_call_site_refusal(refusal),

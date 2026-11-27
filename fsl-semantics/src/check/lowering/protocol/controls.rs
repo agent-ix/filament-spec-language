@@ -32,10 +32,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::{Integer, NodeKey};
 use fsl_forms::{AnchorSite, JoinPolicy, Outstanding, ProtocolNodeKind};
 
-use super::super::{Binder, Binders, Lowering, NodeRef, fault};
+use super::super::{fault, Binder, Binders, Lowering, NodeRef};
 use super::{
-    ProtocolInput, ProtocolSite, RelatedSide, checked_slot_names, empty_group, identifier, member,
-    protocol_location, protocol_site, sorted,
+    checked_slot_names, empty_group, identifier, member, protocol_location, protocol_site, sorted,
+    ProtocolInput, ProtocolSite, RelatedSide,
 };
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedBody;
@@ -46,7 +46,7 @@ use crate::check::node_key::{
 use crate::check::protocol_clause::{CheckedControl, CheckedControlTree, ProtocolNodeId};
 use crate::check::protocol_obligation::CheckedCommit;
 use crate::check::protocol_slots::CheckedNodeBody;
-use crate::check::refusal::{CheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 use crate::value::member::Member;
 
 /// The nodes one protocol `attempt` names, which are keyed after the
@@ -131,7 +131,7 @@ impl Lowering<'_> {
         &mut self,
         protocol: &ProtocolInput<'_>,
         inputs: &RunInputs<'_>,
-    ) -> Result<Run, CheckRefusal> {
+    ) -> Result<Run, SemanticCheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let checked = protocol.checked;
         let tree = &checked.controls;
@@ -283,7 +283,7 @@ impl Lowering<'_> {
         keys: &BTreeMap<ProtocolNodeId, NodeRef>,
         compensations: &BTreeMap<usize, NodeKey>,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<(&'static str, Vec<MemberTerm>), CheckRefusal> {
+    ) -> Result<(&'static str, Vec<MemberTerm>), SemanticCheckRefusal> {
         let protocol = controls.protocol;
         let form = protocol.form;
         let checked = protocol.checked;
@@ -577,7 +577,7 @@ impl Lowering<'_> {
         control: &CheckedControl,
         keys: &BTreeMap<ProtocolNodeId, NodeRef>,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<Vec<MemberTerm>, CheckRefusal> {
+    ) -> Result<Vec<MemberTerm>, SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let form = protocol
             .form
@@ -677,7 +677,7 @@ impl Lowering<'_> {
         entry: &BTreeSet<usize>,
         keys: &BTreeMap<ProtocolNodeId, NodeRef>,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<Vec<MemberTerm>, CheckRefusal> {
+    ) -> Result<Vec<MemberTerm>, SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let protocol = controls.protocol;
         let form = protocol
@@ -745,7 +745,7 @@ impl Lowering<'_> {
         entry: &BTreeSet<usize>,
         keys: &BTreeMap<ProtocolNodeId, NodeRef>,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<Vec<MemberTerm>, CheckRefusal> {
+    ) -> Result<Vec<MemberTerm>, SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let protocol = controls.protocol;
         let form = protocol
@@ -841,7 +841,7 @@ impl Lowering<'_> {
         visible: &[CheckedBody],
         entry: &BTreeSet<usize>,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<BindingValue, CheckRefusal> {
+    ) -> Result<BindingValue, SemanticCheckRefusal> {
         let mut nodes = Vec::with_capacity(visible.len());
         for body in visible {
             match self.scoped_body(controls, body, entry, location)? {
@@ -898,7 +898,7 @@ impl Lowering<'_> {
         node: ProtocolNodeId,
         entry: &BTreeSet<usize>,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<MemberTerm, CheckRefusal> {
+    ) -> Result<MemberTerm, SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let mut readable = entry.clone();
         if let Some(own) = controls.own.get(&node) {
@@ -1015,7 +1015,7 @@ impl Lowering<'_> {
         body: &CheckedBody,
         entry: &BTreeSet<usize>,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let scope = entry
             .iter()
@@ -1035,7 +1035,7 @@ impl Lowering<'_> {
         entry: &BTreeSet<usize>,
         own: bool,
         location: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let unchecked = || fault(location, KeyFault::UncheckedProtocolFact);
         let body = controls.bodies.get(&node).ok_or_else(unchecked)?;
         let mut scope = entry
@@ -1180,7 +1180,7 @@ impl Controls<'_, '_> {
     /// compensation anchor, the template's forward effect and commit
     /// control). A cycle is
     /// a fact S3 refused (FSpec FR-464 "Derived causal relation").
-    fn build_order(&self) -> Result<Vec<ProtocolNodeId>, CheckRefusal> {
+    fn build_order(&self) -> Result<Vec<ProtocolNodeId>, SemanticCheckRefusal> {
         let tree = &self.protocol.checked.controls;
         let unchecked = || fault(&self.protocol.location(), KeyFault::UncheckedProtocolFact);
         let root = tree.root().ok_or_else(unchecked)?;

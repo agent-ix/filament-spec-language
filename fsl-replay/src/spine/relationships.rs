@@ -3,12 +3,12 @@
 //! to filament-observation without adding correlation semantics here.
 
 use filament_observation::{
-    AdmissionOutcome, AdmissionRequest, AdmittedBundleKey, AdmittedRecord, AdmittedStaticBundle,
-    Anchor, ClockRange, Digest, Identity, Member, NATIVE_LINKED_PACKAGE_FORMAT, ObservationBinding,
+    admit, AdmissionOutcome, AdmissionRequest, AdmittedBundleKey, AdmittedRecord,
+    AdmittedStaticBundle, Anchor, ClockRange, Digest, Identity, Member, ObservationBinding,
     PackageSelection, ProducerDigest, QualifiedSubject, Relationship, RelationshipExtent,
     RelationshipExtentState, RequiredRelationship, ResourceLimits, Revision, ScopeKind,
     ScopeSelection, StaticProducerBundle, SubjectIdentity, SubjectKind, ValueState, Visibility,
-    admit,
+    NATIVE_LINKED_PACKAGE_FORMAT,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -729,6 +729,7 @@ fn read_snapshot_subject(
     ))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_record(value: &Value, path: &str) -> ReadResult<RecordParts> {
     let record = object(value, path)?;
     const FIELDS: &[&str] = &[
@@ -947,6 +948,7 @@ fn read_subject(value: &Value, path: &str) -> ReadResult<SubjectParts> {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn read_anchor(value: &Value, path: &str) -> ReadResult<Anchor> {
     let object = object(value, path)?;
     let kind = text(member(object, "kind", path)?, &format!("{path}/kind"))?;
@@ -987,6 +989,7 @@ fn read_anchor(value: &Value, path: &str) -> ReadResult<Anchor> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn read_scope_kind(value: &Value, path: &str) -> ReadResult<ScopeKind> {
     let object = object(value, path)?;
     let kind = text(member(object, "kind", path)?, &format!("{path}/kind"))?;
@@ -1013,6 +1016,7 @@ fn read_scope_kind(value: &Value, path: &str) -> ReadResult<ScopeKind> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn read_range(value: &Value, path: &str) -> ReadResult<ClockRange> {
     let object = object(value, path)?;
     let family = text(
@@ -1151,6 +1155,7 @@ fn digest(value: &Value, path: &str, prefix: bool) -> ReadResult<Digest> {
         .map(Digest::new)
         .ok_or_else(|| error(path, "expected lowercase SHA-256 digest"))
 }
+#[ix_trace_rs::string_edge]
 fn parse_digest(value: &str, prefix: bool) -> Option<[u8; 32]> {
     let value = if prefix {
         value.strip_prefix("sha256:")?
@@ -1220,6 +1225,7 @@ fn limit(value: &Value, path: &str) -> ReadResult<usize> {
     let value = unsigned_decimal(value, path)?;
     Ok(usize::try_from(value).unwrap_or(usize::MAX))
 }
+#[ix_trace_rs::string_edge]
 fn valid_decimal(value: &str, signed: bool) -> bool {
     let digits = if signed {
         value.strip_prefix('-').unwrap_or(value)
@@ -1253,21 +1259,22 @@ pub fn package_selection(name: String, digest: [u8; 32]) -> PackageSelection {
 #[cfg(test)]
 mod tests {
     use super::{
-        RelationshipIdentityMapping, RelationshipSelection, invalid_snapshot_relationship_identity,
-        read_extents, unknown_snapshot_relationship,
+        invalid_snapshot_relationship_identity, read_extents, unknown_snapshot_relationship,
+        RelationshipIdentityMapping, RelationshipSelection,
     };
     use filament_exact::{
         EffectiveId, NodeKey, ObjectId, ObjectReference, OriginalDeclarationKey, PathSegment,
         UniverseId,
     };
     use filament_observation::{
-        PRODUCER_INTERFACE_VERSION, ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
+        ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
         RelationshipEndpointDeclaration, Revision, StaticProducerBundle,
+        PRODUCER_INTERFACE_VERSION,
     };
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use ix_trace_rs::trace;
-    use serde_json::Value;
     use serde_json::json;
+    use serde_json::Value;
     use std::collections::{BTreeMap, BTreeSet};
 
     const ORDER: &str = "ix://test/workflow/Order";

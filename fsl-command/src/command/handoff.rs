@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared bytes-only directory admission (FR-850, FR-1039).
 
-use super::{Intake, Result, RunCause, dependency_manifest::Manifest};
+use super::{dependency_manifest::Manifest, Intake, Result, RunCause};
 use filament_contract_model::CheckedPackageV2;
 use std::{
     collections::{BTreeMap, BTreeSet},

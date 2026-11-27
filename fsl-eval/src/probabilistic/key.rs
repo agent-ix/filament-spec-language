@@ -214,6 +214,7 @@ impl super::MeasurePlan<'_> {
     ///
     /// # Errors
     /// An impossible phase/count/sum or a caller's actual admission stop.
+    #[ix_trace_rs::string_edge]
     pub fn restore_fraction_control(
         &self,
         control: NodeRef<'_>,

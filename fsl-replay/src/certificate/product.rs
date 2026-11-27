@@ -29,7 +29,7 @@ pub use relation::{
 };
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
-use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
+use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
 use super::{CertificateLocus, CertificateRule};
 use crate::shared_wire::state_key_text;
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
@@ -626,10 +626,11 @@ fn check(
         let system = systems
             .get(slot(parameter.alias.as_str())?)
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
+        // FR-125-AC-21: over an empty `initial` list the declared universe
+        // keys are bindable, so the item reaches `no-initial-state` instead
+        // of refusing the key.
         let admitted = system
-            .instances(&filament_exact::ValueType::Reference(
-                parameter.object.clone(),
-            ))
+            .hyper_bindable(&parameter.object)
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         let found = admitted
             .into_iter()

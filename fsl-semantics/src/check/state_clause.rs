@@ -19,7 +19,7 @@
 //! [`PackageDeclarations::check`]: super::PackageDeclarations::check
 
 use filament_checked::node::{AuthoredBound, NodeKind};
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, Identifier, NodeKey, Origin, ValueType};
@@ -28,18 +28,18 @@ use fsl_foundation::bound::DomainKey;
 use fsl_foundation::diagnostic::{StageFailure, Staged};
 use fsl_foundation::selection::ProfileSelection;
 
-use super::check::{Signatures, StateContext, Typer, bind_parameters};
-use super::claims::{RequirementRecord, wire};
+use super::check::{bind_parameters, Signatures, StateContext, Typer};
+use super::claims::{wire, RequirementRecord};
 use super::facts::{CheckedFacts, Definedness};
 use super::ir::{CheckedBody, CheckedNode, DispatchTable};
 use super::lowering::{AdmittedModel, LoweredClause};
 use super::observation::Observations;
-use super::references::{ModelReferences, body_objects};
-use super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::references::{body_objects, ModelReferences};
+use super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use super::{Capability, Scope};
 use crate::family::{
-    CheckContext, CheckOutcome, ClaimExtent, ClassifyFailure, FamilyContract, Requirements,
-    classify_domains, classify_extent,
+    classify_domains, classify_extent, CheckContext, CheckOutcome, ClaimExtent, ClassifyFailure,
+    FamilyContract, Requirements,
 };
 use crate::model::clause_observation::Observation;
 use crate::model::operation::OperationDeclaration;
@@ -510,7 +510,7 @@ pub(crate) fn check_type_invariant<'a>(
     declarations: &ClauseDeclarations<'a>,
     functions: &[&CheckedBody],
     cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
-) -> Result<(super::type_invariant::CheckedTypeInvariant, u64), CheckRefusal> {
+) -> Result<(super::type_invariant::CheckedTypeInvariant, u64), SemanticCheckRefusal> {
     let typed = check_clause(
         &invariant.view(),
         declarations,
@@ -523,7 +523,7 @@ pub(crate) fn check_type_invariant<'a>(
     if matches!(invariant.self_type, ValueType::Composite(_))
         && reads_object_through_calls(typed.body.root(), declarations.scope, functions)
     {
-        return Err(invariant.refusal(CheckRefusal {
+        return Err(invariant.refusal(SemanticCheckRefusal {
             location: declarations.location.clone(),
             cause: Box::new(CheckCause::ObjectReadInValueInvariant),
         }));
@@ -810,8 +810,8 @@ fn walked_bound(
 }
 
 /// `refusal`'s cause attributed to the `StateModel` family.
-fn state_model_refusal(refusal: CheckRefusal) -> CheckRefusal {
-    CheckRefusal {
+fn state_model_refusal(refusal: SemanticCheckRefusal) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: refusal.location,
         cause: Box::new(CheckCause::StateModel(Box::new(
             super::state_model::StateModelRefusal {
@@ -829,13 +829,13 @@ fn ambiguous_population(
     object: EffectiveId,
     populations: &[DeclarationKey],
     location: &Location,
-) -> CheckRefusal {
+) -> SemanticCheckRefusal {
     let name = scope
         .types()
         .object_type(object)
         .map_or_else(String::new, |declaration| declaration.name().to_owned());
     let populations: Vec<&str> = populations.iter().map(|key| key.node.as_str()).collect();
-    CheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::AmbiguousName {
             name: format!("{name} ({})", populations.join(", ")),
@@ -847,14 +847,14 @@ fn ambiguous_population(
 impl FamilyContract for ProtocolClauseFamily {
     type Form = StateClauseDeclaration;
     type Checked = TypedStateClause;
-    type Cause = CheckRefusal;
+    type Cause = SemanticCheckRefusal;
     type Declarations<'a> = ClauseDeclarations<'a>;
     type Claim = ClauseClaim;
 
     fn check<'a>(
         form: &StateClauseDeclaration,
         cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
-    ) -> CheckOutcome<TypedStateClause, CheckRefusal> {
+    ) -> CheckOutcome<TypedStateClause, SemanticCheckRefusal> {
         let declarations = cx.declarations();
         // FR-391: a unit-level state clause's body is a population position.
         let named = super::check::NamedScope::of(
@@ -885,13 +885,13 @@ impl FamilyContract for ProtocolClauseFamily {
 fn parent_slot_refusal(
     failure: super::lowering::ParentSlotFailure,
     location: &Location,
-) -> CheckRefusal {
+) -> SemanticCheckRefusal {
     use super::lowering::ParentSlotFailure;
     let cause = match failure {
         ParentSlotFailure::Incomplete(incomplete) => CheckCause::ModelIncomplete(incomplete),
         ParentSlotFailure::Pending(failure) => super::pending_refusal(failure),
     };
-    CheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(cause),
     }
@@ -905,7 +905,7 @@ pub(crate) fn check_operation_clause<'a>(
     clause: &super::operation_clause::OperationClauseDeclaration,
     declarations: &ClauseDeclarations<'a>,
     cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
-) -> Result<TypedStateClause, CheckRefusal> {
+) -> Result<TypedStateClause, SemanticCheckRefusal> {
     check_clause(
         &clause.view(),
         declarations,
@@ -920,7 +920,7 @@ pub(crate) fn check_clause(
     form: &ClauseView<'_>,
     input: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, Scope>,
-) -> Result<TypedStateClause, CheckRefusal> {
+) -> Result<TypedStateClause, SemanticCheckRefusal> {
     check_clause_in(form, input, cx, None)
 }
 
@@ -932,7 +932,7 @@ pub(crate) fn check_clause_named(
     input: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, Scope>,
     named: super::check::NamedScope,
-) -> Result<TypedStateClause, CheckRefusal> {
+) -> Result<TypedStateClause, SemanticCheckRefusal> {
     check_clause_in(form, input, cx, Some(named))
 }
 
@@ -944,7 +944,7 @@ fn check_clause_in(
     input: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, Scope>,
     named: Option<super::check::NamedScope>,
-) -> Result<TypedStateClause, CheckRefusal> {
+) -> Result<TypedStateClause, SemanticCheckRefusal> {
     check_clause_typed(form, input, cx, named).map_err(|refusal| {
         // FR-056-AC-43: a clause naming a parameter of its operation that has
         // no checked type reaches an untyped member, not a missing name.
@@ -976,7 +976,7 @@ fn check_clause_in(
                 )))
             });
         match untyped {
-            Some(cause) => CheckRefusal {
+            Some(cause) => SemanticCheckRefusal {
                 location: refusal.location,
                 cause: Box::new(cause),
             },
@@ -990,7 +990,7 @@ fn check_clause_typed(
     input: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, Scope>,
     named: Option<super::check::NamedScope>,
-) -> Result<TypedStateClause, CheckRefusal> {
+) -> Result<TypedStateClause, SemanticCheckRefusal> {
     let location = input.location;
     let mut nodes = input.nodes_used;
     let (parameters, has_result) = form.parameters();
@@ -1039,7 +1039,7 @@ fn check_clause_typed(
     });
     let body = typer.infer(form.body, Some(&ValueType::Boolean), location)?;
     if body.root().value_type() != &ValueType::Boolean {
-        return Err(CheckRefusal {
+        return Err(SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(CheckCause::NonBooleanRoot),
         });
@@ -1445,13 +1445,16 @@ pub(crate) fn population_key(
 /// rather than hand-built, so a state clause's or an attempt's
 /// resource-exhausted refusal carries the same kind and region a
 /// function's would.
-pub(crate) fn classify_refusal(failure: ClassifyFailure, location: &Location) -> CheckRefusal {
+pub(crate) fn classify_refusal(
+    failure: ClassifyFailure,
+    location: &Location,
+) -> SemanticCheckRefusal {
     match failure {
-        ClassifyFailure::Limit(exceeded) => CheckRefusal {
+        ClassifyFailure::Limit(exceeded) => SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(super::limit_cause(&exceeded)),
         },
-        ClassifyFailure::Fault(fault) => CheckRefusal {
+        ClassifyFailure::Fault(fault) => SemanticCheckRefusal {
             location: location.clone(),
             cause: Box::new(CheckCause::InternalFault(Box::new(
                 KeyFault::UnclassifiedExtent(fault),
@@ -1475,7 +1478,7 @@ pub(crate) fn frame_record(
     types: &TypeEnvironment,
     position_limit: u64,
     location: &Location,
-) -> Result<RequirementRecord, CheckRefusal> {
+) -> Result<RequirementRecord, SemanticCheckRefusal> {
     let receiver = ValueType::Reference(operation.declaring.clone());
     let mut roots: Vec<(NodeKey, &ValueType)> = vec![(frame.clone(), &receiver)];
     roots.extend(
@@ -1534,7 +1537,7 @@ pub(crate) fn clause_records(
     types: &TypeEnvironment,
     position_limit: u64,
     location: &Location,
-) -> Result<Vec<KeyedClaim>, CheckRefusal> {
+) -> Result<Vec<KeyedClaim>, SemanticCheckRefusal> {
     let object_of = |object: EffectiveId| {
         clause
             .population_types
@@ -1542,7 +1545,7 @@ pub(crate) fn clause_records(
             .position(|named| *named == object)
             .and_then(|at| lowered.population_objects.get(at).cloned())
     };
-    let unkeyable = || CheckRefusal {
+    let unkeyable = || SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::InternalFault(Box::new(
             KeyFault::UnkeyableRequirements,

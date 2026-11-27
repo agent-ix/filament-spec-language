@@ -1131,7 +1131,7 @@ pub enum ProtocolEmissionResult {
         /// The span of the declaration's name.
         declaration_span: fsl_foundation::Span,
         /// The first typed refusal attributed to this declaration.
-        refusal: fsl_semantics::check::CheckRefusal,
+        refusal: fsl_semantics::check::SemanticCheckRefusal,
     },
     /// The protocol could not finish within its shared checking budget.
     Incomplete {
@@ -1150,7 +1150,7 @@ pub enum ProtocolEmissionAggregate {
     /// At least one protocol was refused; no package is admitted.
     Refused {
         /// The first refused protocol's primary record.
-        primary: fsl_semantics::check::CheckRefusal,
+        primary: fsl_semantics::check::SemanticCheckRefusal,
     },
     /// No protocol was refused, but at least one is incomplete.
     Incomplete {
@@ -1185,7 +1185,9 @@ impl ProtocolEmission {
 
     /// One primary diagnostic for each refused protocol, in declaration
     /// order (FR-383 diagnostics rule).
-    pub fn diagnostics(&self) -> impl Iterator<Item = &fsl_semantics::check::CheckRefusal> + '_ {
+    pub fn diagnostics(
+        &self,
+    ) -> impl Iterator<Item = &fsl_semantics::check::SemanticCheckRefusal> + '_ {
         self.results.iter().filter_map(|result| match result {
             ProtocolEmissionResult::Emitted { .. } => None,
             ProtocolEmissionResult::Refused { refusal, .. } => Some(refusal),
@@ -2126,6 +2128,7 @@ impl<'g> Candidate<'g> {
     /// `correspondence` node other than `component_composition`, and on a
     /// `value`/`enum_value` node; on eligible nodes it is present exactly
     /// when the node has a `declaration` occurrence.
+    #[ix_trace_rs::string_edge]
     fn declaration_matches_occurrences(&self) -> bool {
         // The `EnumValue` arm is not distinguished by any fixture today:
         // occurrence-recording never attaches a `Declaration`-role
@@ -3624,6 +3627,7 @@ fn recorded_occurrences(
 /// Emit every authored related clause against its actual recorded control
 /// occurrence and final full node id (FSpec FR-831). Canonical positions
 /// were retained before lowering deduplicated the records.
+#[ix_trace_rs::string_edge]
 fn protocol_correlation_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -4283,6 +4287,7 @@ fn equality_fact_witness_rows(
 /// Turns the checked equality decision and its exact occurrence witness into
 /// FR-322's wire sidecar. The structural graph supplies operand type nodes;
 /// the producer rows supply the schedule and occurrence-specific decision.
+#[ix_trace_rs::string_edge]
 fn checked_equality_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -4677,10 +4682,12 @@ fn emitted_source_declaration_key(
 /// Rewrite source declaration keys in the typed literals of an emitted clock
 /// place. Those keys are producer-local S3 strings; the package names the
 /// same declarations from their SourceOwner identities.
+#[ix_trace_rs::string_edge]
 fn rewrite_source_keys_in_clock_place(
     node: &mut CheckedSemanticNodeV2,
     source_keys: &SourceDeclarationKeys,
 ) -> Result<(), EmitRefusal> {
+    #[ix_trace_rs::string_edge]
     fn rewrite_term(
         term: &mut CheckedTerm,
         source_keys: &SourceDeclarationKeys,
@@ -6896,6 +6903,7 @@ fn append_model_roots<'a>(
 }
 
 #[implements("FSpec-FR-322-AC-137")]
+#[ix_trace_rs::string_edge]
 fn move_model_roots_to_end(
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -6941,6 +6949,7 @@ fn move_model_roots_to_end(
 /// node carries one generated occurrence at its selected model root region.
 /// Type references discovered while emitting a declaration do not create
 /// additional occurrences on that declaration node.
+#[ix_trace_rs::string_edge]
 fn normalize_model_declaration_occurrences(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -7469,6 +7478,7 @@ impl<'g> Candidates<'g> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn candidates_of<'g>(
     ids: &StructuralIds,
     foreign: &ForeignNodes,
@@ -8402,9 +8412,7 @@ fn emit_package_nodes(
                     .iter()
                     .map(|(key, id)| (key.clone(), id.clone())),
             );
-            value_validity
-                .renumbering
-                .relabel_term_data(&row_ids, data);
+            value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
     }
     let selected_operation_member_rows = selected_operation_member_rows
@@ -8489,11 +8497,7 @@ fn emit_package_nodes(
         &relation_rows,
         &omitted_causes,
     )?;
-    value_validity_requirements::renumber_records(
-        &requirement_rows,
-        &mut nodes,
-        &mut source_map,
-    )?;
+    value_validity_requirements::renumber_records(&requirement_rows, &mut nodes, &mut source_map)?;
     meter.charge(&requirement_rows)?;
     let path_condition_frames =
         value_validity_requirements::frame_rows(ids, &producer_node_ids, &value_validity.frames)?;
@@ -8946,6 +8950,7 @@ type SourceObjectRows = (
 /// FR-569 "Source-object identity rows": one row for each emitted source
 /// object node, joined to its checked declaration, effective body bindings,
 /// normalized supertypes and populations.
+#[ix_trace_rs::string_edge]
 fn source_object_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
@@ -9019,40 +9024,36 @@ fn source_object_rows(
         // order and the type itself last: a field's place in the view is its
         // owner's rank, then its declared position (FR-569 "Source-object
         // identity rows").
-        let owner_chain = {
-            let supertypes_of = |key: &_| object_records.get(key).map(|found| &found.supertypes);
-            let mut chain = Vec::new();
-            let mut stack = vec![(&object.key, 0_usize)];
-            while let Some((key, next)) = stack.pop() {
-                let supertypes = supertypes_of(key).map_or(&[][..], |found| found.as_slice());
-                match supertypes.get(next) {
-                    Some(parent) => {
-                        stack.push((key, next + 1));
-                        if !chain.contains(&parent)
-                            && !stack.iter().any(|(held, _)| *held == parent)
-                        {
-                            stack.push((parent, 0));
-                        }
-                    }
-                    None => {
-                        if !chain.contains(&key) {
-                            chain.push(key);
-                        }
-                    }
-                }
-            }
-            chain
-        };
+        let owner_chain = fsl_semantics::check::source_object_owner_chain(
+            |key| {
+                object_records
+                    .get(key)
+                    .map(|found| found.supertypes.as_slice())
+            },
+            &object.key,
+        );
         let mut placed: Vec<(
             (usize, usize),
             SelectedSourceObjectMember,
             SourceObjectMemberFacts,
         )> = Vec::with_capacity(source_members.len());
-        for ((name, target, optional), attribute) in source_members.into_iter().zip(attributes) {
+        let mut bound: Vec<&str> = Vec::with_capacity(source_members.len());
+        for (name, target, optional) in source_members {
+            // The body's binding names are exactly the view's field names,
+            // each once.
+            if bound.contains(&name) {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            bound.push(name);
+            // The body binds the view order; the scope lists an object's own
+            // fields before its supertypes', so each binding finds its
+            // attribute by name.
+            let attribute = attributes
+                .iter()
+                .find(|attribute| attribute.field().name() == name)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
             let field = attribute.field();
-            if name != field.name()
-                || optional != (field.presence() == filament_exact::Presence::Optional)
-            {
+            if optional != (field.presence() == filament_exact::Presence::Optional) {
                 return Err(EmitRefusal::SourceMapInvariant);
             }
             let field_owner = graph
@@ -10102,6 +10103,7 @@ fn validate_temporal_clock(
 /// Whether `node` is claim-bearing (FSpec FR-322 "Claim declaration names"):
 /// a `state`/`state_clause`, `relation`/`refinement`,
 /// `correspondence`/`component_composition` or `claim` node.
+#[ix_trace_rs::string_edge]
 fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
     let (tag, form) = (node.node_tag.as_ref(), node.semantic_form.as_ref());
     (tag == CheckedNodeTag::State.as_wire() && form == "state_clause")
@@ -10117,6 +10119,7 @@ fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
 /// declaration's region, sorted by node then occurrence. The rows are
 /// written from the checked unit's declarations, never derived from a
 /// region, a node path or the clause body.
+#[ix_trace_rs::string_edge]
 fn claim_name_rows(
     graph: &CheckedGraph,
     ids: &StructuralIds,

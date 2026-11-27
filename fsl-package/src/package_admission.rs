@@ -256,6 +256,7 @@ pub fn checked_package_evidence(
 
 /// The refusal IR's reader raised, with its pointer and typed cause. The
 /// identity at fault is the caller's to read from the bytes.
+#[ix_trace_rs::string_edge]
 fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal {
     let pointer = refusal
         .loci

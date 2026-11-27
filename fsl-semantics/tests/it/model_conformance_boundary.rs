@@ -9,13 +9,15 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, ModelConformanceFailure, PackageDeclarations, RefinementObligation,
+    CheckCause, ModelConformanceFailure, PackageDeclarations, RefinementObligation,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::{
-    NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationLimitKind,
 };
-use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use fsl_semantics::model::domain_package::ValueTypeRef;
+use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use fsl_semantics::model::normalize::{EffectiveParameterType, ModelRefusalCause};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -206,7 +208,7 @@ fn document(types: impl FnOnce(&Value) -> Vec<Value>) -> Vec<u8> {
 /// `budget` is the `work_units` limit the run was admitted under.
 struct Run {
     n: u64,
-    outcome: Result<(), Vec<CheckRefusal>>,
+    outcome: Result<(), Vec<SemanticCheckRefusal>>,
 }
 
 fn admit_n(unit: &str, packages: &fsl_semantics::model::intake::PackageInput) -> u64 {
@@ -273,7 +275,7 @@ fn run_unit(
     Run { n, outcome }
 }
 
-fn failures(refusals: &[CheckRefusal]) -> Vec<&ModelConformanceFailure> {
+fn failures(refusals: &[SemanticCheckRefusal]) -> Vec<&ModelConformanceFailure> {
     refusals
         .iter()
         .map(|refusal| match &*refusal.cause {
@@ -284,7 +286,7 @@ fn failures(refusals: &[CheckRefusal]) -> Vec<&ModelConformanceFailure> {
 }
 
 fn tuples(
-    outcome: &Result<(), Vec<CheckRefusal>>,
+    outcome: &Result<(), Vec<SemanticCheckRefusal>>,
 ) -> Result<(), Vec<(Code, Option<&'static str>)>> {
     outcome.as_ref().map(|_| ()).map_err(|refusals| {
         refusals
@@ -298,7 +300,7 @@ fn check(document: &[u8], body: &str) -> Result<(), Vec<(Code, Option<&'static s
     tuples(&run(document, body, None).outcome)
 }
 
-fn denial(refusals: &[CheckRefusal]) -> NormalizationIncomplete {
+fn denial(refusals: &[SemanticCheckRefusal]) -> NormalizationIncomplete {
     assert_eq!(
         refusals.len(),
         1,
@@ -317,7 +319,7 @@ fn assert_complete_at_total_and_exact_denial_one_less(
     document: &[u8],
     body: &str,
     total: u64,
-    expect: impl FnOnce(&Result<(), Vec<CheckRefusal>>),
+    expect: impl FnOnce(&Result<(), Vec<SemanticCheckRefusal>>),
 ) {
     let complete = run(document, body, Some(total));
     expect(&complete.outcome);
