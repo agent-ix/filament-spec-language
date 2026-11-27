@@ -19,6 +19,7 @@ use fsl_package::verification_plan::{
     emit_verification_plans, VerificationPlan, VerificationPlanRefusal,
 };
 use fsl_semantics::model::observation::DocumentProvision;
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 use super::settle::Settle;
@@ -84,6 +85,7 @@ fn refuse(code: Code, pointer: &str, cause: &'static str, reason: impl Into<Stri
 /// # Errors
 ///
 /// A refusal at the member's pointer, or the compile's refusal.
+#[implements("FR-480-AC-2")]
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
@@ -205,8 +207,20 @@ pub(super) fn run_bytes(
             }
             // FSpec FR-824: `initial` is the state each consuming step starts
             // from, and its complete populations are the subject's universes.
-            let mut binding =
-                SubjectSelection::default_over(&documents).binding(&packages, &documents);
+            let mut binding = SubjectSelection::default_over(&documents)
+                .binding_with_source_packages(
+                    &packages,
+                    &documents,
+                    package.graph().source_packages(),
+                )
+                .map_err(|ambiguity| {
+                    refuse(
+                        Code::AmbiguousDeclaration,
+                        "/initial",
+                        "ambiguous-name",
+                        ambiguity.to_string(),
+                    )
+                })?;
             binding.initial = initial;
             let mut provision = SourceProvision::default();
             for unit in std::iter::once(&source).chain(units) {

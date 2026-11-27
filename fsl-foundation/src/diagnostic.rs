@@ -765,6 +765,21 @@ pub fn category_of(code: &CatalogCode) -> Option<Category> {
     catalog_category(code.code())
 }
 
+/// FR-285: the category an exit derives from for a catalog code, one
+/// category per code. It is [`category_of`] except that every code
+/// [`Code::is_unsupported`] names (`unsupported_construct`,
+/// `unsupported_projection`, `unknown_required_feature`,
+/// `unimplemented_capability`), which the refusal-record map files under
+/// `Refusal` or not at all, is `Unsupported` (exit 21), as [`Code::category`]
+/// gives them. Use it wherever the category feeds an exit; [`category_of`]
+/// stays the ADR-013 O-17 record map.
+pub fn exit_category_of(code: &CatalogCode) -> Option<Category> {
+    match Code::from_code(code.code()) {
+        Some(known) if known.is_unsupported() => Some(Category::Unsupported),
+        _ => category_of(code),
+    }
+}
+
 /// The refusal-record category of the catalog code spelled `code`
 /// ([`category_of`]); `None` for a spelling the catalog does not define.
 pub fn catalog_category(code: &str) -> Option<Category> {
@@ -981,8 +996,8 @@ mod foundation_tests {
     use alloc::{string::ToString, vec, vec::Vec};
 
     use super::{
-        category_of, resource_exhausted, Code, Phase, Source, SourceIdentity, Span, SyntaxLimit,
-        CATALOG_CATEGORIES,
+        category_of, exit_category_of, resource_exhausted, Code, Phase, Source, SourceIdentity,
+        Span, SyntaxLimit, CATALOG_CATEGORIES,
     };
     use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
     use ix_trace_rs::trace;
@@ -1118,6 +1133,34 @@ mod foundation_tests {
                 .stage_kind()
                 .catalog_cause(),
             "token-count-exceeded"
+        );
+    }
+
+    /// FR-285-AC-1: the exit category of each unsupported code is
+    /// `Unsupported` (exit 21), `Code::category`'s answer, though the record
+    /// map files them under `Refusal`; every other code keeps its record
+    /// category and an unknown code has none.
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn exit_category_of_files_the_unsupported_codes_as_unsupported() {
+        for code in [
+            "unsupported_construct",
+            "unsupported_projection",
+            "unknown_required_feature",
+            "unimplemented_capability",
+        ] {
+            let catalog = CatalogCode::new(code, "x");
+            assert_ne!(category_of(&catalog), Some(Category::Unsupported), "{code}");
+            assert_eq!(exit_category_of(&catalog), Some(Category::Unsupported));
+            assert_eq!(Category::Unsupported.exit_code(), 21);
+        }
+        let ill_typed = CatalogCode::new("ill_typed", "x");
+        assert_eq!(exit_category_of(&ill_typed), Some(Category::Refusal));
+        let cancelled = CatalogCode::new("cancelled", "x");
+        assert_eq!(exit_category_of(&cancelled), Some(Category::Incomplete));
+        assert_eq!(
+            exit_category_of(&CatalogCode::new("not_a_catalog_code", "x")),
+            None
         );
     }
 

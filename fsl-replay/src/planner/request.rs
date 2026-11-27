@@ -932,13 +932,15 @@ pub fn dependency_graphs(
     emit: fsl_package::EmitLimits,
 ) -> Result<DependencyGraphs, DependencyGraphsRefusal> {
     let mut graphs = DependencyGraphs::new();
-    for dependency in package.dependencies().values() {
+    for (identity, dependency) in package.dependencies() {
         let name = dependency.graph().package_name().to_owned();
-        let emission = fsl_package::emit_checked(dependency, emit).map_err(|refusal| {
-            DependencyGraphsRefusal::Emission {
-                package: name.clone(),
-                refusal: Box::new(refusal),
-            }
+        let linked = match fsl_package::emit_linked_dependency(package, identity, emit) {
+            Some(linked) => linked,
+            None => fsl_package::emit_checked(dependency, emit),
+        };
+        let emission = linked.map_err(|refusal| DependencyGraphsRefusal::Emission {
+            package: name.clone(),
+            refusal: Box::new(refusal),
         })?;
         let graph = WireGraph::of_package_bytes(emission.package().bytes()).map_err(|message| {
             DependencyGraphsRefusal::Unreadable {

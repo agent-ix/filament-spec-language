@@ -18,8 +18,12 @@ const TRAFFIC: &str = "random Service::call(ok) ~ { true: 99, false: 1 };\n\
 const CALLS: &str = "reward calls on Service::call = 1;\n";
 
 // Hand-counted from the deterministic expected-reward subsystem charge path.
-// The first witness-production charge follows the 110,432-unit product prefix (70,989 plus the 39,443 read beyond decided control, ADR-018 UE-6);
-// production admits 168,995 units (189 below its earlier 169,184 since QSL-3611, #4109) and independent replay admits 165,143.
+// The first witness-production charge follows the 110,432-unit product prefix
+// (70,989 plus the 39,443 read beyond decided control, ADR-018 UE-6);
+// production admits 168,995 units and independent replay admits 165,143.
+// Production is 189 units below its earlier 169,184 since QSL-3611 (#4109)
+// reduced the exact certificate candidate work; FR-203-AC-31/32 pin the
+// shared count, not its value.
 #[cfg(feature = "test-support")]
 const SUBSYSTEM_PREFIX_WORK: u64 = 110_432;
 #[cfg(feature = "test-support")]

@@ -7,8 +7,8 @@ use ix_trace_rs::implements;
 use super::fair::maximal_fair_end_components_within;
 use super::rows::Evaluation;
 use super::{
-    Dyadic, ExactProbLimits, ProbProduct, UnboundedError, UnboundedObjective, UnboundedOutcome,
-    decide_until_threshold,
+    decide_until_threshold, Dyadic, ExactProbLimits, ProbProduct, UnboundedError,
+    UnboundedObjective, UnboundedOutcome,
 };
 
 /// Bound a fair-minimum eventual probability through the complement event.
@@ -110,8 +110,8 @@ use num_bigint::BigInt;
 mod tests {
     use super::*;
     use crate::exact_probabilistic::{
-        ExtRational, ProbEdge, ProbKey, ProbStateId, ProductAction, ProductKind,
-        decide_fair_reachability,
+        decide_fair_reachability, ExtRational, ProbEdge, ProbKey, ProbStateId, ProductAction,
+        ProductKind,
     };
     use ix_trace_rs::trace;
 
