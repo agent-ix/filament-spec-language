@@ -800,6 +800,15 @@ enum FirstHit {
     Unstated,
 }
 
+/// Finalize the refused first-phase candidate without making an undefined
+/// counterexample.
+fn finalize_refused_candidate(depth: usize, candidate: Candidate) -> Option<(usize, FirstHit)> {
+    match candidate {
+        Candidate::Refused(cause) => Some((depth, FirstHit::Undecided(cause))),
+        Candidate::Found(..) | Candidate::Rejected(_) => None,
+    }
+}
+
 /// Keep, of the refused findings of one state, the one at the earliest joint
 /// position; the first in the list on a tie.
 fn sooner(refused: &mut Option<(usize, UndecidedCause)>, depth: usize, cause: UndecidedCause) {
@@ -2005,8 +2014,8 @@ impl<'a> Run<'_, 'a> {
         }
         Ok(match best {
             None => None,
-            Some((depth, _, Candidate::Refused(cause))) => {
-                Some((depth, FirstHit::Undecided(cause)))
+            Some((depth, _, candidate @ Candidate::Refused(_))) => {
+                finalize_refused_candidate(depth, candidate)
             }
             Some((depth, _, Candidate::Rejected(id))) => {
                 let hit = match self.confirmed_rejection(run, id, totals)? {
