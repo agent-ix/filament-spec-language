@@ -131,6 +131,7 @@ use crate::refinement::{
     check_initial, check_step, open_systems, CandidateStep, ConcreteStep, RefinementPosition,
     StepVerdict, SubjectRefusal, Taken,
 };
+use crate::timed::{clock_constraints, follow_carries};
 
 type CandidateRow = (
     usize,
@@ -1000,14 +1001,19 @@ pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
 /// A state-graph decision reached after all structural, initial and
 /// successor-coverage checks have completed successfully.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StateGraphCertificateDecision {
+pub enum StateGraphCertificateDecision {
+    /// The claim's form holds of the timed states.
     Holds,
+    /// The claim's form is false of the timed states.
     Violated,
 }
 
-/// Preserve the state-graph decision separately from rejection codes shared
-/// by graph-coverage checks. An invalid or unfinished certificate has no decision.
-pub(crate) fn check_state_graph_certificate<O: Clone + Eq>(
+/// [`check_zone_certificate`] for a state-graph item, returning the form's
+/// decision beside the verdict. A rejection's rule does not give the decision,
+/// since the graph-coverage checks share those rules: an invalid or unfinished
+/// certificate has no decision.
+#[implements("FSpec-FR-712-AC-1", "FSpec-FR-712-AC-2", "FSpec-FR-712-AC-3")]
+pub fn check_state_graph_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
     item_of: impl Fn(&O) -> CertificateItem<'_>,
@@ -1669,25 +1675,18 @@ impl<O> Checker<'_, '_, O> {
         if self.time_lock {
             self.divergence_part()?;
         }
-        if self.state_graph.is_some() {
-            let result = self.state_graph();
-            match &result {
-                Ok(()) => *decision = Some(StateGraphCertificateDecision::Holds),
-                Err(Halt::Verdict(ZoneCertificateVerdict::Rejected(rejection)))
-                    if matches!(
-                        rejection.rule,
-                        CertificateRule::InitialMissing
-                            | CertificateRule::SuccessorMissing
-                            | CertificateRule::CountBroken
-                    ) =>
-                {
-                    *decision = Some(StateGraphCertificateDecision::Violated);
-                }
-                _ => {}
+        if self.state_graph.is_none() {
+            return self.admitted();
+        }
+        match self.state_graph()? {
+            None => {
+                *decision = Some(StateGraphCertificateDecision::Holds);
+                Ok(())
             }
-            result
-        } else {
-            self.admitted()
+            Some(violation) => {
+                *decision = Some(StateGraphCertificateDecision::Violated);
+                Err(Halt::Verdict(ZoneCertificateVerdict::Rejected(violation)))
+            }
         }
     }
 
@@ -4508,9 +4507,11 @@ fn scaled(value: &Rational, scale: &Integer) -> Option<Integer> {
 
 /// The LU bounds the checker computes from the model and, for a TT-2
 /// claim, its automaton's `constants` for the horizon clock: per clock,
-/// the largest constant a guard, invariant or reset compares it with from
-/// below and from above, scaled; `None` when the scale makes any constant
+/// the largest constant a guard, invariant or reset compares it with, in its
+/// field or in one a collection write carries it into, from below and from
+/// above, scaled; `None` when the scale makes any constant
 /// not an integer.
+#[implements("FR-245-AC-2")]
 #[allow(
     clippy::type_complexity,
     reason = "one list of lower and one of upper bounds"
@@ -4540,25 +4541,12 @@ fn computed_bounds(
             upper[clock].push(bound.clone());
         }
     };
-    for guard in model.guards() {
-        for part in guard.parts() {
-            for constraint in part.clocks() {
-                record(
-                    constraint.clock().index(),
-                    constraint.op(),
-                    constraint.bound(),
-                );
-            }
-        }
-    }
-    for invariant in model.invariants() {
-        for constraint in invariant.bounds() {
-            record(
-                constraint.clock().index(),
-                constraint.op(),
-                constraint.bound(),
-            );
-        }
+    for constraint in clock_constraints(timed) {
+        record(
+            constraint.clock().index(),
+            constraint.op(),
+            constraint.bound(),
+        );
     }
     for resets in model.resets() {
         for reset in resets.resets() {
@@ -4581,13 +4569,21 @@ fn computed_bounds(
             None => Some(None),
         }
     };
-    let mut lows = Vec::new();
-    let mut highs = Vec::new();
-    for place in timed.places() {
-        let clock = place.clock().index();
-        lows.push(max(lower.get(clock)?)?);
-        highs.push(max(upper.get(clock)?)?);
-    }
+    let of_places = |fields: &[Vec<Rational>]| -> Option<Vec<Option<Integer>>> {
+        let mut largest: Vec<Option<&Rational>> =
+            fields.iter().map(|values| values.iter().max()).collect();
+        follow_carries(timed, &mut largest);
+        timed
+            .places()
+            .iter()
+            .map(|place| match largest.get(place.clock().index())? {
+                Some(value) => scaled(value, scale).map(Some),
+                None => Some(None),
+            })
+            .collect()
+    };
+    let mut lows = of_places(&lower)?;
+    let mut highs = of_places(&upper)?;
     if let Some(constants) = constants {
         // The horizon clock is compared with every interval end, from both
         // sides.

@@ -457,7 +457,7 @@ struct ContractWitness<'w> {
 /// Re-expand `state`, the path's last state, and reproduce the witness when
 /// the named clause has no value there with the offered cause and guarded
 /// transition (ADR-018 UE-6).
-#[implements("FR-196-AC-20")]
+#[implements("FR-196-AC-21")]
 #[allow(clippy::too_many_arguments)]
 fn contract_witness(
     system: &ModelSystem<'_>,

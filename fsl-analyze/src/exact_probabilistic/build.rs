@@ -1235,7 +1235,7 @@ impl Builder<'_, '_, '_, '_> {
     /// What a state whose expansion left its successors unknown halts the
     /// build with: an undefined contract conjunction refutes (ADR-018 UE-6)
     /// with the path to the state; only a refused one is undecided.
-    #[implements("FR-196-AC-20")]
+    #[implements("FR-196-AC-21")]
     fn undecided_successor(&self, at: usize, undecided: UndecidedSuccessor) -> Halt {
         // The replay of a bounded measure's undefined path (`measure.rs`)
         // does not yet read a contract site: that form stays undecided.
@@ -1283,7 +1283,7 @@ impl Builder<'_, '_, '_, '_> {
     /// its decided control. A refused conjunction changes nothing, as the
     /// decided verdict never read it. A bounded measure has no contract replay
     /// yet and stays undecided.
-    #[implements("FR-196-AC-20")]
+    #[implements("FR-196-AC-21")]
     fn sweep(&mut self) -> Step<()> {
         let horizon = match &self.plan {
             Plan::Labels if self.key_policy.is_some() => None,

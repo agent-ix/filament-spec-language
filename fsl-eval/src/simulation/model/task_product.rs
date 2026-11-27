@@ -1758,28 +1758,18 @@ impl<'a> TaskProductPlan<'a> {
     }
 }
 
+/// The largest constant each source clock field's value is compared with, in
+/// the field or in one a collection write carries it into.
 pub(super) fn source_clock_maxima(source: &TimedSystem<'_, '_>) -> Vec<Rational> {
     let mut maxima = vec![task_zero(); source.model().clocks().len()];
-    for guard in source.model().guards() {
-        for part in guard.parts() {
-            for constraint in part.clocks() {
-                if let Some(maximum) = maxima.get_mut(constraint.clock().index()) {
-                    if constraint.bound() > maximum {
-                        *maximum = constraint.bound().clone();
-                    }
-                }
+    for constraint in source.compared_constraints() {
+        if let Some(maximum) = maxima.get_mut(constraint.clock().index()) {
+            if constraint.bound() > maximum {
+                *maximum = constraint.bound().clone();
             }
         }
     }
-    for invariant in source.model().invariants() {
-        for constraint in invariant.bounds() {
-            if let Some(maximum) = maxima.get_mut(constraint.clock().index()) {
-                if constraint.bound() > maximum {
-                    *maximum = constraint.bound().clone();
-                }
-            }
-        }
-    }
+    source.raise_by_carries(&mut maxima);
     maxima
 }
 

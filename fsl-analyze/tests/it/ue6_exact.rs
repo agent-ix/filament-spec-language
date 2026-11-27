@@ -64,7 +64,7 @@ fn refutes(world: &World, name: &str) {
     );
 }
 
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_scheduler_reach_at_start() {
     refutes(
@@ -76,7 +76,7 @@ fn ue6_exact_scheduler_reach_at_start() {
     );
 }
 
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_workload_reach_at_start() {
     refutes(
@@ -88,7 +88,7 @@ fn ue6_exact_workload_reach_at_start() {
     );
 }
 
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_workload_reach_at_the_state() {
     refutes(
@@ -102,7 +102,7 @@ fn ue6_exact_workload_reach_at_the_state() {
 
 /// The atom `undefined_remainder(c.v) >= 0` has no value at position 0 (`v = 0`),
 /// which `always[0,0]` reads.
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_atom_undefined_at_position_zero() {
     refutes_at(
@@ -117,7 +117,7 @@ fn ue6_exact_atom_undefined_at_position_zero() {
 
 /// A claim whose form reads only position 0 never reads the guard that is
 /// undefined at position 1 (ADR-018 UE-1, ADR-028 XV-8): it stays proved.
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_form_reading_only_position_zero_stays_proved() {
     let record = record(
@@ -137,7 +137,7 @@ fn ue6_exact_form_reading_only_position_zero_stays_proved() {
 /// A bounded event that decides at position 0 still reads the guard of
 /// position 1 when its horizon reaches it (ADR-028 XV-8): `eventually[0,2]`
 /// refutes.
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_bounded_event_reads_to_its_horizon() {
     refutes(
@@ -151,7 +151,7 @@ fn ue6_exact_bounded_event_reads_to_its_horizon() {
 
 /// The horizon boundary: `eventually[0,1]` reads positions 0 and 1 but not
 /// the guard that expands position 1, so it stays proved.
-#[trace("FR-196-AC-20")]
+#[trace("FR-196-AC-21")]
 #[test]
 fn ue6_exact_bounded_event_stops_at_its_horizon() {
     let record = record(

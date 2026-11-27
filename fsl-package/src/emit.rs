@@ -7303,10 +7303,10 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let (requirement_rows, path_condition_frames, renumbered) =
+    let (requirement_rows, path_condition_frames, renumbered, synthetics) =
         value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
-        value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+        value_validity_requirements::ordinals::relabel_term_data(&renumbered, &synthetics, data);
     }
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
@@ -8483,13 +8483,13 @@ fn emit_package_nodes(
         &source_map,
     )?;
     meter.charge(&claim_names)?;
-    let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
+    let mut equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
-    let equality_fact_witness_rows = equality_fact_witness_rows(
+    let mut equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
         &producer_node_ids,
         &nodes,
@@ -8506,16 +8506,22 @@ fn emit_package_nodes(
         &source_keys,
         &mut meter,
     )?;
-    if let Some(data) = &mut checked_term_data {
-        if value_validity.renumbering.renumbers() {
-            let mut row_ids = emitted_node_ids.clone();
-            row_ids.extend(
-                producer_node_ids
-                    .iter()
-                    .map(|(key, id)| (key.clone(), id.clone())),
-            );
+    if value_validity.renumbering.renumbers() {
+        let mut row_ids = emitted_node_ids.clone();
+        row_ids.extend(
+            producer_node_ids
+                .iter()
+                .map(|(key, id)| (key.clone(), id.clone())),
+        );
+        if let Some(data) = &mut checked_term_data {
             value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
+        value_validity.renumbering.relabel_equality_rows(
+            &row_ids,
+            &mut equality_producer_identity_rows,
+            &mut equality_fact_witness_rows,
+            &source_map,
+        );
     }
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()

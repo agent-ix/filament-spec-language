@@ -97,7 +97,7 @@ fn refusal(result: Result<ModelTraceSettlement, ReplayRefusal>) -> (ModelTraceRe
 
 /// The steps `moves` take from `world`'s initial state, each after its
 /// delay, by the first step of the named operation enabled then.
-fn walk(world: &World, moves: &[(&str, Rational)]) -> Vec<ModelStep> {
+pub(crate) fn walk(world: &World, moves: &[(&str, Rational)]) -> Vec<ModelStep> {
     let system = world.system();
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let mut state: TimedState = timed.initial().remove(0);
@@ -124,7 +124,7 @@ fn walk(world: &World, moves: &[(&str, Rational)]) -> Vec<ModelStep> {
 }
 
 /// A counterexample of `kind` with `prefix`, over `world`'s instance `c`.
-fn payload(
+pub(crate) fn payload(
     world: &World,
     prefix: Vec<ModelStep>,
     kind: CounterexampleKind,
@@ -150,7 +150,7 @@ fn payload(
     }
 }
 
-fn whole(value: i64) -> Rational {
+pub(crate) fn whole(value: i64) -> Rational {
     exact(value, 1)
 }
 

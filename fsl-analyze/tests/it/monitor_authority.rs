@@ -376,12 +376,28 @@ fn retained_tick_plan_context_drives_native_join_and_type_closure() {
             &mut type_budget,
         )
         .expect("the native selected closure accepts the retained context and rows");
-    assert_eq!(
-        closure.identities().declaration_rows().count(),
-        identity_rows.declarations().len()
-    );
-    assert_eq!(closure.identities().field_rows(), identity_rows.fields());
-    for row in identity_rows.source_records() {
+    // The closure keeps only the declarations and fields the monitor's seeds
+    // reach; the emission's full rows are a superset (here the tick event's
+    // object type is not reached by the formula).
+    let reached_declarations = closure.identities().declaration_rows().count();
+    assert!(reached_declarations <= identity_rows.declarations().len());
+    for row in closure.identities().declaration_rows() {
+        assert!(
+            identity_rows.declarations().contains(row),
+            "a reached declaration is one of the emission's declaration rows"
+        );
+    }
+    for row in closure.identities().field_rows() {
+        assert!(
+            identity_rows.fields().contains(row),
+            "a reached field is one of the emission's field rows"
+        );
+    }
+    for row in closure.identities().source_record_rows() {
+        assert!(
+            identity_rows.source_records().contains(row),
+            "a reached source record is one of the emission's source record rows"
+        );
         let projected = package
             .project_exact_type(&row.structural_node, closure.identities(), &mut type_budget)
             .expect("the selected closure retains the projected Exact record type");
