@@ -53,6 +53,7 @@ use crate::automaton::numbering::Numbering;
 use crate::automaton::past::{Memory, Outcome, Past};
 use crate::automaton::state::StateId;
 use crate::simulation::model::encode::Enc;
+use ix_trace_rs::implements;
 
 /// How the steps of a behaviour count for interval distance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
