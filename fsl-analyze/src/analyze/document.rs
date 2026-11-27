@@ -331,6 +331,19 @@ impl SubjectSelection {
         packages: &'a fsl_semantics::model::intake::PackageInput,
         documents: &'a DocumentProvision,
     ) -> SubjectBinding<'a> {
+        self.binding_with_source_packages(packages, documents, &[])
+    }
+
+    /// Build this subject's binding while resolving scheme-less population
+    /// names against the checked package's source declarations (FR-569).
+    #[implements("FR-569-AC-9")]
+    #[ix_trace_rs::string_edge]
+    pub fn binding_with_source_packages<'a>(
+        &self,
+        packages: &'a fsl_semantics::model::intake::PackageInput,
+        documents: &'a DocumentProvision,
+        source_packages: &[fsl_semantics::model::domain_package::DomainPackage],
+    ) -> SubjectBinding<'a> {
         let mut universes: BTreeMap<DeclarationKey, (Vec<String>, BTreeSet<String>)> =
             BTreeMap::new();
         for read in self.universes.iter().filter_map(|selection| {
@@ -346,19 +359,34 @@ impl SubjectSelection {
                 // A hyper subject can share one snapshot across selected
                 // models. Its `model` header names one model, while each
                 // population identity names its own declaring package.
-                let (keys, seen) = universes
-                    .entry(DeclarationKey {
-                        package: population
-                            .population
-                            .strip_prefix("ix://")
-                            .and_then(|identity| identity.rsplit_once('/'))
-                            .map_or_else(
-                                || read.model.identity.clone(),
-                                |(package, _)| package.to_owned(),
-                            ),
+                let declaration = population
+                    .population
+                    .strip_prefix("ix://")
+                    .and_then(|identity| identity.rsplit_once('/'))
+                    .map(|(package, _)| DeclarationKey {
+                        package: package.to_owned(),
                         node: population.population.clone(),
                     })
-                    .or_default();
+                    .or_else(|| {
+                        source_packages
+                            .iter()
+                            .flat_map(|source| &source.records)
+                            .find_map(|record| match record {
+                                fsl_semantics::model::domain_package::DomainPackageRecord::Population(
+                                    source_population,
+                                ) if source_population.key.node.rsplit('/').next()
+                                    == Some(population.population.as_str()) =>
+                                {
+                                    Some(source_population.key.clone())
+                                }
+                                _ => None,
+                            })
+                    })
+                    .unwrap_or_else(|| DeclarationKey {
+                        package: read.model.identity.clone(),
+                        node: population.population.clone(),
+                    });
+                let (keys, seen) = universes.entry(declaration).or_default();
                 for object in &population.objects {
                     if seen.insert(object.key.clone()) {
                         keys.push(object.key.clone());

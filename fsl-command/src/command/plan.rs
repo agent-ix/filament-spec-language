@@ -205,8 +205,12 @@ pub(super) fn run_bytes(
             }
             // FSpec FR-824: `initial` is the state each consuming step starts
             // from, and its complete populations are the subject's universes.
-            let mut binding =
-                SubjectSelection::default_over(&documents).binding(&packages, &documents);
+            let mut binding = SubjectSelection::default_over(&documents)
+                .binding_with_source_packages(
+                    &packages,
+                    &documents,
+                    package.graph().source_packages(),
+                );
             binding.initial = initial;
             let mut provision = SourceProvision::default();
             for unit in std::iter::once(&source).chain(units) {

@@ -1189,7 +1189,11 @@ pub(super) fn settle_items<'u>(
             .map_err(|_| RunCause::AnalyzeFault)?;
     }
     check_memory(package, &routed.memory)?;
-    let binding = routed.subject.binding(packages, &routed.documents);
+    let binding = routed.subject.binding_with_source_packages(
+        packages,
+        &routed.documents,
+        package.graph().source_packages(),
+    );
     let resolved = resolve_items(
         package,
         &routed.subject,
