@@ -13,6 +13,7 @@ use filament_contract_model::{
 use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_semantics::check::CheckedGraph;
+use ix_trace_rs::implements;
 
 use super::location_paths::Paths;
 use super::protocol_locations::{applications_at, ordered, term_rows, PendingRow, MAX_SAFE};
@@ -90,6 +91,7 @@ fn references<'a>(
                     if has_tag(node, WireTag::Expression)
                         || has_form(node, WireTag::Value, WireForm::RecordValue)
                         || has_form(node, WireTag::Value, WireForm::TupleValue)
+                        || has_form(node, WireTag::Value, WireForm::OptionValue)
                     {
                         found.push(*node);
                     }
@@ -107,6 +109,11 @@ fn references<'a>(
 /// Every captured row, in the wire's (application, occurrence, term ordinal)
 /// order, with deltas computed in each function's actual body-walk order.
 #[ix_trace_rs::string_edge]
+#[implements(
+    "FSpec-FR-322-AC-540",
+    "FSpec-FR-322-AC-541",
+    "FSpec-FR-322-AC-543"
+)]
 pub(super) fn checked_body_locations(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
