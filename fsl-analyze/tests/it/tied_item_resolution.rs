@@ -513,6 +513,7 @@ fn contract_verdict(row: ContractRow) -> fsl_analyze::provider::ProviderVerdict 
             request,
         )],
         &filament_exact::Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let mut found = record

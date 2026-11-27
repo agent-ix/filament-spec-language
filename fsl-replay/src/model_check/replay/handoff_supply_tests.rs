@@ -2,13 +2,15 @@
 //! The replay handoff supply admits one artifact per library identity
 //! (FR-850 "Admission").
 
-use super::{handoff_join_refusal, HandoffSupply, ReplayRefusal};
+use super::{handoff_identities_refusal, handoff_join_refusal, HandoffSupply, ReplayRefusal};
 use crate::execute::PackageReadRefusal;
 use filament_contract_model::{
     encode_checked_package_v2, CheckedDependencySelection, CheckedPackageSidecarsRef,
     CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, NativeJoinBudget,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::Setting;
 use fsl_package::{DependencyArtifact, Emission, EmitLimits, V2ReadLimits};
 use fsl_semantics::check::PackageDeclarations;
 use ix_trace_rs::trace;
@@ -295,11 +297,94 @@ fn a_join_refusal_of_an_artifact_name_is_the_handoff_refusal() {
         let Err(refusal) = joined else {
             panic!("{case}: the join attached the artifacts");
         };
-        assert_refuses(Err(handoff_join_refusal(refusal)), case);
+        assert_refuses(Err(handoff_join_refusal(refusal, &join_budget())), case);
     }
     let denial = fsl_package::NativeJoinFailure::UnitDefinitions {
         setting: fsl_foundation::Setting::I2WorkUnits,
     };
-    let control = handoff_join_refusal(denial.into());
+    let control = handoff_join_refusal(denial.into(), &join_budget());
+    assert!(matches!(control, ReplayRefusal::Fault(_)), "{control:?}");
+}
+
+/// The replay's refusal of a denied native charge: the stage-limit class
+/// naming `setting`, with the original configured bound.
+fn assert_stage_limit(refusal: &ReplayRefusal, setting: Setting, bound: u64) {
+    let ReplayRefusal::Recompile { refusal: stage, .. } = refusal else {
+        panic!("a denied native charge is not a stage refusal: {refusal:?}");
+    };
+    assert_eq!(refusal.code(), Code::StageLimitExceeded, "{refusal:?}");
+    let limit = stage.limit().expect("the refusal carries its limit");
+    assert_eq!(limit.setting(), setting);
+    assert_eq!(limit.configured_bound(), bound);
+}
+
+/// A denied native-join charge of the handoff supply settles as
+/// `stage_limit_exceeded` naming the exhausted setting, never as the internal
+/// fault `handoff-supply-joins`; the expected class is stated by hand.
+#[trace("TC-1331", "FR-531-AC-21")]
+#[test]
+fn a_denied_native_join_charge_settles_as_a_stage_limit() {
+    let artifact = library(2);
+    let join = |budget: &mut NativeJoinBudget| {
+        fsl_package::BarePackage::new(&artifact.package).with_supply(
+            fsl_package::BareSupply {
+                identities: &artifact.identities,
+                equality: Some(&artifact.equality),
+            },
+            budget,
+        )
+    };
+    let mut measure = join_budget();
+    join(&mut measure).expect("the join on an ample budget");
+    let need = measure.consumed();
+    assert!(need.work > 0 && need.storage > 0, "{need:?}");
+    for (work, storage, setting, bound) in [
+        (
+            need.work - 1,
+            need.storage,
+            Setting::I2WorkUnits,
+            need.work - 1,
+        ),
+        (
+            need.work,
+            need.storage - 1,
+            Setting::I2NativeJoinStorage,
+            need.storage - 1,
+        ),
+    ] {
+        let mut budget = NativeJoinBudget::new(work, storage);
+        let Err(failure) = join(&mut budget) else {
+            panic!("one short of {setting:?} must be denied");
+        };
+        let refusal = handoff_join_refusal(failure.into(), &budget);
+        assert_stage_limit(&refusal, setting, bound);
+    }
+}
+
+/// A denied identity-row charge of the handoff read settles as
+/// `stage_limit_exceeded`, never as the internal fault
+/// `handoff-identities-admit`; another identity-file refusal stays the fault.
+#[trace("TC-1331", "FR-531-AC-21")]
+#[test]
+fn a_denied_identity_row_charge_settles_as_a_stage_limit() {
+    let artifact = library(2);
+    let read = |budget: &mut NativeJoinBudget| {
+        fsl_package::ReadIdentityRows::read(&artifact.identity_bytes, &artifact.package, budget)
+    };
+    let mut measure = join_budget();
+    read(&mut measure).expect("the read on an ample budget");
+    let need = measure.consumed();
+    assert!(need.work > 0, "{need:?}");
+    let mut budget = NativeJoinBudget::new(need.work - 1, need.storage);
+    let Err(failure) = read(&mut budget) else {
+        panic!("one work unit short must be denied");
+    };
+    let refusal = handoff_identities_refusal(failure, &budget);
+    assert_stage_limit(&refusal, Setting::I2WorkUnits, need.work - 1);
+
+    let malformed =
+        fsl_package::ReadIdentityRows::read(b"{", &artifact.package, &mut join_budget())
+            .expect_err("not JSON");
+    let control = handoff_identities_refusal(malformed, &join_budget());
     assert!(matches!(control, ReplayRefusal::Fault(_)), "{control:?}");
 }

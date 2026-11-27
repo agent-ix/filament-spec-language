@@ -59,6 +59,7 @@ use fsl_foundation::{Code, Diagnostic, Source};
 /// The label of a model unit accepted by `fsl run`.
 const MODEL_UNIT_FORMAT: &str = WireFormat::ModelUnit.as_str();
 use fsl_replay::spine::SpineLimits;
+use fsl_replay::CertificationPolicy;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
 use ix_trace_rs::implements;
 use settle::Settle;
@@ -644,6 +645,8 @@ struct FunctionRunData {
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
+    /// FR-1052: which of those items' proofs settle `proved`.
+    certification: CertificationPolicy,
     /// The limits its requirement items settle under.
     item_limits: fsl_analyze::analyze::AnalyzeLimits,
 }
@@ -668,6 +671,10 @@ pub struct FunctionRunInput {
 impl PreparedFunctionRun {
     pub(in crate::command) fn requirements(&self) -> Option<&requirements::Requirements> {
         self.data.requirements.as_ref()
+    }
+
+    pub(in crate::command) fn certification(&self) -> CertificationPolicy {
+        self.data.certification
     }
 
     /// Transfer the prepared typed values without executing a stage.
@@ -4597,6 +4604,9 @@ fn prepare_run_bytes_with_sources(
     }
     // FR-1031: the first refusal in table order is the selection conflict.
     refuse_transfer_selection_conflict(&request)?;
+    // FR-1052: a `require_certified` that is not a boolean refuses before any
+    // selected file is opened.
+    analyze::read_certification(request.require_certified.clone())?;
     // FR-1045: reject malformed correlation selection before any selected
     // program, package, model or snapshot file is opened.
     relationships::validate_request(request.call.as_ref())?;
@@ -5231,6 +5241,7 @@ fn prepare_complete_run(
             call: spine_call,
             integer_division,
             requirements,
+            certification: analyze::read_certification(request.require_certified.clone())?,
             item_limits: overrides::item_limits(overrides),
         }),
     }))
@@ -5465,6 +5476,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                     &prepared.packages,
                     prepared.item_limits,
                     settle,
+                    prepared.certification,
                 )
             },
         )
