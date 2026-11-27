@@ -1208,6 +1208,7 @@ pub(super) fn settle_items<'u>(
         return Err(engine_conflict(conflict));
     }
     let run = AnalyzeRun {
+        selections: routed.items.as_deref().unwrap_or_default(),
         package,
         binding,
         provision,
@@ -1219,6 +1220,10 @@ pub(super) fn settle_items<'u>(
         settle_run(run, settle.negotiate, settle.cancel)
     })
     .map_err(|error| match error {
+        AnalyzeDocumentError::Refused(fsl_analyze::analyze::AnalyzeRefusal::EngineConflict {
+            position,
+            setting,
+        }) => engine_conflict((position, setting)),
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
         AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
         AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
