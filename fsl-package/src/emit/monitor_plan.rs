@@ -1393,7 +1393,11 @@ pub(super) fn finish(
         for (old, new) in changes {
             super::replace_term_data_node(data, old, new);
         }
-        super::value_validity_requirements::ordinals::relabel_term_data(&renumbered, &synthetics, data);
+        super::value_validity_requirements::ordinals::relabel_term_data(
+            &renumbered,
+            &synthetics,
+            data,
+        );
     }
     let operation_bodies = base.operation_body_rows().map(|rows| {
         let mut rows = rows.to_vec();

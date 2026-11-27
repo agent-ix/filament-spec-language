@@ -693,7 +693,9 @@ fn relabel_term_data_inner(
             Some(false)
         }
     };
-    let copies = synthetic_copies(&data.equality_decisions, synthetics, |row| (&row.application, &mut row.occurrence));
+    let copies = synthetic_copies(&data.equality_decisions, synthetics, |row| {
+        (&row.application, &mut row.occurrence)
+    });
     let mut changed = !copies.is_empty();
     data.equality_decisions.retain_mut(|row| {
         let moved = relabel(&row.application, &mut row.occurrence);

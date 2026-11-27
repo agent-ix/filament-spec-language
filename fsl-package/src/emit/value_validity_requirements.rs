@@ -1189,10 +1189,9 @@ fn record_id_with(
     conversion: Option<u64>,
 ) -> Result<CheckedNodeId, EmitRefusal> {
     use filament_contract_model::CheckedNodePathSegment as Segment;
-    let shape = || EmitRefusal::RequirementRowCarry("a record's identity path has an unknown shape");
-    let is_name = |segment: &Segment, text: &str| {
-        matches!(segment, Segment::Name(name) if name.as_ref() == text)
-    };
+    let shape =
+        || EmitRefusal::RequirementRowCarry("a record's identity path has an unknown shape");
+    let is_name = |segment: &Segment, text: &str| matches!(segment, Segment::Name(name) if name.as_ref() == text);
     let mut id = id.clone();
     let bound = id
         .path
@@ -1268,7 +1267,12 @@ pub(super) fn carry_rows(
 ) -> Result<CarriedRows, EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
-        return Ok((Vec::new(), Vec::new(), BTreeMap::new(), ordinals::Synthetics::new()));
+        return Ok((
+            Vec::new(),
+            Vec::new(),
+            BTreeMap::new(),
+            ordinals::Synthetics::new(),
+        ));
     }
     let base_nodes = &base.resolved_graph().nodes;
     let finals = nodes
