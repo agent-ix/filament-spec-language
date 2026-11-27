@@ -148,7 +148,8 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .expect("emit package")
         .into_value();
     let floor_identity = fsl_replay::DefinitionRole::IntegerDivisionFloor.identity();
-    let ceiling_identity = "filament.value.integer-division.ceiling/v1";
+    let alternate_identity =
+        fsl_replay::DefinitionRole::IntegerDivisionTruncating.identity();
     let original: serde_json::Value =
         serde_json::from_slice(emitted.package().bytes()).expect("emitted JSON");
     let floor_row = original["lock"]["definition_selections"]
@@ -216,7 +217,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
             &floor_authority,
             floor_identity,
             &floor_authority,
-            ceiling_identity,
+            alternate_identity,
         ) >= 2,
         "lock selection and operation-law definition are changed together"
     );
@@ -239,12 +240,12 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .lock()
         .definition_selections
         .iter()
-        .find(|row| row.identity.as_ref() == ceiling_identity)
+        .find(|row| row.identity.as_ref() == alternate_identity)
         .expect("strict reader retains altered selection pair");
     assert_eq!(retained.authority.as_ref(), floor_authority);
-    assert_eq!(retained.identity.as_ref(), ceiling_identity);
+    assert_eq!(retained.identity.as_ref(), alternate_identity);
     let graph = serde_json::to_value(admitted.graph()).expect("admitted graph");
-    assert!(contains_pair(&graph, &floor_authority, ceiling_identity));
+    assert!(contains_pair(&graph, &floor_authority, alternate_identity));
 
     let refusal = match read_checked_package(
         &bytes,
@@ -252,7 +253,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         emitted.evidence(),
     ) {
         CheckedPackageDispatchResult::Refused(refusal) => refusal,
-        other => panic!("catalog-bound reader admitted uncatalogued law mutation: {other:?}"),
+        other => panic!("catalog-bound reader admitted law absent from evidence: {other:?}"),
     };
     assert_eq!(
         refusal.code,
@@ -270,7 +271,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .iter_mut()
         .find(|row| row["identity"] == floor_identity)
         .expect("floor law row");
-    row["identity"] = ceiling_identity.into();
+    row["identity"] = alternate_identity.into();
     let bytes = serde_json::to_vec(&lock_only).expect("serialize lock-only mutation");
     let refusal = match read_checked_package(&bytes, CheckedPackageReadLimits::bounded(), &evidence)
     {
