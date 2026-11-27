@@ -17,6 +17,9 @@ use fsl_replay::{
 use ix_trace_rs::implements;
 
 #[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
+#[implements("FR-199-AC-3")]
+#[implements("FR-199-AC-4")]
+#[implements("FR-199-AC-5")]
 pub(super) fn run(
     mut request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -29,7 +32,12 @@ pub(super) fn run(
     };
     let weight = match weight {
         Some(fsl_semantics::check::Weighting::Reward(name)) => Some(name),
-        Some(fsl_semantics::check::Weighting::Delay) => return not_yet(),
+        Some(fsl_semantics::check::Weighting::Delay) => {
+            // QSL-3580 owns timed Delay weighting and its certificate path.
+            // `not_yet` yields typed Unsupported(NOT_YET) from EN-5; keep it
+            // until that route is implemented.
+            return not_yet();
+        }
         None => None,
     };
     if !matches!(
@@ -43,7 +51,8 @@ pub(super) fn run(
     }
     let every = matches!(claim.scheduler, ProbScheduler::Every);
     if every && weight.is_some() {
-        // Per-action weights are not part of the MDP long-run profile yet.
+        // FR-199 specifies weighted workload cases, not per-action weights.
+        // Keep this unsupported until an acceptance criterion owns the MDP form.
         return not_yet();
     }
     let simulation = request.subject.simulation.clone();

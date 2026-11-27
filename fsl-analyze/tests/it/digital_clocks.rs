@@ -1565,6 +1565,90 @@ fn delay_weighting_and_elapsed_quantiles_check_over_retx() {
     }
 }
 
+/// G11's timed-form boundary: Delay remains typed Unsupported(NOT_YET) under
+/// QSL-3580, and FR-199's weighted workload requirement does not imply
+/// weighted every-scheduler. EN-5 remains the deciding backend on both rows.
+#[trace("TC-2169", "FR-186-AC-15", "FR-199-AC-2")]
+#[test]
+fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
+    let claims = "probabilistic DelayLongRun using ev on M over (c: M::Call) under every scheduler on origin \
+         { long_run_fraction holds(c.late) weighted by delay <= 0.5 }\n\
+         probabilistic EveryRewardLongRun using ev on M over (c: M::Call) under every scheduler on origin \
+         { long_run_fraction holds(c.late) weighted by cost <= 0.5 }\n";
+    let world = retx(
+        GUARD,
+        true,
+        "reward cost on M::Call::send = 1;\n",
+        claims,
+    );
+    let model = world.package.graph().probabilistic_model();
+    assert!(matches!(
+        &model.claim("DelayLongRun").expect("FR-186 delay claim checks").form,
+        ProbForm::LongRunFraction {
+            weight: Some(Weighting::Delay),
+            ..
+        }
+    ));
+    assert!(matches!(
+        &model
+            .claim("EveryRewardLongRun")
+            .expect("weighted every-scheduler claim checks")
+            .form,
+        ProbForm::LongRunFraction {
+            weight: Some(Weighting::Reward(name)),
+            ..
+        } if name.as_str() == "cost"
+    ));
+
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let rows = [
+        (
+            "DelayLongRun",
+            "FR-186-AC-15 / FSpec FR-407; QSL-3580 owns the deferred route",
+        ),
+        (
+            "EveryRewardLongRun",
+            "FR-199-AC-2 defines weighted workload, not weighted every-scheduler",
+        ),
+    ];
+    for (name, ownership) in rows {
+        let claim = model.claim(name).expect("the guarded claim checks");
+        let item = exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            ProductRequest {
+                subject: ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits: ExactProbLimits::default(),
+            },
+        );
+        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let terminal = record.terminal().expect("the exact engine declines the form");
+        assert!(
+            matches!(
+                terminal.value(),
+                TerminalValue::Unsupported(UnavailabilityCause::Disposition)
+            ),
+            "{name} ({ownership}): {:?}",
+            terminal.value()
+        );
+        assert_eq!(
+            terminal.backend().map(|backend| backend.as_str()),
+            Some("en-5"),
+            "{name} ({ownership})"
+        );
+        assert_eq!(
+            terminal.diagnostic().map(|code| code.to_string()).as_deref(),
+            Some("unsupported_construct/not-yet-implemented"),
+            "{name}"
+        );
+        assert!(record.exact_probabilistic.is_none(), "{name}");
+        assert!(record.probabilistic_counterexample.is_none(), "{name}");
+    }
+}
+
 /// FR-186-AC-15 (TC-2168): on an untimed Service, `delay` reports the absent
 /// binding while the declared `duration` reward remains resolvable.
 #[trace("TC-2168", "FR-186-AC-15")]
