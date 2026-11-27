@@ -704,7 +704,14 @@ fn first_refuted_instance(
             | ModelCheckOutcome::Undecided { .. }
             | ModelCheckOutcome::Stopped { .. } => None,
         };
-        if let (Some(position), ModelCheckOutcome::Violated { stats, .. }) = (position, &outcome) {
+        if let (
+            Some(position),
+            ModelCheckOutcome::Violated {
+                stats,
+                counterexample,
+            },
+        ) = (position, &outcome)
+        {
             if position > 0 {
                 limits.limits.max_states = limits
                     .limits
@@ -713,7 +720,8 @@ fn first_refuted_instance(
                 limits.limits.max_transitions = limits
                     .limits
                     .max_transitions
-                    .saturating_sub(usize::try_from(stats.product_edges).unwrap_or(usize::MAX));
+                    .saturating_sub(usize::try_from(stats.product_edges).unwrap_or(usize::MAX))
+                    .saturating_sub(counterexample.len());
                 cap = Some(position);
                 kept = Some(outcome);
                 continue;

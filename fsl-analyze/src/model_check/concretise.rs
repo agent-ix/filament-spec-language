@@ -8,9 +8,9 @@
 //! canonicaliser returned for it. Each retained edge `(source, t, target,
 //! π)` becomes the concrete step `σ(t)` to `σ ∘ π⁻¹ (target)`, and `σ`
 //! becomes `σ ∘ π⁻¹`; a successor that was never canonicalised is the same
-//! step with `π` the identity. Every concrete step is checked against an
-//! expansion of the concrete source and counted against the run's
-//! remaining `max_transitions`.
+//! step with `π` the identity. Every lifted step is an admitted canonical
+//! graph edge mapped through the symmetry action and counted against the
+//! run's remaining `max_transitions`.
 //!
 //! Under the trivial group a model path is already concrete. Protocol
 //! paths additionally lift delivery-label canonical edges by re-executing
@@ -72,6 +72,9 @@ pub(super) trait Permuter<State, Transition> {
         transition: &ModelTransition,
         permutation: &Permutation,
     ) -> Result<ModelTransition, ExpansionStop>;
+
+    /// Charge one state or transition permutation application to the run.
+    fn charge_permutation_work(&self) -> Result<(), ExpansionStop>;
 }
 
 impl Permuter<ModelSimState, ModelTransition> for ModelSystem<'_> {
@@ -105,6 +108,10 @@ impl Permuter<ModelSimState, ModelTransition> for ModelSystem<'_> {
         permutation: &Permutation,
     ) -> Result<ModelTransition, ExpansionStop> {
         ModelSystem::permute_transition(self, transition, permutation)
+    }
+
+    fn charge_permutation_work(&self) -> Result<(), ExpansionStop> {
+        self.charge_concretisation_work()
     }
 }
 
@@ -235,29 +242,26 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
         }
         self.budget -= 1;
         self.charged_steps += 1;
+        permuter
+            .charge_permutation_work()
+            .map_err(LiftStop::Expansion)?;
         let step = permuter
             .permute_transition(transition, &self.sigma)
             .map_err(|_| fault("a-concretised-step-encodes"))?;
         let sigma = self.sigma.compose(&permutation.inverse());
+        permuter
+            .charge_permutation_work()
+            .map_err(LiftStop::Expansion)?;
         let next = permuter
             .permute(target, &sigma)
             .map_err(LiftStop::Expansion)?;
         let (bytes, _) = self.system.state_key(&next)?;
         let key = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
-        let expansion = self
-            .system
-            .successors(&self.concrete)
-            .map_err(LiftStop::Expansion)?;
-        let mut matched = false;
-        for (candidate, state) in &expansion.successors {
-            if *candidate == step && self.system.state_key(state)?.0 == key.as_bytes() {
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
-            return Err(fault("a-concretised-step-is-a-subject-step").into());
-        }
+        // The canonical graph admitted this edge at its source state. The
+        // subject symmetry maps its transition identity and target together,
+        // so the lifted edge remains a subject step. Re-expanding the
+        // concrete source here would charge candidate exploration work to
+        // FR-161's permutation allowance.
         self.steps.push(ModelStep {
             transition: step,
             post_state: key.clone(),

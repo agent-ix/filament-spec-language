@@ -973,6 +973,23 @@ impl ModelSystem<'_> {
         }
     }
 
+    /// Charge one unit of FR-161 path-lifting work to this model's active
+    /// evaluation meter.
+    #[implements("FR-161-AC-5")]
+    pub fn charge_concretisation_work(&self) -> Result<(), crate::simulation::ExpansionStop> {
+        use filament_exact::{Charge, ChargePoint};
+        use crate::simulation::{ExpansionLimit, ExpansionStop};
+
+        self.shared_meter
+            .lock()
+            .expect("evaluation meter lock")
+            .charge(Charge::new(ChargePoint::GraphEdge).work(filament_exact::Integer::one()))
+            .map_err(|incomplete| ExpansionStop {
+                cause: EXHAUSTED,
+                limit: Some(ExpansionLimit::EvaluationMeter(incomplete.limit_kind)),
+            })
+    }
+
     /// A fresh evaluation meter, sharing only the probability item's work
     /// allowance when this system belongs to such an item.
     pub fn fresh_meter(&self) -> filament_exact::Meter {
