@@ -305,7 +305,9 @@ pub use model_check::counterexample::{
     UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
-pub use model_check::existential_settle::{settle_existential, ExistentialRecord};
+pub use model_check::existential_settle::{
+    settle_existential, settle_package_existential, ExistentialRecord,
+};
 pub use model_check::finite_hyper_replay::{
     replay_finite_hyper_refutation, reproduce_finite_hyper_refutation,
     ReproducedFiniteHyperRefutation,

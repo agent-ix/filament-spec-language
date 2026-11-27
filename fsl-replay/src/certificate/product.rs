@@ -314,6 +314,27 @@ impl<'a> PackageHyperClosureRequest<'a> {
         &self.clause
     }
 
+    pub(crate) fn evaluator(&self) -> &'a dyn ModelEvaluator {
+        self.evaluator
+    }
+
+    pub(crate) fn subjects(&self) -> &'a [ModelSubject<'a>] {
+        self.subjects
+    }
+
+    pub(crate) fn meter(&self) -> ScalarLimits {
+        self.meter
+    }
+
+    pub(crate) fn check_certificate(
+        &self,
+        certificate: &ProductClosureCertificate,
+        limits: &ModelCheckLimits,
+        cancel: &Cancel,
+    ) -> Result<ProductClosureCheck, ProductClosureRefusal> {
+        check_package_hyper_closure(self, certificate, limits, cancel)
+    }
+
     fn originals(&self) -> HyperOriginals<'_, 'a> {
         HyperOriginals {
             clause: &self.clause,

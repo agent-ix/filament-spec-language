@@ -9,7 +9,7 @@
 use filament_eval::{CallFailure, FamilyOutcome};
 use filament_exact::{
     ChargePoint, FieldValue, IeeeFlag, IeeeValue, Integer, LimitKind, Meter, ObjectId,
-    ObjectReference, ScalarLimits, UniverseId, Value, ValueType,
+    ObjectReference, Outcome, ScalarLimits, UniverseId, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::location::ExpressionOwner as LocationOwner;
@@ -1211,6 +1211,160 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
             "work limit {limit}"
         );
     }
+}
+
+/// FR-531-AC-64: a checked source-object field read remains executable after
+/// the checked package is read from its emitted bytes.
+#[trace("TC-1331", "FR-531-AC-64")]
+#[test]
+fn probe_a_source_field_read_on_both_routes() {
+    let text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        object ConfigVersion { versionNumber: Integer; operation probe(): Integer; operation size(): Integer; }\n\
+        body sizeA using v on ConfigVersion::size() { 1 }\n\
+        pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
+        pre versioned using v on ConfigVersion::size { self.versionNumber > 0 }\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "qsl-3404"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the source-object unit");
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the source-object unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("S3 admits the source-object operations and clauses");
+    declarations
+        .link_dispatch(Default::default())
+        .expect("rootCall reaches the source size operation");
+    let package = CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .unwrap_or_else(|refusal| panic!("{refusal:?}")),
+    );
+    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits the source-object package");
+    let source_clause = package
+        .graph()
+        .state_clause("versioned")
+        .expect("the field-read precondition is checked");
+    let source_operation = source_clause
+        .operation()
+        .expect("the precondition names its source operation");
+    let anchor = package
+        .graph()
+        .operation_anchor_of(
+            source_operation.declaring.clone(),
+            source_operation.declaration.name(),
+        )
+        .expect("the checked source operation has an anchor");
+    let reference = filament_exact::ObjectReference::new(
+        filament_exact::UniverseId::new(source_clause.identity()),
+        source_clause.context(),
+        filament_exact::ObjectId::new("qsl-3404-instance")
+            .expect("the source-object instance identity is non-empty"),
+    );
+    let objects = ObjectEnvironment::new(
+        ObjectClosure::new(
+            package.graph().scope().types(),
+            [(
+                reference.clone(),
+                vec![(
+                    "versionNumber",
+                    FieldValue::Present(Value::Integer(Integer::from(1_i64))),
+                )],
+            )],
+            &[],
+        )
+        .expect("the source-owned receiver admits its direct field"),
+    );
+    let mut source_meter = Meter::new(UNLIMITED);
+    let source_evaluation = fsl_eval::value::evaluate_source_operation_clause(
+        &package,
+        &anchor,
+        &fsl_package::SourceOperationClause::Precondition {
+            name: "versioned".to_owned(),
+        },
+        vec![Value::Reference(reference.clone())],
+        &objects,
+        &mut source_meter,
+    )
+    .expect("the source route reads versionNumber");
+    assert!(
+        matches!(
+            &source_evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ),
+        "the source field read returns true"
+    );
+
+    let no_domains = package_input(std::iter::empty::<&[u8]>()).expect("no model imports");
+    let read = fsl_package::read_evaluation_emission(
+        &package,
+        &emission,
+        LibraryName::new("fixture").expect("the package library name is valid"),
+        &no_domains,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the strict reader admits the emitted package");
+    let admitted = read.admitted();
+    let mut native_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(admitted, &mut native_budget)
+        .expect("source-object identity rows materialize");
+    let bare = fsl_package::BarePackage::new(admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut native_budget,
+        )
+        .expect("the admitted package joins its source-object rows");
+    let bare_anchor = identities
+        .source_operations()
+        .iter()
+        .find(|row| row.source_identity.as_ref() == "ConfigVersion::size")
+        .expect("the admitted size operation identity row")
+        .anchor_id
+        .clone();
+    let mut bare_meter = Meter::new(UNLIMITED);
+    let bare_evaluation = fsl_eval::value::evaluate_bare_source_operation_clause(
+        &bare,
+        &bare_anchor,
+        fsl_package::SourceOperationClause::Precondition {
+            name: "versioned".to_owned(),
+        },
+        vec![Value::Reference(reference)],
+        &objects,
+        &mut bare_meter,
+        &mut native_budget,
+    )
+    .expect("the bytes route reads versionNumber without missing-type-representation");
+    assert!(
+        matches!(
+            &bare_evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ),
+        "the bytes route returns the same true result"
+    );
+    assert_eq!(
+        charged(&source_evaluation, &source_meter),
+        charged(&bare_evaluation, &bare_meter),
+        "source and bytes routes have equal charge logs"
+    );
 }
 
 /// TC-1331: public native joins have caller-owned finite budgets, the
