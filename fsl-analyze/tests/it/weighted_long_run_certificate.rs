@@ -60,6 +60,18 @@ fn every_scheduler_reward_weighting_checks_minimum_and_maximum_mec_values() {
 #[trace("TC-2177", "FR-199-AC-6")]
 #[test]
 fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
+    assert_forged_mixed_zero_weight_maximum_rejected(false);
+}
+
+/// A zero-weight accepting recurrence is still checked when the forged
+/// selected policy sends its state transiently to a weighted rejecting class.
+#[trace("TC-2177", "FR-199-AC-6")]
+#[test]
+fn checker_rejects_weighted_maximum_with_transient_zero_weight_accepting_state() {
+    assert_forged_mixed_zero_weight_maximum_rejected(true);
+}
+
+fn assert_forged_mixed_zero_weight_maximum_rejected(transient_at_a: bool) {
     use fsl_replay::{LongRunOptimization, LongRunPolicyChoice, ProductAction, Schedule};
 
     let package = "test/weighted-longrun-mixed-zero-mec";
@@ -153,8 +165,13 @@ fn checker_rejects_weighted_maximum_that_hides_zero_weight_accepting_class() {
         .as_mut()
         .expect("scheduler certificate has a policy");
     let row_a = policy.iter_mut().find(|row| row.state == a_key).unwrap();
+    let selected_a = if transient_at_a {
+        action_to_b
+    } else {
+        action_a
+    };
     row_a.choice = LongRunPolicyChoice::Deterministic(ProductAction::Identity(
-        Schedule::of(&system, &action_a.identity).unwrap(),
+        Schedule::of(&system, &selected_a.identity).unwrap(),
     ));
     let row_b = policy.iter_mut().find(|row| row.state != a_key).unwrap();
     row_b.choice = LongRunPolicyChoice::Deterministic(ProductAction::Identity(

@@ -2433,6 +2433,75 @@ fn check_mdp(
             mec_of[state] = Some(index);
         }
     }
+    // A supplied policy can leave a zero-weight recurrent alternative
+    // transient. Check every zero-weight action that stays inside a zero-only
+    // end component, whether or not the policy selected it.
+    let mut zero_weight_recurrent_actions = actions
+        .iter()
+        .map(|per_state| vec![false; per_state.len()])
+        .collect::<Vec<_>>();
+    if constraints.is_empty() {
+        if let Some(weights) = action_weights {
+            for (mec_index, mec) in mecs.iter().enumerate() {
+                let local_of = mec
+                    .iter()
+                    .enumerate()
+                    .map(|(local, state)| (*state, local))
+                    .collect::<BTreeMap<_, _>>();
+                let mut zero_shape = vec![Vec::new(); mec.len()];
+                for (local, &state) in mec.iter().enumerate() {
+                    let per_action = weights
+                        .get(keys[state])
+                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                    for (action, successors) in actions[state].iter().enumerate() {
+                        cx.work(1)?;
+                        let stays = successors
+                            .iter()
+                            .all(|(next, _)| mec_of[*next] == Some(mec_index));
+                        let zero_weight = per_action.get(action).is_some_and(Rational::is_zero)
+                            || graph.states[keys[state]].choices.is_empty()
+                                && per_action.get(action).is_none();
+                        if stays && zero_weight {
+                            zero_shape[local].push(
+                                successors
+                                    .iter()
+                                    .map(|(next, _)| {
+                                        local_of
+                                            .get(next)
+                                            .copied()
+                                            .ok_or(ProbabilityDocumentError::Malformed)
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            );
+                        }
+                    }
+                }
+                let zero_mecs = maximal_end_components(&zero_shape, cx)?;
+                for zero_mec in zero_mecs {
+                    for &local in &zero_mec {
+                        let state = mec[local];
+                        let per_action = weights
+                            .get(keys[state])
+                            .ok_or(ProbabilityDocumentError::Malformed)?;
+                        for (action, successors) in actions[state].iter().enumerate() {
+                            cx.work(1)?;
+                            let stays = successors.iter().all(|(next, _)| {
+                                local_of
+                                    .get(next)
+                                    .is_some_and(|next| zero_mec.contains(next))
+                            });
+                            let zero_weight = per_action.get(action).is_some_and(Rational::is_zero)
+                                || graph.states[keys[state]].choices.is_empty()
+                                    && per_action.get(action).is_none();
+                            if stays && zero_weight {
+                                zero_weight_recurrent_actions[state][action] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     // One entry per component; a missing or an extra one is malformed.
     let mut entry_of = vec![None; mecs.len()];
     for (index, component) in document.components.iter().enumerate() {
@@ -2634,18 +2703,20 @@ fn check_mdp(
                 let policy_zero_weight = local_of
                     .get(&state)
                     .is_some_and(|local| policy_zero_weight_states[*local]);
-                let action_weight =
-                    if zero_weight_component[mec] || policy_zero_weight && selected_policy_action {
-                        rational(1)
-                    } else if let Some(weights) = action_weights {
-                        match weights.get(keys[state]).and_then(|rows| rows.get(index)) {
-                            Some(weight) => weight.clone(),
-                            None if graph.states[keys[state]].choices.is_empty() => rational(0),
-                            None => return Err(ProbabilityDocumentError::Malformed),
-                        }
-                    } else {
-                        rational(1)
-                    };
+                let action_weight = if zero_weight_component[mec]
+                    || policy_zero_weight && selected_policy_action
+                    || zero_weight_recurrent_actions[state][index]
+                {
+                    rational(1)
+                } else if let Some(weights) = action_weights {
+                    match weights.get(keys[state]).and_then(|rows| rows.get(index)) {
+                        Some(weight) => weight.clone(),
+                        None if graph.states[keys[state]].choices.is_empty() => rational(0),
+                        None => return Err(ProbabilityDocumentError::Malformed),
+                    }
+                } else {
+                    rational(1)
+                };
                 let reward = cx.arithmetic(filament_exact::RationalArithmetic::Multiply(
                     &action_weight,
                     &centered,
