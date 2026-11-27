@@ -316,15 +316,15 @@ impl Refusal {
             Self::Profile => 2,
             Self::QueryKind { .. } => 3,
             Self::SubjectAdmission(_) => 4,
-            Self::NoInitialState => 5,
-            Self::ObjectLifecycle(_) => 6,
-            Self::ConstantName { .. } => 7,
-            Self::FieldSort { .. } => 8,
-            Self::ParameterDomain { .. } => 9,
-            Self::FieldDomain { .. } => 10,
-            Self::RequiresBound(_) => 11,
-            Self::NoInstance => 12,
-            Self::InstanceType { .. } => 13,
+            Self::NoInitialState => 6,
+            Self::ObjectLifecycle(_) => 9,
+            Self::ConstantName { .. } => 10,
+            Self::FieldSort { .. } => 11,
+            Self::ParameterDomain { .. } => 12,
+            Self::FieldDomain { .. } => 13,
+            Self::RequiresBound(_) => 5,
+            Self::NoInstance => 8,
+            Self::InstanceType { .. } => 14,
             Self::SeveralInstances { .. } => 14,
             Self::TooLarge {
                 measure: Measure::ScriptBytes,
@@ -356,6 +356,20 @@ pub enum SmtEncodingRefusal {
     /// settles `failed`.
     #[error("encoding broke invariant {0:?}")]
     Fault(InternalFault),
+}
+
+/// FR-315 rows 5 to 8: the refusal of each of FR-125's instancing outcomes,
+/// in the one order [`crate::simulation::model::ModelSystem::claim_instances`]
+/// reports them.
+impl From<crate::simulation::model::NoClaimInstances> for Refusal {
+    fn from(failure: crate::simulation::model::NoClaimInstances) -> Self {
+        use crate::simulation::model::NoClaimInstances;
+        match failure {
+            NoClaimInstances::NotSimulated(refusal) => Self::RequiresBound(refusal),
+            NoClaimInstances::NoInitialState => Self::NoInitialState,
+            NoClaimInstances::NoInstance => Self::NoInstance,
+        }
+    }
 }
 
 impl From<Refusal> for SmtEncodingRefusal {
