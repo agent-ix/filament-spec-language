@@ -113,19 +113,25 @@ impl fsl_analyze::analyze::document::Negotiate for FslNegotiate {
     }
 }
 
-fn nested_analyze_source() -> String {
+fn analyze_source(extra: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile values = \"filament.value.complete/v1\";\n\
          profile paths = \"filament.temporal.infinite-trace/v1\";\n\
          model Queue = \"test/counter\";\n\
-         function nested using values(): Boolean pure {{ {}true{} }}\n\
+         {extra}\
          temporal Bounded using paths over (q: Queue::Counter) clock \"model-steps\" on origin {{\n\
            always holds(q.value <= 2)\n\
-         }}\n",
+         }}\n"
+    )
+}
+
+fn nested_analyze_source() -> String {
+    analyze_source(&format!(
+        "function nested using values(): Boolean pure {{ {}true{} }}\n",
         "not (".repeat(NESTED),
         ")".repeat(NESTED)
-    )
+    ))
 }
 
 fn flat_analyze_source() -> String {
@@ -219,6 +225,48 @@ fn counter_model_with_one_thousand_enums() -> Vec<u8> {
     serde_json::to_vec(&model).expect("extended counter model serializes")
 }
 
+fn counter_model_with_one_thousand_links(redefines: bool) -> Vec<u8> {
+    let mut model: Value = serde_json::from_slice(include_bytes!(
+        "../../fixtures/cli-contract/counter.semantic-ir.json"
+    ))
+    .expect("counter model fixture is JSON");
+    let types = model["types"].as_array_mut().expect("types");
+    for index in 0..=1_000 {
+        let name = format!("Link{index:04}");
+        let identity = format!("ix://test/counter/{name}");
+        let generated = |suffix: &str| {
+            json!({"generated":{"generatorIdentity":format!("{identity}/{suffix}"),
+                "generatorVersion":"1.0.0",
+                "inputIdentities":[format!("{identity}/{suffix}")]}})
+        };
+        let parent = index
+            .checked_sub(1)
+            .map(|parent| format!("ix://test/counter/Link{parent:04}"));
+        let operations = if redefines {
+            let mut operation = json!({
+                "identity":format!("{identity}/query"),"name":"query",
+                "params":[],"pre":[],"post":[],"origin":generated("query"),
+                "frame":{"modifies":[],"creates":[],"deletes":[]}
+            });
+            if let Some(parent) = &parent {
+                operation["redefines"] = json!(format!("{parent}/query"));
+            }
+            vec![operation]
+        } else {
+            Vec::new()
+        };
+        let supertypes = parent.into_iter().collect::<Vec<_>>();
+        types.push(json!({
+            "identity":identity,"displayName":name,
+            "kind":{"module":"test/counter","name":"object_type"},
+            "roles":[],"origin":generated("type"),"constraints":[],"extensions":[],
+            "unknownPolicy":"reject","supertypes":supertypes,"fields":[],
+            "operations":operations
+        }));
+    }
+    serde_json::to_vec(&model).expect("extended counter model serializes")
+}
+
 fn analyze_with_request_bound(
     path: &Path,
     request_bytes: u64,
@@ -290,8 +338,21 @@ fn analyze_admits_the_ten_thousand_term_package_at_its_request_byte_bound() {
 fn analyze_admits_one_thousand_enums_at_its_request_byte_bound() {
     let directory = tempfile::tempdir().expect("analyze workspace");
     let model = counter_model_with_one_thousand_enums();
-    let path = analyze_request_with_model(directory.path(), &nested_analyze_source(), &model);
+    let path = analyze_request_with_model(directory.path(), &analyze_source(""), &model);
     assert_analyze_request_exact_and_one_byte_over(&path);
+}
+
+/// Analyze admits both 1,000-link model fixtures at exact request bytes and
+/// settles the bounded claim; one extra request byte stays document-level.
+#[trace("TC-3242", "FR-620-AC-15")]
+#[test]
+fn analyze_admits_both_thousand_link_models_at_the_request_byte_bound() {
+    for redefines in [false, true] {
+        let directory = tempfile::tempdir().expect("analyze workspace");
+        let model = counter_model_with_one_thousand_links(redefines);
+        let path = analyze_request_with_model(directory.path(), &analyze_source(""), &model);
+        assert_analyze_request_exact_and_one_byte_over(&path);
+    }
 }
 
 fn chain_model(prefix: &str, redefines: bool) -> String {
