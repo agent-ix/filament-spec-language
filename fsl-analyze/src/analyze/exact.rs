@@ -1385,6 +1385,12 @@ fn run_timed_mean(
     "FSpec-FR-421-AC-13"
 )]
 fn region_not_built(request: &ProductRequest<'_>, cancel: &Cancel) -> Option<EngineReport> {
+    // A long-run fraction keeps its own typed outcome (FR-186-AC-15: the
+    // delay-weighted guard stays `unsupported` from `long_run`), so the
+    // region route does not override it.
+    if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
+        return None;
+    }
     let simulation = request.subject.simulation.clone();
     let meter = simulation.meter;
     let subject = SubjectLimits {

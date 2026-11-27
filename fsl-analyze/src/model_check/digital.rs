@@ -1106,6 +1106,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     #[implements("FR-243-AC-8")]
     fn initial_bad_prefix(
         &mut self,
+        automaton: &mut PositionAutomaton,
         instance: &ModelInstance,
     ) -> Result<Option<TemporalCounterexample>, Halt> {
         let property = match translate_position_clause(
@@ -1142,7 +1143,11 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 continue;
             };
             let after = self.automaton_stop(monitor.step(start, letter))?;
-            if self.automaton_stop(monitor.is_rejecting(after))? {
+            // A time-locked initial state is no admitted behaviour: a bad
+            // letter read there refutes nothing (FR-239-AC-5).
+            if self.automaton_stop(monitor.is_rejecting(after))?
+                && self.continues(automaton, instance, &state)?
+            {
                 return Ok(Some(TemporalCounterexample {
                     initial_state,
                     prefix: Vec::new(),
@@ -1182,7 +1187,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             return Ok(self.vacuous(vacuity));
         }
         for instance in instances.as_slice() {
-            if let Some(counterexample) = self.initial_bad_prefix(instance)? {
+            if let Some(counterexample) = self.initial_bad_prefix(automaton, instance)? {
                 return Ok(self.violated(counterexample));
             }
             let mut product = Product::default();
