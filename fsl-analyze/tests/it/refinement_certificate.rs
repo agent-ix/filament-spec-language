@@ -1228,3 +1228,46 @@ fn an_unmatched_concrete_step_names_its_transition_in_the_checker_diagnostic() {
         "the serialized checker diagnostic retains the exact concrete transition"
     );
 }
+
+/// FR-149-AC-1, FR-1051 "No producer objects" (QSL-3551): the checker is
+/// handed its refinement by the producer. A certificate of the holding
+/// `CasRefinesCounter`, presented with that refinement but with the concrete
+/// and abstract subjects of a package whose own refinement is the
+/// `commitB -> stutter` one (which does not hold), must be refused: the refinement the request carries is
+/// not the one the checked package declares.
+#[trace("TC-556", "FR-149-AC-1")]
+#[test]
+fn a_refinement_the_checked_package_does_not_declare_is_not_accepted() {
+    let producer = safety_only();
+    let (certificate, _) = certificate(&producer);
+    let package = World::new(&mutated(
+        &cas_refines_counter(),
+        "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
+        "step Impl::Counter::commitB -> stutter;",
+    ));
+    assert!(
+        !matches!(run(&package), SafetyOutcome::Holds { .. }),
+        "the package's own refinement does not hold"
+    );
+    assert_eq!(
+        check(&producer, &certificate),
+        TemporalCertificateCheck::Accepted,
+        "the certificate is accepted against its own package"
+    );
+    let request = SimulationCertificateRequest {
+        refinement: producer.refinement(),
+        concrete: package.concrete_request(UNLIMITED),
+        abstract_package: package.package(),
+        abstract_initial: vec![package.abstract_initial()].into(),
+    };
+    let outcome = check_simulation_certificate(
+        &request,
+        &certificate,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        !matches!(outcome, Ok(TemporalCertificateCheck::Accepted)),
+        "a refinement the package does not declare was accepted: {outcome:?}"
+    );
+}
