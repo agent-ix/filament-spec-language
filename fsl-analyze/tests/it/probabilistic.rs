@@ -26,6 +26,7 @@ mod relation_claims_support;
 mod source_value_support;
 mod statistical_witness_support;
 mod timed_world;
+mod undefined_draw_refutation;
 mod units;
 
 mod bounded_closure;
