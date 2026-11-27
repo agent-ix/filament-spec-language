@@ -859,7 +859,10 @@ fn checked_graph_declaring(bindings: &str) -> fsl_semantics::check::CheckedGraph
 /// The check of the unit declaring `bindings`.
 fn check_declaring(
     bindings: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<
+    fsl_semantics::check::CheckedGraph,
+    Vec<fsl_semantics::check::SemanticCheckRefusal>,
+> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     let unit = format!(
         "{}abstraction A using v {{\n{bindings}}}\n",
@@ -1122,7 +1125,7 @@ fn checking_a_path_a_step_relation_cannot_read_refuses_with_its_cause() {
     let CheckCause::Abstraction(cause) = refusal.cause.as_ref() else {
         panic!("an abstraction refusal: {refusal:?}");
     };
-    assert_empty_segment(cause);
+    assert_empty_segment(&**cause);
 }
 
 /// The claim node's occurrences: role, ordinal and location.

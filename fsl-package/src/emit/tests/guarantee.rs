@@ -11,7 +11,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind, PropertyForm};
 use fsl_semantics::check::{
     AbstractionKey, AbstractionNodeRefusal, AbstractionRefusal, AssemblyCause, CheckCause,
-    CheckRefusal, CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot,
+    CheckedImplementationGuarantee, GuaranteeName, GuaranteeRefusal, GuaranteeSlot,
     ModelFamily, SemanticCheckRefusal, SlotBacking, SlotRole,
     AuthoredBinding, FrameBinding, ObjectBinding, OperationKey, PopulationBinding, RustField,
     RustPath, RustReceiver,
