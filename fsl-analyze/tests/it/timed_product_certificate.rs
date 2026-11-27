@@ -852,6 +852,51 @@ fn an_infinite_expected_time_is_rederived_not_claimed() {
     );
 }
 
+/// `send` sets `late` once `x >= 1 ms`; no time invariant applies and nothing
+/// is urgent, so the initial state is quiescent (FR-231) yet `send` fires
+/// there. The least expected time until `late` is exactly 1 ms.
+fn quiescent_send(claim: &str) -> World {
+    timed_world::world(
+        &timed_world::document(&["x"], &[("send", &["late", "x"])]),
+        PROFILES,
+        &format!(
+            "{}pre Send using v on M::Call::send {{ not self.late and self.x >= 1 ms }}\n\
+             post Sent using v on M::Call::send {{ self.late }}\n\
+             probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin \
+             {{ expected elapsed until {claim} }}\n",
+            timed_world::DENSE,
+        ),
+    )
+}
+
+/// FR-921-AC-6, FR-231: a quiescent state keeps its enabled steps, so the
+/// target is reached from the initial state at 1 ms and the expected time is
+/// finite. A document with no value and no rank claims an infinity the
+/// checker's own graph denies: it is rejected `Malformed`, where a checker
+/// that gave the quiescent state no move would accept it for `>= 100 ms`. The
+/// control, a target no state reaches, is accepted as infinite.
+#[trace("TC-2490", "FR-921-AC-6")]
+#[test]
+fn a_quiescent_state_keeps_its_steps_so_a_false_infinity_is_rejected() {
+    let world = quiescent_send("holds(c.late) >= 1 ms");
+    let mut forged = document(&settle(&world, "MeanTime"));
+    forged["values"] = json!([]);
+    forged["ranking"] = json!([]);
+    let claim_100 = quiescent_send("holds(c.late) >= 100 ms");
+    assert_eq!(
+        rejected_rule(&claim_100, "MeanTime", &forged),
+        ProbabilityCertificateRule::Malformed
+    );
+
+    let never = quiescent_send("holds(false) >= 100 ms");
+    let control = document(&settle(&never, "MeanTime"));
+    assert_eq!(control["values"], json!([]));
+    assert!(matches!(
+        check(&never, "MeanTime", &control),
+        Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
+    ));
+}
+
 // --- FR-923 (TC-2492) -------------------------------------------------------
 
 /// A `discrete` delay over every scheduler leaves no choice: minimum and
