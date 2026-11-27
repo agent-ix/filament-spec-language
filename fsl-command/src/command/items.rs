@@ -1205,7 +1205,9 @@ fn population_refusal(population: &str) -> Value {
         "basis": "unavailable",
         "axes": {
             "activation": "unavailable",
+            "execution": null,
             "settlement": "unavailable",
+            "truth": null,
         },
         "usage": {
             "admission": {"document_bytes": 0, "objects": 0, "values": 0},
@@ -1304,16 +1306,6 @@ fn invariant_result(
         disposition["refusal"] = refusal;
     }
     let settled = truth.is_some();
-    let mut axes = json!({
-        "activation": if settled { "active" } else { "unavailable" },
-        "settlement": if settled { "closed-scope" } else { "unavailable" },
-    });
-    if stage == "evaluate" {
-        axes["execution"] = json!("completed");
-    }
-    if let Some(truth) = truth {
-        axes["truth"] = json!(if truth { "true" } else { "false" });
-    }
     json!({
         "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": disposition,
@@ -1327,7 +1319,12 @@ fn invariant_result(
             "evaluation_consumed": [],
         },
         "basis": if settled { "closed-scope" } else { "unavailable" },
-        "axes": axes,
+        "axes": {
+            "activation": if settled { "active" } else { "unavailable" },
+            "execution": if stage == "evaluate" { Some("completed") } else { None::<&str> },
+            "settlement": if settled { Some("closed-scope") } else { Some("unavailable") },
+            "truth": truth.map(|truth| if truth { "true" } else { "false" }),
+        },
     })
 }
 
@@ -1343,7 +1340,7 @@ mod tests {
     }
 
     /// FR-267-AC-8, FSpec FR-352: the item-level documents that carry the
-    /// label omit an absent member (never `null`), and both read as clause
+    /// label omit an absent disposition member (never `null`), and both read as clause
     /// runs.
     #[ix_trace_rs::trace("FR-267-AC-8")]
     #[test]
@@ -1354,7 +1351,8 @@ mod tests {
         let refusal = population_refusal("Order");
         assert_eq!(read_label(&refusal), Ok(()));
         assert!(refusal["disposition"].get("truth").is_none());
-        assert!(refusal["axes"].get("truth").is_none());
+        // The axes keep `null`: the axes type declares each of them present.
+        assert!(refusal["axes"]["truth"].is_null());
     }
 
     #[test]
