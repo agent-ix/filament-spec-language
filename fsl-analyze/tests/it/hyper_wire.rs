@@ -417,7 +417,7 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
     let unit = unit.replace(
         "profile inf = \"filament.temporal.infinite-trace/v1\";",
-        "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile ep = \"filament.temporal.event-position.false-extension/v1\";\nprofile fs = \"filament.temporal.fixed-sample.false-extension/v1\";",
+        "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile fs = \"filament.temporal.fixed-sample.false-extension/v1\";",
     );
     let ws = Workspace::new("hyper-wire-fixed-sample-no-form");
     let run = analyze(&request_over(
