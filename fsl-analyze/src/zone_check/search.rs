@@ -37,8 +37,9 @@ use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, PlaceConstraint, TerminalClass, TimedStop, TimedSystem,
+    UndecidedReading,
 };
-use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup};
+use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::{ReductionKind, Setting};
 use fsl_replay::{
@@ -149,6 +150,9 @@ pub struct TimedStateGraph {
     pub edges: Vec<TimedStateGraphEdge>,
     /// Each initial state's graph node, in the subject's initial order.
     pub initials: Vec<usize>,
+    /// Undefined evaluations encountered at reachable nodes, in breadth-first
+    /// discovery order.
+    pub undefined: Vec<TimedStateGraphUndefined>,
     /// Counts for the exploration.
     pub stats: ZoneStats,
     /// The scale factor shared by the node zones.
@@ -161,6 +165,15 @@ pub struct TimedStateGraph {
     /// The node, step and guard part that created each node, `None` for an
     /// initial one. A node's zone is exactly its parent's successor.
     pub(super) parents: Vec<Option<(usize, usize, usize)>>,
+}
+
+/// An undefined timed-subject evaluation at one explored state-graph node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedStateGraphUndefined {
+    /// The node where evaluation was undefined.
+    pub node: usize,
+    /// The timed member and undefined cause.
+    pub reading: UndecidedReading,
 }
 
 /// A request to EN-6.
@@ -413,6 +426,7 @@ pub enum ZoneCheckOutcome<S> {
 ///
 /// [`ZoneCheckRefusal`] if the timed subject cannot be explored or the
 /// caller cancels the run.
+#[implements("FR-852-AC-9", "FR-852-AC-10", "FR-852-AC-11")]
 pub fn explore_timed_state_graph(
     subject: &TimedSystem<'_, '_>,
     limits: ZoneCheckLimits,
@@ -437,7 +451,7 @@ pub fn explore_timed_state_graph(
             _ => return Err(ZoneCheckRefusal::Fault("state-graph-halt")),
         },
     };
-    let nodes = run
+    let nodes: Vec<TimedStateGraphNode> = run
         .nodes
         .iter()
         .map(|node| TimedStateGraphNode {
@@ -445,6 +459,30 @@ pub fn explore_timed_state_graph(
             zone: node.zone.clone(),
         })
         .collect();
+    let mut undefined = run
+        .undefined
+        .iter()
+        .filter_map(|(key, reading)| {
+            let node = run.keys.iter().position(|candidate| candidate == key)?;
+            Some(TimedStateGraphUndefined {
+                node,
+                reading: reading.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    for (node, state) in run.nodes.iter().enumerate() {
+        if undefined.iter().any(|found| found.node == node) {
+            continue;
+        }
+        if let Err(TimedStop::Undecided(reading)) = subject.guarded_steps(&state.state) {
+            if reading.cause.is_some() {
+                undefined.push(TimedStateGraphUndefined {
+                    node,
+                    reading: *reading,
+                });
+            }
+        }
+    }
     let mut edges = Vec::new();
     let graph_edges = run.edges.clone();
     for edge in &graph_edges {
@@ -478,16 +516,126 @@ pub fn explore_timed_state_graph(
             })
         })
         .collect();
+    let model_system = subject.system();
+    for (node, graph_node) in nodes.iter().enumerate() {
+        if undefined.iter().any(|found| found.node == node) {
+            continue;
+        }
+        let Ok(expansion) = model_system.successors(&graph_node.state) else {
+            continue;
+        };
+        let Ok(TerminalClass::Undefined { model, cause }) = model_system
+            .terminal_class(&graph_node.state, !expansion.successors.is_empty())
+        else {
+            continue;
+        };
+        undefined.push(TimedStateGraphUndefined {
+            node,
+            reading: UndecidedReading {
+                site: fsl_eval::simulation::model::TimedSite::Terminal {
+                    model: model.identity().to_owned(),
+                },
+                object: None,
+                cause: Some(cause),
+                transition: None,
+                location: model_system.terminal_locus(&model),
+            },
+        });
+    }
     Ok(TimedStateGraph {
         nodes,
         edges,
         initials,
+        undefined,
         stats,
         scale: run.scale,
         lower: run.lower,
         upper: run.upper,
         parents,
     })
+}
+
+/// Concretise a path in `graph` to one exact rational delay before each
+/// discrete step. `edges` contains indices into the graph's edge list, in
+/// path order.
+///
+/// # Errors
+///
+/// [`ZoneCheckRefusal`] if the edge sequence is not contiguous or no exact
+/// timed path satisfies its recorded zones and guards.
+pub fn concretise_timed_state_graph_path(
+    subject: &TimedSystem<'_, '_>,
+    graph: &TimedStateGraph,
+    edges: &[usize],
+) -> Result<Vec<fsl_replay::ModelStep>, ZoneCheckRefusal> {
+    if edges.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stages = Vec::with_capacity(edges.len());
+    let mut last = None;
+    for &edge_index in edges {
+        let edge = graph
+            .edges
+            .get(edge_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-edge-index"))?;
+        if last.is_some_and(|node| node != edge.from) {
+            return Err(ZoneCheckRefusal::Fault("state-graph-path-contiguity"));
+        }
+        let source = graph
+            .nodes
+            .get(edge.from)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-source-index"))?;
+        let target = graph
+            .nodes
+            .get(edge.to)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-target-index"))?;
+        let steps = subject
+            .guarded_steps(&source.state)
+            .map_err(|_| ZoneCheckRefusal::Fault("state-graph-guarded-steps"))?;
+        let step = steps
+            .get(edge.step_index)
+            .ok_or(ZoneCheckRefusal::Fault("state-graph-step-index"))?;
+        if step.transition() != &edge.transition {
+            return Err(ZoneCheckRefusal::Fault("state-graph-transition"));
+        }
+        stages.push(super::concretise::Stage {
+            invariants: subject
+                .invariants(&source.state)
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-invariants"))?,
+            elapses: subject.tick_period().is_none()
+                && !subject
+                    .is_urgent(&source.state)
+                    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-elapses"))?,
+            target: subject
+                .invariants(step.post())
+                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-target-invariants"))?,
+            step: Some((step.clone(), edge.part_index)),
+            position: Vec::new(),
+            position_resets: Vec::new(),
+            before: Some(source.zone.clone()),
+            after: None,
+            auxiliary_carries: Vec::new(),
+            auxiliary_resets: Vec::new(),
+            auxiliary_advances: Vec::new(),
+            piece: Some(target.zone.clone()),
+            silent: false,
+            fixed: None,
+        });
+        last = Some(edge.to);
+    }
+    let target = graph
+        .nodes
+        .get(last.ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?)
+        .ok_or(ZoneCheckRefusal::Fault("state-graph-path-end"))?;
+    super::concretise::concretise(
+        subject,
+        subject.places().len(),
+        &stages,
+        &super::concretise::Target::Within(target.zone.clone()),
+        &graph.scale,
+    )
+    .map(|concrete| concrete.prefix)
+    .map_err(|_| ZoneCheckRefusal::Fault("state-graph-path-concretisation"))
 }
 
 /// Why EN-6 does not take the request.
@@ -1044,6 +1192,8 @@ pub(super) struct Run<'r, 's, 'a> {
     escape_edges: u64,
     /// The guarded steps of each model state reached, by its key.
     steps: BTreeMap<Vec<u8>, Vec<GuardedStep>>,
+    /// Undefined timed guards retained by state-graph exploration.
+    undefined: Vec<(Vec<u8>, UndecidedReading)>,
     /// The first instance an admitted behaviour read short of data for.
     insufficient: Option<ModelInstance>,
     /// The group the run's states are canonicalised under (FSpec FR-430).
@@ -1106,6 +1256,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             escape_states: 0,
             escape_edges: 0,
             steps: BTreeMap::new(),
+            undefined: Vec::new(),
             insufficient: None,
             group: SymmetryGroup::default(),
             reduced: false,
@@ -1750,7 +1901,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         if let Some(steps) = self.steps.get(&key) {
             return Ok(steps.clone());
         }
-        let steps = self.timed(self.timed.guarded_steps(state))?;
+        let steps = match self.timed.guarded_steps(state) {
+            Ok(steps) => steps,
+            Err(TimedStop::Undecided(reading))
+                if matches!(self.judged, Judged::StateGraph) && reading.cause.is_some() =>
+            {
+                self.undefined.push((key.clone(), *reading));
+                Vec::new()
+            }
+            Err(stop) => return self.timed(Err(stop)),
+        };
         self.steps.insert(key, steps.clone());
         Ok(steps)
     }

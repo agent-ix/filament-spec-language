@@ -133,9 +133,14 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
         }
         let mut moves = Vec::new();
         for source in 0..states.len() {
-            let steps = timed
-                .guarded_steps(&states[source].state)
-                .map_err(|_| ZoneCheckRefusal::Fault("state-graph-guarded-steps"))?;
+            // A guard that reads undefined leaves the state with no steps
+            // here: the exploration recorded that reading in
+            // `graph.undefined`, where it outranks a later verdict.
+            let steps = match timed.guarded_steps(&states[source].state) {
+                Ok(steps) => steps,
+                Err(_) if !graph.undefined.is_empty() => Vec::new(),
+                Err(_) => return Err(ZoneCheckRefusal::Fault("state-graph-guarded-steps")),
+            };
             for step in steps {
                 // A post-state no node holds is entered from no reachable
                 // valuation.

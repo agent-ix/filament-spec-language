@@ -15,6 +15,7 @@ mod api_surface;
 mod error;
 mod metadata;
 mod qualified_core;
+mod reference_base;
 mod trusted_base;
 
 use arch_lint::graph;
@@ -258,7 +259,23 @@ fn run_qualified_core(mut args: Vec<String>) -> Result<(String, bool)> {
     }
     let direction = qualified_core::check_direction(&qualified_core::workspace_graph(&fsl)?)?;
     let ambient = qualified_core::scan_ambient(&fsl)?;
-    Ok(qualified_core::report(&fsl, &direction, &ambient))
+    let (mut report, mut passed) = qualified_core::report(&fsl, &direction, &ambient);
+    let reference = reference_base::scan(&fsl)?;
+    if reference.is_empty() {
+        report.push_str("  FR-1051-AC-18 [definitional reference isolation]: PASS\n");
+    } else {
+        passed = false;
+        report.push_str("  FR-1051-AC-18 [definitional reference isolation]: FAIL\n");
+        for finding in reference {
+            report.push_str(&format!(
+                "    {}:{} names {}\n",
+                finding.file.display(),
+                finding.line,
+                finding.construct
+            ));
+        }
+    }
+    Ok((report, passed))
 }
 
 fn run_trusted_base(mut args: Vec<String>) -> Result<(String, bool)> {
