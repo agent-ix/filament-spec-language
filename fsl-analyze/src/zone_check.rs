@@ -43,13 +43,16 @@ pub use scale::{scale_constants, ScaledConstants};
 pub use search::{
     canonical_symbolic_state, check_timed_model, concretise_timed_state_graph_path,
     explore_timed_state_graph, TimedStateGraph, TimedStateGraphEdge, TimedStateGraphNode,
+    TimedStateGraphUndefined,
     ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
     ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop, ZoneUndecided,
 };
 pub use settle::{
     settle_timed_refinement, settle_zone_check, ZoneCheckRecord, ZoneItem, ZONE_CERTIFIED,
 };
-pub use state_graph::{decide_timed_state_graph, TimedStateGraphDecision};
+pub use state_graph::{
+    decide_timed_state_graph, decide_timed_state_graph_with_constraint, TimedStateGraphDecision,
+};
 pub use task_certificate::{
     no_release_task_product_certificate, read_back_unchanged, read_back_unchanged_with_source,
     task_product_certificate, TaskCertificateRefusal,

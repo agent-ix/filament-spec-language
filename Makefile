@@ -505,7 +505,8 @@ arch-lint-api-surface-fsl:
 
 # FR-284 (ADR-029 CB-2, CB-3): no FSL core crate depends on a crate above
 # the core, a CG or RT crate, or a frontend crate, and no core crate's
-# shipped source reads ambient input or writes to the process. Needs only
+# shipped source reads ambient input or writes to the process. FR-1051-AC-18
+# also keeps the definitional reference independent of fsl-eval. Needs only
 # this repository and passes on it, so it is part of `ci:`.
 arch-lint-qualified-core:
 	cargo run --locked -p arch-lint -- qualified-core --fsl .

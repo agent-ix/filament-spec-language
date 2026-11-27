@@ -653,7 +653,7 @@ pub fn replay_probabilistic_witness_from_package_with_work_scope(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-202-AC-47", "FR-203-AC-32")]
+#[implements("FR-202-AC-47", "FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
 fn replay_probabilistic_witness_impl(
     probabilistic: &fsl_semantics::check::CheckedProbabilisticModel,
     system: &ModelSystem<'_>,
