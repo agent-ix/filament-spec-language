@@ -107,7 +107,7 @@ use ix_trace_rs::implements;
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
-use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
+use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
 use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
@@ -189,40 +189,6 @@ impl<'k> SelectedKeys<'k> for MeteredKeys<'k, '_, '_> {
     }
 }
 
-/// A non-empty, canonically ordered set of admitted claim instances.
-///
-/// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
-/// an empty instance list to an exploration engine.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClaimInstances(Vec<ModelInstance>);
-
-impl ClaimInstances {
-    /// The first instance in canonical order.
-    pub fn first(&self) -> &ModelInstance {
-        // The private field is only constructed after checking non-emptiness.
-        &self.0[0]
-    }
-
-    /// All instances in canonical order.
-    pub fn as_slice(&self) -> &[ModelInstance] {
-        &self.0
-    }
-}
-
-/// Why a claim has no non-empty admitted instance set.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum NoClaimInstances {
-    /// The model could not be simulated or its extent could not be classified.
-    #[error("the model cannot be simulated: {0}")]
-    NotSimulated(#[from] NotSimulated),
-    /// The subject has no initial state.
-    #[error("the subject has no initial state")]
-    NoInitialState,
-    /// No initial record admits a key in the overlapping populations.
-    #[error("the claim has no admitted instance")]
-    NoInstance,
-}
-
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
 pub use cells::Cell;
 pub use contract::{
@@ -280,11 +246,45 @@ pub use timed::{
     DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
     TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
     TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
-    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, replay_timed_sample,
-    sample_timed, sample_timed_race,
+    TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, advance_timed,
+    sample_timed, sample_timed_from, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
+
+/// A non-empty, canonically ordered set of admitted claim instances.
+///
+/// Constructed by [`ModelSystem::claim_instances`] so a checker cannot pass
+/// an empty instance list to an exploration engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimInstances(Vec<ModelInstance>);
+
+impl ClaimInstances {
+    /// The first instance in canonical order.
+    pub fn first(&self) -> &ModelInstance {
+        // The private field is only constructed after checking non-emptiness.
+        &self.0[0]
+    }
+
+    /// All instances in canonical order.
+    pub fn as_slice(&self) -> &[ModelInstance] {
+        &self.0
+    }
+}
+
+/// Why a claim has no non-empty admitted instance set.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum NoClaimInstances {
+    /// The model could not be simulated or its extent could not be classified.
+    #[error("the model cannot be simulated: {0}")]
+    NotSimulated(#[from] NotSimulated),
+    /// The subject has no initial state.
+    #[error("the subject has no initial state")]
+    NoInitialState,
+    /// No initial record admits a key in the overlapping populations.
+    #[error("the claim has no admitted instance")]
+    NoInstance,
+}
 
 /// `resource_exhausted`/`insufficient-next-charge`: a candidate count, or an
 /// evaluation meter, ran out (FR-120 "Post-states", "Contract clauses").
@@ -795,6 +795,8 @@ pub enum NativeCandidateEvent<'a> {
     Undetermined {
         /// The invocation being evaluated.
         transition: &'a ModelTransition,
+        /// The name of the contract clause that was not decided.
+        clause: &'a str,
         /// The closed native outcome classification.
         outcome: &'a ClauseOutcome,
     },
@@ -1364,7 +1366,7 @@ impl<'a> ModelSystem<'a> {
     /// The first population overlapping `over` that the initial snapshot did
     /// not list. This is a request refusal check, performed after policy
     /// declaration resolution and before policy instancing.
-    #[implements("FR-1012-AC-11", "FR-1013-AC-3")]
+    #[implements("FR-1012-AC-13", "FR-1013-AC-3")]
     pub fn unlisted_population_overlapping(
         &self,
         over: &ValueType,
@@ -3895,6 +3897,9 @@ pub struct SampledDraw {
     pub coverage: crate::simulation::Coverage,
     /// The meter's refusal, when it stopped the run.
     pub stopped: Option<filament_exact::Incomplete>,
+    /// For each trace, the budget its final stopped expansion ran out of;
+    /// `None` for a trace that no expansion stopped or whose stop names none.
+    pub stop_limits: Vec<Option<ExpansionLimit>>,
 }
 
 /// FSL FR-634's sampled runs over `system`: `runs.samples` traces drawn by
@@ -3927,12 +3932,14 @@ pub fn sample_model_runs(
         .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
         .collect();
     let mut traces = Vec::new();
+    let mut stop_limits = Vec::new();
     let mut stopped = None;
     for trace in 0..runs.samples {
         if poll() {
             break;
         }
-        let drawn = sample_request_until(
+        let mut stop_limit = None;
+        let drawn = crate::simulation::sample::sample_request_using_observed(
             system,
             SampleRequest {
                 domains: &roots,
@@ -3944,14 +3951,24 @@ pub fn sample_model_runs(
                 max_steps: runs.max_steps,
                 identity: identity_limits(),
             },
-            |_| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
+            |_, _| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
                 Ok(()) => false,
                 Err(incomplete) => {
                     stopped = Some(incomplete);
                     true
                 }
             },
+            |state, _| expand(system, state, identity_limits()),
+            |observation| {
+                if let crate::simulation::sample::SampleExpansion::Stopped(stop) =
+                    &observation.expansion
+                {
+                    stop_limit = stop.limit;
+                }
+                crate::simulation::sample::ObserverDecision::Continue
+            },
         )?;
+        stop_limits.push(stop_limit);
         let retained = std::iter::once(&drawn.initial)
             .chain(drawn.steps.iter().map(|step| &step.key))
             .map(|key| length_amount(key.as_bytes().len()))
@@ -3974,6 +3991,7 @@ pub fn sample_model_runs(
         traces,
         coverage,
         stopped,
+        stop_limits,
     })
 }
 

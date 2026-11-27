@@ -472,9 +472,7 @@ pub(crate) fn package_global_behavior_item<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: fsl_eval::simulation::model::ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             };
@@ -491,6 +489,13 @@ pub(crate) fn package_global_behavior_item<'a>(
                 None => return unsupported_global_protocol(),
             };
             let over_type = program.over_type.clone();
+            // FR-882-AC-3: a scalar `over` is observed through the one model
+            // the request selects; several selections are not yet admitted.
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && input.model_selections.len() > 1
+            {
+                return unsupported_global_protocol();
+            }
             if !matches!(over_type, filament_exact::ValueType::Reference(_))
                 && binding.initial.is_empty()
             {
@@ -694,6 +699,13 @@ pub(crate) fn global_behavior_item<'a>(
             else {
                 return internal_fault();
             };
+            // FR-882-AC-3: a scalar `over` is observed through the one model
+            // the request selects; several selections are not yet admitted.
+            if !matches!(over_type, filament_exact::ValueType::Reference(_))
+                && input.model_selections.len() > 1
+            {
+                return unsupported_global_protocol();
+            }
             if !matches!(over_type, filament_exact::ValueType::Reference(_))
                 && binding.initial.is_empty()
             {
@@ -795,12 +807,7 @@ fn claim_over_instances(
     if matches!(over_type, filament_exact::ValueType::Reference(_)) {
         return model
             .claim_instances(over_type)
-            .map(|instances| {
-                std::iter::once(instances.first())
-                    .chain(instances.as_slice().iter().skip(1))
-                    .cloned()
-                    .collect()
-            })
+            .map(|instances| instances.as_slice().to_vec())
             .map_err(|failure| match failure {
                 fsl_eval::simulation::model::NoClaimInstances::NoInstance => Box::new({
                     empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance)
@@ -832,6 +839,7 @@ fn unsupported_global_protocol() -> crate::analyze::EngineReport {
     )))
 }
 
+#[implements("FR-896-AC-4")]
 fn missing_package_role(
     program: &fsl_eval::simulation::protocol::PackageProtocolProgram<'_>,
     binding: &crate::analyze::SubjectBinding<'_>,
@@ -912,9 +920,7 @@ fn package_subject<'a>(
                 initial: binding.initial.clone(),
                 universes: binding.universes.clone(),
                 observation: limits.observation,
-                expansion: fsl_eval::simulation::model::ExpansionLimits {
-                    max_candidates: u64::MAX,
-                },
+                expansion: limits.expansion,
                 meter: limits.accounting,
                 emit: limits.emit,
             },

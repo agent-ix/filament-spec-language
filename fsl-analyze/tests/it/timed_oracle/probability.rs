@@ -947,7 +947,6 @@ fn row_254_elapsed_within_ten_routes() {
 
 #[trace("FR-254-AC-9")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 0 where the elapsed time is 10 ms"]
 fn row_254_elapsed_within_ten_sampled() {
     assert_routes(&elapsed_ten().sampled_route());
 }
@@ -972,7 +971,6 @@ fn row_254_elapsed_reply_one_routes() {
 
 #[trace("FR-254-AC-9")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 0 where the elapsed time is 1 ms"]
 fn row_254_elapsed_reply_one_sampled() {
     assert_routes(&elapsed_one().sampled_route());
 }
@@ -1034,7 +1032,6 @@ fn row_3463_at_least_four_after_three_routes() {
 
 #[trace("FR-254-AC-3")]
 #[test]
-#[ignore = "QSL-3463: en-4 accepts with estimate 1 where the elapsed time is 3 ms"]
 fn row_3463_at_least_four_after_three_sampled() {
     assert_routes(&four_after_three().sampled_route());
 }
@@ -1047,7 +1044,6 @@ fn row_3463_quantile_routes() {
 
 #[trace("FR-254-AC-3")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 0 where the elapsed time is 3 ms"]
 fn row_3463_quantile_sampled() {
     assert_routes(&quantile_three().sampled_route());
 }
@@ -1059,7 +1055,6 @@ fn row_3463_at_most_after_five_routes() {
 
 #[trace("FR-254-AC-3")]
 #[test]
-#[ignore = "QSL-3463: en-4 rejects with estimate 1 where the probability is 0"]
 fn row_3463_at_most_after_five_sampled() {
     assert_routes(&four_after_five().sampled_route());
 }
@@ -1296,7 +1291,6 @@ fn row_sampled_time_lock_hand() {
 /// The sample is decided: rejected with estimate 1.
 #[trace("FR-254-AC-4")]
 #[test]
-#[ignore = "QSL-3493: en-4 does not decide a sample that ends time-locked after its event (FR-254-AC-4)"]
 fn row_sampled_time_lock_routes() {
     let row = sampled_lock();
     let answer = routes::sampled(&row.world, "LockS");

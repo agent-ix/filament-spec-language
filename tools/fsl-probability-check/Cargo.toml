@@ -20,6 +20,7 @@ serde_json = { version = "1.0.151", features = ["raw_value"] }
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [dev-dependencies]
+fsl-certificate-mutation = { path = "../../fsl-certificate-mutation" }
 filament-semantic-value = { workspace = true }
 base64 = "0.22"
 fsl-analyze = { path = "../../fsl-analyze", features = ["test-support"] }

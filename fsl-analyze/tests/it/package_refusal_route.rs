@@ -5,8 +5,8 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, Engines, SourceProvision,
-    SubjectBinding,
+    analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, DeadlineSupply, Engines,
+    SourceProvision, SubjectBinding,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::model::intake::PackageInput;
@@ -39,7 +39,7 @@ fn a_package_the_reader_refuses_settles_the_model_check_route_as_its_own_refusal
         &checked,
         &request,
         &Engines::fsl().expect("they register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("the reader refuses the package");
@@ -88,7 +88,7 @@ fn the_document_graph_of_a_package_the_reader_refuses_is_the_readers_refusal() {
     let refusal = fsl_analyze::analyze::DocumentGraphs::of_package(
         &checked,
         &PackageInput::new(),
-        AnalyzeLimits::unbounded().emit,
+        AnalyzeLimits::published(DeadlineSupply::Unbounded).emit,
     )
     .expect_err("the reader refuses the package");
     let AnalyzeRefusal::Package(refusal) = refusal else {

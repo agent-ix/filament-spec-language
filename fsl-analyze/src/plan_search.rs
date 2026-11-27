@@ -701,6 +701,15 @@ pub enum PlanStopCause {
         /// The entry it failed at.
         entry: usize,
     },
+    /// A state's expansion evaluated a contract conjunction with no value
+    /// (ADR-018 UE-6): it is never read as a disabled step, so no complete
+    /// exploration, and no certificate resting on it, exists.
+    ContractUndefined {
+        /// The conjunction's clause name.
+        clause: String,
+        /// The canonical key of the first such state.
+        state: Vec<u8>,
+    },
     /// A state was pruned because an invariant could not be decided there,
     /// so no complete exploration, and no certificate resting on it, exists.
     InvariantUndetermined {
@@ -909,6 +918,9 @@ pub(crate) struct Search<'s, 'a, R: PlanRules> {
     /// The first state pruned for an undetermined invariant: its canonical
     /// key and the invariant's name.
     pub(crate) undecided: Option<(Vec<u8>, String)>,
+    /// The first state whose expansion evaluated a contract conjunction with
+    /// no value: its canonical key and the clause's name (ADR-018 UE-6).
+    pub(crate) undefined: Option<(Vec<u8>, String)>,
 }
 
 /// What a state's invariants say about it.
@@ -1007,7 +1019,7 @@ impl From<PlanSearchError> for Stop {
 /// # Errors
 /// [`PlanSearchError`] for a model that cannot be searched and for a
 /// reported plan that fails native replay (a method failure).
-#[implements("FR-1012-AC-9")]
+#[implements("FR-1012-AC-11")]
 pub fn search<R: PlanRules>(
     system: &ModelSystem<'_>,
     rules: &mut R,
@@ -1061,6 +1073,7 @@ pub fn search<R: PlanRules>(
             explored: PlanExplored::default(),
             negative_step,
             undecided: None,
+            undefined: None,
         };
         match search.explore() {
             Ok(()) => return search.settle(),
@@ -1116,7 +1129,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         Ok(key)
     }
 
-    #[implements("FR-1012-AC-8")]
+    #[implements("FR-1012-AC-10")]
     fn explore(&mut self) -> Result<(), Stop> {
         let Some(start) = self.system.initial().into_iter().next() else {
             return Err(Stop::Error(PlanSearchError::InitialStates(0)));
@@ -1218,6 +1231,24 @@ impl<R: PlanRules> Search<'_, '_, R> {
         }
     }
 
+    /// Keep the first contract conjunction with no value among `findings`, at
+    /// `state` (ADR-018 UE-6): the search is then not complete, whatever it
+    /// finds elsewhere.
+    #[implements("FR-1012-AC-9")]
+    fn note_undefined_contract(
+        &mut self,
+        state: &ModelSimState,
+        findings: &[ModelFinding],
+    ) -> Result<(), Stop> {
+        if self.undefined.is_none() {
+            if let Some(contract) = findings.iter().find_map(ModelFinding::undefined_contract) {
+                let key = self.state_key(state)?;
+                self.undefined = Some((key, contract.clause));
+            }
+        }
+        Ok(())
+    }
+
     /// Every candidate invocation of `state`, enabled or not, in FSpec
     /// FR-804's step order.
     fn candidates(&mut self, state: &ModelSimState) -> Result<Vec<Candidate<R::StepKey>>, Stop> {
@@ -1225,6 +1256,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
             .system
             .successors(state)
             .map_err(|stop| expansion_stop(stop, self.system))?;
+        self.note_undefined_contract(state, &expansion.findings)?;
         let identities = self
             .system
             .transition_identities(state)
@@ -1305,9 +1337,21 @@ impl<R: PlanRules> Search<'_, '_, R> {
                             })
                     }),
                     Event::Disabled(_) => Ok(()),
-                    Event::Undetermined { outcome, .. } => match outcome {
+                    Event::Undetermined {
+                        outcome, clause, ..
+                    } => match outcome {
                         fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(_)
-                        | fsl_eval::simulation::model::ClauseOutcome::FamilyUndefined(_) => Ok(()),
+                        | fsl_eval::simulation::model::ClauseOutcome::FamilyUndefined(_) => {
+                            // A contract with no value is no disabled
+                            // invocation (ADR-018 UE-6).
+                            if self.undefined.is_none() {
+                                self.state_key(&state).map(|key| {
+                                    self.undefined = Some((key, clause.to_owned()));
+                                })
+                            } else {
+                                Ok(())
+                            }
+                        }
                         fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete) => {
                             Err(Stop::Cause(PlanStopCause::LimitReached {
                                 limit: incomplete.limit_kind.as_str(),
@@ -1594,6 +1638,9 @@ impl<R: PlanRules> Search<'_, '_, R> {
     /// The best plan found so far, replayed, for an `incomplete` result.
     fn stopped(mut self, cause: PlanStopCause) -> Result<PlanResult, PlanSearchError> {
         let best = self.best();
+        // A conjunction with no value on the way refutes (ADR-018 UE-6): no
+        // plan is a claim, so none is reported.
+        let best = best.filter(|_| !matches!(cause, PlanStopCause::ContractUndefined { .. }));
         let (plan, objective) = match best {
             Some(index) => match self.replayed(index) {
                 Ok((plan, value)) => (Some(plan), Some(value)),
@@ -1652,6 +1699,12 @@ impl<R: PlanRules> Search<'_, '_, R> {
 
     /// Build the result of a complete exploration.
     fn settle(mut self) -> Result<PlanResult, PlanSearchError> {
+        if let Some((state, clause)) = self.undefined.take() {
+            // A contract conjunction has no value at a reachable state, so
+            // the exploration is not known complete: never `optimal` or
+            // `infeasible`, and no plan found there is certified.
+            return self.stopped(PlanStopCause::ContractUndefined { clause, state });
+        }
         if let Some((state, invariant)) = self.undecided.take() {
             // A state was pruned for an undetermined invariant, so the
             // exploration is not known complete: never `optimal` or

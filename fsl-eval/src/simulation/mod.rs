@@ -19,6 +19,7 @@
 //! transition system. `sample_probabilistic` samples a probabilistic model
 //! under a workload (FR-188), over FR-187's step structure.
 
+pub mod bounds;
 mod choice;
 mod discovery;
 mod expansion;
@@ -61,8 +62,8 @@ pub use sample::{
 };
 pub use sampled::{
     ProbabilisticSampler, SampleStop, SampledBehaviour, SampledDisagreement, SampledPosition,
-    SampledRecord, SampledReplay, SampledReplayRefusal, SampledStep, StepAt, TimedDelayRefusal,
-    draw_timed_delay, replay_sampled, sample_probabilistic,
+    SampledRecord, SampledReplay, SampledReplayRefusal, SampledStep, StepAt, TimedDelayDraw,
+    TimedDelayRefusal, draw_timed_delay, replay_sampled, sample_probabilistic,
 };
 pub use subject::{
     Bounded, ConstraintError, Cut, InitialStateRefusal, SubjectSystem, SubjectTransition,

@@ -61,24 +61,19 @@ pub(crate) fn digitisation_decline(
                 StateGraphForm::AlwaysPossible { .. } => SearchItem::AlwaysPossible,
                 StateGraphForm::UniquePath { .. } => SearchItem::UniquePath,
             };
-            // ADR-038's EN-1 rows are the declared table; this module names
-            // the FR-243 rule of a form no row admits.
+            // ADR-038's EN-1 rows are the declared table; `of_state_graph`
+            // names the FR-243 rule of a form no row admits.
             if EN1_DIGITAL.contains(&item) {
                 return Ok(None);
             }
-            // Each of these two forms quantifies over every reachable timed
-            // state, which an integer-clock reading does not visit.
-            let rule = match item {
-                SearchItem::AlwaysPossible => NotDigitisableRule::AlwaysPossible,
-                SearchItem::UniquePath => NotDigitisableRule::UniquePath,
+            return match item {
+                SearchItem::AlwaysPossible | SearchItem::UniquePath => {
+                    Ok(NotDigitisable::of_state_graph(claim))
+                }
                 SearchItem::DigitisableTemporalClaim
                 | SearchItem::Possible
-                | SearchItem::DeadlockFreedom => return Err("digital-admission-table"),
+                | SearchItem::DeadlockFreedom => Err("digital-admission-table"),
             };
-            return Ok(Some(NotDigitisable {
-                rule,
-                span: claim.span(),
-            }));
         }
     };
     let formula = clause.formula();

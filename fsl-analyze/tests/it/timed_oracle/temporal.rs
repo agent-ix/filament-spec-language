@@ -320,7 +320,7 @@ fn trap_route(row: &str, one_guard: &str, claim: &str, route: &str, expected: Ex
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 proves a false always possible over a partly trapped zone"]
+#[trace("FR-852-AC-32")]
 fn row_3478_always_possible_never_one_zones() {
     trap_zones("3478-possible-never-zones", NEVER, POSSIBLE);
 }
@@ -337,7 +337,7 @@ fn row_3478_always_possible_never_one_digital() {
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 proves a false always possible over a partly trapped zone"]
+#[trace("FR-852-AC-32")]
 fn row_3446_always_possible_one_at_one_zones() {
     trap_zones("3446-possible-at-one-zones", AT_ONE, POSSIBLE);
 }
@@ -354,7 +354,7 @@ fn row_3446_always_possible_one_at_one_digital() {
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 proves a false unique path over a partly trapped zone"]
+#[trace("FR-852-AC-32")]
 fn row_3478_unique_path_never_one_zones() {
     trap_zones("3478-unique-never-zones", NEVER, UNIQUE);
 }
@@ -366,7 +366,7 @@ fn row_3478_unique_path_never_one_digital() {
 }
 
 #[test]
-#[ignore = "QSL-3478: en-6 settles unique path failed with established-invariant-broken"]
+#[trace("FR-852-AC-32")]
 fn row_3446_unique_path_one_at_one_zones() {
     trap_zones("3446-unique-at-one-zones", AT_ONE, UNIQUE);
 }

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
 use fsl_analyze::analyze::document::Negotiate;
-use fsl_analyze::analyze::{AnalyzeLimits, ClaimItem, Diagnostic, Engine, Engines};
+use fsl_analyze::analyze::{AnalyzeLimits, ClaimItem, DeadlineSupply, Diagnostic, Engine, Engines};
 use fsl_analyze::plan::{execute_plan, PlanInputs, PlanRefusal, PlanResult, PlanStatus};
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_package::verification_plan::{VerificationPlan, VerificationPlanRefusal};
@@ -161,7 +161,7 @@ fn value_generation_requires_only_its_consumed_bound_and_reports_catalog_fields(
         &inputs,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("unbounded value requires size, but no trace bound");
@@ -187,7 +187,7 @@ fn value_generation_requires_only_its_consumed_bound_and_reports_catalog_fields(
         &inputs,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the plan runs once its consumed size is supplied")
@@ -219,7 +219,7 @@ fn declared_finite_value_generation_consumes_neither_trace_nor_size() {
             &inputs(&world, &plan),
             &Engines::default(),
             &negotiate,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &Cancel::new(),
         )
         .expect("a finite value runs on the FR-752 entry without generation bounds")
@@ -247,7 +247,7 @@ fn value_check_negotiates_value_validity_without_generation_inputs() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("negotiated value route")
@@ -285,7 +285,7 @@ fn an_exhausted_simulation_proves_nothing_and_blocks_its_dependents() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("simulation prerequisite")
@@ -327,7 +327,7 @@ fn absent_initial_still_requires_the_first_state_trace_consumer() {
         &inputs,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("state trace bound precedes earlier value size consumer");
@@ -389,7 +389,7 @@ fn proved_prerequisite_runs_its_dependent_and_transitive_blocking_skips_descenda
             &inputs(&world, &plan),
             engines,
             &negotiate,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &Cancel::new(),
         )
         .expect("dependency graph")
@@ -436,7 +436,7 @@ fn missing_trace_names_first_consumer_before_any_negotiation() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("missing trace bound");
@@ -466,7 +466,7 @@ fn package_identity_precedes_missing_inputs_and_names_both_identities() {
             &inputs,
             &Engines::default(),
             &negotiate,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &Cancel::new(),
         )
         .expect_err("identity mismatch");
@@ -497,7 +497,7 @@ fn unsupported_blocks_only_descendants_and_does_not_require_trace_bound() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("model-only plan")
@@ -555,7 +555,7 @@ fn a_real_refutation_blocks_a_forward_dependent_but_runs_independent_work() {
         &inputs(&world, &plan),
         &engines,
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("plan executes")
@@ -594,7 +594,7 @@ fn missing_value_size_follows_trace_bound_and_names_first_unbounded_consumer() {
         &input,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("trace first");
@@ -612,7 +612,7 @@ fn missing_value_size_follows_trace_bound_and_names_first_unbounded_consumer() {
         &input,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("value size next");
@@ -638,7 +638,7 @@ fn reader_refusal_precedes_identity_and_missing_runtime_inputs() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("format refusal");
@@ -669,7 +669,7 @@ fn initial_admission_precedes_missing_generation_bounds() {
         &inputs,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("initial refusal first");
@@ -694,7 +694,7 @@ fn finite_model_generation_consumes_no_value_size_and_runs_on_the_model_based_te
         &inputs,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("a finite model needs no value size")
@@ -724,7 +724,7 @@ fn simulation_runs_on_its_language_route_without_negotiation() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("simulation route")
@@ -762,7 +762,7 @@ fn blocked_by_names_first_prerequisite_in_source_order_not_edge_order() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("plan")
@@ -790,7 +790,7 @@ fn direct_call_cycle_is_rejected_before_negotiation() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("requires cycle");
@@ -828,7 +828,7 @@ fn contract_method_negotiates_an_operation_contract_item() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("contract route")
@@ -909,7 +909,7 @@ fn probability_methods_keep_their_evidence_and_only_statistical_consumes_seed() 
         &inputs,
         &Engines::fsl().expect("native manifests"),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("probability routes")
@@ -995,7 +995,7 @@ fn release_dispatches_tested_to_the_model_based_test_entry_and_negotiates_safe_o
         &inputs,
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("Release runs")
@@ -1060,7 +1060,7 @@ fn an_unbounded_model_based_test_step_runs_no_case() {
         &inputs,
         &Engines::default(),
         &Recording::default(),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the plan runs")
@@ -1116,7 +1116,7 @@ fn a_model_based_test_step_with_no_initial_settles_unsupported_not_failed() {
         &inputs,
         &Engines::default(),
         &Recording::default(),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the plan runs")
@@ -1151,7 +1151,7 @@ fn an_inapplicable_method_settles_its_step_and_siblings_still_run() {
         &inputs(&world, &plan),
         &Engines::default(),
         &negotiate,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("one step's refusal never aborts the run")
@@ -1186,7 +1186,7 @@ fn a_cancelled_run_settles_the_model_based_test_step_incomplete() {
         &inputs,
         &Engines::default(),
         &Recording::default(),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &cancel,
     )
     .expect("the plan runs")

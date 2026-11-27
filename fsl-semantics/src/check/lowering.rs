@@ -109,6 +109,7 @@ pub use model::{
     SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
     SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember, SourceClockEntry,
     SourceClockMembers, clock_field_member_type, collection_kind, model_root_key,
+    source_object_owner_chain,
 };
 pub(crate) use model::{
     QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,

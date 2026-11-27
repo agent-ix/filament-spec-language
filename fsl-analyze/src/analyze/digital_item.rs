@@ -22,6 +22,7 @@ use fsl_replay::{
 };
 use fsl_route::Mode;
 use fsl_semantics::check::Capability;
+use ix_trace_rs::implements;
 use serde_json::{Map, json};
 
 use super::clause_item::{CLAUSE_TRANSCRIPT, ReplayInputs, ReplayShape, clause_name, replay_over};
@@ -203,6 +204,7 @@ fn digital_refusal(refusal: &DigitalRefusal) -> Refusal {
 
 /// FR-243: an item digitisation does not preserve declines `invalid-input`
 /// with FSpec FR-272's `not_digitisable` member, before any search.
+#[implements("FR-243-AC-5", "FR-243-AC-6", "FR-243-AC-7")]
 pub(super) fn not_digitisable(declined: NotDigitisable) -> Refusal {
     let Ok(member) = serde_json::to_value(declined) else {
         return Refusal::Failed(BROKEN);

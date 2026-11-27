@@ -109,6 +109,7 @@ impl Case {
             },
             stutter_closure: false,
             certificate: self.request(),
+            engines: Default::default(),
             replay: Box::new(|payload| replay(self, payload.clone())),
         }
     }

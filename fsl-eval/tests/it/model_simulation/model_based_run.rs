@@ -1477,6 +1477,7 @@ fn root_admission_disagreement_is_a_failed_result_record() {
         seed: 7,
         max_cases: 100,
         max_trace_length: Some(8),
+        max_steps: u64::MAX,
         max_value_bits: None,
         subject: Some(subject),
         expansion: ExpansionLimits {
@@ -1582,6 +1583,7 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
             seed: 7,
             max_cases: 30,
             max_trace_length: None,
+            max_steps: u64::MAX,
             max_value_bits: None,
             subject: None,
             expansion: ExpansionLimits {
@@ -1613,7 +1615,9 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
             assert_eq!(
                 result.cause,
                 Some(ModelBasedTestCause::LimitReached {
-                    limit: filament_exact::LimitKind::WorkUnits,
+                    limit: fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                        filament_exact::LimitKind::WorkUnits
+                    ),
                     value: work,
                     setting: "accounting.work_units".to_owned(),
                 })
@@ -1656,6 +1660,7 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
         seed: 7,
         max_cases: 100,
         max_trace_length: Some(8),
+        max_steps: u64::MAX,
         max_value_bits: None,
         subject: Some(subject),
         expansion: ExpansionLimits {
@@ -1761,6 +1766,7 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
         seed: 7,
         max_cases: 10,
         max_trace_length: Some(8),
+        max_steps: u64::MAX,
         max_value_bits: None,
         subject: None,
         expansion: ExpansionLimits {
@@ -1912,6 +1918,7 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
         seed: 7,
         max_cases: 10,
         max_trace_length: None,
+        max_steps: u64::MAX,
         max_value_bits: None,
         subject: None,
         expansion: ExpansionLimits {
@@ -2212,4 +2219,362 @@ fn temporal_violation_shrinks_and_retains_the_same_clause_failure() {
         panic!("a temporal failure retains a trace counterexample");
     };
     assert!(counterexample.trace.steps.is_empty());
+}
+
+/// FR-752-AC-15: whatever `accounting.work_units` bound stops a model-based
+/// run, over an invariant, a precondition, a postcondition and a temporal
+/// clause, the run settles `incomplete` naming that bound and its setting, or
+/// reports what the unbounded run reports. A meter stop is never read as a
+/// clause failure, a discard or a defect.
+#[trace("FR-752-AC-15")]
+#[test]
+fn every_work_bound_settles_incomplete_or_reports_the_unbounded_result() {
+    let invariant = || counter_run_world("Safe", "self.value + 1 + 1 > 0");
+    let temporal = || counter_temporal_world("always[0,5] holds(c.value <= 5)");
+    let worlds: [(&dyn Fn() -> World, &str); 4] = [
+        (&invariant, "Safe"),
+        (&invariant, "CanInc"),
+        (&invariant, "Inc"),
+        (&temporal, "ModelProperty"),
+    ];
+    let mut wrong = Vec::new();
+    for (build, clause) in worlds {
+        let run = |work_units: u64| {
+            let mut world = build();
+            let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+            let limits = ScalarLimits {
+                work_units,
+                ..UNLIMITED
+            };
+            let system = system(&world, vec![initial], &["c1"], limits);
+            let graph = world.package.graph();
+            let identity = graph
+                .temporal_clauses()
+                .iter()
+                .find(|node| node.clause().name() == clause)
+                .map(|node| node.identity())
+                .or_else(|| graph.state_clause(clause).map(|node| node.identity()))
+                .expect("the checked clause");
+            run_model_based_test(
+                &system,
+                &identity,
+                &sampler(),
+                7,
+                4,
+                3,
+                10_000,
+                Limits::default()
+                    .with_max_states(100)
+                    .with_max_transitions(1_000),
+            )
+            .map_err(|error| format!("{error:?}"))
+        };
+        let observed = |result: &fsl_eval::simulation::model::ModelBasedTestResult| {
+            format!(
+                "{:?}",
+                (
+                    &result.evidence,
+                    &result.counts,
+                    &result.checks,
+                    &result.cause,
+                    &result.partitions,
+                    &result.partition_coverage,
+                    &result.counterexample,
+                )
+            )
+        };
+        let control = run(UNLIMITED.work_units).expect("the unbounded run");
+        assert_ne!(
+            control.evidence,
+            ModelBasedTestEvidence::Incomplete,
+            "{clause}"
+        );
+        let control = observed(&control);
+        let mut unchanged = 0;
+        let mut stopped = 0;
+        let mut seen = Vec::new();
+        for work_units in 0..20_000 {
+            let found = match run(work_units) {
+                Ok(result) if observed(&result) == control => {
+                    unchanged += 1;
+                    if unchanged > 64 {
+                        break;
+                    }
+                    continue;
+                }
+                Ok(result) => match &result.cause {
+                    Some(ModelBasedTestCause::LimitReached { value, setting, .. })
+                        if result.evidence == ModelBasedTestEvidence::Incomplete
+                            && *value == work_units
+                            && setting == "accounting.work_units" =>
+                    {
+                        stopped += 1;
+                        unchanged = 0;
+                        continue;
+                    }
+                    _ => format!(
+                        "{:?} {:?} {:?}",
+                        result.evidence, result.cause, result.counts
+                    ),
+                },
+                Err(error) => error,
+            };
+            unchanged = 0;
+            if !seen.contains(&found) {
+                wrong.push(format!("{clause} at {work_units}: {found}"));
+                seen.push(found);
+            }
+        }
+        assert!(
+            stopped > 0 && unchanged > 64,
+            "{clause}: {stopped} {unchanged}"
+        );
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The model-based run of the counter temporal clause `formula` with the
+/// candidate bound `max_candidates`, seed 7, 4 cases of up to 8 steps.
+fn counter_temporal_run(
+    formula: &str,
+    max_candidates: u64,
+) -> fsl_eval::simulation::model::ModelBasedTestResult {
+    let mut world = counter_temporal_world(formula);
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let system = ModelSystem::new(request(
+        &world,
+        vec![initial],
+        universe(&["c1"]),
+        UNLIMITED,
+        max_candidates,
+    ))
+    .expect("the system admits");
+    let identity = world.package.graph().temporal_clauses()[0].identity();
+    run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        4,
+        8,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the run settles")
+}
+
+/// FR-752-AC-18: the candidate bound stops the initial state's expansion, so
+/// every trace is a zero-step prefix. A false-extension clause that holds of
+/// the counter is not read as if the trace ended there.
+#[trace("FR-752-AC-18")]
+#[test]
+fn a_candidate_truncated_trace_is_not_judged_as_a_closed_trace() {
+    for formula in [
+        "always[0,5] holds(c.value <= 5)",
+        "eventually[0,5] holds(c.value >= 4)",
+    ] {
+        let result = counter_temporal_run(formula, 1);
+
+        assert_eq!(result.counterexample, None, "{formula}");
+        assert_eq!(
+            result.evidence,
+            ModelBasedTestEvidence::Incomplete,
+            "{formula}"
+        );
+        assert_eq!(
+            result.cause,
+            Some(ModelBasedTestCause::LimitReached {
+                limit: fsl_eval::simulation::ExpansionLimit::MaxCandidates,
+                value: 1,
+                setting: "expansion.max_candidates".to_owned(),
+            }),
+            "{formula}"
+        );
+    }
+}
+
+/// FR-752-AC-18: a clause every continuation of the zero-step prefix violates
+/// is still refuted under the bound.
+#[trace("FR-752-AC-18", "FR-752-AC-17")]
+#[test]
+fn a_violation_every_continuation_shares_survives_truncation() {
+    let result = counter_temporal_run("always[0,5] holds(c.value >= 1)", 1);
+
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Refuted);
+    let Some(ModelBasedCounterexample::Trace(trace)) = result.counterexample else {
+        panic!("a trace counterexample");
+    };
+    assert!(trace.trace.steps.is_empty());
+}
+
+/// The run of the precondition clause `Low`, which is undefined on every
+/// receiver, over the orders snapshots `initial`, each named with its
+/// objects, under `expansion.max_candidates` 1.
+fn undefined_precondition_run(
+    initial: &[(&str, &[&str])],
+) -> fsl_eval::simulation::model::ModelBasedTestResult {
+    let world = OrdersWorld::new("pre Low using v on M::A::ready { self.ready() }");
+    let mut snapshots = BTreeMap::new();
+    let mut references = Vec::new();
+    for (identity, keys) in initial {
+        let objects: Vec<Json> = keys
+            .iter()
+            .map(|key| {
+                json!({"key": key, "type": "ix://test/orders/A",
+                    "fields": {"flag": {"boolean": true},
+                        "next": {"reference": {"population": "ix://test/orders/pop",
+                            "key": key}}}})
+            })
+            .collect();
+        let bytes = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": identity},
+            "observation": "current",
+            "model": {"identity": "test/orders"},
+            "anchor": {"kind": "initialization", "name": "start"},
+            "populations": [{"population": "ix://test/orders/pop", "complete": true,
+                "objects": objects}],
+        })
+        .to_string()
+        .into_bytes();
+        snapshots.insert(
+            fsl_semantics::model::observation::document_reference(&bytes)
+                .expect("a document names itself"),
+            bytes,
+        );
+        references.push(DocumentRef {
+            authority: "test".to_owned(),
+            identity: (*identity).to_owned(),
+        });
+    }
+    let system = ModelSystem::new(ModelSimulationRequest {
+        emit: fsl_package::EmitLimits::fixture(),
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+        packages: &world.packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &snapshots,
+        initial: references,
+        universes: vec![PopulationUniverse {
+            population: DeclarationKey {
+                package: "test/orders".to_owned(),
+                node: "ix://test/orders/pop".to_owned(),
+            },
+            keys: vec!["t1".to_owned(), "t2".to_owned()],
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits { max_candidates: 1 },
+        meter: UNLIMITED,
+    })
+    .expect("the system admits");
+    let identity = system
+        .contract_clauses()
+        .into_iter()
+        .find(|clause| clause.name == "Low")
+        .expect("clause Low")
+        .identity;
+    run_model_based_test(
+        &system,
+        &identity,
+        &sampler(),
+        7,
+        8,
+        4,
+        10_000,
+        Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+    )
+    .expect("the run settles")
+}
+
+/// FR-752-AC-20: a state whose precondition cases pass the candidate bound is
+/// skipped, and the counterexample the other state holds is retained.
+#[trace("FR-752-AC-20")]
+#[test]
+fn a_precondition_expansion_over_the_bound_does_not_lose_a_counterexample() {
+    let result = undefined_precondition_run(&[("two", &["t1", "t2"]), ("one", &["t1"])]);
+
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Refuted);
+    assert!(result.counterexample.is_some());
+}
+
+/// FR-752-AC-20: with only the over-bound state, the run is incomplete.
+#[trace("FR-752-AC-20")]
+#[test]
+fn a_precondition_run_over_the_bound_alone_is_incomplete() {
+    let result = undefined_precondition_run(&[("two", &["t1", "t2"])]);
+
+    assert_eq!(result.counterexample, None);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Incomplete);
+    assert_eq!(
+        result.cause,
+        Some(ModelBasedTestCause::LimitReached {
+            limit: fsl_eval::simulation::ExpansionLimit::MaxCandidates,
+            value: 1,
+            setting: "expansion.max_candidates".to_owned(),
+        })
+    );
+}
+
+/// `eventually[0,5] holds(c.value >= 4)` over the counter, requested at 8
+/// steps under `simulation.max_steps` `max_steps`.
+fn stepped_temporal_run(max_steps: u64) -> fsl_eval::simulation::model::ModelBasedTestResult {
+    let mut world = counter_temporal_world("eventually[0,5] holds(c.value >= 4)");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let request = ModelBasedTestRequest {
+        clause: Some(world.package.graph().temporal_clauses()[0].identity()),
+        profile: sampler(),
+        seed: 7,
+        max_cases: 4,
+        max_trace_length: Some(8),
+        max_steps,
+        max_value_bits: None,
+        subject: Some(ModelBasedTestSubject {
+            packages: &world.packages,
+            snapshots: &world.snapshots,
+            initial: vec![initial],
+            universes: universe(&["c1"]),
+        }),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        accounting: UNLIMITED,
+        normalization: ModelNormalizationLimits::default(),
+        observation: ObservationLimits::default(),
+        emit: fsl_package::EmitLimits::fixture(),
+        exploration: Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+        position_limit: 10_000,
+    };
+    fsl_eval::simulation::model::run_model_based_test(
+        &world.package,
+        &request,
+        &NativeAdmission,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the run settles")
+}
+
+/// FR-752-AC-19: two steps cannot reach `value >= 4`, but the setting cut the
+/// trace, so the run is incomplete naming it and holds no counterexample. At
+/// the requested 8 steps the setting cuts nothing.
+#[trace("FR-752-AC-19")]
+#[test]
+fn a_trace_cut_by_the_step_setting_is_not_judged_as_a_closed_trace() {
+    let result = stepped_temporal_run(2);
+
+    assert_eq!(result.counterexample, None);
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Incomplete);
+    assert_eq!(
+        result.cause,
+        Some(ModelBasedTestCause::TraceStepLimit { value: 2 })
+    );
+    assert_eq!(result.max_trace_length, 2);
+
+    let uncut = stepped_temporal_run(8);
+    assert_eq!(uncut.counterexample, None);
+    assert_eq!(uncut.evidence, ModelBasedTestEvidence::Tested);
 }

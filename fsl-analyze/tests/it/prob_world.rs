@@ -1178,6 +1178,44 @@ pub(crate) fn fair_mec_refinement(extra: &str) -> Model {
     }
 }
 
+/// `go` takes `s` to the target `g` and `back` returns, so `s` and `g` form one
+/// SCC of the whole product that no non-target component lies in.
+pub(crate) fn fair_returning_target(extra: &str) -> Model {
+    Model {
+        package: "test/fair-returning-target",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![("s", BOOLEAN.to_owned()), ("g", BOOLEAN.to_owned())],
+        operations: vec![
+            Operation {
+                name: "go",
+                parameters: vec![],
+                modifies: vec!["s", "g"],
+                deletes: false,
+            },
+            Operation {
+                name: "back",
+                parameters: vec![],
+                modifies: vec!["s", "g"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            concat!(
+                "pre GoAtS using v on M::W::go {{ self.s }}\n",
+                "post Went using v on M::W::go {{ self.s = false and self.g = true }}\n",
+                "pre BackAtG using v on M::W::back {{ self.g }}\n",
+                "post Returned using v on M::W::back {{ self.s = true and self.g = false }}\n",
+                "{}"
+            ),
+            extra
+        ),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}}),
+    }
+}
+
 /// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
 /// only action loops and `go` is disabled; `wait` instead exposes an unfair
 /// live cycle at `s`.
