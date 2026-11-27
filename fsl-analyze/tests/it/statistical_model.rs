@@ -30,6 +30,7 @@ use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, Su
 use fsl_replay::SymmetryRefusal;
 use fsl_replay::{
     settle_exact_prob_build_issue, ExactProbBuildIssue, IncompleteCause, ModelCheckLimit,
+    StatisticalRequestRefusal, UnavailabilityCause,
 };
 use fsl_replay::{ClaimPredicate, TerminalValue, UndefinedLocus};
 use fsl_route::reductions::SymmetryDeclaration;
@@ -2187,15 +2188,17 @@ fn exact_only_claims_are_refused_before_any_sample() {
         let TerminalValue::Unsupported(cause) = record.value else {
             panic!("an exact-only gate refusal settles unsupported: {record:?}");
         };
+        let refusal = match claim {
+            "Every" => StatisticalRequestRefusal::EveryScheduler,
+            "Bare" => StatisticalRequestRefusal::MissingConfidence,
+            "Expected" => StatisticalRequestRefusal::ExactOnlyForm,
+            _ => unreachable!("listed claim"),
+        };
         assert_eq!(
-            cause.as_str(),
-            match claim {
-                "Every" => "every-scheduler",
-                "Bare" => "missing-confidence",
-                "Expected" => "exact-only-form",
-                _ => unreachable!("listed claim"),
-            }
+            cause,
+            &UnavailabilityCause::StatisticalRequest(refusal)
         );
+        assert_eq!(cause.as_str(), "unsupported-requested-capability");
     }
 }
 
