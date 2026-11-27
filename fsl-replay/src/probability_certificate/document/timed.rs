@@ -2252,7 +2252,7 @@ fn enumerate_digital_deadline(
             insert_checker_state(
                 key,
                 CheckerState {
-                    terminal: Some(false),
+                    terminal: Some(locked_terminal(&current.phase)),
                     choices: Vec::new(),
                 },
                 &mut states,

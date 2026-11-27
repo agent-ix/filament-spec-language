@@ -289,10 +289,7 @@ impl ExactReport {
                 binding,
             ) {
                 Some(record) => (record, evidence),
-                None => {
-                    eprintln!("DIAG3468 record-none at {}", line!());
-                    (TerminalRecord::failed_with(index, backend, BROKEN), None)
-                }
+                None => (TerminalRecord::failed_with(index, backend, BROKEN), None),
             },
             Self::ProvedBounds {
                 claim,
@@ -311,10 +308,7 @@ impl ExactReport {
                 binding,
             ) {
                 Some(record) => (record, Some(evidence)),
-                None => {
-                    eprintln!("DIAG3468 record-none at {}", line!());
-                    (TerminalRecord::failed_with(index, backend, BROKEN), None)
-                }
+                None => (TerminalRecord::failed_with(index, backend, BROKEN), None),
             },
             Self::ProvedPartialBounds {
                 claim,
@@ -333,10 +327,7 @@ impl ExactReport {
                 binding,
             ) {
                 Some(record) => (record, Some(evidence)),
-                None => {
-                    eprintln!("DIAG3468 record-none at {}", line!());
-                    (TerminalRecord::failed_with(index, backend, BROKEN), None)
-                }
+                None => (TerminalRecord::failed_with(index, backend, BROKEN), None),
             },
             Self::ResourceExhausted => (
                 TerminalRecord::incomplete(
@@ -488,9 +479,7 @@ fn is_unbounded_eventually_formula(formula: &fsl_semantics::check::CheckedTempor
     )
 }
 
-#[track_caller]
 fn broken() -> EngineReport {
-    eprintln!("DIAG3468 broken at {}", std::panic::Location::caller());
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
 
@@ -2776,7 +2765,7 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         ProbabilityDocumentError::Unsupported => not_yet(),
         // The product build reports a first undefined read itself (`ProbBuild::Undefined`);
         // one the checker finds after a build that saw none is a disagreement between them.
-        diag3468 @ (ProbabilityDocumentError::UndefinedPredicate(_)
+        ProbabilityDocumentError::UndefinedPredicate(_)
         | ProbabilityDocumentError::MalformedMember(_)
         | ProbabilityDocumentError::Malformed
         | ProbabilityDocumentError::MissingMember(_)
@@ -2784,10 +2773,7 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         | ProbabilityDocumentError::IdentityMismatch
         | ProbabilityDocumentError::ObjectiveMismatch
         | ProbabilityDocumentError::OptimizationMismatch
-        | ProbabilityDocumentError::Graph(_)) => {
-            eprintln!("DIAG3468 checker {diag3468:?}");
-            broken()
-        }
+        | ProbabilityDocumentError::Graph(_) => broken(),
     }
 }
 
