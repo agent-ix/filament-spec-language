@@ -2698,6 +2698,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 
     /// Resolve universal hyper analysis from its authenticated package form.
+    #[implements("FR-173-AC-3", "FR-173-AC-5", "FR-281-AC-3")]
     fn hyper(
         &self,
         index: RequestIndex,
@@ -2714,6 +2715,25 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             key.clone(),
             filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
         );
+        let profile = package.hyper_clause_profile(&claim).map_err(|_| fault())?;
+        let unsupported_form = package
+            .hyper_clause_hp4_reason(&claim)
+            .map_err(|_| fault())?;
+        if !matches!(
+            profile,
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+                | fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        ) || unsupported_form.is_some()
+        {
+            return Ok(Resolution::Settled(ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(TerminalRecord::disposition_unsupported(
+                    index,
+                    fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                    Map::new(),
+                )),
+            }));
+        }
         let pending = |fact| {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
