@@ -2394,7 +2394,7 @@ fn exact_only_claims_are_refused_before_any_sample() {
             "Expected" => StatisticalRequestRefusal::ExactOnlyForm,
             _ => unreachable!("listed claim"),
         };
-        assert_eq!(cause, &UnavailabilityCause::StatisticalRequest(refusal));
+        assert_eq!(cause, UnavailabilityCause::StatisticalRequest(refusal));
         assert_eq!(cause.as_str(), "unsupported-requested-capability");
     }
 }
