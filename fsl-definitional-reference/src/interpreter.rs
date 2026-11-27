@@ -772,7 +772,7 @@ pub fn evaluate_finite_value(
 }
 
 fn evaluate_value(
-    graph: &CheckedGraph,
+    _graph: &CheckedGraph,
     expression: CheckedNode<'_>,
     locals: &[Value],
     pre_state: &ReferenceFiniteState,
@@ -790,7 +790,7 @@ fn evaluate_value(
     })?;
     let child = |node, state: &ReferenceFiniteState, budget: &mut usize| {
         evaluate_value(
-            graph,
+            _graph,
             expression.at(node),
             locals,
             pre_state,

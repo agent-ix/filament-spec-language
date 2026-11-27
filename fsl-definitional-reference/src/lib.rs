@@ -280,6 +280,34 @@ pub fn validate_conjunctive_guards(graph: &CheckedGraph) -> Result<(), Reference
     Ok(())
 }
 
+impl RewardEvaluator for ReferenceRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        reward: &Reward,
+        arguments: Vec<Value>,
+        _meter: &mut Meter,
+    ) -> Result<Value, RewardEvaluationFailure> {
+        let expression = reward.expression();
+        match expression.kind() {
+            NodeKind::Literal(literal)
+                if matches!(
+                    &literal.0,
+                    Value::Integer(_) | Value::Rational(_) | Value::Quantity(_)
+                ) && arguments.len() == reward.parameters().len() =>
+            {
+                Ok(literal.0.clone())
+            }
+            _ => Err(RewardEvaluationFailure {
+                diagnostic_code: Code::UnsupportedConstruct,
+                catalog: CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                fields: vec![("what", "reward outside literal rational fragment".into())],
+            }),
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::TinyMdp;
@@ -374,32 +402,5 @@ mod tests {
             validate_quantile_scheduler(&ReferenceSchedulerQuantifier::Workload("Even".into()))
                 .is_ok()
         );
-    }
-}
-
-impl RewardEvaluator for ReferenceRewardEvaluator {
-    fn evaluate(
-        &self,
-        _graph: &CheckedGraph,
-        reward: &Reward,
-        arguments: Vec<Value>,
-        _meter: &mut Meter,
-    ) -> Result<Value, RewardEvaluationFailure> {
-        let expression = reward.expression();
-        match expression.kind() {
-            NodeKind::Literal(literal)
-                if matches!(
-                    &literal.0,
-                    Value::Integer(_) | Value::Rational(_) | Value::Quantity(_)
-                ) && arguments.len() == reward.parameters().len() =>
-            {
-                Ok(literal.0.clone())
-            }
-            _ => Err(RewardEvaluationFailure {
-                diagnostic_code: Code::UnsupportedConstruct,
-                catalog: CatalogCode::new("unsupported_construct", "not-yet-implemented"),
-                fields: vec![("what", "reward outside literal rational fragment".into())],
-            }),
-        }
     }
 }

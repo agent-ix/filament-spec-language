@@ -1251,7 +1251,6 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "fsl-foundation",
- "fsl-package",
  "fsl-semantics",
  "ix-trace-rs",
 ]
