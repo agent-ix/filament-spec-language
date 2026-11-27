@@ -1279,7 +1279,6 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
             }
             admission(failure)
         }
-        ModelCheckRefusal::ConflictingIdentity(conflict) => conflicting_identity(conflict),
         ModelCheckRefusal::RequiresBound(_) | ModelCheckRefusal::UnboundCapacity(_) => {
             Refusal::RequiresBound
         }

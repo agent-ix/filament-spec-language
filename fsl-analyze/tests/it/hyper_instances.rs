@@ -338,11 +338,13 @@ fn the_event_position_item_has_the_same_instance() {
     }
 }
 
-/// FR-181-AC-10: a package selection of an HP-5 clause with an object
-/// parameter is not yet implemented, with no verdict and no instance.
-#[trace("TC-3219", "FR-181-AC-10")]
+/// FR-940-AC-17: a package selection of an HP-5 clause with an object
+/// parameter settles as its program-source item does, with no `unsupported`
+/// record and no `not-yet-implemented` diagnostic; a proved record names no
+/// instance (FSpec FR-390).
+#[trace("TC-3127", "FR-940-AC-17")]
 #[test]
-fn a_package_selection_of_an_object_parameter_hp5_clause_is_not_implemented() {
+fn a_package_selection_of_an_object_parameter_hp5_clause_settles() {
     for (name, body) in [("guard", GUARD), ("read", READ)] {
         let run = Pets::LAMP.analyze(
             &format!("hyper-admitted-package-hp5-{name}"),
@@ -351,10 +353,9 @@ fn a_package_selection_of_an_object_parameter_hp5_clause_is_not_implemented() {
             true,
         );
         let text = run.document().to_string();
-        assert_eq!(run.exit, 21, "{text}");
-        assert!(text.contains("unsupported_construct"), "{text}");
-        assert!(text.contains("not-yet-implemented"), "{text}");
-        assert!(run.item(0)["record"]["result"].is_null(), "{text}");
+        assert_eq!(run.exit, 0, "{text}");
+        assert!(!text.contains("unsupported_construct"), "{text}");
+        assert!(!text.contains("not-yet-implemented"), "{text}");
         assert!(!text.contains("\"instance\""), "{text}");
     }
 }
