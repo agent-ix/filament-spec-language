@@ -99,9 +99,9 @@ The command's outcome under the configured limits.
   driver SHALL refuse `invalid-request`, exit 20, naming the setting and
   listing the settings the command accepts, before any file is read.
 - If an operand is malformed, names an unknown setting, has a value that is
-  not a non-negative decimal integer or repeats a name, then the driver
-  SHALL return FR-255 Behavior 6's usage refusal naming the operand, exit 20,
-  before any file is read.
+  not a non-negative decimal integer or repeats a name, then the `fsl`
+  command driver SHALL return FR-255 Behavior 6's usage refusal naming the
+  operand, exit 20, before any file is read.
 - When `fsl compile` is given `--request-bytes` or `--dependent-bytes`, the
   compile SHALL read the request and its dependent files under those
   ceilings, and a refusal at either SHALL name the limit, its value and the
