@@ -1745,6 +1745,54 @@ fn a_bounded_nested_punctual_claim_settles_an_exact_verdict() {
     );
 }
 
+fn complete_window_world() -> World {
+    retx(
+        GUARD,
+        true,
+        "",
+        "probabilistic Nested using ev on M over (c: M::Call) under every scheduler on origin { \
+             probability >= 0.99 [ eventually[0 ms, 100 ms] always[0 ms, 10 ms] holds(c.late) ] }\n\
+         probabilistic Conjoined using ev on M over (c: M::Call) under every scheduler on origin { \
+             probability >= 0.99 [ (eventually[0 ms, 4 ms] holds(c.late) and \
+                 eventually[0 ms, 4 ms] holds(not c.late)) ] }\n",
+    )
+}
+
+/// FR-204-AC-21/26 and FR-186-AC-3: the specified non-punctual nested
+/// Eventually/Always formula settles at its exact value over the region MDP.
+#[trace("FR-204-AC-21", "FR-204-AC-26", "FR-186-AC-3")]
+#[test]
+fn bounded_timed_window_non_punctual_nested_always_settles_at_its_exact_pointwise_value() {
+    let world = complete_window_world();
+    let nested = settle_trio(&world, "Nested", None);
+    let no_success = ratio(1, 10).pow(&Integer::from(50_i64));
+    assert_eq!(exact_value(&nested), ratio(1, 1).sub(&no_success));
+    assert_eq!(timed_route(&nested), "region");
+}
+
+/// FR-204-AC-21/26: a Boolean conjunction whose children each own a bounded
+/// operator is decided with the exact pointwise value over the region MDP.
+#[trace("FR-204-AC-21", "FR-204-AC-26")]
+#[test]
+fn bounded_timed_window_conjunction_of_operator_children_settles_at_its_exact_value() {
+    let world = complete_window_world();
+    let conjoined = settle_trio(&world, "Conjoined", None);
+    assert_eq!(exact_value(&conjoined), ratio(99, 100));
+    assert_eq!(timed_route(&conjoined), "region");
+}
+
+fn timed_route(record: &fsl_analyze::analyze::AnalyzeRecord) -> String {
+    let bytes = record
+        .terminal()
+        .and_then(|terminal| terminal.exact_certificate_document())
+        .expect("a timed proof keeps its certificate document");
+    let document: serde_json::Value = serde_json::from_slice(bytes).expect("a JSON document");
+    document["objective"]["timed"]["route"]
+        .as_str()
+        .expect("the timed certificate names its route")
+        .to_owned()
+}
+
 /// `Trio` of FR-204's worked example over the timed fixture's `Call`: its
 /// `phase` 0 is `Idle` and 1 `Done`, and the flags `a`, `b` and `c` are the
 /// fixture's `inflight`, `late` and `retried`. `A`, `B` and `C` are each
