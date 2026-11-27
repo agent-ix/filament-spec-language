@@ -254,9 +254,10 @@ fn check_recompiled(
             cancel,
         )?;
     }
-    if request.initial.len() != 1 {
-        return Err(ProbabilityDocumentError::Unsupported.into());
-    }
+    // The profile admits one initial state, but only for a subject with an
+    // initial state and an instance (FR-201 "Instancing outcomes"): several
+    // are refused once the subject is admitted and found to have both.
+    let several_initial = request.initial.len() > 1;
     let bytes = request
         .provision
         .get(request.source)
@@ -385,6 +386,18 @@ fn check_recompiled(
     let admitted = ModelSystem::new_with_cancel(simulation, cancel);
     super::poll_cancel(cancel).map_err(ProbabilityDocumentError::from)?;
     let system = admitted.map_err(ProbabilitySourceError::Subject)?;
+    if several_initial {
+        if let Some(outcome) = super::instancing_outcome(
+            &system,
+            super::bind_claim(claims, &claimed(request.item, held.is_some()), cancel)
+                .map_err(ProbabilityDocumentError::from)?,
+        )
+        .map_err(ProbabilityDocumentError::from)?
+        {
+            return Ok(outcome);
+        }
+        return Err(ProbabilityDocumentError::Unsupported.into());
+    }
     check_probability_certificate_document_as(
         &system,
         claims,

@@ -152,6 +152,8 @@ pub(crate) enum ExactReport {
     ProvedExhaustively,
     /// The `on each` claim has no instance to read (FR-875).
     NoInstance,
+    /// The subject has no initial state (FR-125, FR-201 "Instancing outcomes").
+    NoInitialState,
     /// A semantic replay disagreed with the produced path evidence.
     ReplayParity,
     /// Replay refused the witness's semantic content.
@@ -241,6 +243,10 @@ impl ExactReport {
             }
             Self::NoInstance => (
                 TerminalRecord::inconclusive(index, backend, InconclusiveCause::NoInstance),
+                None,
+            ),
+            Self::NoInitialState => (
+                TerminalRecord::inconclusive(index, backend, InconclusiveCause::NoInitialState),
                 None,
             ),
             Self::ReplayParity => (
@@ -2616,6 +2622,12 @@ fn checked_report(
                     binding: None,
                     evidence: None,
                 }))
+            }
+            ExactProbabilityCertificateCheck::NoInitialState => {
+                EngineReport::Exact(Box::new(ExactReport::NoInitialState))
+            }
+            ExactProbabilityCertificateCheck::NoInstance => {
+                EngineReport::Exact(Box::new(ExactReport::NoInstance))
             }
             ExactProbabilityCertificateCheck::Rejected(rejection) => {
                 let rule = match rejection.rule {

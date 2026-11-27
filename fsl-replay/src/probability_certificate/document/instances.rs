@@ -208,15 +208,7 @@ fn instances_of(
     };
     system
         .instances(value_type)
-        .map_err(|error| match error {
-            fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
-                ExactProbabilityGraphError::RequiresBound
-            }
-            fsl_eval::simulation::NotSimulated::Extent(
-                fsl_semantics::family::ClassifyFailure::Limit(_),
-            ) => ExactProbabilityGraphError::ExtentLimit,
-            _ => ExactProbabilityGraphError::ExpansionRefused,
-        })?
+        .map_err(instance_graph_error)?
         .into_iter()
         .map(|instance| {
             let reference = system
