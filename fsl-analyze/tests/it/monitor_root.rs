@@ -155,10 +155,23 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     let final_data = package
         .checked_term_data()
         .expect("body locations retained");
-    assert_eq!(
-        final_data.body_locations.len(),
-        base_data.body_locations.len()
-    );
+    // The writer renames record fields (`origin_tick` as `origin`), so an
+    // application node holds its base position under its final id; rows name
+    // the final id.
+    let renamed = |id: &filament_contract_model::CheckedNodeId| {
+        let mut id = id.clone();
+        for segment in &mut id.path {
+            if let filament_contract_model::CheckedNodePathSegment::Name(name) = segment {
+                if let Some((_, wire)) = fsl_analyze::monitor_entries::WIRE_FIELD_NAMES
+                    .iter()
+                    .find(|(source, _)| *source == name.as_ref())
+                {
+                    *name = (*wire).into();
+                }
+            }
+        }
+        id
+    };
     let mut seen_entries = [false; 4];
     let mut seen_helper = false;
     let mut stale_origin = None;
@@ -190,7 +203,11 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
         );
         assert_eq!(after.occurrence, before.occurrence);
         assert_eq!(after.term_ordinal, before.term_ordinal);
-        assert_eq!(after.application, before.application);
+        assert_eq!(
+            after.application,
+            renamed(&before.application),
+            "an application keeps its node but for the writer's field renames"
+        );
     }
     assert_eq!(
         seen_entries, [true; 4],
