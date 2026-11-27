@@ -746,7 +746,7 @@ pub fn evaluate_boolean(
 
 /// Evaluates one finite scalar value from the checked graph.
 pub fn evaluate_finite_value(
-    graph: &CheckedGraph,
+    _graph: &CheckedGraph,
     expression: CheckedNode<'_>,
     locals: &[Value],
     pre_state: &ReferenceFiniteState,
@@ -754,7 +754,6 @@ pub fn evaluate_finite_value(
 ) -> Result<Value, ReferenceRefusal> {
     let mut budget = MAX_EXPRESSION_NODES;
     let value = evaluate_value(
-        graph,
         expression,
         locals,
         pre_state,
@@ -772,7 +771,6 @@ pub fn evaluate_finite_value(
 }
 
 fn evaluate_value(
-    _graph: &CheckedGraph,
     expression: CheckedNode<'_>,
     locals: &[Value],
     pre_state: &ReferenceFiniteState,
@@ -790,7 +788,6 @@ fn evaluate_value(
     })?;
     let child = |node, state: &ReferenceFiniteState, budget: &mut usize| {
         evaluate_value(
-            _graph,
             expression.at(node),
             locals,
             pre_state,
