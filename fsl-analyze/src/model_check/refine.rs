@@ -2063,6 +2063,7 @@ impl Run<'_, '_> {
     }
 
     /// Check every edge out of node `at`, in canonical order.
+    #[implements("FR-142-AC-9")]
     fn expand(&mut self, at: usize) -> Result<(), End> {
         let expansion = self
             .concrete
@@ -2400,6 +2401,7 @@ impl Run<'_, '_> {
 
     /// The position and `Taken` a passing verdict gives, or the end the
     /// verdict is.
+    #[implements("FR-142-AC-9")]
     fn judge(
         &self,
         verdict: StepVerdict,

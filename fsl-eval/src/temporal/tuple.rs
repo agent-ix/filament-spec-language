@@ -526,3 +526,27 @@ pub fn evaluate_closed_tuple<L: TupleLetters>(
         meter,
     )
 }
+
+/// The reading of `atom` at joint position `index` of a tuple of closed
+/// finite traces of `lens` positions, as [`evaluate_closed_tuple`] reads it: a
+/// component past its last position reads false (FR-043).
+///
+/// # Errors
+///
+/// [`LetterStop`] when the letter cannot give a reading.
+pub fn read_closed_atom<L: TupleLetters>(
+    body: &CheckedHyperClause,
+    lens: &[u64],
+    letters: &mut L,
+    atom: FormulaNodeId,
+    index: u64,
+    meter: &mut Meter,
+) -> Result<AtomReading, LetterStop> {
+    let mut lockstep = ClosedLockstep {
+        body,
+        letters,
+        lens,
+        scratch: Vec::with_capacity(lens.len()),
+    };
+    TemporalLetters::atom(&mut lockstep, atom, TemporalPosition::new(index), meter)
+}

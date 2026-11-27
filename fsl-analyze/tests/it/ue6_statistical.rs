@@ -45,9 +45,9 @@ fn ue6_statistical_walk_through_the_state() {
     assert!(site.transition.is_some(), "the guard names its transition");
 }
 
-/// FR-189-AC-5: the atom `undefined_remainder(c.v) >= 0` has no value at
-/// position 0 (`v = 0`), which the walk reads whatever the horizon (UE-1).
-#[trace("FR-189-AC-5")]
+/// The atom `undefined_remainder(c.v) >= 0` has no value at position 0
+/// (`v = 0`), which the walk reads whatever the horizon (ADR-018 UE-1). No
+/// criterion states UE-1 alone, so the test carries no criterion tag.
 #[test]
 fn ue6_statistical_atom_undefined_at_position_zero() {
     let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \

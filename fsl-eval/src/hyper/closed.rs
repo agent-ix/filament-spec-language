@@ -23,7 +23,8 @@ use crate::hyper::seam::{
     HyperLetters, MatchPart, MatchReading, ParameterBinding, StepLabel, StepMatch,
 };
 use crate::temporal::{
-    evaluate_closed_tuple, AtomReading, ComponentPosition, LetterStop, TemporalOutcome,
+    evaluate_closed_tuple, read_closed_atom, AtomReading, ComponentPosition, LetterStop,
+    TemporalOutcome,
     TemporalPosition, TupleLetters,
 };
 
@@ -110,6 +111,45 @@ pub enum ClosedStop {
     /// A state's expansion refused a contract conjunction, so what the state
     /// enables is not exactly known.
     Refused,
+}
+
+/// The expression of a closed tuple's reading that has no value (ADR-023
+/// HV-8).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClosedLocus {
+    /// A `holds` atom of the body.
+    Atom(FormulaNodeId),
+    /// A universal `match` conjunct, by its index.
+    Match {
+        /// The conjunct's index among the universal conjuncts.
+        conjunct: usize,
+    },
+    /// An existential `match` conjunct, by its index.
+    ExistentialMatch {
+        /// The conjunct's index among the existential conjuncts.
+        conjunct: usize,
+    },
+    /// A `pre` or `post` clause of a contract conjunction, by its name.
+    Contract(String),
+}
+
+/// The first expression with no value along a tuple of closed executions,
+/// in the engine's reading order (ADR-018 UE-4): the joint position, what has
+/// no value, the components it reads, the guarded transition of a
+/// precondition, and why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClosedUndefined {
+    /// The joint position, read over the visible positions of an `align skip`
+    /// clause.
+    pub position: u64,
+    /// The expression.
+    pub locus: ClosedLocus,
+    /// The components whose states it reads.
+    pub components: Vec<usize>,
+    /// The transition a precondition guards.
+    pub transition: Option<ModelTransition>,
+    /// Why it has no value.
+    pub cause: crate::temporal::UndefinedCause,
 }
 
 /// The body's horizon (ADR-014 TR-4): the greatest sum of interval upper
@@ -275,11 +315,12 @@ pub enum ClosedVerdict {
         /// The joint position.
         at: u64,
     },
-    /// A `match` conjunct has no value or was refused or incomplete at a
-    /// joint step (ADR-023 HV-4).
+    /// A `match` conjunct was refused or incomplete at a joint step
+    /// (ADR-023 HV-4).
     MatchUndetermined,
-    /// An atom of the body has no value on the tuple (ADR-023 HV-8).
-    Undefined,
+    /// A `match` conjunct or an atom of the body has no value on the tuple
+    /// (ADR-023 HV-8).
+    Undefined(Box<ClosedUndefined>),
     /// The evaluation meter ran out.
     Incomplete(filament_exact::LimitKind),
     /// An invariant of the evaluation broke.
@@ -440,6 +481,19 @@ pub fn judge_closed_tuple(
                         ClosedVerdict::UniversalUnmatched
                     };
                 }
+                Ok(MatchReading::Undefined { conjunct, cause }) => {
+                    return ClosedVerdict::Undefined(Box::new(ClosedUndefined {
+                        position: u64::try_from(joint).unwrap_or(u64::MAX),
+                        locus: if existential {
+                            ClosedLocus::ExistentialMatch { conjunct }
+                        } else {
+                            ClosedLocus::Match { conjunct }
+                        },
+                        components: (0..executions.len()).collect(),
+                        transition: None,
+                        cause,
+                    }));
+                }
                 Ok(_) => return ClosedVerdict::MatchUndetermined,
                 Err(verdict) => return verdict,
             }
@@ -458,7 +512,31 @@ pub fn judge_closed_tuple(
     match evaluate_closed_tuple(clause, &lens, &mut letters, &mut meter) {
         Ok(TemporalOutcome::Holds) => ClosedVerdict::Holds,
         Ok(TemporalOutcome::Violated { at }) => ClosedVerdict::Violated { at: at.index() },
-        Ok(TemporalOutcome::Undefined(_)) => ClosedVerdict::Undefined,
+        Ok(TemporalOutcome::Undefined(found)) => {
+            // The first undefined atom at that position, in clause-node order.
+            let index = found.at.index();
+            for node in 0..clause.body().nodes().len() {
+                let atom = FormulaNodeId::from_arena_index(node);
+                let Some(reads) = clause.component_reads(atom) else {
+                    continue;
+                };
+                match read_closed_atom(clause, &lens, &mut letters, atom, index, &mut meter) {
+                    Ok(AtomReading::Undefined(cause)) => {
+                        let components: BTreeSet<usize> = reads.values().copied().collect();
+                        return ClosedVerdict::Undefined(Box::new(ClosedUndefined {
+                            position: index,
+                            locus: ClosedLocus::Atom(atom),
+                            components: components.into_iter().collect(),
+                            transition: None,
+                            cause,
+                        }));
+                    }
+                    Ok(AtomReading::True | AtomReading::False) => {}
+                    Err(_) => break,
+                }
+            }
+            closed_fault("an-undefined-closed-atom-is-found")
+        }
         Ok(TemporalOutcome::Incomplete(incomplete)) => {
             ClosedVerdict::Incomplete(incomplete.limit_kind)
         }
@@ -530,6 +608,14 @@ pub enum PartnerSearch {
         /// The budget.
         limit: u64,
     },
+    /// An expression has no value on the universal tuple with the existential
+    /// tuple of these indices (ADR-023 HV-8): the clause is refuted.
+    Undefined {
+        /// What has no value.
+        found: Box<ClosedUndefined>,
+        /// The index of each existential variable's execution in its list.
+        existentials: Vec<usize>,
+    },
     /// A reading stopped the search; it settles no partner.
     Stopped(ClosedVerdict),
     /// The run was cancelled.
@@ -572,11 +658,140 @@ pub fn search_partner(
             ClosedVerdict::UniversalUnmatched => return PartnerSearch::UniversalUnmatched,
             ClosedVerdict::ExistentialUnmatched => {}
             ClosedVerdict::Violated { at } => position = position.max(at),
+            ClosedVerdict::Undefined(found) => {
+                return PartnerSearch::Undefined {
+                    found,
+                    existentials: picked,
+                };
+            }
             stopped @ (ClosedVerdict::MatchUndetermined
-            | ClosedVerdict::Undefined
             | ClosedVerdict::Incomplete(_)
             | ClosedVerdict::Fault(_)) => return PartnerSearch::Stopped(stopped),
         }
     }
     PartnerSearch::Exhausted { position }
+}
+
+/// What reading a tuple of closed executions, or a joint prefix of them, for
+/// an expression with no value found (ADR-023 HV-8).
+#[derive(Debug)]
+pub enum ClosedRead {
+    /// The first expression with no value, in reading order.
+    Undefined(Box<ClosedUndefined>),
+    /// `μ` is false at a joint step: the tuple is outside the clause's scope.
+    Unmatched,
+    /// Every expression the tuple reads has a value.
+    Clear,
+    /// A contract conjunction of an `align skip` clause is not read: FR-183
+    /// states no replay for it.
+    Unread,
+    /// A state could not be expanded for its contract conjunctions.
+    Expansion {
+        /// The component whose state it was.
+        component: usize,
+        /// Why.
+        stop: ExpansionStop,
+    },
+    /// A reading stopped before it found a value.
+    Stopped(ClosedVerdict),
+}
+
+/// Read `executions`, one per trace variable in quantifier order, for the
+/// first expression with no value (ADR-018 UE-4, UE-6; ADR-023 HV-8), in the
+/// one order the producer and the replay share: a `match` conjunct or an atom
+/// of the body at the joint positions the evaluator reads, then the contract
+/// conjunctions of the states the closed form expands, by joint position and
+/// then component. `systems` holds each component's subject. The executions
+/// may differ in length: a component that has ended reads false (FR-043) and
+/// is expanded no further.
+pub fn read_closed_undefined(
+    inputs: &ClosedInputs<'_>,
+    systems: &[&ModelSystem<'_>],
+    executions: &[&ClosedExecution],
+) -> ClosedRead {
+    match judge_closed_tuple(inputs, executions) {
+        ClosedVerdict::Undefined(found) => return ClosedRead::Undefined(found),
+        ClosedVerdict::UniversalUnmatched | ClosedVerdict::ExistentialUnmatched => {
+            return ClosedRead::Unmatched;
+        }
+        stopped @ (ClosedVerdict::MatchUndetermined
+        | ClosedVerdict::Incomplete(_)
+        | ClosedVerdict::Fault(_)) => return ClosedRead::Stopped(stopped),
+        ClosedVerdict::Holds | ClosedVerdict::Violated { .. } => {}
+    }
+    let clause = inputs.clause;
+    if !clause.align_skip().is_empty() {
+        return ClosedRead::Unread;
+    }
+    let Some(depth) = horizon(clause.body()) else {
+        return ClosedRead::Stopped(closed_fault("a-body-has-a-horizon"));
+    };
+    let longest = executions
+        .iter()
+        .map(|execution| execution.states.len())
+        .max()
+        .unwrap_or(0);
+    for joint in 0..longest {
+        if u64::try_from(joint).map_or(true, |joint| joint >= depth) {
+            break;
+        }
+        for (component, execution) in executions.iter().enumerate() {
+            let Some(state) = execution.states.get(joint) else {
+                continue;
+            };
+            let Some(system) = systems.get(component) else {
+                return ClosedRead::Stopped(closed_fault("a-component-has-a-system"));
+            };
+            let expansion = match system.successors(state) {
+                Ok(expansion) => expansion,
+                Err(stop) => return ClosedRead::Expansion { component, stop },
+            };
+            if let Some(contract) = expansion
+                .findings
+                .iter()
+                .find_map(crate::simulation::model::ModelFinding::undefined_contract)
+            {
+                return ClosedRead::Undefined(Box::new(ClosedUndefined {
+                    position: u64::try_from(joint).unwrap_or(u64::MAX),
+                    locus: ClosedLocus::Contract(contract.clause),
+                    components: vec![component],
+                    transition: contract.guard_of,
+                    cause: contract.cause,
+                }));
+            }
+        }
+    }
+    ClosedRead::Clear
+}
+
+/// The state key of `execution`'s state at joint `position` of `clause`, read
+/// over the visible positions of an `align skip` clause (ADR-023 PA-2): the
+/// state a [`ClosedUndefined`] names, which the producer and the replay both
+/// spell. `None` when the execution has no such position.
+///
+/// # Errors
+///
+/// [`EncodingRefusal`] when the state has no canonical key.
+pub fn closed_state_key(
+    system: &ModelSystem<'_>,
+    clause: &CheckedHyperClause,
+    execution: &ClosedExecution,
+    position: u64,
+) -> Result<Option<StateKey>, EncodingRefusal> {
+    let Ok(index) = usize::try_from(position) else {
+        return Ok(None);
+    };
+    let projected;
+    let read = if clause.align_skip().is_empty() {
+        execution
+    } else {
+        projected = execution.projection();
+        &projected
+    };
+    let Some(state) = read.states.get(index) else {
+        return Ok(None);
+    };
+    system
+        .state_key(state, fsl_foundation::IdentityLimits::default())
+        .map(|(_, key)| Some(key))
 }

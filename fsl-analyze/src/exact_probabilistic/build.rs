@@ -620,7 +620,9 @@ struct Builder<'r, 'c, 'p, 'k> {
 /// One model state the sweep beyond decided control reached.
 struct Swept {
     model: ModelSimState,
-    key: ProbKey,
+    /// The product key, built only when the sweep can end the build with a
+    /// path (not under key admission).
+    key: Option<ProbKey>,
     parent: Option<usize>,
     step: Option<TraceStep>,
     /// The model steps from the decided node.
@@ -949,14 +951,26 @@ impl Builder<'_, '_, '_, '_> {
         pending: Option<Pending>,
     ) -> Step<ProbKey> {
         let model = self.key_bytes(state)?;
-        Ok(ProbKey {
+        Ok(self.key_from(model, binding, monitor, accumulator, pending))
+    }
+
+    /// The product key of the model state whose canonical bytes are `model`.
+    fn key_from(
+        &self,
+        model: Vec<u8>,
+        binding: usize,
+        monitor: Option<MonitorState>,
+        accumulator: Option<Accumulator>,
+        pending: Option<Pending>,
+    ) -> ProbKey {
+        ProbKey {
             binding: self.bindings[binding].0.clone(),
             model,
             monitor,
             accumulator,
             pending,
             certificate_state: None,
-        })
+        }
     }
 
     fn admit_state(&mut self, key: &ProbKey) -> Step<()> {
@@ -1289,34 +1303,35 @@ impl Builder<'_, '_, '_, '_> {
         if roots.is_empty() {
             return Ok(());
         }
-        let expanded: BTreeSet<Vec<u8>> = (0..self.nodes.len())
-            .filter(|at| !self.is_decided(*at))
-            .map(|at| self.nodes[at].key.model.clone())
-            .collect();
-        // An unbounded form shares one visited set; a bounded one reads each
-        // root to its own depth, so a state reached nearer a later root is
-        // read again.
-        let mut shared = expanded.clone();
+        // The model states read, with the lowest trace position each was read
+        // at: a state read at a position is read to the horizon from there, so
+        // only a nearer position reads it again. An unbounded form reads every
+        // state once, those a node expanded already included.
+        let mut visited: BTreeMap<Vec<u8>, u64> = BTreeMap::new();
+        if horizon.is_none() {
+            for at in 0..self.nodes.len() {
+                if !self.is_decided(at) {
+                    visited.insert(self.nodes[at].key.model.clone(), 0);
+                }
+            }
+        }
+        // Under admission the sweep only reports that a conjunction has no
+        // value, so no product key is built for a swept state.
+        let keyed = self.key_policy.is_none();
         for root in roots {
-            let mut local;
-            let visited = if horizon.is_some() {
-                local = expanded.clone();
-                &mut local
-            } else {
-                &mut shared
-            };
             let first = self.position_of(root);
             let binding = self.binding_of(root)?;
             let (monitor, accumulator) = (
                 self.nodes[root].key.monitor,
                 self.nodes[root].key.accumulator.clone(),
             );
-            if !self.admit_swept(visited, &self.nodes[root].key.model.clone())? {
+            let root_bytes = self.nodes[root].key.model.clone();
+            if !self.admit_swept(&mut visited, &root_bytes, first)? {
                 continue;
             }
             let mut swept = vec![Swept {
                 model: self.nodes[root].model.clone(),
-                key: self.nodes[root].key.clone(),
+                key: keyed.then(|| self.nodes[root].key.clone()),
                 parent: None,
                 step: None,
                 depth: 0,
@@ -1331,19 +1346,21 @@ impl Builder<'_, '_, '_, '_> {
                 let model = swept[next].model.clone();
                 match self.swept_steps(&model) {
                     Ok(steps) => {
+                        let depth = swept[next].depth + 1;
                         for (taken, post) in steps {
                             let bytes = self.key_bytes(&post)?;
-                            if !self.admit_swept(visited, &bytes)? {
+                            if !self.admit_swept(&mut visited, &bytes, first + depth)? {
                                 continue;
                             }
-                            let key =
-                                self.key_of(&post, binding, monitor, accumulator.clone(), None)?;
+                            let key = keyed.then(|| {
+                                self.key_from(bytes, binding, monitor, accumulator.clone(), None)
+                            });
                             swept.push(Swept {
                                 model: post,
                                 key,
                                 parent: Some(next),
                                 step: Some(taken),
-                                depth: swept[next].depth + 1,
+                                depth,
                             });
                         }
                     }
@@ -1373,10 +1390,13 @@ impl Builder<'_, '_, '_, '_> {
         state: StateKey,
     ) -> Halt {
         let node = &self.nodes[root];
+        let Some(last_key) = swept[last].key.clone() else {
+            return fault("a-swept-path-has-keys").into();
+        };
         let hit = Hit {
             cause: contract.cause.clone(),
             state_key: state,
-            model: swept[last].key.model.clone(),
+            model: last_key.model.clone(),
             read: UndefinedRead::Contract(Box::new(contract)),
         };
         let Halt::Undefined(mut path) =
@@ -1387,11 +1407,14 @@ impl Builder<'_, '_, '_, '_> {
         let mut trail = Vec::new();
         let mut cursor = last;
         while let (Some(parent), Some(taken)) = (swept[cursor].parent, swept[cursor].step.clone()) {
+            let Some(target) = swept[cursor].key.clone() else {
+                return fault("a-swept-path-has-keys").into();
+            };
             trail.push(PathStep {
                 action: taken.action,
                 draw: taken.draw,
                 probability: taken.probability,
-                target: Box::new(swept[cursor].key.clone()),
+                target: Box::new(target),
                 resolved: None,
             });
             cursor = parent;
@@ -1402,15 +1425,24 @@ impl Builder<'_, '_, '_, '_> {
             path.steps.push(step);
         }
         path.position = u64::try_from(path.steps.len()).unwrap_or(u64::MAX);
-        path.key = Box::new(swept[last].key.clone());
+        path.key = Box::new(last_key);
         Halt::Undefined(path)
     }
 
     /// Whether the model state `bytes` is new to the sweep, counted against
     /// the state limit like a product state.
-    fn admit_swept(&mut self, visited: &mut BTreeSet<Vec<u8>>, bytes: &[u8]) -> Step<bool> {
-        if visited.contains(bytes) {
-            return Ok(false);
+    fn admit_swept(
+        &mut self,
+        visited: &mut BTreeMap<Vec<u8>, u64>,
+        bytes: &[u8],
+        position: u64,
+    ) -> Step<bool> {
+        if let Some(known) = visited.get_mut(bytes) {
+            if *known <= position {
+                return Ok(false);
+            }
+            *known = position;
+            return Ok(true);
         }
         if visited.len() >= self.max_states {
             return Err(Self::stopped(
@@ -1419,7 +1451,7 @@ impl Builder<'_, '_, '_, '_> {
             ));
         }
         self.reserve_key(bytes.len().saturating_add(std::mem::size_of::<Vec<u8>>()))?;
-        visited.insert(bytes.to_vec());
+        visited.insert(bytes.to_vec(), position);
         Ok(true)
     }
 

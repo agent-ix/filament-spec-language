@@ -59,8 +59,9 @@
 
 use fsl_eval::automaton::translate_negation;
 use fsl_eval::hyper::{
-    closed_executions, horizon as closed_horizon, judge_closed_tuple, search_partner,
-    ClosedExecution, ClosedInputs, ClosedStep, ClosedStop, ClosedVerdict, ComponentStep, Halt,
+    closed_executions, closed_state_key, horizon as closed_horizon, judge_closed_tuple,
+    read_closed_undefined, search_partner, ClosedExecution, ClosedInputs, ClosedRead,
+    ClosedStep, ClosedStop, ClosedVerdict, ComponentStep, Halt,
     HyperFinding, HyperLetters, HyperState, HyperTransition, MatchReading, ParameterBinding,
     PartnerSearch, Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
 };
@@ -358,6 +359,25 @@ pub fn replay_hyper_trace_tuple(
         return Err(shape_error(
             "marks its steps other than as its kind does: every step of a projected one and none of any other",
         ));
+    }
+    let closed_profile =
+        replay.clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension;
+    if let HyperCounterexampleKind::Undefined(claimed) = &counterexample.kind {
+        // An event-position clause is read over tuples of closed finite
+        // executions of any lengths, `align skip` or not, with the producer's
+        // own reading (ADR-023 HV-8); a lasso clause marks no step.
+        if closed_profile {
+            return closed_undefined(replay, counterexample, claimed);
+        }
+        if counterexample
+            .traces
+            .iter()
+            .any(|trace| !trace.marks.is_empty())
+        {
+            return Err(shape_error(
+                "marks its steps other than as its kind does: every step of a projected one and none of any other",
+            ));
+        }
     }
     if counterexample.kind == HyperCounterexampleKind::Projected {
         return projected(replay, counterexample);
@@ -1300,6 +1320,128 @@ fn undefined(
     })
 }
 
+/// FR-183 "Undefined evaluation" over a tuple of closed finite executions of
+/// an event-position clause (ADR-023 HV-8): the executions, of any lengths,
+/// are re-executed and read for the first expression with no value by the
+/// code the producer reads them with, and its evaluation must be the claimed
+/// one.
+#[implements("FR-173-AC-7")]
+fn closed_undefined(
+    replay: &HyperReplay<'_, '_>,
+    counterexample: &HyperCounterexample,
+    claimed: &HyperUndefined,
+) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    let clause = replay.clause;
+    about_clause(replay, counterexample, clause.quantifiers().len())?;
+    let aligned = !clause.align_skip().is_empty();
+    if counterexample
+        .traces
+        .iter()
+        .any(|trace| trace.marks.is_empty() == aligned && !trace.steps.is_empty())
+    {
+        return Err(shape_error(
+            "marks its steps other than as the clause's `align skip` list does: every step of an aligned clause and none of any other",
+        ));
+    }
+    let visible = if aligned {
+        visible_steps(replay, counterexample)?
+    } else {
+        Vec::new()
+    };
+    let Some(executed) = execute(replay, counterexample)? else {
+        return Ok(no_value());
+    };
+    let mut executions = Vec::with_capacity(executed.len());
+    for (component, (trace, positions)) in counterexample.traces.iter().zip(&executed).enumerate()
+    {
+        let mut steps = Vec::with_capacity(trace.steps.len());
+        for (index, step) in trace.steps.iter().enumerate() {
+            match step {
+                HyperStep::Model(step) => steps.push(ClosedStep {
+                    transition: step.transition.clone(),
+                    post_state: step.post_state.clone(),
+                    skipped: aligned
+                        && visible
+                            .get(component)
+                            .is_some_and(|taken| !taken.contains(&index)),
+                }),
+                HyperStep::TerminalStutter => {
+                    return Err(shape_error(
+                        "holds a stutter step in a closed finite trace, which a terminal state does not extend",
+                    ));
+                }
+            }
+        }
+        executions.push(ClosedExecution {
+            initial: usize::try_from(trace.initial).unwrap_or(usize::MAX),
+            states: positions
+                .iter()
+                .map(|position| position.state.clone())
+                .collect(),
+            steps,
+        });
+    }
+    let inputs = ClosedInputs {
+        clause,
+        instance: replay.instance,
+        letters: replay.letters,
+        matcher: replay.matcher,
+        meter: replay.meter,
+        cancel: replay.cancel,
+    };
+    let tuple: Vec<&ClosedExecution> = executions.iter().collect();
+    let found = match read_closed_undefined(&inputs, &replay.systems, &tuple) {
+        ClosedRead::Undefined(found) => *found,
+        ClosedRead::Unmatched => {
+            return Err(refused(ModelTraceRefusal::HyperUnmatched {
+                joint: counterexample.trace_position,
+            }));
+        }
+        ClosedRead::Clear => {
+            return Ok(ModelTraceSettlement::Inconclusive(disagreement(
+                Category::Success,
+            )));
+        }
+        ClosedRead::Unread => return Err(refused(ModelTraceRefusal::HyperProjected)),
+        ClosedRead::Stopped(ClosedVerdict::Fault(_)) => {
+            return Err(fault("the-closed-tuple-evaluates"));
+        }
+        ClosedRead::Expansion { stop, .. } if stop.is_internal_failure() => {
+            return Err(fault("model-expansion"));
+        }
+        ClosedRead::Expansion { .. } | ClosedRead::Stopped(_) => return Ok(no_value()),
+    };
+    let quantifiers = clause.quantifiers();
+    let mut state_keys = Vec::with_capacity(found.components.len());
+    let mut variables = Vec::with_capacity(found.components.len());
+    for component in &found.components {
+        let (Some(execution), Some(system), Some(quantifier)) = (
+            executions.get(*component),
+            replay.systems.get(*component),
+            quantifiers.get(*component),
+        ) else {
+            return Err(fault("an-undefined-component-is-traced"));
+        };
+        let Ok(Some(key)) = closed_state_key(system, clause, execution, found.position) else {
+            return Err(fault("an-undefined-position-is-a-state"));
+        };
+        state_keys.push(key);
+        variables.push((
+            quantifier.variable.clone(),
+            quantifier.alias.as_str().to_owned(),
+        ));
+    }
+    let evaluated = HyperUndefined::of_closed(found, state_keys, variables);
+    Ok(if evaluated == *claimed {
+        ModelTraceSettlement::Reproduced {
+            value: ModelTraceValue::HyperUndefined(evaluated),
+            trace_position: Some(claimed.position),
+        }
+    } else {
+        ModelTraceSettlement::Inconclusive(disagreement(Category::Violation))
+    })
+}
+
 /// `found` as the payload spells it: the joint position, the state keys of the
 /// named components' states there and their variables with aliases.
 fn evaluated(
@@ -1657,7 +1799,7 @@ fn closed(
             }
             ClosedVerdict::Fault(_) => return Err(fault("the-closed-tuple-evaluates")),
             ClosedVerdict::MatchUndetermined
-            | ClosedVerdict::Undefined
+            | ClosedVerdict::Undefined(_)
             | ClosedVerdict::Incomplete(_) => no_value(),
         });
     }
@@ -1705,7 +1847,7 @@ fn closed(
             PartnerSearch::Stopped(ClosedVerdict::Fault(_)) => {
                 return Err(fault("the-closed-tuple-evaluates"));
             }
-            PartnerSearch::Stopped(_) => no_value(),
+            PartnerSearch::Stopped(_) | PartnerSearch::Undefined { .. } => no_value(),
             PartnerSearch::Cancelled => no_value(),
         },
     )

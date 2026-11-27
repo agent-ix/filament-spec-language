@@ -383,6 +383,7 @@ fn match_run(declaration: &str) -> Result<HyperOutcome, ModelCheckRefusal> {
     world.run(ModelCheckLimits::default(), &Cancel::new())
 }
 
+
 #[trace("TC-602")]
 #[test]
 fn an_undefined_match_refutes_the_infinite_universal_and_forall_exists() {
@@ -410,23 +411,154 @@ fn an_undefined_match_refutes_the_infinite_universal_and_forall_exists() {
     }
 }
 
-/// No criterion owns an undefined `match` (ADR-023 HV-8 is the only rule), so the
-/// tests of it carry the test-case tag alone. The closed forms stop at
-/// `Undecided(MatchUndetermined)`: never `Holds`. A
-/// refuting counterexample (HV-8) needs the tuple search that the closed
-/// forms lack.
-#[trace("TC-2243")]
+/// An undefined `match` on a joint step of the closed forms refutes the
+/// clause with a `match` locus (ADR-023 HV-8), settled `Refuted`; a `match`
+/// the evaluator refuses stays `MatchUndetermined`.
+#[trace("TC-2243", "FR-173-AC-7")]
 #[test]
-fn an_undefined_match_never_proves_the_closed_forms() {
+fn an_undefined_match_refutes_the_closed_forms() {
     for quantifier in ["forall", "exists"] {
-        let run = match_run(&match_undefined(
+        let declaration = match_undefined(
             "ep",
             quantifier,
             "eventually [0, 2] holds(v.l @ a = v.l @ a)",
-        ));
-        assert!(
-            !matches!(run, Ok(HyperOutcome::Holds { .. })),
-            "{quantifier}: {run:?}"
         );
+        let world = World::new_with_kernel_function(
+            Vault::Secure,
+            false,
+            &[(0, 0)],
+            &declaration,
+            QUOTIENT,
+        );
+        let (outcome, label) = settled(&world);
+        let HyperOutcome::Violated { counterexample, .. } = outcome else {
+            panic!("{quantifier}: expected a counterexample, got {outcome:?}");
+        };
+        let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+            panic!("{quantifier}: expected undefined, got {:?}", counterexample.kind);
+        };
+        assert!(
+            matches!(
+                undefined.locus,
+                HyperLocus::Match { .. } | HyperLocus::ExistentialMatch { .. }
+            ),
+            "{quantifier}: {:?}",
+            undefined.locus
+        );
+        assert_eq!(label, "Refuted", "{quantifier}");
     }
+}
+
+/// The outcome of `world`'s clause and the label it settles with.
+fn settled(world: &World) -> (HyperOutcome, String) {
+    let outcome = world
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("not refused");
+    let subjects = (0..world.clause.aliases().len())
+        .map(|_| world.subject())
+        .collect::<Vec<_>>();
+    let certificate = ProductClosureRequest {
+        package: &world.package,
+        clause: ProductClosureClause::Hyper(&world.clause),
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    let record = fsl_replay::settle_hyper_check(
+        &outcome,
+        &ModelCheckLimits::default(),
+        &[],
+        Some(&certificate),
+        &Cancel::new(),
+        |counterexample| world.replay(counterexample),
+    )
+    .expect("settled");
+    let label = format!("{:?}", record.label);
+    (outcome, label)
+}
+
+/// The refutation `declaration` settles with over `vault` from `starts`: its
+/// undefined evaluation, after the label is checked.
+fn refuted_undefined(
+    vault: Vault,
+    starts: &[(i64, i64)],
+    declaration: &str,
+) -> fsl_replay::HyperUndefined {
+    let world = World::new_with_kernel_function(vault, false, starts, declaration, QUOTIENT);
+    let (outcome, label) = settled(&world);
+    let HyperOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected a counterexample, got {outcome:?}");
+    };
+    let HyperCounterexampleKind::Undefined(undefined) = counterexample.kind else {
+        panic!("expected undefined, got {:?}", counterexample.kind);
+    };
+    assert_eq!(label, "Refuted");
+    undefined
+}
+
+/// An atom of the body with no value at a position the executions reach
+/// refutes with the atom as the locus, not the guard (ADR-023 HV-8): from
+/// `(0, 0)` the body reads `quotient(v.l @ a)` at `l = 0`.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn a_closed_body_atom_with_no_value_refutes_at_the_atom() {
+    let undefined = refuted_undefined(
+        Vault::Secure,
+        &[(0, 0)],
+        &universal("ep", "", "eventually [0, 3] holds(quotient(v.l @ a) >= 0)"),
+    );
+    assert!(
+        matches!(undefined.locus, HyperLocus::Atom(_)),
+        "{:?}",
+        undefined.locus
+    );
+}
+
+/// A two-subject clause reaches the guard on one component and every other
+/// component holds the prefix of its own: both traces are named, replayed
+/// and settled.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn a_closed_two_subject_clause_refutes_with_every_component_traced() {
+    let undefined = refuted_undefined(
+        GUARDED,
+        &[(0, 0)],
+        &universal("ep", "", "eventually [0, 3] holds(v.h @ a = v.h @ b)"),
+    );
+    assert_eq!(undefined.locus, HyperLocus::Contract("Guard".to_owned()));
+}
+
+/// Tuples whose executions end at different lengths: the guard of `(0, 0)`
+/// fails at `(0, 1)` after `step(1)`, the other component being terminal.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn a_closed_tuple_with_a_terminal_component_replays() {
+    const TERMINAL: Vault = Vault::Custom(
+        "pre Guard using v on V::Vault::step { self.h = 0 and quotient(1 - self.l + self.h) >= 0 }\n\
+         post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
+    );
+    let undefined = refuted_undefined(
+        TERMINAL,
+        &[(0, 0), (1, 0)],
+        &universal("ep", "", "eventually [0, 3] holds(v.h @ a = v.h @ b)"),
+    );
+    assert_eq!(undefined.locus, HyperLocus::Contract("Guard".to_owned()));
+}
+
+/// The body atom is read on the prefix before the contract is claimed
+/// (ADR-018 UE-4): from `(0, 0)` the atom has no value at position 0, though
+/// the guard has none at position 1.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn a_closed_body_atom_is_read_before_the_contract() {
+    let undefined = refuted_undefined(
+        GUARDED,
+        &[(0, 0)],
+        &universal("ep", "", "eventually [0, 3] holds(quotient(v.l @ a) >= 0)"),
+    );
+    assert!(
+        matches!(undefined.locus, HyperLocus::Atom(_)),
+        "{:?}",
+        undefined.locus
+    );
+    assert_eq!(undefined.position, 0);
 }

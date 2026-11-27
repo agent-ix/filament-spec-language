@@ -1648,6 +1648,7 @@ pub(crate) fn stop_verdict(system: &ModelSystem<'_>, stop: ExpansionStop) -> Ste
     })
 }
 
+#[implements("FR-142-AC-9")]
 fn decide_step(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
@@ -2711,6 +2712,7 @@ fn completions(
 /// judged against each completion of the mapped post-state from each member
 /// of `pre_states`, with the calls the abstract system makes when it expands
 /// the member. The members after the step are the accepted completions.
+#[implements("FR-142-AC-9")]
 fn judge_operation(
     abstract_system: &ModelSystem<'_>,
     (pre_states, mapped): (&[ModelState], &MappedState),
@@ -2773,7 +2775,7 @@ fn judge_operation(
                         }
                         accepted.push(found.transition);
                     }
-                    Judgement::Undecided(conjuncts) => {
+                    Judgement::Undecided { guard, conjuncts } => {
                         // A conjunct with no value refutes (ADR-018 UE-6,
                         // ADR-020 RE-5); a refused one stays undecided.
                         if let Some((clause, cause)) =
@@ -2790,7 +2792,7 @@ fn judge_operation(
                                     fsl_eval::simulation::StateKey::from_canonical_bytes(pre_key),
                                     fsl_eval::simulation::model::UndefinedContract {
                                         clause,
-                                        guard_of: None,
+                                        guard_of: guard.then(|| found.transition.clone()),
                                         cause,
                                     },
                                 ),

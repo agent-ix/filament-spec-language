@@ -1503,6 +1503,7 @@ fn decide_closed(
         };
         let mut paths = Vec::with_capacity(initials);
         let mut trapped = None;
+        let mut undefined = None;
         let mut stopped: Option<RunEnd> = None;
         'initials: for initial in 0..initials {
             let mut witness = None;
@@ -1515,8 +1516,45 @@ fn decide_closed(
                         witness = Some(execution);
                         break;
                     }
-                    ClosedVerdict::Undefined => {
-                        return Err(HyperRefusal::ClosedUndefined.into());
+                    // An atom of the body has no value on the execution
+                    // (ADR-023 HV-8): the instance is refuted at that position.
+                    ClosedVerdict::Undefined(found) => {
+                        let fsl_eval::hyper::ClosedLocus::Atom(atom) = found.locus else {
+                            return Err(fault("a-single-closed-body-reads-no-match"));
+                        };
+                        let position = usize::try_from(found.position)
+                            .map_err(|_| fault("a-position-fits-usize"))?;
+                        let state_key =
+                            fsl_eval::hyper::closed_state_key(system, clause, execution, found.position)
+                                .map_err(ModelCheckRefusal::Encoding)?
+                                .ok_or_else(|| fault("an-undefined-position-is-a-state"))?;
+                        undefined = Some((
+                            ModelPath {
+                                initial: u32::try_from(initial)
+                                    .map_err(|_| fault("an-initial-fits-u32"))?,
+                                steps: execution
+                                    .steps
+                                    .iter()
+                                    .take(position)
+                                    .map(|step| ModelStep {
+                                        transition: step.transition.clone(),
+                                        post_state: step.post_state.clone(),
+                                        delay: None,
+                                    })
+                                    .collect(),
+                            },
+                            UndefinedEvaluation {
+                                site: UndefinedSite {
+                                    position: found.position,
+                                    state_key,
+                                    locus: UndefinedLocus::Atom(atom),
+                                    transition: None,
+                                    time: None,
+                                },
+                                cause: found.cause,
+                            },
+                        ));
+                        break 'initials;
                     }
                     ClosedVerdict::Fault(internal) => {
                         return Err(ModelCheckRefusal::Fault(internal));
@@ -1565,18 +1603,19 @@ fn decide_closed(
                     .collect(),
             });
         }
-        let outcome = match (stopped, trapped) {
-            (Some(end), _) => ExistentialOutcome::NoDecision {
+        let outcome = match (stopped, undefined, trapped) {
+            (Some(end), _, _) => ExistentialOutcome::NoDecision {
                 end,
                 open: BTreeSet::new(),
             },
-            (None, Some(initial)) => ExistentialOutcome::Trapped {
+            (None, Some((stem, undefined)), _) => ExistentialOutcome::Undefined { stem, undefined },
+            (None, None, Some(initial)) => ExistentialOutcome::Trapped {
                 stem: ModelPath {
                     initial: u32::try_from(initial).map_err(|_| fault("an-initial-fits-u32"))?,
                     steps: Vec::new(),
                 },
             },
-            (None, None) => ExistentialOutcome::ClosedWitnessed { paths },
+            (None, None, None) => ExistentialOutcome::ClosedWitnessed { paths },
         };
         outcomes.push(ExistentialInstanceOutcome {
             certificate: None,

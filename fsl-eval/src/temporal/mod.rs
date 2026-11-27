@@ -110,8 +110,8 @@ pub use timed_measure::{
     timed_weighted_fraction, MeasureReading,
 };
 pub use tuple::{
-    evaluate_closed_tuple, evaluate_projected_prefix, evaluate_tuple, ComponentPosition,
-    ComponentTrace, TupleLetters,
+    evaluate_closed_tuple, evaluate_projected_prefix, evaluate_tuple, read_closed_atom,
+    ComponentPosition, ComponentTrace, TupleLetters,
 };
 pub use window::{
     AggregateAtom, AggregateKind, AggregateSample, AggregateTerm, InsufficientData, PastWindow,

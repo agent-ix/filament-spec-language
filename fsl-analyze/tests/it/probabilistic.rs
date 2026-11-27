@@ -26,7 +26,6 @@ mod relation_claims_support;
 mod source_value_support;
 mod statistical_witness_support;
 mod timed_world;
-mod ue6_closed;
 mod ue6_exact;
 mod ue6_statistical;
 mod units;
