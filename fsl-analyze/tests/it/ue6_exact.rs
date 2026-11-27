@@ -133,3 +133,37 @@ fn ue6_exact_form_reading_only_position_zero_stays_proved() {
         "{value:?}"
     );
 }
+
+/// A bounded event that decides at position 0 still reads the guard of
+/// position 1 when its horizon reaches it (ADR-028 XV-8): `eventually[0,2]`
+/// refutes.
+#[trace("FR-196-AC-20")]
+#[test]
+fn ue6_exact_bounded_event_reads_to_its_horizon() {
+    refutes(
+        &world(
+            "probabilistic P using ev on M over (c: M::Cell) under Even on origin \
+             { probability >= 0.99 [ eventually[0,2] holds(c.v = 0) ] }\n",
+        ),
+        "P",
+    );
+}
+
+/// The horizon boundary: `eventually[0,1]` reads positions 0 and 1 but not
+/// the guard that expands position 1, so it stays proved.
+#[trace("FR-196-AC-20")]
+#[test]
+fn ue6_exact_bounded_event_stops_at_its_horizon() {
+    let record = record(
+        &world(
+            "probabilistic P using ev on M over (c: M::Cell) under Even on origin \
+             { probability >= 0.99 [ eventually[0,1] holds(c.v = 0) ] }\n",
+        ),
+        "P",
+    );
+    let value = record.terminal().map(|terminal| terminal.value().clone());
+    assert!(
+        matches!(value, Some(TerminalValue::Proved { .. })),
+        "{value:?}"
+    );
+}

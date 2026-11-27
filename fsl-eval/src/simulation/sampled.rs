@@ -19,6 +19,7 @@ use std::rc::Rc;
 use filament_exact::{Cancel, CancelCause, Identifier, Integer, Rational, Value};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_semantics::check::Workload;
+use ix_trace_rs::implements;
 
 use crate::simulation::choice::{
     weighted_choice_counted, ChoicePoint, TotalAboveDrawRange, WeightsRefusal,
@@ -336,6 +337,7 @@ impl<'s, 'a> ProbabilisticSampler<'s, 'a> {
     }
 
     /// `from`'s enabled actions, expanded once per state key.
+    #[implements("FR-189-AC-21")]
     #[allow(
         clippy::result_large_err,
         reason = "FR-188 pins SampleStop::NotMarkov(NotMarkov), whose scheduled identity carries a receiver reference"

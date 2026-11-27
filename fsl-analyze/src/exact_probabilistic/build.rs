@@ -286,6 +286,13 @@ fn build_configured(
         workload,
         kind,
         plan,
+        event_horizon: match &claim.form {
+            fsl_semantics::check::ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula { horizon, .. },
+                ..
+            } => Some(*horizon),
+            _ => None,
+        },
         measure_meter: system.fresh_meter().with_cancel(cancel.clone()),
         reads,
         bindings,
@@ -587,6 +594,8 @@ struct Builder<'r, 'c, 'p, 'k> {
     workload: Option<&'r Workload>,
     kind: ProductKind,
     plan: Plan<'c>,
+    /// The horizon of a bounded event: the last position it reads.
+    event_horizon: Option<u64>,
     measure_meter: filament_exact::Meter,
     reads: Reads<'c>,
     /// Each `over` binding, with the reference its predicates are read for.
@@ -608,10 +617,21 @@ struct Builder<'r, 'c, 'p, 'k> {
     omitted: Vec<(usize, OmittedEdge)>,
 }
 
+/// One model state the sweep beyond decided control reached.
+struct Swept {
+    model: ModelSimState,
+    key: ProbKey,
+    parent: Option<usize>,
+    step: Option<TraceStep>,
+    /// The model steps from the decided node.
+    depth: u64,
+}
+
 /// Why reading a swept state's steps stopped.
 enum SweptStop {
-    /// Its expansion found a contract conjunction with no value.
-    Undefined(fsl_eval::simulation::model::UndefinedContract),
+    /// Its expansion found a contract conjunction with no value, at the state
+    /// with this key.
+    Undefined(fsl_eval::simulation::model::UndefinedContract, StateKey),
     Halt(Halt),
 }
 
@@ -1201,6 +1221,7 @@ impl Builder<'_, '_, '_, '_> {
     /// What a state whose expansion left its successors unknown halts the
     /// build with: an undefined contract conjunction refutes (ADR-018 UE-6)
     /// with the path to the state; only a refused one is undecided.
+    #[implements("FR-196-AC-20")]
     fn undecided_successor(&self, at: usize, undecided: UndecidedSuccessor) -> Halt {
         // The replay of a bounded measure's undefined path (`measure.rs`)
         // does not yet read a contract site: that form stays undecided.
@@ -1224,51 +1245,113 @@ impl Builder<'_, '_, '_, '_> {
         self.undefined(Some(at), None, None, node.initial, node.key.clone(), hit)
     }
 
+    /// The number of model steps from an initial state to node `at`: its
+    /// position in the claim's trace.
+    fn position_of(&self, at: usize) -> u64 {
+        let mut position = 0_u64;
+        let mut cursor = at;
+        while let Some((parent, taken)) = &self.nodes[cursor].parent {
+            position += u64::from(taken.is_some());
+            cursor = *parent;
+        }
+        position
+    }
+
     /// The model states a state of decided control reaches, each read once for
-    /// an undefined contract conjunction (ADR-018 UE-6): a qualified build
-    /// stops at the first target of a form that reads every position and
-    /// would otherwise settle past a guard no claim reads. The sweep adds no
-    /// node or edge and returns only the fact that a conjunction has no value,
-    /// for the caller to rebuild without admission, which keeps expanding past
-    /// a target and finds the path. A refused conjunction changes nothing, as
-    /// the decided verdict never read it.
+    /// an undefined contract conjunction (ADR-018 UE-6, ADR-028 XV-8): a form
+    /// that reads every position (an unbounded one, under admission) reads
+    /// every reachable state, and a bounded event reads the states at the
+    /// positions below its horizon. A decided node is never expanded, so the
+    /// guard of a state beyond it is read here. The sweep adds no node or edge.
+    /// Under admission it returns only that a conjunction has no value, for
+    /// the caller to rebuild without admission; there it ends the build with
+    /// the path to the state, the model steps beyond the decided node carrying
+    /// its decided control. A refused conjunction changes nothing, as the
+    /// decided verdict never read it. A bounded measure has no contract replay
+    /// yet and stays undecided.
+    #[implements("FR-196-AC-20")]
     fn sweep(&mut self) -> Step<()> {
-        // A bounded event reads positions to its horizon, and a bounded
-        // measure has no contract replay yet; only a form that reads every
-        // position (an unbounded one) reads all that is reachable.
-        if self.key_policy.is_none() || !matches!(self.plan, Plan::Labels) {
+        let horizon = match &self.plan {
+            Plan::Labels if self.key_policy.is_some() => None,
+            Plan::Formula(_) => Some(
+                self.event_horizon
+                    .ok_or_else(|| Halt::from(fault("an-event-has-a-horizon")))?,
+            ),
+            _ => return Ok(()),
+        };
+        let roots: Vec<usize> = (0..self.nodes.len())
+            .filter(|at| {
+                self.is_decided(*at)
+                    && self.nodes[*at].resolution.is_none()
+                    && horizon.is_none_or(|horizon| self.position_of(*at) < horizon)
+            })
+            .collect();
+        if roots.is_empty() {
             return Ok(());
         }
-        let roots: Vec<usize> = (0..self.nodes.len())
-            .filter(|at| self.is_decided(*at) && self.nodes[*at].resolution.is_none())
+        let expanded: BTreeSet<Vec<u8>> = (0..self.nodes.len())
+            .filter(|at| !self.is_decided(*at))
+            .map(|at| self.nodes[at].key.model.clone())
             .collect();
-        let mut visited = BTreeSet::new();
-        for at in 0..self.nodes.len() {
-            if !self.is_decided(at) {
-                visited.insert(self.nodes[at].key.model.clone());
-            }
-        }
+        // An unbounded form shares one visited set; a bounded one reads each
+        // root to its own depth, so a state reached nearer a later root is
+        // read again.
+        let mut shared = expanded.clone();
         for root in roots {
-            let start = self.nodes[root].model.clone();
-            if !self.admit_swept(&mut visited, &self.nodes[root].key.model.clone())? {
+            let mut local;
+            let visited = if horizon.is_some() {
+                local = expanded.clone();
+                &mut local
+            } else {
+                &mut shared
+            };
+            let first = self.position_of(root);
+            let binding = self.binding_of(root)?;
+            let (monitor, accumulator) = (
+                self.nodes[root].key.monitor,
+                self.nodes[root].key.accumulator.clone(),
+            );
+            if !self.admit_swept(visited, &self.nodes[root].key.model.clone())? {
                 continue;
             }
-            let mut swept = vec![start];
+            let mut swept = vec![Swept {
+                model: self.nodes[root].model.clone(),
+                key: self.nodes[root].key.clone(),
+                parent: None,
+                step: None,
+                depth: 0,
+            }];
             let mut next = 0;
             while next < swept.len() {
                 self.poll()?;
-                let model = swept[next].clone();
+                if horizon.is_some_and(|horizon| first + swept[next].depth >= horizon) {
+                    next += 1;
+                    continue;
+                }
+                let model = swept[next].model.clone();
                 match self.swept_steps(&model) {
-                    Ok(posts) => {
-                        for post in posts {
+                    Ok(steps) => {
+                        for (taken, post) in steps {
                             let bytes = self.key_bytes(&post)?;
-                            if self.admit_swept(&mut visited, &bytes)? {
-                                swept.push(post);
+                            if !self.admit_swept(visited, &bytes)? {
+                                continue;
                             }
+                            let key =
+                                self.key_of(&post, binding, monitor, accumulator.clone(), None)?;
+                            swept.push(Swept {
+                                model: post,
+                                key,
+                                parent: Some(next),
+                                step: Some(taken),
+                                depth: swept[next].depth + 1,
+                            });
                         }
                     }
-                    Err(SweptStop::Undefined(contract)) => {
-                        return Err(Halt::UndefinedReading(contract.cause));
+                    Err(SweptStop::Undefined(contract, state)) => {
+                        if self.key_policy.is_some() {
+                            return Err(Halt::UndefinedReading(contract.cause));
+                        }
+                        return Err(self.swept_path(root, &swept, next, contract, state));
                     }
                     Err(SweptStop::Halt(halt)) => return Err(halt),
                 }
@@ -1276,6 +1359,58 @@ impl Builder<'_, '_, '_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// The undefined path to the contract conjunction found at swept state
+    /// `last`: the path to decided node `root`, then the model steps the
+    /// sweep took, which carry the decided control unchanged.
+    fn swept_path(
+        &self,
+        root: usize,
+        swept: &[Swept],
+        last: usize,
+        contract: fsl_eval::simulation::model::UndefinedContract,
+        state: StateKey,
+    ) -> Halt {
+        let node = &self.nodes[root];
+        let hit = Hit {
+            cause: contract.cause.clone(),
+            state_key: state,
+            model: swept[last].key.model.clone(),
+            read: UndefinedRead::Contract(Box::new(contract)),
+        };
+        let Halt::Undefined(mut path) = self.undefined(
+            Some(root),
+            None,
+            None,
+            node.initial,
+            node.key.clone(),
+            hit,
+        ) else {
+            return fault("an-undefined-path-is-undefined").into();
+        };
+        let mut trail = Vec::new();
+        let mut cursor = last;
+        while let (Some(parent), Some(taken)) =
+            (swept[cursor].parent, swept[cursor].step.clone())
+        {
+            trail.push(PathStep {
+                action: taken.action,
+                draw: taken.draw,
+                probability: taken.probability,
+                target: Box::new(swept[cursor].key.clone()),
+                resolved: None,
+            });
+            cursor = parent;
+        }
+        trail.reverse();
+        for step in trail {
+            path.probability = path.probability.mul(&step.probability);
+            path.steps.push(step);
+        }
+        path.position = u64::try_from(path.steps.len()).unwrap_or(u64::MAX);
+        path.key = Box::new(swept[last].key.clone());
+        Halt::Undefined(path)
     }
 
     /// Whether the model state `bytes` is new to the sweep, counted against
@@ -1295,9 +1430,12 @@ impl Builder<'_, '_, '_, '_> {
         Ok(true)
     }
 
-    /// The post-states of the model steps out of `model`, or the undefined
-    /// contract conjunction its expansion found.
-    fn swept_steps(&mut self, model: &ModelSimState) -> Result<Vec<ModelSimState>, SweptStop> {
+    /// The model steps out of `model` with their post-states, or the
+    /// undefined contract conjunction its expansion found.
+    fn swept_steps(
+        &mut self,
+        model: &ModelSimState,
+    ) -> Result<Vec<(TraceStep, ModelSimState)>, SweptStop> {
         let mut steps = Vec::new();
         match self.kind {
             ProductKind::Dtmc => {
@@ -1324,14 +1462,21 @@ impl Builder<'_, '_, '_, '_> {
                 match result.map_err(SweptStop::Halt)? {
                     Ok(weighted) => {
                         for step in weighted {
-                            if step.identity.is_some() {
-                                steps.push(step.post);
+                            if let Some(identity) = step.identity {
+                                steps.push((
+                                    TraceStep {
+                                        action: Some(identity),
+                                        draw: Some(step.random),
+                                        probability: step.probability,
+                                    },
+                                    step.post,
+                                ));
                             }
                         }
                     }
                     Err(Unsteppable::UndecidedSuccessor(undecided)) => {
                         if let Some(contract) = undecided.undefined {
-                            return Err(SweptStop::Undefined(contract));
+                            return Err(SweptStop::Undefined(contract, undecided.state));
                         }
                     }
                     Err(Unsteppable::NotMarkov(_)) => {}
@@ -1358,13 +1503,21 @@ impl Builder<'_, '_, '_, '_> {
                     Ok(actions) => {
                         for action in actions {
                             for draw in action.draws {
-                                steps.extend(draw.successors.into_iter().map(|(_, post)| post));
+                                for (_, post) in draw.successors {
+                                    steps.push((
+                                        TraceStep {
+                                            action: Some(action.identity.clone()),
+                                            draw: Some(draw.random.clone()),
+                                            probability: draw.probability.clone(),                                        },
+                                        post,
+                                    ));
+                                }
                             }
                         }
                     }
                     Err(undecided) => {
                         if let Some(contract) = undecided.undefined {
-                            return Err(SweptStop::Undefined(contract));
+                            return Err(SweptStop::Undefined(contract, undecided.state));
                         }
                     }
                 }

@@ -359,7 +359,12 @@ pub fn replay_probabilistic_undefined_with_work_scope(
         // A contract conjunction with no value at the state is read from the
         // state's expansion, decided control or not (ADR-018 UE-6): the
         // claim need not read it.
-        if position == path.steps.len() && &key == offered_key {
+        // A bounded form reads the step of a state only below its horizon
+        // (ADR-028 XV-8): `always[0,0]` never reads position 1's guard.
+        let reads_step = monitor.as_ref().is_none_or(|monitor| {
+            u64::try_from(position).is_ok_and(|position| position < monitor.horizon())
+        });
+        if position == path.steps.len() && &key == offered_key && reads_step {
             if let crate::UndefinedLocus::Contract(clause) = &witness.evaluation.site.locus {
                 return contract_witness(
                     system,
@@ -391,6 +396,9 @@ pub fn replay_probabilistic_undefined_with_work_scope(
                 return Ok(ProbabilityWitnessReplay::Parity);
             }
             swept = true;
+        }
+        if swept && !reads_step {
+            return Ok(ProbabilityWitnessReplay::Parity);
         }
         if !seen.insert(key.clone()) && workload.is_none() {
             return Ok(ProbabilityWitnessReplay::Parity);
@@ -448,7 +456,7 @@ struct ContractWitness<'w> {
 /// Re-expand `state`, the path's last state, and reproduce the witness when
 /// the named clause has no value there with the offered cause and guarded
 /// transition (ADR-018 UE-6).
-#[implements("FR-203-AC-33")]
+#[implements("FR-196-AC-20")]
 #[allow(clippy::too_many_arguments)]
 fn contract_witness(
     system: &ModelSystem<'_>,

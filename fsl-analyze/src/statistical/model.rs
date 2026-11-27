@@ -770,21 +770,13 @@ enum Ended {
 /// The undefined evaluation of `contract` at the state `key` at `position`
 /// (ADR-018 UE-6): the clause, with the guarded transition for a
 /// precondition.
+#[implements("FR-189-AC-21")]
 fn contract_evaluation(
     position: u64,
     key: &fsl_eval::simulation::StateKey,
     contract: UndefinedContract,
 ) -> UndefinedEvaluation {
-    UndefinedEvaluation {
-        site: UndefinedSite {
-            position,
-            state_key: key.clone(),
-            locus: UndefinedLocus::Contract(contract.clause),
-            transition: contract.guard_of,
-            time: None,
-        },
-        cause: contract.cause,
-    }
+    UndefinedEvaluation::of_contract(position, key.clone(), contract)
 }
 
 impl From<SampleStop> for Ended {
