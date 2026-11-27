@@ -361,6 +361,7 @@ pub(super) fn atom_location(
         .map(|(condition, _)| condition.location())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn replay_undefined(
     system: &ModelSystem<'_>,
     package: &fsl_package::CheckedPackage,

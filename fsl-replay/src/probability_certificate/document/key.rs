@@ -301,6 +301,10 @@ pub(super) fn model_form(node: NodeRef<'_>) -> bool {
     }
 }
 
+#[allow(
+    clippy::needless_bool,
+    reason = "False exits the whole validator; it is not an absent-deadline value."
+)]
 fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
     let boundary = matches!(
         parts.first().map(|part| part.node()),
