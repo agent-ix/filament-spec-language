@@ -9,7 +9,7 @@
 use std::num::NonZeroU64;
 
 use filament_exact::{length_amount, Cancel, Charge, ChargePoint, Incomplete, Meter};
-use filament_semantic_value::catalog::Category;
+use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_eval::simulation::model::{
     enumerate_model, sample_model_runs, ClauseOutcome, ModelFinding, ModelSystem, SampledRuns,
 };
@@ -245,10 +245,17 @@ fn ending(
             )
         }
         EnumerationEnd::Stopped(cause, _) => (
-            fsl_foundation::diagnostic::category_of(cause).unwrap_or(Category::InternalFailure),
+            stopped_category(cause),
             Some(json!({"code": cause.code(), "kind": cause.cause()})),
         ),
     }
+}
+
+/// The O-16 category of a run stopped with `cause`: its exit category
+/// (FR-285), so an unsupported code exits 21; a code the catalog does not
+/// define is an internal failure.
+fn stopped_category(cause: &CatalogCode) -> Category {
+    fsl_foundation::diagnostic::exit_category_of(cause).unwrap_or(Category::InternalFailure)
 }
 
 /// The FR-634 cause of an expansion stopped at `limit`: the `limit-reached`
@@ -333,7 +340,7 @@ pub(crate) fn simulate(
 fn not_simulated(refused: &NotSimulated) -> (Category, Value) {
     match refused.catalog_code() {
         Some(code) => (
-            fsl_foundation::diagnostic::category_of(&code).unwrap_or(Category::Refusal),
+            fsl_foundation::diagnostic::exit_category_of(&code).unwrap_or(Category::Refusal),
             json!({"code": code.code(), "kind": code.cause()}),
         ),
         // FR-101: an unbounded root, or an unbound capacity, requires a bound.
@@ -696,7 +703,37 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::json;
 
-    use super::Emission;
+    use super::{not_simulated, stopped_category, Emission};
+    use filament_semantic_value::catalog::{CatalogCode, Category};
+    use fsl_eval::simulation::protocol::{ProtocolRefusal, Unsupported};
+    use fsl_eval::simulation::NotSimulated;
+
+    /// FR-285-AC-1: a run stopped with an unsupported code is category
+    /// `unsupported`, exit 21; an undefined code is an internal failure.
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn a_stopped_run_with_an_unsupported_code_is_exit_21() {
+        let cause = CatalogCode::new("unsupported_construct", "not-yet-implemented");
+        assert_eq!(stopped_category(&cause), Category::Unsupported);
+        assert_eq!(stopped_category(&cause).exit_code(), 21);
+        let undefined = CatalogCode::new("not_a_catalog_code", "x");
+        assert_eq!(stopped_category(&undefined), Category::InternalFailure);
+    }
+
+    /// FR-285-AC-1: a run refused before it starts for an unsupported
+    /// protocol construct (`unsupported_construct`) is category
+    /// `unsupported`, exit 21, not the record map's `Refusal` (20).
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn a_refused_simulation_with_an_unsupported_code_is_exit_21() {
+        let refused = NotSimulated::ProtocolInitial(Box::new(ProtocolRefusal::Unsupported(
+            Unsupported::WeakMemory,
+        )));
+        let (category, cause) = not_simulated(&refused);
+        assert_eq!(category, Category::Unsupported, "{cause}");
+        assert_eq!(category.exit_code(), 21);
+        assert_eq!(cause["code"], "unsupported_construct");
+    }
 
     fn limits(result_units: u64) -> ScalarLimits {
         ScalarLimits {

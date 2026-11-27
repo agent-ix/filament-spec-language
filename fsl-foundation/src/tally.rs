@@ -17,7 +17,7 @@ impl Tally {
     pub fn add(&self, count: u64) -> u64 {
         let previous = self
             .0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
                 Some(total.saturating_add(count))
             })
             .unwrap_or_else(|total| total);

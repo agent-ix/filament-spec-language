@@ -171,6 +171,10 @@ pub fn horizon(formula: &CheckedFormula) -> Option<u64> {
 ///
 /// [`ClosedStop`] when a state cannot be expanded or encoded, the executions
 /// pass `limit` or `cancel` stops the run.
+#[allow(
+    clippy::result_large_err,
+    reason = "ClosedStop is public; keep its structured payload compatible for callers."
+)]
 pub fn closed_executions(
     system: &ModelSystem<'_>,
     horizon: u64,

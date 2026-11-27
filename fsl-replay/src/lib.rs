@@ -442,13 +442,13 @@ pub use refinement::{
     ObjectKey, ObjectMapping, ObservationField, ObservationLabel, PackageRefinement,
     PackageRefinementRefusal, PairedAssumptionPath, PairedAssumptionStep, PopulationMapping,
     ProtocolAssumptionFairness, ProtocolAssumptionReason, ProtocolAssumptionWitness,
-    ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation, ProtocolStep,
-    ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal, ProtocolTrace, RefinementFailure,
-    RefinementOutcome, RefinementPosition, RefinementRead, RefinementSystems, RefinementWitness,
-    RefinementWitnessError, RefinementWorld, RequiredTemporalFairness, SafetyOutcome,
-    SafetyUndecided, StateIndex, StepArgument, StepMapping, StepRejection, StepResult, StepVerdict,
-    StepViewRefusal, SubjectRefusal, Taken, TerminalSuccessDirection, Undetermined,
-    UnsteppedConstruct,
+    ProtocolCandidate, ProtocolPathNode, ProtocolPathRef, ProtocolRelationError,
+    ProtocolStateRelation, ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal,
+    ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementRead,
+    RefinementSystems, RefinementWitness, RefinementWitnessError, RefinementWorld,
+    RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex, StepArgument,
+    StepMapping, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
+    TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;

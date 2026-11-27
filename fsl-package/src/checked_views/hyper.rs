@@ -212,11 +212,10 @@ impl BarePackage<'_> {
             }
             quantifiers.push((kind, members.len() > 3));
         }
-        let aligned = group_member(&node.body, "align_skip")
+        let aligned = !group_member(&node.body, "align_skip")
             .and_then(members)
             .ok_or_else(|| malformed(claim))?
-            .len()
-            > 0;
+            .is_empty();
         let preliminary = HyperForm::classify_package_facts(&quantifiers, aligned, true);
         if preliminary.unsupported_reason().is_some() {
             return Ok(preliminary.unsupported_reason());
@@ -527,8 +526,12 @@ impl BarePackage<'_> {
             let alias = match used_aliases.first() {
                 Some(used) => (*used).to_owned(),
                 None => {
-                    let Some(filament_contract_model::CheckedNodeOwner::ModelRoot { identity }) =
-                        nodes.get(model_node).and_then(|node| node.owner.as_ref())
+                    // A parameter's model node is the declared type (owned by the
+                    // model), or the model root itself: both name the package.
+                    let Some(
+                        filament_contract_model::CheckedNodeOwner::ModelRoot { identity }
+                        | filament_contract_model::CheckedNodeOwner::Model { identity, .. },
+                    ) = nodes.get(model_node).and_then(|node| node.owner.as_ref())
                     else {
                         return Err(malformed(claim));
                     };
