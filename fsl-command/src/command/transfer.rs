@@ -691,6 +691,7 @@ impl Transfer<'_> {
         }
         let analyzed = analyze_document(
             AnalyzeRun {
+                selections: &[],
                 package,
                 binding,
                 provision,

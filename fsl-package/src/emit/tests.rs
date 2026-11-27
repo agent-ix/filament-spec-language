@@ -48,6 +48,7 @@ use crate::checked_v2::{read_v2, Read, V2ReadLimits};
 mod abstraction;
 mod admission_corpus;
 mod bare_world;
+mod body_location_walk;
 mod bytes_operations;
 mod carried_quantity_paths;
 mod check_mode;

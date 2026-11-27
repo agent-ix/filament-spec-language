@@ -3,7 +3,9 @@
 //! §15.5's `Retx`, decided by the finite-horizon solver.
 
 use filament_exact::{Cancel, Integer, Rational};
-use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::analyze::{
+    analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
+};
 use fsl_analyze::exact_probabilistic::{
     build_product, decide_bounded_event, witness_scheduler, ActionChoice, EntryChoice,
     ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
@@ -1562,6 +1564,69 @@ fn delay_weighting_and_elapsed_quantiles_check_over_retx() {
             "{name}: {:?}",
             claim.form
         );
+    }
+}
+
+/// G11's held timed-form boundary: the existing Delay route remains unchanged
+/// while FR-199-AC-6 covers weighted every-scheduler Reward support.
+#[trace("TC-2169", "FR-186-AC-15")]
+#[test]
+fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
+    let claims = "probabilistic DelayLongRun using ev on M over (c: M::Call) under every scheduler on origin \
+         { long_run_fraction holds(c.late) weighted by delay <= 0.5 }\n";
+    let world = retx(GUARD, true, "reward cost on M::Call::send = 1;\n", claims);
+    let model = world.package.graph().probabilistic_model();
+    assert!(matches!(
+        &model
+            .claim("DelayLongRun")
+            .expect("FR-186 delay claim checks")
+            .form,
+        ProbForm::LongRunFraction {
+            weight: Some(Weighting::Delay),
+            ..
+        }
+    ));
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let rows = [("DelayLongRun", "FR-186-AC-15 / FSpec FR-407")];
+    for (name, ownership) in rows {
+        let claim = model.claim(name).expect("the guarded claim checks");
+        let item = exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            ProductRequest {
+                subject: ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits: ExactProbLimits::default(),
+            },
+        );
+        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let Settlement::Disposed(disposed) = &record.settlement else {
+            panic!("{name} ({ownership}): expected an EN-5 disposition, got {record:?}");
+        };
+        assert!(
+            disposed.kind == DispositionKind::Unsupported,
+            "{name} ({ownership}): {:?}",
+            disposed.kind
+        );
+        assert_eq!(
+            disposed.backend.as_ref().map(|backend| backend.as_str()),
+            Some("en-5"),
+            "{name} ({ownership})"
+        );
+        assert_eq!(
+            disposed
+                .diagnostic
+                .as_ref()
+                .map(|diagnostic| diagnostic.code.to_string())
+                .as_deref(),
+            Some("unsupported_construct/not-yet-implemented"),
+            "{name}"
+        );
+        assert!(record.terminal().is_none(), "{name}");
+        assert!(record.exact_probabilistic.is_none(), "{name}");
+        assert!(record.probabilistic_counterexample.is_none(), "{name}");
     }
 }
 

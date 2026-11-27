@@ -4,6 +4,41 @@
 use super::*;
 use fsl_analyze::exact_probabilistic::{DeadlineKind, DeadlinePhase, MonitorState};
 
+/// FR-204-AC-14: a false initial observation refutes bounded Always with an
+/// empty, unit-mass witness whose initial key is the product's initial key.
+#[trace("FR-204-AC-14")]
+#[test]
+fn an_initial_always_violation_has_an_empty_replayed_witness() {
+    let claims = "\
+        probabilistic InitialFalse using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ always[0 ms, 4 ms] holds(c.late) ] }\n";
+    let world = retx(GUARD, true, "", claims);
+    let record = settle(&world, "InitialFalse");
+    assert!(is_refuted(&record), "{record:#?}");
+
+    let reproduced = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the checker reproduces the refutation");
+    let evidence = reproduced.evidence();
+    let product = match fsl_analyze::exact_probabilistic::build_product(
+        request(&world, "InitialFalse"),
+        &Cancel::new(),
+    ) {
+        Ok(fsl_analyze::exact_probabilistic::ProbBuild::Built(product)) => product,
+        other => panic!("the bounded claim has a complete product: {other:?}"),
+    };
+    let (_, _, initial_id) = product.initial[0];
+    let expected_initial_key = product.states[initial_id.index()]
+        .certificate_state
+        .as_ref()
+        .expect("the timed product initial state has a certificate key");
+
+    assert_eq!(&evidence.initial_key, expected_initial_key, "{evidence:#?}");
+    assert_eq!(evidence.paths.len(), 1, "{evidence:#?}");
+    assert!(evidence.paths[0].steps.is_empty(), "{evidence:#?}");
+    assert_eq!(reproduced.mass(), &ratio(1, 1), "{evidence:#?}");
+}
+
 #[trace("FR-186-AC-7")]
 #[test]
 fn timed_eventually_with_closed_horizon_settles_at_ninety_nine_percent() {

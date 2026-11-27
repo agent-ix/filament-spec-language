@@ -135,39 +135,93 @@ pub(super) fn values(
     Ok(ExactProbabilityCertificate { values: rows })
 }
 
-// In-place insertion gives a fallible, allocation-free comparison boundary.
+// Heapsort keeps comparison work logarithmic per item without temporary rows.
+#[implements("FR-203-AC-29")]
 pub(super) fn sort<T>(
     rows: &mut [T],
     key: impl Fn(&T) -> &ProbabilityProductKey,
     meter: &mut filament_exact::Meter,
     cancel: &Cancel,
 ) -> Result<(), ProbabilityDocumentError> {
-    for index in 1..rows.len() {
-        let mut position = index;
-        while position > 0 {
-            if let Some(cause) = cancel.tripped() {
-                return Err(ProbabilityDocumentError::Cancelled(cause));
-            }
-            let bytes = key(&rows[position])
-                .as_bytes()
-                .len()
-                .min(key(&rows[position - 1]).as_bytes().len())
-                .saturating_add(1);
-            meter
-                .charge(
-                    filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
-                        .work(filament_exact::Integer::from(bytes as u64)),
-                )
-                .map_err(|error| match cancel.tripped() {
-                    Some(cause) => ProbabilityDocumentError::Cancelled(cause),
-                    None => ProbabilityDocumentError::Accounting(Box::new(error)),
-                })?;
-            if key(&rows[position - 1]) <= key(&rows[position]) {
-                break;
-            }
-            rows.swap(position - 1, position);
-            position -= 1;
-        }
+    let len = rows.len();
+    for root in (0..len / 2).rev() {
+        sift_down(rows, root, len, &key, meter, cancel)?;
+    }
+    for end in (1..len).rev() {
+        rows.swap(0, end);
+        sift_down(rows, 0, end, &key, meter, cancel)?;
     }
     Ok(())
+}
+
+#[implements("FR-203-AC-29")]
+fn sift_down<T>(
+    rows: &mut [T],
+    mut root: usize,
+    end: usize,
+    key: &impl Fn(&T) -> &ProbabilityProductKey,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityDocumentError> {
+    loop {
+        let left = root.saturating_mul(2).saturating_add(1);
+        if left >= end {
+            return Ok(());
+        }
+        let right = left.saturating_add(1);
+        let child = if right < end
+            && compare_rows(rows, left, right, key, meter, cancel)? == std::cmp::Ordering::Less
+        {
+            right
+        } else {
+            left
+        };
+        if compare_rows(rows, root, child, key, meter, cancel)? != std::cmp::Ordering::Less {
+            return Ok(());
+        }
+        rows.swap(root, child);
+        root = child;
+    }
+}
+
+#[implements("FR-203-AC-29")]
+fn compare_rows<T>(
+    rows: &[T],
+    left: usize,
+    right: usize,
+    key: &impl Fn(&T) -> &ProbabilityProductKey,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<std::cmp::Ordering, ProbabilityDocumentError> {
+    if let Some(cause) = cancel.tripped() {
+        return Err(ProbabilityDocumentError::Cancelled(cause));
+    }
+    let left_key = key(&rows[left]);
+    let right_key = key(&rows[right]);
+    let left_bytes = left_key.as_bytes();
+    let right_bytes = right_key.as_bytes();
+    let mut compared = 0_usize;
+    let mut ordering = None;
+    for (left, right) in left_bytes.iter().zip(right_bytes) {
+        compared = compared.saturating_add(1);
+        match left.cmp(right) {
+            std::cmp::Ordering::Equal => {}
+            different => {
+                ordering = Some(different);
+                break;
+            }
+        }
+    }
+    let ordering = ordering.unwrap_or_else(|| left_bytes.len().cmp(&right_bytes.len()));
+    meter
+        .charge(
+            filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge).work(
+                filament_exact::Integer::from(u64::try_from(compared).unwrap_or(u64::MAX)),
+            ),
+        )
+        .map_err(|error| match cancel.tripped() {
+            Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+            None => ProbabilityDocumentError::Accounting(Box::new(error)),
+        })?;
+    Ok(ordering)
 }

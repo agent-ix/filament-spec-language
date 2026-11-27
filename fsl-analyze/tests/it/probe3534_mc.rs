@@ -316,7 +316,7 @@ fn zone_refutes(outcome: &crate::zone_search::Outcome) {
     );
 }
 
-#[trace("TC-710", "FR-239-AC-10")]
+#[trace("TC-710", "FR-239-AC-11")]
 #[test]
 fn probe_zone_safety() {
     let world = timed(&temporal("always holds(c.phase <= 3)"));
@@ -327,7 +327,7 @@ fn probe_zone_safety() {
     ));
 }
 
-#[trace("TC-710", "FR-239-AC-10")]
+#[trace("TC-710", "FR-239-AC-11")]
 #[test]
 fn probe_zone_liveness() {
     let world = timed(&temporal("eventually holds(c.phase = 0)"));
@@ -338,14 +338,14 @@ fn probe_zone_liveness() {
     ));
 }
 
-#[trace("TC-710", "FR-239-AC-10")]
+#[trace("TC-710", "FR-239-AC-11")]
 #[test]
 fn probe_zone_deadlock_freedom() {
     let world = timed(&temporal("always holds(c.phase <= 3)"));
     zone_refutes(&crate::zone_search::deadlock(&world));
 }
 
-#[trace("TC-710", "FR-243-AC-8")]
+#[trace("TC-710", "FR-243-AC-9")]
 #[test]
 fn probe_digital_safety() {
     let world = timed(&temporal("always holds(c.phase <= 3)"));
@@ -482,9 +482,9 @@ fn probe_zone_refutation_settles_refuted_after_replay() {
     assert_eq!(record.value, TerminalValue::Refuted);
 }
 
-/// FR-243-AC-8: the digital counterexample replays, the guarded transition
+/// FR-243-AC-9: the digital counterexample replays, the guarded transition
 /// included.
-#[trace("TC-710", "FR-243-AC-8")]
+#[trace("TC-710", "FR-243-AC-9")]
 #[test]
 fn probe_digital_refutation_replays() {
     let world = timed(&temporal("always holds(c.phase <= 3)"));
@@ -515,10 +515,10 @@ fn probe_digital_refutation_replays() {
     assert!(crate::zone_replay::reproduced(&settlement));
 }
 
-/// FR-239-AC-11: under a weak fairness constraint the zone route never
+/// FR-239-AC-12: under a weak fairness constraint the zone route never
 /// returns `Holds` past the undefined guard (it stays `Undecided` until the
 /// refutation through a fair behaviour lands).
-#[trace("TC-710", "FR-239-AC-11")]
+#[trace("TC-710", "FR-239-AC-12")]
 #[test]
 fn probe_zone_liveness_under_fairness_is_not_holds() {
     let world = timed(&temporal(

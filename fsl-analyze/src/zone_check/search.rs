@@ -1982,7 +1982,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
 
     /// The first undefined finding of `state`'s expansion (ADR-018 UE-6) as
     /// the locus and cause an undefined evaluation names.
-    #[implements("FR-239-AC-10")]
+    #[implements("FR-239-AC-11")]
     pub(super) fn undefined_of(
         &mut self,
         state: &ModelSimState,
@@ -2286,7 +2286,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         clippy::type_complexity,
         reason = "no violation, a violation, or one only after a delay"
     )]
-    #[implements("FR-239-AC-10")]
+    #[implements("FR-239-AC-11")]
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
         // ADR-018 UE-6: a step guard with no value at the node's state is
         // read as a disabled step by the expansion, so the node is refuted
