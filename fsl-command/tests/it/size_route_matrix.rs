@@ -884,3 +884,61 @@ fn compile_admits_one_hundred_thousand_sequence_values_when_model_limit_is_raise
             .expect("raised independent ceilings admit and emit the 100,000-value package");
     assert!(!outcome.package_bytes().is_empty());
 }
+
+/// The 10,000-value accepted compile must rewrite node IDs with a bounded
+/// number of candidate checks (QSL-3570, FR-869-AC-9 / TC-3242).
+#[trace("TC-3242", "FR-869-AC-9")]
+#[test]
+fn compile_has_bounded_operand_rewrite_candidates_at_ten_thousand() {
+    const N: usize = 10_000;
+    let directory = tempfile::tempdir().expect("collection workspace");
+    let values = (0..N)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         model M = \"example/config-version\";\n\
+         function allValues using v(): Sequence<Integer>[0, {N}] pure {{ sequence[{values}] }}\n"
+    );
+    let mut model: Value = serde_json::from_slice(include_bytes!(
+        "../../../examples/config-version/model.semantic-ir.json"
+    ))
+    .expect("the semantic model fixture is JSON");
+    let config_version = model["types"]
+        .as_array_mut()
+        .expect("model types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == "ix://example/config-version/ConfigVersion")
+        .expect("ConfigVersion type");
+    config_version["fields"][0]["multiplicity"] = json!({
+        "lower": 0, "upper": N, "ordered": true, "unique": false
+    });
+    let path = compile_request_with_semantic_model(directory.path(), &source, &model);
+    let limits = std::collections::BTreeMap::from([
+        (Setting::ModelSequenceMaximum, (N + 1) as u64),
+        (Setting::S1Tokens, 2_000_000),
+        (Setting::S1Nodes, 2_000_000),
+        (Setting::S1WorkUnits, 2_000_000),
+        (Setting::S3Nodes, 2_000_000),
+        (Setting::S3WorkUnits, 2_000_000),
+        (Setting::EmitOutputBytes, 1_073_741_824),
+    ]);
+    let overrides = RequestOverrides {
+        limits: Some(&limits),
+        ..RequestOverrides::default()
+    };
+
+    fsl_package::test_support::reset_node_id_rewrite_candidate_checks();
+    let outcome =
+        command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
+            .expect("the 10,000-value sequence compiles with the raised independent limits");
+    assert!(!outcome.package_bytes().is_empty());
+
+    let checks = fsl_package::test_support::node_id_rewrite_candidate_checks();
+    assert!(
+        checks <= 60_000,
+        "10,000-value operand rewrite used {checks} candidate checks; expected at most 60,000"
+    );
+}

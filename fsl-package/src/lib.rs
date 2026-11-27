@@ -269,6 +269,21 @@ pub use filament_contract_model::{
 #[cfg(all(feature = "std", feature = "test-support"))]
 pub use emit::{checked_node_id_of, emit_checked_with_fault};
 
+/// Test-only instrumentation for focused emitter regression tests.
+#[cfg(all(feature = "std", feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support {
+    /// Reset the number of node-ID candidate checks in operand-slot emission.
+    pub fn reset_node_id_rewrite_candidate_checks() {
+        crate::emit::reset_node_id_rewrite_candidate_checks();
+    }
+
+    /// The number of actual node-ID candidates compared during operand-slot emission.
+    pub fn node_id_rewrite_candidate_checks() -> usize {
+        crate::emit::node_id_rewrite_candidate_checks()
+    }
+}
+
 // ADR-011 §4 I2: `read_checked_package_v2` and its staged outcome remain
 // crate-local. The public `read_import_view` returns a structural import
 // view after Contract IR admits the package bytes.

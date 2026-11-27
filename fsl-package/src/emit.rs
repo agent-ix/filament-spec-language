@@ -14,6 +14,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "test-support")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
     CheckedAbstractionField, CheckedAbstractionFrame, CheckedAbstractionObject,
@@ -81,6 +84,31 @@ fn is_body_binding(name: &str) -> bool {
 
 /// The FR-322 graph schema version every node carries.
 const GRAPH_V2: &str = "filament.checked-semantic-graph/v2";
+
+#[cfg(feature = "test-support")]
+static NODE_ID_REWRITE_CANDIDATE_CHECKS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_node_id_rewrite_candidate_checks() {
+    NODE_ID_REWRITE_CANDIDATE_CHECKS.store(0, Ordering::Relaxed);
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn node_id_rewrite_candidate_checks() -> usize {
+    NODE_ID_REWRITE_CANDIDATE_CHECKS.load(Ordering::Relaxed)
+}
+
+#[cfg(feature = "test-support")]
+fn replace_node_id_with_counted_comparisons(
+    node: &mut CheckedSemanticNodeV2,
+    old: &CheckedNodeId,
+    new: &CheckedNodeId,
+) {
+    node.map_node_ids(|id| {
+        NODE_ID_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+        (id == old).then(|| new.clone())
+    });
+}
 
 /// The diagnostics catalog the package's (empty) diagnostics are qualified
 /// by, written at `diagnostics.catalog`: FSpec's `filament.native.diagnostics/v1`
@@ -11083,6 +11111,9 @@ pub fn write_operand_slots(
             }
         }
         for (old, new) in changes {
+            #[cfg(feature = "test-support")]
+            replace_node_id_with_counted_comparisons(node, &old, &new);
+            #[cfg(not(feature = "test-support"))]
             node.replace_node_id(&old, &new);
         }
         rows.push(row);
