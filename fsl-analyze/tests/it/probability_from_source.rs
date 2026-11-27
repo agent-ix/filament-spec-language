@@ -463,7 +463,7 @@ fn pta_from_source() {
 /// FR-741-AC-2: an exact unbounded reachability item settles `proved` with
 /// the exact value `391/400` and carries its accepted `exact` certificate
 /// document in the item result.
-#[trace("TC-2066", "FR-197-AC-1")]
+#[trace("TC-2066", "FR-741-AC-2")]
 #[trace("FSpec-TC-1564", "FSpec-FR-641-AC-2")]
 #[trace("TC-2065", "FR-203-AC-8")]
 #[test]
@@ -1209,7 +1209,7 @@ fn exact_every_scheduler_from_source() {
     assert!(text.contains("24") && text.contains("25"), "{text}");
 }
 
-#[trace("TC-2066", "FR-741-AC-2")]
+#[trace("TC-2066", "FR-197-AC-1")]
 #[test]
 fn exact_fair_scheduler_from_source() {
     reset_exact_work_checkpoints();
