@@ -2,7 +2,9 @@
 //! HP-5 settlement with independently checked closure and replayed lassos.
 
 use filament_exact::{Cancel, ValueType};
+use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ModelEvaluator, ModelSystem};
+use fsl_semantics::check::CheckedHyperClause;
 use ix_trace_rs::implements;
 
 use super::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};

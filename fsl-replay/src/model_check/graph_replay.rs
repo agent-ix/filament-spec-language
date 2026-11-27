@@ -291,6 +291,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         super::graph_hyper::replay_evidence(
             &system,
             package,
+            Some(package),
             clause,
             envelope.family_payload(),
             model_limits.limits.max_states,
