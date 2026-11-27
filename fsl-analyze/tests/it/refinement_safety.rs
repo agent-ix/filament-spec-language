@@ -39,6 +39,7 @@ fn run_with(
             abstract_protocol_binding: None,
             max_depth,
             limits,
+            retained: None,
         },
         cancel,
     )
@@ -234,6 +235,7 @@ fn run_ring(world: &RingWorld) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

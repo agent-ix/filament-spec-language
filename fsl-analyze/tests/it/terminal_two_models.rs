@@ -391,6 +391,7 @@ fn package_state_graph_value(
                 ..ModelCheckLimits::default()
             },
             seed: None,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -474,6 +475,7 @@ fn source_state_graph_run(
             ..ModelCheckLimits::default()
         },
         seed: None,
+        retained: None,
     };
     check_state_graph(request, &Cancel::new()).expect("the source state graph runs")
 }
@@ -1647,6 +1649,7 @@ fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_jso
     );
     settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding,
             provision: SourceProvision::single(

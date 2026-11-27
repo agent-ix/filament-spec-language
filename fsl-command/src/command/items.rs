@@ -8,7 +8,7 @@ use super::{
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
-const FORMAT: &str = "native-run-items/1";
+const FORMAT: &str = fsl_foundation::wire_format::WireFormat::RunItems.as_str();
 
 enum ItemExecution {
     Run(Box<Result<RunResult>>),
@@ -1192,7 +1192,7 @@ fn refused(member: &str, reason: impl Into<String>) -> RunCause {
 
 fn population_refusal(population: &str) -> Value {
     json!({
-        "format": "native-run-result/2",
+        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": {
             "category": "refusal",
             "refusal": {
@@ -1252,7 +1252,8 @@ fn whole_request_failure(cause: &RunCause) -> bool {
 }
 
 fn is_compile_refusal(value: &Value) -> bool {
-    value.get("format").and_then(Value::as_str) == Some("native-run-result/2")
+    value.get("format").and_then(Value::as_str)
+        == Some(fsl_foundation::wire_format::WireFormat::RunResult.as_str())
         && value
             .get("disposition")
             .and_then(|disposition| disposition.get("stage"))
@@ -1303,7 +1304,7 @@ fn invariant_result(
     }
     let settled = truth.is_some();
     json!({
-        "format": "native-run-result/2",
+        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": disposition,
         "usage": {
             "admission": {
