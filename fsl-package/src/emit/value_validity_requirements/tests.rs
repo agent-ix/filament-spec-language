@@ -1228,3 +1228,102 @@ fn mutual_recursion_preserves_repeated_syntax_owner_regions() {
         "synthetic slots copy the matching lexical occurrence's region"
     );
 }
+
+/// FSpec FR-322 and FR-825 (QSL-3559): the occurrence and conversion occurrence
+/// of a record's identity path follow its row.
+#[test]
+fn a_moved_record_id_carries_its_new_occurrence_and_conversion() {
+    use filament_contract_model::CheckedNodePathSegment as Segment;
+    let name = |text: &str| Segment::Name(text.into());
+    let id = CheckedNodeId {
+        package: "p".into(),
+        path: ["value_validity", "owner", "claim", "0", "bound", "result", "conversion", "narrow", "1", "rest"]
+            .into_iter()
+            .map(name)
+            .collect(),
+        ordinal: 0,
+    };
+    let moved = super::record_id_with(&id, 5, Some(6)).expect("a record id of the known shape");
+    assert_eq!(moved.path[3], name("5"), "the occurrence before `bound`");
+    assert_eq!(moved.path[8], name("6"), "the conversion occurrence");
+    assert_eq!(moved.path[9], name("rest"));
+    let kept = super::record_id_with(&id, 5, None).unwrap();
+    assert_eq!(kept.path[8], name("1"), "no conversion move leaves it");
+    let shapeless = CheckedNodeId {
+        package: "p".into(),
+        path: vec![name("bound")],
+        ordinal: 0,
+    };
+    assert!(super::record_id_with(&shapeless, 5, None).is_err());
+}
+
+/// FSpec FR-322 and FR-825 (QSL-3559): `rename_moved_records` renames the node,
+/// puts the occurrence and conversion occurrence in its body and renames the
+/// source-map entry.
+#[test]
+fn rename_moved_records_updates_the_node_body_and_source_map() {
+    use filament_contract_model::{
+        CheckedNodePathSegment as Segment, CheckedOccurrenceRole, CheckedSemanticNodeV2,
+        CheckedSourceMapEntry, LiteralKind,
+    };
+    let id = |name: &str| CheckedNodeId {
+        package: "p".into(),
+        path: vec![Segment::Name(name.into())],
+        ordinal: 0,
+    };
+    let literal = |value: u64| CheckedTerm::Literal {
+        type_id: id("integer"),
+        value_kind: LiteralKind::Integer,
+        value: crate::emit::checked_literal_json(&value).unwrap(),
+    };
+    let binding = |value: CheckedTerm| CheckedTerm::Binding {
+        name: "m".into(),
+        binder: None,
+        value: Box::new(value),
+    };
+    let aggregate = |members: Vec<CheckedTerm>| CheckedTerm::Aggregate {
+        members,
+        temporal_profile: None,
+    };
+    let body = |occurrence: u64, conversion: u64| {
+        aggregate(vec![
+            binding(aggregate(Vec::new())),
+            binding(aggregate(Vec::new())),
+            binding(literal(occurrence)),
+            binding(aggregate(Vec::new())),
+            binding(aggregate(vec![binding(aggregate(Vec::new())), binding(literal(conversion))])),
+        ])
+    };
+    let mut nodes = vec![CheckedSemanticNodeV2 {
+        node_id: id("old"),
+        schema_version: "v2".into(),
+        node_tag: "claim".into(),
+        semantic_form: "value_validity".into(),
+        semantic_type: id("boolean"),
+        dependencies: Vec::new(),
+        occurrences: Vec::new(),
+        recursion_group: None,
+        declaration: None,
+        owner: None,
+        owner_model: None,
+        check_mode: None,
+        body: body(0, 1),
+    }];
+    let mut source_map = vec![CheckedSourceMapEntry {
+        node_id: id("old"),
+        role: CheckedOccurrenceRole::Generated,
+        ordinal: 0,
+        regions: Vec::new(),
+    }];
+    let moved = [super::MovedRecord {
+        old: id("old"),
+        new: id("new"),
+        occurrence: 5,
+        conversion: Some(6),
+    }];
+    super::rename_moved_records(&moved, &mut nodes, &mut source_map)
+        .expect("a record of the written shape is renamed");
+    assert_eq!(nodes[0].node_id, id("new"));
+    assert_eq!(nodes[0].body, body(5, 6));
+    assert_eq!(source_map[0].node_id, id("new"));
+}

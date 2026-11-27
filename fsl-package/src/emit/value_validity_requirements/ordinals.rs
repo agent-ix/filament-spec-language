@@ -360,13 +360,7 @@ pub(in crate::emit) fn renumber(
             continue;
         }
         renumbering.by_node.insert(key.clone(), mapping.clone());
-        let copies: Vec<(u64, u64)> = slots
-            .iter()
-            .filter_map(|slot| match *slot {
-                Slot::Synthetic { from, ordinal } => Some((from, ordinal)),
-                Slot::Source { .. } => None,
-            })
-            .collect();
+        let copies = synthetic_copies_of(&slots);
         if !copies.is_empty() {
             renumbering.synthetic.insert(key.clone(), copies);
         }
@@ -571,14 +565,7 @@ pub(in crate::emit) fn rewalk(
     let mut moved = BTreeMap::new();
     for (position, mapping) in changed {
         let id = nodes[position].node_id.clone();
-        let copies: Vec<(u64, u64)> = mapping
-            .slots
-            .iter()
-            .filter_map(|slot| match *slot {
-                Slot::Synthetic { from, ordinal } => Some((from, ordinal)),
-                Slot::Source { .. } => None,
-            })
-            .collect();
+        let copies = synthetic_copies_of(&mapping.slots);
         if !copies.is_empty() {
             synthetics.insert(id.clone(), copies);
         }
@@ -594,6 +581,18 @@ pub(in crate::emit) fn rewalk(
         moved.insert(id, sources);
     }
     Ok((moved, synthetics))
+}
+
+/// The synthetic slots of a node as `(from, ordinal)`: the old ordinal of the
+/// use each copies and its new ordinal.
+fn synthetic_copies_of(slots: &[Slot]) -> Vec<(u64, u64)> {
+    slots
+        .iter()
+        .filter_map(|slot| match *slot {
+            Slot::Synthetic { from, ordinal } => Some((from, ordinal)),
+            Slot::Source { .. } => None,
+        })
+        .collect()
 }
 
 /// One visit of the owner walk to a node, as a rekey re-reads it.
@@ -684,14 +683,14 @@ pub(in crate::emit) fn relabel_term_data(
 fn synthetic_copies<T: Clone>(
     rows: &[T],
     synthetics: &Synthetics,
-    at: impl Fn(&mut T) -> (&CheckedNodeId, &mut CheckedOccurrence),
+    at: impl Fn(&T) -> (&CheckedNodeId, &CheckedOccurrence),
+    at_mut: impl Fn(&mut T) -> &mut CheckedOccurrence,
 ) -> Vec<T> {
     let mut copies = Vec::new();
     for (application, wanted) in synthetics {
         let mut own: Vec<(u64, &T)> = Vec::new();
         for row in rows {
-            let mut probe = row.clone();
-            let (id, occurrence) = at(&mut probe);
+            let (id, occurrence) = at(row);
             if id == application && occurrence.role == CheckedOccurrenceRole::Expression {
                 own.push((occurrence.ordinal, row));
             }
@@ -708,7 +707,7 @@ fn synthetic_copies<T: Clone>(
             for (old, row) in &own {
                 if *old == source {
                     let mut copy = (*row).clone();
-                    at(&mut copy).1.ordinal = ordinal;
+                    at_mut(&mut copy).ordinal = ordinal;
                     copies.push(copy);
                 }
             }
@@ -734,37 +733,20 @@ pub(in crate::emit) fn relabel_equality_rows(
     if by_id.is_empty() {
         return;
     }
-    fn relabel<T: Clone>(
-        rows: &mut Vec<T>,
-        by_id: &BTreeMap<CheckedNodeId, Mapping>,
-        synthetics: &Synthetics,
-        at: impl Fn(&mut T) -> (&CheckedNodeId, &mut CheckedOccurrence),
-    ) {
-        let copies = synthetic_copies(rows, synthetics, &at);
-        for row in rows.iter_mut() {
-            let (id, occurrence) = at(row);
-            if occurrence.role != CheckedOccurrenceRole::Expression {
-                continue;
-            }
-            let Some(mapping) = by_id.get(id) else {
-                continue;
-            };
-            let Ok(position) = mapping.binary_search_by_key(&occurrence.ordinal, |(old, _)| *old)
-            else {
-                continue;
-            };
-            if let Some(new) = mapping[position].1 {
-                occurrence.ordinal = new;
-            }
-        }
-        rows.extend(copies);
-    }
-    relabel(producers, by_id, synthetics, |row| {
-        (&row.checked_node, &mut row.occurrence)
-    });
-    relabel(facts, by_id, synthetics, |row| {
-        (&row.checked_application, &mut row.occurrence)
-    });
+    relabel_occurrences(
+        producers,
+        by_id,
+        synthetics,
+        |row| (&row.checked_node, &row.occurrence),
+        |row| &mut row.occurrence,
+    );
+    relabel_occurrences(
+        facts,
+        by_id,
+        synthetics,
+        |row| (&row.checked_application, &row.occurrence),
+        |row| &mut row.occurrence,
+    );
     let entries: BTreeMap<(&CheckedNodeId, u64), &CheckedSourceMapEntry> = source_map
         .iter()
         .filter(|entry| entry.role == CheckedOccurrenceRole::Expression)
@@ -794,6 +776,42 @@ pub(in crate::emit) fn relabel_equality_rows(
             }
         }
     }
+}
+
+/// Move the rows of one equality kind that name a renumbered expression
+/// occurrence, drop the rows of a use dropped with its omitted owner and add the
+/// copies the synthetic occurrences need.
+fn relabel_occurrences<T: Clone>(
+    rows: &mut Vec<T>,
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
+    at: impl Fn(&T) -> (&CheckedNodeId, &CheckedOccurrence),
+    at_mut: impl Fn(&mut T) -> &mut CheckedOccurrence,
+) {
+    let copies = synthetic_copies(rows, synthetics, &at, &at_mut);
+    // A row of a use dropped with its omitted owner is dropped too, as
+    // the checked-term decision of that use is.
+    rows.retain_mut(|row| {
+        let (id, occurrence) = at(row);
+        if occurrence.role != CheckedOccurrenceRole::Expression {
+            return true;
+        }
+        let Some(mapping) = by_id.get(id) else {
+            return true;
+        };
+        let Ok(position) = mapping.binary_search_by_key(&occurrence.ordinal, |(old, _)| *old)
+        else {
+            return true;
+        };
+        match mapping[position].1 {
+            Some(new) => {
+                at_mut(row).ordinal = new;
+                true
+            }
+            None => false,
+        }
+    });
+    rows.extend(copies);
 }
 
 fn relabel_term_data_inner(
@@ -827,9 +845,12 @@ fn relabel_term_data_inner(
             Some(false)
         }
     };
-    let copies = synthetic_copies(&data.equality_decisions, synthetics, |row| {
-        (&row.application, &mut row.occurrence)
-    });
+    let copies = synthetic_copies(
+        &data.equality_decisions,
+        synthetics,
+        |row| (&row.application, &row.occurrence),
+        |row| &mut row.occurrence,
+    );
     let mut changed = !copies.is_empty();
     data.equality_decisions.retain_mut(|row| {
         let moved = relabel(&row.application, &mut row.occurrence);
@@ -888,6 +909,96 @@ fn relabel_term_data_inner(
 #[cfg(test)]
 mod rewalk_tests {
     use super::{rewalk_slots, Slot};
+
+    use super::{relabel_occurrences, synthetic_copies, Mapping, Synthetics};
+    use filament_contract_model::{
+        CheckedNodeId, CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole,
+    };
+    use std::collections::BTreeMap;
+
+    fn id(name: &str) -> CheckedNodeId {
+        CheckedNodeId {
+            package: "p".into(),
+            path: vec![CheckedNodePathSegment::Name(name.into())],
+            ordinal: 0,
+        }
+    }
+
+    type Row = (CheckedNodeId, CheckedOccurrence);
+
+    fn row(name: &str, ordinal: u64) -> Row {
+        (
+            id(name),
+            CheckedOccurrence {
+                role: CheckedOccurrenceRole::Expression,
+                ordinal,
+            },
+        )
+    }
+
+    fn ordinals(rows: &[Row]) -> Vec<(CheckedNodeId, u64)> {
+        rows.iter().map(|(id, o)| (id.clone(), o.ordinal)).collect()
+    }
+
+    fn relabel(rows: &mut Vec<Row>, mappings: &[(&str, Mapping)], synthetics: &Synthetics) {
+        let by_id: BTreeMap<_, _> = mappings
+            .iter()
+            .map(|(name, mapping)| (id(name), mapping.clone()))
+            .collect();
+        relabel_occurrences(
+            rows,
+            &by_id,
+            synthetics,
+            |row| (&row.0, &row.1),
+            |row| &mut row.1,
+        );
+    }
+
+    /// FSpec FR-322 (QSL-3559): an equality row of a use dropped with its
+    /// omitted owner is dropped, as its decision is, instead of keeping the
+    /// checker's ordinal that now names another use (or none).
+    #[test]
+    fn an_equality_row_of_a_dropped_use_is_dropped() {
+        let mut rows = vec![row("app", 0), row("app", 1), row("app", 2), row("other", 1)];
+        let mapping: Mapping = vec![(0, Some(1)), (1, None)];
+        relabel(&mut rows, &[("app", mapping)], &Synthetics::new());
+        assert_eq!(
+            ordinals(&rows),
+            [(id("app"), 1), (id("app"), 2), (id("other"), 1)],
+            "use 0 moves to 1, use 1 is dropped, use 2 has no entry and a node the map lacks stays"
+        );
+    }
+
+    /// FSpec FR-322 (QSL-3559): a synthetic occurrence gets a copy of the row
+    /// of the use it copies; a use with no row borrows the node's first row.
+    #[test]
+    fn a_synthetic_occurrence_copies_the_row_of_the_use_it_repeats() {
+        let mut rows = vec![row("app", 0), row("app", 1)];
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(2))];
+        let synthetics: Synthetics = [(id("app"), vec![(1, 0), (7, 3)])].into_iter().collect();
+        relabel(&mut rows, &[("app", mapping)], &synthetics);
+        let mut got = ordinals(&rows);
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                (id("app"), 0),
+                (id("app"), 1),
+                (id("app"), 2),
+                (id("app"), 3)
+            ],
+            "uses 0 and 1 move to 1 and 2; ordinal 0 copies use 1, ordinal 3 (an unlisted use) copies the first"
+        );
+    }
+
+    #[test]
+    fn synthetic_copies_read_rows_without_changing_them() {
+        let rows = vec![row("app", 4)];
+        let synthetics: Synthetics = [(id("app"), vec![(4, 9)])].into_iter().collect();
+        let copies = synthetic_copies(&rows, &synthetics, |row| (&row.0, &row.1), |row| &mut row.1);
+        assert_eq!(ordinals(&copies), [(id("app"), 9)]);
+        assert_eq!(ordinals(&rows), [(id("app"), 4)]);
+    }
 
     fn pairs(slots: &[Slot]) -> Vec<(bool, u64, u64)> {
         slots

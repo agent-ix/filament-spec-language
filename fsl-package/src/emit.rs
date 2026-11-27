@@ -8487,17 +8487,6 @@ fn emit_package_nodes(
         &source_keys,
         &mut meter,
     )?;
-    if let Some(data) = &mut checked_term_data {
-        if value_validity.renumbering.renumbers() {
-            let mut row_ids = emitted_node_ids.clone();
-            row_ids.extend(
-                producer_node_ids
-                    .iter()
-                    .map(|(key, id)| (key.clone(), id.clone())),
-            );
-            value_validity.renumbering.relabel_term_data(&row_ids, data);
-        }
-    }
     if value_validity.renumbering.renumbers() {
         let mut row_ids = emitted_node_ids.clone();
         row_ids.extend(
@@ -8505,6 +8494,9 @@ fn emit_package_nodes(
                 .iter()
                 .map(|(key, id)| (key.clone(), id.clone())),
         );
+        if let Some(data) = &mut checked_term_data {
+            value_validity.renumbering.relabel_term_data(&row_ids, data);
+        }
         value_validity.renumbering.relabel_equality_rows(
             &row_ids,
             &mut equality_producer_identity_rows,
