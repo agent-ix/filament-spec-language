@@ -6,6 +6,7 @@ use super::{
     RunLimits, RunResult,
 };
 use serde_json::{json, Map, Value};
+use ix_trace_rs::implements;
 use std::path::Path;
 
 const FORMAT: &str = fsl_foundation::wire_format::WireFormat::RunItems.as_str();
@@ -1194,6 +1195,7 @@ fn refused(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
+#[implements("FR-267-AC-8")]
 fn population_refusal(population: &str) -> Value {
     json!({
         "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
@@ -1286,6 +1288,7 @@ fn category_for_exit(exit_code: u8) -> &'static str {
 }
 
 #[ix_trace_rs::string_edge]
+#[implements("FR-267-AC-8")]
 fn invariant_result(
     category: &str,
     stage: &str,
