@@ -2663,9 +2663,12 @@ impl<'c> Builder<'_, '_, 'c> {
                 .collect::<Step<Vec<_>>>()?;
             racers.push((window, conditioned));
         }
+        if free {
+            self.refuse_undecided_free_delays(state, local, &windows, reached)?;
+        }
         if racers.is_empty() && free {
             // Every racing delay is free (FR-204).
-            return self.free_moves(at, state, local, workload, (&windows, reached));
+            return self.free_moves(at, state, local, workload);
         }
         if racers.is_empty() {
             let mut planned = Vec::new();
@@ -3034,26 +3037,22 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(())
     }
 
-    /// Under a workload whose racing identities all have free delays: the
-    /// scheduler chooses between a unit delay and letting the workload resolve
-    /// the identity now (ADR-028 TA-1, RU-6). An identity with a given delay
-    /// does not race here, so the workload resolves among the free ones only.
-    fn free_moves(
+    /// FR-203-AC-17: a free, non-stochastic delay under a workload is not
+    /// decided. FR-204 reads the state as `UnitDelay` and one weighted
+    /// `WorkloadResolve`; ADR-026 SD-1 and SD-3 have the scheduler pick each
+    /// free identity's delay inside its window. The readings differ where
+    /// several free identities are enabled now and where the unit delay
+    /// disables one, so neither is decided here, with or without given delays
+    /// racing alongside.
+    fn refuse_undecided_free_delays(
         &mut self,
-        at: usize,
         state: &DState,
         local: &Rc<Local>,
-        workload: &Workload,
-        reading: (&[Window], u64),
-    ) -> Step<Vec<Planned>> {
+        windows: &[Window],
+        reached: u64,
+    ) -> Step<()> {
         let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
         enabled.retain(|action| self.given(&action.identity.operation).is_none());
-        // FR-204 reads this state as `UnitDelay` and one weighted
-        // `WorkloadResolve`; ADR-026 SD-1 and SD-3 have the scheduler pick each
-        // free identity's delay inside its window. The readings differ where
-        // several free identities are enabled now and where the unit delay
-        // disables one, so neither is decided here.
-        let (windows, reached) = reading;
         if enabled.len() >= 2 {
             return Err(ProductRefusal::WorkloadFreeDelays(
                 fsl_replay::WorkloadFreeDelayRefusal::ManyFreeEnabled,
@@ -3074,6 +3073,22 @@ impl<'c> Builder<'_, '_, 'c> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Under a workload whose racing identities all have free delays: the
+    /// scheduler chooses between a unit delay and letting the workload resolve
+    /// the identity now (ADR-028 TA-1, RU-6). An identity with a given delay
+    /// does not race here, so the workload resolves among the free ones only.
+    fn free_moves(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Rc<Local>,
+        workload: &Workload,
+    ) -> Step<Vec<Planned>> {
+        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
+        enabled.retain(|action| self.given(&action.identity.operation).is_none());
         let mut planned = Vec::new();
         self.running_delays(at, state, local, &mut planned)?;
         let mut operations: BTreeMap<String, (Rational, u64)> = BTreeMap::new();

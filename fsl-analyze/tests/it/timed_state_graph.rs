@@ -1024,6 +1024,7 @@ fn settle_over_base_with(
             items,
             engines: &engines,
             limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),

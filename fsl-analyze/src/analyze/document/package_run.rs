@@ -301,6 +301,8 @@ pub struct PackageRun<'a> {
     /// The invocation's cumulative native budget, which reading a
     /// composition and its component packages continues (FR-531, FR-1044).
     pub budget: filament_contract_model::NativeJoinBudget,
+    /// Which proofs settle `proved`.
+    pub certification: fsl_replay::CertificationPolicy,
 }
 
 /// One item as the package's name tables resolve it.
@@ -486,6 +488,7 @@ fn settle_package_run_inner(
         engines,
         limits,
         mut budget,
+        certification,
     } = run;
     let explicit_items = items.is_some();
     let defaults = items.is_none().then(|| default_selections(package));
@@ -1031,7 +1034,7 @@ fn settle_package_run_inner(
             analyzed.push(work.item(route, item));
         }
     }
-    let records = super::super::analyze_items(engines, analyzed, cancel);
+    let records = super::super::analyze_items(engines, analyzed, cancel, certification);
     let details = records.iter().map(super::super::ItemDetail::of).collect();
     let protocol_conformance = records
         .iter()
