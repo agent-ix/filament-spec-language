@@ -4,7 +4,7 @@
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{CheckedTimedModel, read_checked_package_v2};
+use crate::checked_v2::{read_checked_package_v2, CheckedTimedModel};
 use filament_contract_model::CheckedPackageEvidence;
 use filament_semantic_value::checking::CheckMode;
 
@@ -102,11 +102,9 @@ fn a_checked_time_source_emits_and_reads_back_its_resolved_nodes() {
     let wire = wire(&emission);
     let unit_structural_node = serde_json::to_value(&unit_row.structural_node)
         .expect("the selected unit row has a wire structural id");
-    assert!(
-        nodes(&wire)
-            .iter()
-            .any(|node| node["node_id"] == unit_structural_node)
-    );
+    assert!(nodes(&wire)
+        .iter()
+        .any(|node| node["node_id"] == unit_structural_node));
     assert!(
         nodes(&wire)
             .iter()

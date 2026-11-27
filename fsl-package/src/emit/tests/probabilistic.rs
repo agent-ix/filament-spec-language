@@ -2928,7 +2928,7 @@ fn timed_claims_check(
     declarations: &[&str],
 ) -> (
     Vec<u8>,
-    Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>>,
+    Result<CheckedPackage, Vec<fsl_semantics::check::SemanticCheckRefusal>>,
 ) {
     timed_claims_check_in("time Config dense unit ms;", declarations)
 }
@@ -2939,7 +2939,7 @@ fn timed_claims_check_in(
     declarations: &[&str],
 ) -> (
     Vec<u8>,
-    Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>>,
+    Result<CheckedPackage, Vec<fsl_semantics::check::SemanticCheckRefusal>>,
 ) {
     let (document, unit) = timed_claims_source_in(time_clause, declarations);
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();

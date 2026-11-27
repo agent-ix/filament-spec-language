@@ -301,11 +301,10 @@ fn adapters_preserve_an_earlier_owner_denial_and_maps_never_lose_their_keys() {
 
     let map_package = mixed_collection_package();
     let maps = emit_package(&map_package, whole_unit).expect("real source map emission");
-    assert!(
-        maps.selected_source_collection_rows()
-            .iter()
-            .any(|row| row.key_node.is_some())
-    );
+    assert!(maps
+        .selected_source_collection_rows()
+        .iter()
+        .any(|row| row.key_node.is_some()));
     let (supported_index, supported) = maps
         .selected_source_collection_rows()
         .iter()

@@ -37,6 +37,7 @@ impl BarePackage<'_> {
     /// Preserves the hyper form's typed refusal. A foreign atom, unknown
     /// slot, or model read rooted in zero or multiple components refuses
     /// `MalformedNode` at the selected hyperproperty node.
+    #[ix_trace_rs::string_edge]
     pub fn project_hyper_holds(
         &self,
         claim: &OccurrenceKey,

@@ -27,8 +27,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
-use super::{Lowering, fault};
-use crate::check::Signature;
+use super::{fault, Lowering};
 use crate::check::family::OccurrenceRole;
 use crate::check::hybrid::{
     ArithmeticOp, CheckedHybridClaim, CheckedHybridModel, CompareOp, HybridActivation, HybridClock,
@@ -39,7 +38,8 @@ use crate::check::node_key::{
     MemberTerm, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
 };
 use crate::check::profile::TemporalProfile;
-use crate::check::refusal::{CheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
+use crate::check::Signature;
 use crate::value::member::{FairnessTarget, Member, TimedMember};
 use fsl_foundation::bound::{TemporalInterval, TemporalUpper};
 
@@ -170,7 +170,7 @@ impl Lowering<'_> {
     pub(crate) fn hybrid_model(
         &mut self,
         input: &HybridModelInput<'_>,
-    ) -> Result<LoweredHybridModel, CheckRefusal> {
+    ) -> Result<LoweredHybridModel, SemanticCheckRefusal> {
         let model = input.model;
         let at = hybrid_location;
         let declared = at(HybridSite::Model(input.index));
@@ -325,7 +325,7 @@ impl Lowering<'_> {
     pub(crate) fn hybrid_claim(
         &mut self,
         input: &HybridClaimInput<'_>,
-    ) -> Result<LoweredHybridClaim, CheckRefusal> {
+    ) -> Result<LoweredHybridClaim, SemanticCheckRefusal> {
         let claim = input.claim;
         let at = hybrid_location(HybridSite::Claim(input.index));
         let boolean = self.type_node(&ValueType::Boolean, &at)?;
@@ -415,7 +415,7 @@ impl Lowering<'_> {
         input: &HybridClaimInput<'_>,
         boolean: NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let Some((mode, _)) = constraint.transitions.first().copied() else {
             return Err(stage_fault(location, "fairness-names-a-transition"));
         };
@@ -485,7 +485,7 @@ impl Lowering<'_> {
         claim: &CheckedHybridClaim,
         boolean: NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         enum Step<'f> {
             Visit(&'f HybridFormula),
             Build(&'f HybridFormula),
@@ -599,7 +599,7 @@ impl Lowering<'_> {
         arguments: Vec<MemberTerm>,
         boolean: NodeKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let key = self.insert(
             location,
             NodeTag::Temporal,
@@ -628,7 +628,7 @@ impl Lowering<'_> {
         root: &HybridTerm,
         scope: &TermScope<'_>,
         location: &Location,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let mut steps = vec![TermStep::Visit(root)];
         let mut done: Vec<(LeafTerm, TermKind)> = Vec::new();
         while let Some(step) = steps.pop() {
@@ -825,7 +825,7 @@ fn class_spelling(class: crate::check::hybrid::VariableClass) -> &'static str {
 }
 
 /// The `relation` literal of a reset that is not `=`.
-fn relation_spelling(relation: CompareOp) -> Result<&'static str, CheckRefusal> {
+fn relation_spelling(relation: CompareOp) -> Result<&'static str, SemanticCheckRefusal> {
     match relation {
         CompareOp::Ne => Ok("ne"),
         CompareOp::Lt => Ok("lt"),
@@ -890,7 +890,7 @@ fn interval_member(
     profile: TemporalProfile,
     interval: Option<&HybridInterval>,
     location: &Location,
-) -> Result<Member, CheckRefusal> {
+) -> Result<Member, SemanticCheckRefusal> {
     let Some(interval) = interval else {
         return Ok(Member::TemporalInterval { interval: None });
     };
@@ -921,7 +921,7 @@ fn interval_member(
 }
 
 /// A broken invariant of this lowering, never a refusal of the input.
-fn stage_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+fn stage_fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
     fault(
         location,
         KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(

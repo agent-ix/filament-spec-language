@@ -417,7 +417,7 @@ mod tests {
     /// rather than crate-wide). The checking limits and `CheckMode` live in
     /// the layer-SV leaf `filament-semantic-value` and are defined in no scanned
     /// tree ([`assert_not_defined_in_fsl`]).
-    /// `CheckRefusal` and `CheckedGraph` are canonical types, which
+    /// `SemanticCheckRefusal` and `CheckedGraph` are canonical types, which
     /// `cargo xtask canonical-types` holds to one definition.
     ///
     /// **Updated.** `check`'s S3 output type was renamed
@@ -483,7 +483,7 @@ mod tests {
     /// TC-173 step 1: the check-cause types are each defined once under
     /// `check`, none under `value::expression` (see
     /// [`assert_defined_exactly_once_under_check`] for why this is scoped
-    /// rather than crate-wide). `CheckRefusal` is a canonical type, which
+    /// rather than crate-wide). `SemanticCheckRefusal` is a canonical type, which
     /// `cargo xtask canonical-types` holds to one definition.
     #[trace("TC-173", "FR-068-AC-4")]
     #[test]

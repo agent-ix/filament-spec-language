@@ -124,6 +124,7 @@ struct Subject {
 
 /// Whether value-bounds bytes wrap a base this role owns rather than FR-1043's
 /// finite-horizon measure base.
+#[ix_trace_rs::string_edge]
 pub(in crate::probability_certificate) fn owns(
     bytes: &[u8],
 ) -> Result<bool, ProbabilityDocumentError> {
@@ -157,6 +158,7 @@ pub(in crate::probability_certificate) fn admit(
     decode(bytes, limits, cancel, &mut meter).map(|_| ())
 }
 
+#[ix_trace_rs::string_edge]
 fn decode(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,

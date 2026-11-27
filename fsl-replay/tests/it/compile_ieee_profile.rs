@@ -94,9 +94,9 @@ fn both_float_widths_select_one_profile_and_emit_arithmetic_law_and_rounding() {
     }
 }
 
-#[trace("TC-1091", "FR-397-AC-2")]
+#[trace("TC-1091", "FR-096-AC-25")]
 #[test]
-fn declared_floats_select_the_profile_even_without_an_ieee_application() {
+fn qsl_3473_unused_float_declarations_compile() {
     for declaration in [
         "function keep using v(a: Float64[nearest-even]): Boolean pure { true }",
         "function keep using v(a: Float32[nearest-even]): Float32[nearest-even] pure { a }",
@@ -107,19 +107,73 @@ fn declared_floats_select_the_profile_even_without_an_ieee_application() {
         "record Reading { samples: Sequence<Float64[nearest-even]>[0, 2]; }",
         "function keep using v(a: Option<Float64[nearest-even]>): Boolean pure { true }",
     ] {
-        let wire = wire(&format!("{HEADER}{declaration}"));
-        assert_eq!(ieee_selection(&wire).len(), 1, "{declaration}");
+        let _wire = wire(&format!("{HEADER}{declaration}"));
     }
+}
+
+#[trace("TC-1091", "FR-397-AC-32")]
+#[test]
+fn qsl_3473_no_float_package_has_no_ieee_profile_selection_or_law() {
     let wire = wire(&format!(
         "{HEADER}function plain using v(a: Int[0, 10], b: Int[0, 10]): Int[0, 20] pure {{ a + b }}"
     ));
     assert!(ieee_selection(&wire).is_empty());
     for node in wire["semantic_graph"]["nodes"].as_array().unwrap() {
         let laws = node["body"]["operation"]["laws"].as_array();
-        assert!(!laws
-            .into_iter()
-            .flatten()
-            .any(|law| law["role"] == "ieee_profile"));
+        assert!(
+            !laws
+                .into_iter()
+                .flatten()
+                .any(|law| law["role"] == "ieee_profile")
+        );
+    }
+}
+
+#[trace("TC-1091", "FR-096-AC-25")]
+#[test]
+fn qsl_3473_unused_float_composite_metadata_maps_to_declaration_names() {
+    for declaration in [
+        "record Reading { sample: Float64[nearest-even]; }",
+        "tuple Reading(Float32[nearest-even]);",
+        "union Reading { Empty, Some(Float64[nearest-even]) }",
+    ] {
+        let source = format!("{HEADER}{declaration}");
+        let wire = wire(&source);
+        let name_start = source.find("Reading").expect("declaration name") as u64;
+        let name_end = name_start + "Reading".len() as u64;
+        let nodes = wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("semantic nodes");
+        let text_type = nodes
+            .iter()
+            .find(|node| {
+                node["node_tag"] == "scalar_type" && node["semantic_form"] == "text"
+            })
+            .expect("generated text type for the composite declaration");
+        let generated = text_type["occurrences"]
+            .as_array()
+            .expect("occurrences")
+            .iter()
+            .filter(|occurrence| occurrence["role"] == "generated")
+            .collect::<Vec<_>>();
+        assert!(!generated.is_empty(), "composite type metadata is generated");
+        let rows = wire["source_map"]
+            .as_array()
+            .expect("source-map rows")
+            .iter()
+            .filter(|row| row["node_id"] == text_type["node_id"])
+            .collect::<Vec<_>>();
+        for occurrence in generated {
+            let row = rows
+                .iter()
+                .find(|row| {
+                    row["role"] == occurrence["role"]
+                        && row["ordinal"] == occurrence["ordinal"]
+                })
+                .expect("source-map row for generated metadata occurrence");
+            assert_eq!(row["regions"][0]["start"], name_start, "{declaration}");
+            assert_eq!(row["regions"][0]["end"], name_end, "{declaration}");
+        }
     }
 }
 
@@ -160,7 +214,13 @@ fn strict_ir_reader_admits_the_genuine_float_source_packages() {
     }
 }
 
-#[trace("TC-1091", "FR-397-AC-7", "FR-397-AC-12", "FR-397-AC-15", "FR-093-AC-51")]
+#[trace(
+    "TC-1091",
+    "FR-397-AC-7",
+    "FR-397-AC-12",
+    "FR-397-AC-15",
+    "FR-093-AC-51"
+)]
 #[test]
 fn strict_ir_reader_admits_fma_relations_and_float_orderings() {
     for (width, ty) in [

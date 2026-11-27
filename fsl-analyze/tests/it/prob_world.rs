@@ -25,8 +25,8 @@ use fsl_eval::value::S6aRewardEvaluator;
 use fsl_package::CheckedPackage;
 use fsl_replay::ModelCheckLimits;
 use fsl_semantics::check::{
-    CheckRefusal, CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward,
-    RewardEvaluationFailure, RewardEvaluator,
+    CheckedGraph, CheckedProbabilisticClaim, PackageDeclarations, Reward, RewardEvaluationFailure,
+    RewardEvaluator, SemanticCheckRefusal,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -327,7 +327,7 @@ impl World {
     pub(crate) fn try_new_with_evaluator(
         model: &Model,
         evaluator: &dyn RewardEvaluator,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode_and_evaluator(
             model,
             &[model.key],
@@ -389,7 +389,7 @@ impl World {
     pub(crate) fn try_new_with_mode(
         model: &Model,
         mode: CheckMode,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode(
             model,
             &[model.key],
@@ -403,7 +403,7 @@ impl World {
 
     /// `model`'s S3 check result, exposed for acceptance tests of pre-sampling
     /// refusals.
-    pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<CheckRefusal>> {
+    pub(crate) fn try_new(model: &Model) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build(
             model,
             &[model.key],
@@ -475,7 +475,7 @@ impl World {
         initials: &[&Json],
         symmetric: bool,
         value_profile: bool,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode(
             model,
             keys,
@@ -495,7 +495,7 @@ impl World {
         symmetric: bool,
         value_profile: bool,
         mode: CheckMode,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         Self::try_build_with_mode_and_evaluator(
             model,
             keys,
@@ -523,7 +523,7 @@ impl World {
         mode: CheckMode,
         evaluator: &dyn RewardEvaluator,
         unemittable_workload: bool,
-    ) -> Result<Self, Vec<CheckRefusal>> {
+    ) -> Result<Self, Vec<SemanticCheckRefusal>> {
         let document = model.document(symmetric);
         let mut documents = vec![document.as_slice()];
         if unemittable_workload {

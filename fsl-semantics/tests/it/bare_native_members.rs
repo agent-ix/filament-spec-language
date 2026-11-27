@@ -105,7 +105,7 @@ const HEADER: &str = "profile d = \"filament.model.dispatch.single/v1\";\n";
 fn assembled(
     document: &[u8],
     clauses: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let declarations = crate::model_operations::admit_and_assemble_with_profiles(
         document,
         HEADER,

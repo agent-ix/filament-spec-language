@@ -22,12 +22,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fsl_forms::{DeclarationSpans, ExpressionSpans};
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::source_map::SourceMap;
+use fsl_foundation::Span;
 use ix_trace_rs::implements;
 
-use super::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use super::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -57,6 +57,7 @@ struct DeclaredSpans<'a> {
 
 /// The `probabilistic N` declaration an `N`th probabilistic declaration's site
 /// name begins with.
+#[ix_trace_rs::string_edge]
 fn probabilistic_declaration_name(origin: &str) -> Option<&str> {
     let rest = origin.strip_prefix("probabilistic ")?;
     let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
@@ -305,7 +306,7 @@ impl DeclarationRegions {
     /// The regions of the declarations a check refusal relates, in source
     /// order (FSpec FR-272's `related`): both workloads of a repeated
     /// workload name (FR-185); none for every other refusal.
-    pub fn related_regions(&self, refusal: &CheckRefusal) -> Vec<SourceRegion> {
+    pub fn related_regions(&self, refusal: &SemanticCheckRefusal) -> Vec<SourceRegion> {
         let related = match refusal.cause.as_ref() {
             CheckCause::Probabilistic(cause) => cause.related().to_vec(),
             CheckCause::StateGraph(cause) => cause.related(),
@@ -323,7 +324,7 @@ impl DeclarationRegions {
     /// (FR-113, FR-326, FR-381) carries its own span directly, since a protocol has no
     /// expression tree for a `Location` path to walk; every other refusal
     /// is located by its `location`.
-    pub fn refusal_region(&self, refusal: &CheckRefusal) -> Option<SourceRegion> {
+    pub fn refusal_region(&self, refusal: &SemanticCheckRefusal) -> Option<SourceRegion> {
         match refusal.cause.as_ref() {
             CheckCause::LayerEquality {
                 span: Some(span), ..
@@ -530,6 +531,7 @@ impl CheckedGraph {
     /// every other occurrence. Positions inside the function keep the region
     /// [`Self::region`] gives them (FR-096).
     #[implements("FR-569-AC-6")]
+    #[ix_trace_rs::string_edge]
     pub fn clause_declaration_region(
         &self,
         node: &filament_exact::NodeKey,
@@ -1121,21 +1123,19 @@ mod tests {
         assert_eq!(super::region(&source, Some(&map), whole), None);
         // The single-segment sub-span still resolves to its own document
         // region: only the multi-region span is refused.
-        assert!(
-            super::region(
-                &source,
-                Some(&map),
-                Span {
-                    start: 0,
-                    end: line
-                }
-            )
-            .is_some()
-        );
+        assert!(super::region(
+            &source,
+            Some(&map),
+            Span {
+                start: 0,
+                end: line
+            }
+        )
+        .is_some());
     }
 
     /// FR-096 (SR-745 FND-003): each of node count, input bytes and work
-    /// budget is a `CheckRefusal` with code `stage_limit_exceeded`, carrying
+    /// budget is a `SemanticCheckRefusal` with code `stage_limit_exceeded`, carrying
     /// its kind, bound and counter, located at a specific source text. Input
     /// bytes and the declaration's own work charge are the family's
     /// per-declaration stage-entry checks

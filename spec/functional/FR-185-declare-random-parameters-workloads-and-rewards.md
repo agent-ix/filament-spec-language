@@ -233,7 +233,7 @@ name.
 - S3 SHALL charge one unit of the S3 work meter (`s3.work_units`, FR-255) for
   each argument vector before it evaluates the reward on it. When a charge
   would exceed the work budget, S3 SHALL stop with a
-  `CheckRefusal`/`stage_limit_exceeded`, kind work budget and cause
+  `SemanticCheckRefusal`/`stage_limit_exceeded`, kind work budget and cause
   `work-budget-exceeded`, at the reward's span, naming the bound, the count
   the denied charge would reach and the setting `s3.work_units`, and SHALL
   NOT report `negative-reward` for that reward.
@@ -265,7 +265,7 @@ its own:
   reaches S3 with that implementation.
 - The check runs after the unit's checked graph is assembled and before S3
   returns its result, so the port sees every constant the reward reads; its
-  refusal is an S3 `CheckRefusal` at the reward's span, and S4 does not run.
+  refusal is an S3 `SemanticCheckRefusal` at the reward's span, and S4 does not run.
 - A reward value that the evaluator reports `Undefined`, or a kernel refusal
   of its evaluation, refuses the reward with that record at the reward's
   span; it is never treated as zero or as non-negative.

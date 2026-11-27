@@ -38,6 +38,7 @@ pub(super) fn push<T>(
 }
 
 impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
+    #[ix_trace_rs::string_edge]
     pub(super) fn value(
         &self,
         value: &Value,

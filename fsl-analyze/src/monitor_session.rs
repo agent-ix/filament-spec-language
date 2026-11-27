@@ -1380,6 +1380,7 @@ impl<'a> MonitorSession<'a> {
     /// `monitor-state-mismatch` for a state that is not a closed
     /// `filament.monitor-state/1`, or whose package, clause selections, kind
     /// or binding differ from `package` and `request`.
+    #[ix_trace_rs::string_edge]
     pub fn resume(
         package: &'a CheckedPackage,
         state: &MonitorState,

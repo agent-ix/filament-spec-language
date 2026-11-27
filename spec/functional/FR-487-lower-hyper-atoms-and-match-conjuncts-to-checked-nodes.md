@@ -133,7 +133,7 @@ fn evaluate_step_predicate(
 ) -> Result<Evaluation, CallFailure>;
 ```
 
-- On refusal, a typed `CheckRefusal` with a span and no checked clause, when
+- On refusal, a typed `SemanticCheckRefusal` with a span and no checked clause, when
   an atom or conjunct does not type or its definedness check refuses.
 
 ## Behavior

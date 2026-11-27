@@ -80,7 +80,7 @@ On the `CheckedProtocolClause` (FR-218):
   the one forward `effect` node, `operation` the identity of the operation's
   anchor node and frame node (FR-114), `maximum_attempts` a `u64` of at least
   one, and `within` a closed interval `[lower, upper]`.
-- A typed `CheckRefusal` with a span on refusal, and no checked clause. Every
+- A typed `SemanticCheckRefusal` with a span on refusal, and no checked clause. Every
   refusal holds the S3 stage, the `ProtocolClause` family, the code and cause
   named at it, the located span named at it and the members named at it, so a
   consumer reads each as a field and never from a message.

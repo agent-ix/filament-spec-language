@@ -210,6 +210,7 @@ fn read(package: &CheckedPackageV2) -> Result<PackageProbabilistic, Probabilisti
 }
 
 /// The family of a `delay_distribution` body and its parameters.
+#[ix_trace_rs::string_edge]
 fn delay_family(body: &CheckedTerm) -> Option<PackageDelayFamily> {
     let parameters = bound(body, 3)?;
     Some(match text(bound(body, 2)?)? {
