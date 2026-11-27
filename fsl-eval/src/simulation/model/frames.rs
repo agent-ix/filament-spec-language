@@ -330,6 +330,7 @@ fn apply_argument(
                 if walk.candidate_visitor.is_some() {
                     walk.visit(super::NativeCandidateEvent::Undetermined {
                         transition: &transition,
+                        clause: &clause,
                         outcome: &evaluation,
                     })?;
                     continue;
@@ -2289,6 +2290,7 @@ impl Run<'_, '_, '_> {
                         if self.walk.candidate_visitor.is_some() {
                             self.walk.visit(super::NativeCandidateEvent::Undetermined {
                                 transition: self.transition,
+                                clause: &clause,
                                 outcome: &evaluation,
                             })?;
                             continue;

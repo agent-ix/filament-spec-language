@@ -452,6 +452,18 @@ pub enum HyperFinding {
     /// evaluated undefined or refused. FR-177 states no verdict for it, so the
     /// successor relation of the member is not exactly known.
     MemberContract,
+    /// HP-3: a contract conjunction an existential member's expansion evaluated
+    /// undefined, with the member's tuple (ADR-018 UE-6). The member's steps
+    /// are not exactly known either, so a [`Self::MemberContract`] is recorded
+    /// beside it.
+    MemberUndefined {
+        /// The existential component, by its index in quantifier order.
+        component: usize,
+        /// The undefined conjunction.
+        contract: crate::simulation::model::UndefinedContract,
+        /// How the member's existential tuple was reached.
+        partner: Rc<Partner>,
+    },
 }
 
 impl HyperFinding {

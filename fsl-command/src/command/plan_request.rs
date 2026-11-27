@@ -559,6 +559,9 @@ fn cause_member(cause: &PlanStopCause) -> Value {
         PlanStopCause::CertificateRejected { rule, entry } => {
             json!({"type": "certificate-rejected", "rule": rule.name(), "entry": entry})
         }
+        PlanStopCause::ContractUndefined { clause, .. } => {
+            json!({"type": "contract-undefined", "clause": clause})
+        }
         PlanStopCause::InvariantUndetermined { invariant, .. } => {
             json!({"type": "invariant-undetermined", "invariant": invariant})
         }

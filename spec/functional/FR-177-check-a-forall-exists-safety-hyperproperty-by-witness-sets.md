@@ -100,11 +100,15 @@ partner has failed.
   `Undecided(MatchUndetermined)` (ADR-023 HV-4).
 - If a universal component's contract conjunction is refused or incomplete
   at a product state, or an existential contract conjunction is refused,
-  incomplete or undefined at a member of that state's `X`, so that the
-  member's existential steps are not exactly known, and no refuting evidence
-  comes first, then the engine SHALL return `Undecided(UndecidedSuccessor)`
-  and never `Holds`. A universal component's contract conjunction that is
-  undefined is an undefined evaluation of the universal side.
+  incomplete at a member of that state's `X`, so that the member's
+  existential steps are not exactly known, and no refuting evidence comes
+  first, then the engine SHALL return `Undecided(UndecidedSuccessor)` and
+  never `Holds`. A universal component's contract conjunction that is
+  undefined is an undefined evaluation of the universal side, and an
+  existential member's contract conjunction that is undefined is an
+  undefined evaluation of that member's component (ADR-018 UE-6): the
+  counterexample is the `undefined` kind whose paths end at the member's
+  tuple, with the locus `contract` naming the existential component alone.
 - When the evaluation is on the universal side at a product state whose `X`
   is not empty, the existential variables' paths SHALL be the path of the
   first member of `X` in `X`'s sorted order, which ends at that member's
@@ -157,9 +161,8 @@ Findings are ranked within one instance only.
   over the joint step that enters the position; the body's letter there,
   its atoms in clause-node order; then each universal component's contract
   conjunctions there, the components in quantifier order and each
-  component's in the order its expansion records them. An existential
-  member's undefined contract conjunction is not among them: it leaves the
-  member's steps unknown, as above.
+  component's in the order its expansion records them, then each existential
+  member's component's, in the member's own order.
 - A later finding SHALL NOT replace an earlier one: an undefined evaluation
   at a position after an empty `X` with a fair universal cycle returns the
   empty `X`'s `WitnessExhausted` counterexample.
@@ -217,7 +220,7 @@ Findings are ranked within one instance only.
 | FR-177-AC-4 | `Opaque` over the leaky vault with `max_witness_set` 0 returns `Stopped(ResourceExhausted, MaxWitnessSet)` naming the limit and its value; with the default it returns AC-1's outcome. | Test (TC-602) |
 | FR-177-AC-5 | `Opaque` over the secure vault with the added `match` conjunct `(if present(b.step.Vault::step.i) then q(value(b.step.Vault::step.i)) else 0) = 0` on the existential variable `b`, where `function q using v(x: Integer): Integer pure { 1 mod x }` is checked under `CheckMode::Kernel` and the clause calls it (the clause is checked Linked and would refuse a bare `mod` as `unproved-nonzero`, FR-495-AC-3, FR-952), so `q` has no value on a joint step whose `b` step is `step(0)`: the item returns `Violated` with an `Undefined` counterexample whose traces hold a path for `a` and for `b`, ending at the first such joint step in canonical order, with cause `division-by-zero`; it never returns `Holds`. | Test (TC-602) |
 | FR-177-AC-6 | `Opaque` with a `match` conjunct that calls a function whose evaluation exhausts its meter at the first joint step (incomplete) returns `Undecided(MatchUndetermined)` and never `Holds`. | Test (TC-602) |
-| FR-177-AC-7 | `Opaque` over the leaky vault whose `step` has the precondition `d(1 - self.l + self.h) >= 0`, where `function d using v(x: Integer): Integer pure { 1 div x }` is checked under `CheckMode::Kernel` and the Linked precondition calls it (a bare `div` in the guard is refused `Unproved(Nonzero)` before evaluation, FR-495-AC-3, FR-952), so the guard has no value in the state `(h, l) = (0, 1)`, with the added `match` conjuncts `(if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 and b.step.op != stutter`, so that `a` never reaches `(0, 1)` and an existential member does: the item returns `Undecided(UndecidedSuccessor)` and never `Holds`. With a `μ_U` evaluation refused on a joint step that enters position 2, it returns the same cause, the contract at position 1 coming first. | Test (TC-602) |
+| FR-177-AC-7 | `Opaque` over the leaky vault whose `step` has the precondition `d(1 - self.l + self.h) >= 0`, where `function d using v(x: Integer): Integer pure { 1 div x }` is checked under `CheckMode::Kernel` and the Linked precondition calls it (a bare `div` in the guard is refused `Unproved(Nonzero)` before evaluation, FR-495-AC-3, FR-952), so the guard has no value in the state `(h, l) = (0, 1)`, with the added `match` conjuncts `(if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 and b.step.op != stutter`, so that `a` never reaches `(0, 1)` and an existential member does: the item returns `Violated` with an `undefined` counterexample of position 1, locus `contract` `Guard` naming the existential variable `b` alone, and cause `DivisionByZero`, and never `Holds`. With a `μ_U` evaluation refused on a joint step that enters position 2, it returns the same counterexample, the contract at position 1 coming first. A contract conjunction that is refused at a member, with none undefined, returns `Undecided(UndecidedSuccessor)`. | Test (TC-602) |
 | FR-177-AC-8 | Over the leaky vault, a `μ_U` conjunct with no value on `step(1)` from joint position 1 on, a joint step that enters position 2, does not replace the empty `X` at position 1: the item returns `Violated` with `WitnessExhausted{position: 1}`. AC-6's refused `μ_E` returns `Undecided(MatchUndetermined)` although the members it drops would empty `X` at the same position. | Test (TC-602) |
 | FR-177-AC-9 | AC-1's lasso is the canonical one: the stem is `step(0)` into the empty `X`, the loop is `step(0)` from that state, and since the loop's step repeats the stem's step from an equal universal state the loop entry rotates back to 0. Over the leaky vault with `step` requiring `l = 0`, an added `reset` requiring `l = 0` with postcondition `l = 1`, and `fair { weak V::Vault::reset }` on `a`, the empty state after `step(0)` has only the unfair loop `step(0)`: the lasso goes on by one connecting step to `l = 1`, where nothing is enabled, and loops on the terminal stutter, with `position: 1` and loop entry 2. | Test (TC-602) |
 | FR-177-AC-10 | `Opaque` over the secure vault with the added `match` conjunct `(if present(a.step.Vault::step.i) then q(value(a.step.Vault::step.i)) else 0) = 0` (`q` is AC-5's Kernel-checked function, FR-495-AC-3, FR-952) on the universal variable `a`: the item returns `Violated` with an `Undefined` counterexample at position 1 with cause `division-by-zero`, whose trace for `a` takes `step(0)` and whose trace for `b` is the first member's path, from the initial state `(1, 0)` with no step, one step short of `a`'s; `variables` and `state_keys` hold two entries. With a second universal variable `c` before `b` they hold three, in the order `a`, `c`, `b`. | Test (TC-602) |

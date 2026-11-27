@@ -23,12 +23,11 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
-    GraphEvidenceEnvelope, GraphReplayResult, GraphReplaySettlement, ModelTraceSubject,
-    ProfileSelection, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestTargetWire, StateGraphCertificateForm, StateGraphInstanceOutcome, StateGraphOutcome,
-    StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence, GraphEvidenceEnvelope,
+    GraphReplayResult, GraphReplaySettlement, ModelTraceSubject, ProfileSelection, ReplayRefusal,
+    ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire, StateGraphCertificateForm,
+    StateGraphInstanceOutcome, StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord,
+    TerminalValue, TrapClosure, WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
@@ -1061,10 +1060,11 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if instances.is_empty() {
         return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
     }
-    let limits = super::timed_item::zone_limits(read.form);
+    let bounds = super::timed_item::zone_bounds(read.form, read.limits.engines);
+    let limits = super::timed_item::zone_limits(&bounds);
     let graph = match explore_timed_state_graph(&timed, limits, cancel) {
         Ok(graph) => graph,
-        Err(refusal) => return stopped(refusal, cancel),
+        Err(refusal) => return stopped(refusal, read, cancel),
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
@@ -1092,7 +1092,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             cancel,
         ) {
             Ok(decision) => decision,
-            Err(refusal) => return stopped(refusal, cancel),
+            Err(refusal) => return stopped(refusal, read, cancel),
         };
         let form = certificate_form(read.claim.form());
         let (held, ef_nodes) = match &decision {
@@ -1132,7 +1132,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             &obligation,
             certificate_item,
             &certificate,
-            CertificateCheckLimits::default(),
+            super::timed_item::certificate_limits(&bounds),
             cancel,
         );
         if let Ok(ZoneCertificateVerdict::Stopped(cause)) = &check {
@@ -1270,14 +1270,24 @@ fn certificate_form(form: &StateGraphForm) -> StateGraphCertificateForm {
 }
 
 /// A timed exploration or decision that returned no verdict.
-fn stopped(refusal: ZoneCheckRefusal, cancel: &Cancel) -> EngineReport {
+fn stopped(refusal: ZoneCheckRefusal, read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let incomplete = |cause| EngineReport::Refused(Refusal::Incomplete(cause));
     let broken = || EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     match refusal {
         ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(limit)) => {
             let (limit, value) = match limit {
                 ZoneCheckLimit::MaxSymbolicStates(value) => {
-                    (fsl_replay::ModelCheckLimit::MaxStates, value)
+                    // FR-852: the item's own `max_states` keeps its name.
+                    let stated = read
+                        .form
+                        .requested_limits
+                        .contains(&fsl_replay::ModelCheckLimit::MaxStates);
+                    let limit = if stated {
+                        fsl_replay::ModelCheckLimit::MaxStates
+                    } else {
+                        fsl_replay::ModelCheckLimit::ZoneMaxSymbolicStates
+                    };
+                    (limit, value)
                 }
                 ZoneCheckLimit::MaxSymbolicTransitions(value) => (
                     fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions,

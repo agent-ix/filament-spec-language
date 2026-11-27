@@ -112,6 +112,8 @@ use fsl_eval::simulation::{
     SubjectTransition, SymmetryGroup, TransitionSystem, ZeroProgress, ZeroProgressError,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::Setting;
 use fsl_package::TemporalClockSelection;
 use fsl_replay::undefined_finding;
 use fsl_replay::{
@@ -132,6 +134,7 @@ use super::fair_walk::FairModel;
 use super::false_extension::false_extension_rejects;
 use super::initial::{admit_initial, Refused};
 use super::reduce::{self, InstanceGroup, TableForm};
+use crate::analyze::EngineBounds;
 use fsl_route::reductions::Reductions;
 
 pub(super) use fsl_eval::simulation::BOUND_POSITIONS;
@@ -463,6 +466,9 @@ struct Node<State, Transition> {
 /// reads, the counted distance (see [`Run::product`]).
 type ProductKey = (Vec<u8>, Vec<StateId>, usize, Vec<BoundedState>);
 
+/// FR-255 "Retained bytes": the fixed overhead of one stored EN-1 state.
+pub(super) const EN1_STATE_OVERHEAD_BYTES: u64 = 256;
+
 /// Why the run ended before its frontier emptied.
 enum Finish {
     Violated(Box<Violation>),
@@ -611,7 +617,13 @@ pub fn check_model(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-    check_model_with_stutter_closure(request, cancel, false)
+    let retained = published_budget(&request.subject, cancel);
+    check_model_with_stutter_closure(request, cancel, false, &retained)
+}
+
+/// The allowance of a run whose caller set no engine setting.
+fn published_budget(subject: &ModelSubject<'_>, cancel: &Cancel) -> Budget {
+    EngineBounds::default().item_budget(subject.simulation.meter, cancel)
 }
 
 /// Decide one model item, optionally adding the unfair self-loop at every
@@ -620,6 +632,7 @@ pub(crate) fn check_model_with_stutter_closure(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
     stutter_closure: bool,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     if request.workers == 0 {
         return Err(ModelCheckRefusal::Workers);
@@ -640,16 +653,16 @@ pub(crate) fn check_model_with_stutter_closure(
                     }));
                 }
             }
-            return super::liveness::check(request, cancel, stutter_closure);
+            return super::liveness::check(request, cancel, stutter_closure, retained);
         }
     }
     if !request.reductions.is_empty() {
         return first_refuted_instance(request.limits, |cap, limits, listed| {
-            check_reduced(&request, cancel, cap, limits, listed)
+            check_reduced(&request, cancel, cap, limits, listed, retained)
         });
     }
     first_refuted_instance(request.limits, |cap, limits, listed| {
-        check_safety(&request, cancel, cap, limits, listed)
+        check_safety(&request, cancel, cap, limits, listed, retained)
     })
 }
 
@@ -803,6 +816,7 @@ fn check_safety(
     cap: Option<usize>,
     limits: ModelCheckLimits,
     listed: &mut Vec<ModelInstance>,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let max_automaton_states = request.limits.max_automaton_states;
     // The form is refused before admission reads any snapshot.
@@ -884,6 +898,7 @@ fn check_safety(
         meter,
         max_candidates,
         cancel,
+        retained,
         nodes: Vec::new(),
         canonical: Vec::new(),
         known: BTreeMap::new(),
@@ -1008,6 +1023,18 @@ pub fn check_protocol_constrained(
     constraint: Option<&str>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+    let retained = published_budget(&request.subject.model, cancel);
+    check_protocol_retaining(request, constraint, cancel, &retained)
+}
+
+/// [`check_protocol_constrained`] storing its states on the item's allowance
+/// `retained`.
+pub(crate) fn check_protocol_retaining(
+    request: ProtocolCheckRequest<'_>,
+    constraint: Option<&str>,
+    cancel: &Cancel,
+    retained: &Budget,
+) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     if request.workers == 0 {
         return Err(ModelCheckRefusal::Workers);
     }
@@ -1016,7 +1043,7 @@ pub fn check_protocol_constrained(
     }
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
-            return check_protocol_liveness(request, constraint, cancel);
+            return check_protocol_liveness(request, constraint, cancel, retained);
         }
     }
     let max_automaton_states = request.limits.max_automaton_states;
@@ -1134,6 +1161,7 @@ pub fn check_protocol_constrained(
         meter,
         max_candidates,
         cancel,
+        retained,
         max_automaton_states,
         instance_bound,
         constraint,
@@ -1244,6 +1272,7 @@ fn check_protocol_liveness(
     request: ProtocolCheckRequest<'_>,
     constraint: Option<&str>,
     cancel: &Cancel,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     let subject = &request.subject;
     let model = ModelSystem::new(subject.model.simulation.clone())
@@ -1331,6 +1360,7 @@ fn check_protocol_liveness(
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
                         constraint,
+                        retained,
                     },
                     cancel,
                 )
@@ -1358,6 +1388,7 @@ fn check_protocol_liveness(
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
                         constraint,
+                        retained,
                     },
                     cancel,
                 )
@@ -1380,6 +1411,7 @@ fn check_protocol_liveness(
                     ignore_memory_constraints: request.ignore_memory_constraints,
                     instance_bound,
                     constraint,
+                    retained,
                 },
                 cancel,
             )
@@ -1435,6 +1467,7 @@ struct ProtocolRun<'r> {
     meter: filament_exact::ScalarLimits,
     max_candidates: u64,
     cancel: &'r Cancel,
+    retained: &'r Budget,
     max_automaton_states: u64,
     /// The instance bound of an `activation on each` protocol.
     instance_bound: Option<InstanceBound>,
@@ -1497,6 +1530,7 @@ impl ProtocolRun<'_> {
             meter: self.meter,
             max_candidates: self.max_candidates,
             cancel: self.cancel,
+            retained: self.retained,
             nodes: Vec::new(),
             canonical: Vec::new(),
             known: BTreeMap::new(),
@@ -1622,6 +1656,7 @@ fn check_reduced(
     cap: Option<usize>,
     limits: ModelCheckLimits,
     listed: &mut Vec<ModelInstance>,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let reductions = &request.reductions;
     let max_automaton_states = request.limits.max_automaton_states;
@@ -1716,6 +1751,7 @@ fn check_reduced(
             meter,
             max_candidates,
             cancel,
+            retained,
             nodes: Vec::new(),
             canonical: Vec::new(),
             known: BTreeMap::new(),
@@ -2363,6 +2399,8 @@ struct Run<'r, S: SubjectSystem> {
     meter: filament_exact::ScalarLimits,
     max_candidates: u64,
     cancel: &'r Cancel,
+    /// The item's allowance for the states this run stores.
+    retained: &'r Budget,
     nodes: Vec<Node<S::State, S::TransitionId>>,
     /// For each node, each instance's canonical bounded state after reading
     /// its position; empty unless the item has canonical translations.
@@ -3509,6 +3547,7 @@ where
                 }
             }
         }
+        self.retain(&product, &node, &canonical)?;
         let at = self.nodes.len();
         self.nodes.push(node);
         self.canonical.push(canonical);
@@ -3525,6 +3564,44 @@ where
             }
         }
         Ok(())
+    }
+
+    /// Charge the bytes of a state about to be stored (FR-255 "Retained
+    /// bytes"): the fixed overhead of an EN-1 state, then the buffers the
+    /// stored node and its coalescing entry own.
+    #[implements("FR-255-AC-40")]
+    fn retain(
+        &self,
+        (key, monitor, _, canonical_key): &ProductKey,
+        node: &Node<S::State, S::TransitionId>,
+        canonical: &[BoundedState],
+    ) -> Step<()> {
+        let sequence = |len: usize, element: usize| widen(len).saturating_mul(widen(element));
+        let bytes = [
+            // The model state's key, held by the node and by the index.
+            sequence(key.len(), 2),
+            sequence(node.monitor.len() + monitor.len(), size_of::<StateId>()),
+            sequence(
+                canonical.len() + canonical_key.len(),
+                size_of::<BoundedState>(),
+            ),
+        ]
+        .into_iter()
+        .fold(EN1_STATE_OVERHEAD_BYTES, u64::saturating_add);
+        match self.retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+            Ok(()) => Ok(()),
+            Err(BudgetStop::Limit(limit)) => Err(Self::stopped(
+                ModelCheckLimit::AnalysisRetainedBytes,
+                limit.configured_bound(),
+            )
+            .into()),
+            Err(BudgetStop::Cancelled(source)) => {
+                Err(Finish::Stopped(IncompleteCause::Cancelled { source }, None).into())
+            }
+            Err(BudgetStop::Accounting(_)) => {
+                Err(fault("a-byte-charge-is-no-kernel-charge").into())
+            }
+        }
     }
 
     /// Each instance's monitor state after reading `node`'s position from

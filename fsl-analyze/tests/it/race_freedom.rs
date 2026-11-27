@@ -1844,6 +1844,7 @@ fn protocol_run<'c>(
             max_messages: None,
             max_live_instances: None,
         },
+        engines: Default::default(),
         replay: Box::new(move |payload| {
             if race {
                 case.replay_race(selection, payload.clone())

@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use filament_exact::{Cancel, CancelCause};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{
-    analyze_items, AlterEvidence, AnalyzeLimits, Engines, PackageStateGraphSubject,
+    analyze_items, AlterEvidence, AnalyzeLimits, DeadlineSupply, Engines, PackageStateGraphSubject,
 };
 use fsl_analyze::model_check::{check_and_settle_state_graph, StateGraphItem, StateGraphRequest};
 use fsl_eval::model_subject::ModelInstance;
@@ -2018,7 +2018,7 @@ fn a_confirmed_refutation_decides_over_a_disagreeing_replay_in_either_order() {
             &handoff.bytes,
             handoff.supply(),
             world.binding(AB),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             occurrence,
         )
         .expect("the package route rebuilds the claim")
