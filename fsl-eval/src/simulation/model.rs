@@ -104,19 +104,19 @@ use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
-use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
+use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
-use crate::simulation::order::{Expanded, expand, sorted_initial};
+use crate::simulation::order::{expand, sorted_initial, Expanded};
 use crate::simulation::protocol::WeakAccessShape;
 use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
 use crate::simulation::sample::{
-    ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
-    sample_request_observed_using, sample_request_until,
+    sample_request, sample_request_observed_using, sample_request_until, ObservedSample,
+    ObserverDecision, SampleObservation, SampleRequest,
 };
-use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
+use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
 use crate::value::QualifiedName;
 
 struct UnmeteredModelKeyBudget;
@@ -250,14 +250,13 @@ pub use task_product::{
 };
 pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
-    advance_timed, replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters,
-    BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal,
-    PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock,
-    TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep,
-    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop,
-    TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal, TimedSystem,
-    TimedTerminalClass, DEFAULT_MAX_CLOCKS,
-    TimedSampleEnd, UndecidedReading, sample_timed_from,
+    advance_timed, replay_timed_sample, sample_timed, sample_timed_from, sample_timed_race,
+    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep,
+    MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding,
+    TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw,
+    TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd,
+    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
 };
 pub(crate) use walk::{Applied, Budget};
 

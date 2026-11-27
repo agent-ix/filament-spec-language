@@ -109,10 +109,11 @@ pub(crate) use model::{
     record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
 };
 pub use model::{
-    clock_field_member_type, collection_kind, model_root_key, AdmittedModel, CollectionShape,
-    ForeignView, ModelClause, PlaceRow, PlaceStep, SelectedModelEnumDeclaration,
-    SelectedModelEnumMember, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
-    SelectedOperationMember, SourceClockEntry, SourceClockMembers, source_object_owner_chain,
+    clock_field_member_type, collection_kind, model_root_key, source_object_owner_chain,
+    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
+    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
+    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember, SourceClockEntry,
+    SourceClockMembers,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{

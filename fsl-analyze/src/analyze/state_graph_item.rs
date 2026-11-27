@@ -44,7 +44,7 @@ use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
     SubjectBinding, TemporalItem,
 };
-use crate::model_check::digitisable::{DigitalItem, digitisation_decline};
+use crate::model_check::digitisable::{digitisation_decline, DigitalItem};
 use crate::model_check::manifest as en1;
 use crate::model_check::{
     check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
@@ -406,15 +406,27 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
             StateGraphForm::UniquePath { from, to } => (Some(from), to),
         };
-        let (target_values, mut undefined_candidates) =
-            match digital_predicate_values(&system, &graph.nodes, target, PredicateRole::Target, over.as_ref(), cancel) {
-                Ok(values) => values,
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            };
+        let (target_values, mut undefined_candidates) = match digital_predicate_values(
+            &system,
+            &graph.nodes,
+            target,
+            PredicateRole::Target,
+            over.as_ref(),
+            cancel,
+        ) {
+            Ok(values) => values,
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        };
         let source_values = match source {
             Some(source) => {
-                match digital_predicate_values(&system, &graph.nodes, source, PredicateRole::From, over.as_ref(), cancel)
-                {
+                match digital_predicate_values(
+                    &system,
+                    &graph.nodes,
+                    source,
+                    PredicateRole::From,
+                    over.as_ref(),
+                    cancel,
+                ) {
                     Ok((values, mut undefined)) => {
                         undefined_candidates.append(&mut undefined);
                         Some(values)
@@ -439,8 +451,8 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         };
         for found in &graph.undefined {
             let state = graph.nodes[found.node].discrete();
-            let Ok((_, state_key)) = system
-                .state_key(state, fsl_foundation::IdentityLimits::default())
+            let Ok((_, state_key)) =
+                system.state_key(state, fsl_foundation::IdentityLimits::default())
             else {
                 return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
             };
@@ -667,27 +679,30 @@ fn digital_predicate_values(
     let mut values = Vec::with_capacity(nodes.len());
     let mut undefined = Vec::new();
     for (index, node) in nodes.iter().enumerate() {
-            let readings = system
-                .state_predicates_with_cancel(node.discrete(), &[(body, over)], cancel)
-                .map_err(|_| ())?;
-            match readings.as_slice() {
-                [fsl_eval::simulation::model::PredicateReading::True] => values.push(true),
-                [fsl_eval::simulation::model::PredicateReading::False] => values.push(false),
-                [fsl_eval::simulation::model::PredicateReading::Undefined { cause, location }] => {
-                    let (_, state_key) = system
-                        .state_key(node.discrete(), fsl_foundation::IdentityLimits::default())
-                        .map_err(|_| ())?;
-                    undefined.push((index, fsl_replay::GraphUndefined {
+        let readings = system
+            .state_predicates_with_cancel(node.discrete(), &[(body, over)], cancel)
+            .map_err(|_| ())?;
+        match readings.as_slice() {
+            [fsl_eval::simulation::model::PredicateReading::True] => values.push(true),
+            [fsl_eval::simulation::model::PredicateReading::False] => values.push(false),
+            [fsl_eval::simulation::model::PredicateReading::Undefined { cause, location }] => {
+                let (_, state_key) = system
+                    .state_key(node.discrete(), fsl_foundation::IdentityLimits::default())
+                    .map_err(|_| ())?;
+                undefined.push((
+                    index,
+                    fsl_replay::GraphUndefined {
                         predicate: Some(role),
                         transition: None,
                         state_key,
                         locus: location.clone(),
                         cause: cause.clone(),
-                    }));
-                    values.push(false);
-                }
-                _ => return Err(()),
+                    },
+                ));
+                values.push(false);
             }
+            _ => return Err(()),
+        }
     }
     Ok((values, undefined))
 }
@@ -707,10 +722,7 @@ fn digital_constraint_undefined(
             continue;
         };
         let (_, state_key) = system
-            .state_key(
-                timed.discrete(),
-                fsl_foundation::IdentityLimits::default(),
-            )
+            .state_key(timed.discrete(), fsl_foundation::IdentityLimits::default())
             .map_err(|_| Refusal::Failed(super::items::BROKEN))?;
         undefined.push((
             node,
@@ -1279,19 +1291,18 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             }
             _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
-        let decision =
-            match crate::zone_check::decide_timed_state_graph_with_constraint(
-                &timed,
-                &graph,
-                read.claim,
-                over.as_ref(),
-                read.form.reductions.constraint.as_deref(),
-                limits,
-                cancel,
-            ) {
-                Ok(decision) => decision,
-                Err(refusal) => return stopped(refusal, read, cancel),
-            };
+        let decision = match crate::zone_check::decide_timed_state_graph_with_constraint(
+            &timed,
+            &graph,
+            read.claim,
+            over.as_ref(),
+            read.form.reductions.constraint.as_deref(),
+            limits,
+            cancel,
+        ) {
+            Ok(decision) => decision,
+            Err(refusal) => return stopped(refusal, read, cancel),
+        };
         let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
         let form = certificate_form(read.claim.form());
         let ef_nodes = match &decision {
@@ -1594,9 +1605,7 @@ fn timed_path_state_key(
         return Ok(step.post_state.clone());
     }
     let initial_states = timed.initial();
-    let initial = initial_states
-        .get(path.initial as usize)
-        .ok_or(())?;
+    let initial = initial_states.get(path.initial as usize).ok_or(())?;
     timed.state_key(initial).map_err(|_| ())
 }
 

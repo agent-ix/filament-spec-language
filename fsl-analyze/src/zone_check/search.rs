@@ -39,7 +39,9 @@ use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, PlaceConstraint, TerminalClass, TimedStop, TimedSystem,
     UndecidedReading,
 };
-use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup, TransitionSystem};
+use fsl_eval::simulation::{
+    NotSimulated, Permutation, RequiresBound, SymmetryGroup, TransitionSystem,
+};
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::{ReductionKind, Setting};
 use fsl_replay::{
@@ -524,8 +526,8 @@ pub fn explore_timed_state_graph(
         let Ok(expansion) = model_system.successors(&graph_node.state) else {
             continue;
         };
-        let Ok(TerminalClass::Undefined { model, cause }) = model_system
-            .terminal_class(&graph_node.state, !expansion.successors.is_empty())
+        let Ok(TerminalClass::Undefined { model, cause }) =
+            model_system.terminal_class(&graph_node.state, !expansion.successors.is_empty())
         else {
             continue;
         };

@@ -4388,13 +4388,17 @@ mod tests {
                 .find(|(_, arguments)| {
                     arguments.first().is_some_and(|argument| argument == "test")
                         && arguments.iter().any(|argument| argument == "--no-run")
-                        && arguments.windows(2).any(|pair| {
-                            pair[0] == "-p" && pair[1] == package
-                        })
+                        && arguments
+                            .windows(2)
+                            .any(|pair| pair[0] == "-p" && pair[1] == package)
                 })
                 .expect("package build invocation");
             assert_eq!(
-                build.1.iter().filter(|argument| *argument == "--test").count(),
+                build
+                    .1
+                    .iter()
+                    .filter(|argument| *argument == "--test")
+                    .count(),
                 1,
                 "only the selected integration target is built for {package}"
             );

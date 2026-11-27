@@ -3372,18 +3372,11 @@ impl QuantifierFacts for (QuantifierKind, bool) {
     }
 }
 
-fn classify_facts<Q: QuantifierFacts>(
-    quantifiers: &[Q],
-    aligned: bool,
-    safety: bool,
-) -> HyperForm {
+fn classify_facts<Q: QuantifierFacts>(quantifiers: &[Q], aligned: bool, safety: bool) -> HyperForm {
     let any_exists = quantifiers
         .iter()
         .any(|quantifier| quantifier.kind() == QuantifierKind::Exists);
-    if quantifiers.len() == 1
-        && quantifiers[0].kind() == QuantifierKind::Exists
-        && !aligned
-    {
+    if quantifiers.len() == 1 && quantifiers[0].kind() == QuantifierKind::Exists && !aligned {
         return HyperForm::SingleExistential;
     }
     let first_exists = quantifiers
@@ -3402,9 +3395,7 @@ fn classify_facts<Q: QuantifierFacts>(
     }
     let existential_fairness = quantifiers
         .iter()
-        .any(|quantifier| {
-            quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness()
-        });
+        .any(|quantifier| quantifier.kind() == QuantifierKind::Exists && quantifier.has_fairness());
     if any_exists && quantifiers.len() >= 2 && (!safety || existential_fairness) {
         return HyperForm::Other {
             reason: HyperUnsupported::ExistentialOutsideSafety,

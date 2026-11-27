@@ -15,8 +15,8 @@ use filament_contract_model::{
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{
-    AtomSlot, BinaryTemporal, PackageFormulaNode, PackageHyperForm, PackageHyperParameter,
-    HyperForm, PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
+    AtomSlot, BinaryTemporal, HyperForm, PackageFormulaNode, PackageHyperForm,
+    PackageHyperParameter, PackageHyperQuantifier, TemporalProfile, UnaryTemporal,
 };
 use ix_trace_rs::implements;
 

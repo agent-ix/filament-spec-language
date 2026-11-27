@@ -1520,7 +1520,10 @@ impl AdmittedModel {
                 .values()
                 .filter_map(|record| match record {
                     DomainPackageRecord::FieldMember(field) => Some((
-                        (field.owner.clone(), field.key.node.rsplit('/').next()?.to_owned()),
+                        (
+                            field.owner.clone(),
+                            field.key.node.rsplit('/').next()?.to_owned(),
+                        ),
                         field.position,
                     )),
                     _ => None,

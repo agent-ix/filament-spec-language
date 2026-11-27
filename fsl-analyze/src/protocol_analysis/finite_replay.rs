@@ -13,9 +13,9 @@ use fsl_eval::model_subject::{
 };
 use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    Capacities, MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
-    ResolvedMemory, SubjectMemory, live_instance_bound, over_reference, send_record_json,
-    transition_json,
+    live_instance_bound, over_reference, send_record_json, transition_json, Capacities,
+    MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
+    ResolvedMemory, SubjectMemory,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
@@ -23,11 +23,11 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::shared_wire::{StateLocus, WireDefectKind};
 use fsl_replay::{
-    CounterexampleKind, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
-    ModelStep, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceEnd,
-    ProtocolTraceSubject, ProtocolWire, QualifiedName, ReplayTargetMembers, RequestTargetWire,
-    TemporalCounterexample, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
-    evaluate_protocol_trace, settle_protocol_check, undefined_finding,
+    evaluate_protocol_trace, settle_protocol_check, undefined_finding, CounterexampleKind,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
+    ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceEnd, ProtocolTraceSubject,
+    ProtocolWire, QualifiedName, ReplayTargetMembers, RequestTargetWire, TemporalCounterexample,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CheckedProtocol, TemporalClauseNode};
 use serde_json::Value;
@@ -39,8 +39,8 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 
 use super::manifest::BACKEND_ID;
 use crate::analyze::{
-    AnalyzeItem, AnalyzeLimits, EngineReport, NoLetters, ProtocolReplayInputs, Refusal,
-    ReplayShape, SourceProvision, SubjectBinding, derived_target, replay_protocol_over,
+    derived_target, replay_protocol_over, AnalyzeItem, AnalyzeLimits, EngineReport, NoLetters,
+    ProtocolReplayInputs, Refusal, ReplayShape, SourceProvision, SubjectBinding,
 };
 
 /// The FSpec FR-433 trace document a `finite-replay` item names: a format
@@ -955,7 +955,7 @@ impl Run<'_, '_> {
         let shape = match clause {
             Some(node) => {
                 let name = QualifiedName::new(vec![
-                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?,
+                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?
                 ])
                 .map_err(|_| ReplayFault::Broken)?;
                 ReplayShape {
