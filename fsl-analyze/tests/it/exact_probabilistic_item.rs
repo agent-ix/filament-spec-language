@@ -78,6 +78,7 @@ fn settle_with_work(
         &Engines::fsl().expect("the linked engines are admitted"),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0)
 }

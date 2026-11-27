@@ -4492,6 +4492,7 @@ fn fair_minimum_over_a_component_with_an_exit_back_into_its_scc_is_refuted() {
             world.request("FairGo", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(
@@ -4660,6 +4661,7 @@ fn extrema_over_a_component_holding_the_target_are_decided_and_certified() {
                 world.request(name, ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         let settled = record.terminal().map(|terminal| terminal.value());
@@ -5397,6 +5399,7 @@ fn fair_eventual_stops_settle_incomplete_and_an_unused_constraint_changes_nothin
             &engines,
             vec![exact_probabilistic_item(RequestIndex::new(0), request)],
             cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     };
@@ -5502,6 +5505,7 @@ fn fair_eventual_stops_settle_incomplete_and_an_unused_constraint_changes_nothin
         &engines,
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert!(

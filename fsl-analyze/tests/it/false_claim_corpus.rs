@@ -578,7 +578,12 @@ fn bounded_probability_neighbour_of_qsl_3414_is_not_proved_above_the_reference_v
         RequestIndex::new(0),
         world.request("FalseBound", ModelCheckLimits::default()),
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    ).remove(0);
     assert_eq!(
         record.terminal().expect("the route settles").value(),
         &TerminalValue::Refuted,
@@ -589,7 +594,12 @@ fn bounded_probability_neighbour_of_qsl_3414_is_not_proved_above_the_reference_v
         RequestIndex::new(0),
         world.request("TrueBound", ModelCheckLimits::default()),
     );
-    let proof = analyze_items(&engines, vec![proof_item], &Cancel::new()).remove(0);
+    let proof = analyze_items(
+        &engines,
+        vec![proof_item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    ).remove(0);
     let proof_bytes = proof
         .terminal()
         .expect("the neighboring true bound settles")

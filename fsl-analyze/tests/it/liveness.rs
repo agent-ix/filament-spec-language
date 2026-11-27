@@ -861,6 +861,7 @@ fn a_liveness_run_charges_each_product_state_to_retained_bytes() {
             &Engines::fsl().expect("the engines register"),
             vec![model_item(RequestIndex::new(0), item).expect("a clause run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let (mut records, _) = split_records(records, &fixture.package);
         records.remove(0)
