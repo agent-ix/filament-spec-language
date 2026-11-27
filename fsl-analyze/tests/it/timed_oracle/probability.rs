@@ -1158,9 +1158,38 @@ fn row_3468_time_lock_hand() {
     }
 }
 
+/// The closed time-lock row keeping only the claim `name`.
+fn time_lock_claim(name: &str) -> Row {
+    let mut row = time_lock("self.x <= 1 ms");
+    row.claims.retain(|claim| claim.exact == Some(name));
+    row
+}
+
+/// `Early` reads positions the lock reaches: its `always` holds, value 1.
 #[test]
-fn row_3468_time_lock_closed_routes() {
-    assert_routes(&time_lock("self.x <= 1 ms"));
+fn row_3468_time_lock_closed_early_routes() {
+    assert_routes(&time_lock_claim("Early"));
+}
+
+/// `Later` waits on the region process (QSL-3495, ADR-038 step 6): the
+/// admission table sends a time-locked free subject to the region route.
+#[test]
+#[ignore = "QSL-3495: region MDP decides time-locked free subject; settles incomplete:UnresolvedDynamics until step 6"]
+fn row_3468_time_lock_closed_later_routes() {
+    assert_routes(&time_lock_claim("Later"));
+}
+
+/// Until step 6, `Later` settles the typed `incomplete`, never a verdict: a
+/// wrong answer fails here.
+#[test]
+fn row_3468_time_lock_closed_later_settles_incomplete() {
+    let mut row = time_lock_claim("Later");
+    row.claims = row
+        .claims
+        .into_iter()
+        .map(|claim| claim.exact_expects(Expect::Declines("incomplete:UnresolvedDynamics")))
+        .collect();
+    assert_routes(&row);
 }
 
 #[test]
