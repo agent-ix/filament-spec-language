@@ -151,6 +151,7 @@ fn object<'a>(
     Ok(members)
 }
 
+#[ix_trace_rs::string_edge]
 fn read_undefined_kind(
     value: &Value,
     graph: &CheckedGraph,

@@ -12,7 +12,7 @@ use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity,
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    check_clauses, CheckCause, CheckRefusal, CheckedTemporalClause, TemporalCause,
+    check_clauses, CheckCause, CheckedTemporalClause, SemanticCheckRefusal, TemporalCause,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -164,7 +164,7 @@ fn check_in(
     body: &str,
 ) -> (
     String,
-    Result<CheckedTemporalClause, StageFailure<CheckRefusal>>,
+    Result<CheckedTemporalClause, StageFailure<SemanticCheckRefusal>>,
 ) {
     let (profiles, declarations) = (profile_header(profile), clause_body(body));
     let package = admit_and_assemble_with_profiles(&mutex_document(), &profiles, &declarations)

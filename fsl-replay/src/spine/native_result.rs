@@ -731,6 +731,7 @@ pub struct CallLocationRead {
 
 impl CallLocationRead {
     /// The typed location this record restores.
+    #[ix_trace_rs::string_edge]
     fn typed(&self) -> filament_semantic_value::location::ExpressionLocation {
         use filament_semantic_value::location::{
             ExpressionLocation as Location, ExpressionOwner as Origin,
@@ -2963,6 +2964,7 @@ impl OutcomeDiagnosticRead {
 /// # Errors
 /// Existing codec errors identify malformed format/diagnostic/locus data or
 /// an exhausted reader bound. No partial diagnostic list is returned.
+#[ix_trace_rs::string_edge]
 pub fn read_outcome_diagnostics(
     bytes: &[u8],
     limits: NativeRunLimits,

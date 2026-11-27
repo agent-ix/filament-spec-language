@@ -462,7 +462,7 @@ pub enum FormsCause {
     /// all.").
     RecoveringCst,
     /// The source carries a diagnostic and no recovery (for example a
-    /// profile refusal added by `ParsedSource::prepend_diagnostic`). Holds
+    /// profile refusal added by `FormsSource::prepend_diagnostic`). Holds
     /// the first diagnostic's code.
     DiagnosedSource(Code),
     /// A declaration's leading token has no entry in the dispatch table.

@@ -380,6 +380,7 @@ fn member(term: &CheckedTerm, position: usize) -> Option<&CheckedTerm> {
 /// The unit node of the `dense` time source of the timed model rooted on
 /// `declaring`, read from the timed nodes already written. IR's reader
 /// types each delay time by this node (FR-640 Reader rule 5).
+#[ix_trace_rs::string_edge]
 pub(super) fn dense_unit(
     nodes: &[CheckedSemanticNodeV2],
     declaring: &CheckedNodeId,
@@ -598,6 +599,7 @@ fn reward_node(
 /// The term of `statement` in a claim body: a text as a text literal, a
 /// reference as a reference to its emitted node, an exact value as a literal of
 /// its type node. `None` when a node it names is not emitted.
+#[ix_trace_rs::string_edge]
 fn statement_term(
     ids: &StructuralIds,
     nodes: &[CheckedSemanticNodeV2],

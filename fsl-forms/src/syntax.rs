@@ -5463,11 +5463,9 @@ mod tests {
         let listed = field_read(10);
         let guard = field_read(40);
         assert!(listed.root().same_tree(guard.root()));
-        assert!(
-            !listed
-                .root()
-                .same_tree(Expression::field(Expression::name("got"), "ready").root())
-        );
+        assert!(!listed
+            .root()
+            .same_tree(Expression::field(Expression::name("got"), "ready").root()));
     }
 
     /// A 100,000-deep tree, alternating single-, two- and many-operand

@@ -23,9 +23,9 @@ use fsl_forms::{
 use fsl_foundation::Span;
 use ix_trace_rs::implements;
 
-use super::assemble::{AssemblyCause, AssemblyError, SourceObjectFault, source_member_type};
+use super::assemble::{source_member_type, AssemblyCause, AssemblyError, SourceObjectFault};
 use super::lowering::strongly_connected;
-use super::type_form::{TypeNames, resolve_form};
+use super::type_form::{resolve_form, TypeNames};
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, FieldMemberRecord, Multiplicity,
     NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord,

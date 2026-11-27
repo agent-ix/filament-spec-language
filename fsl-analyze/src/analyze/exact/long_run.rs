@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Candidate production for the independently checked DTMC long-run profile.
 
-use super::candidate::{CandidateBudget, rational_bytes, sort, values};
+use super::candidate::{rational_bytes, sort, values, CandidateBudget};
 use super::*;
 use crate::exact_probabilistic::{
-    BudgetedProductError, LongRunResult, ProductKind, build_retaining_monitor_in_scope,
-    build_retaining_monitor_with_budget_in_scope, decide_long_run_workload,
+    build_retaining_monitor_in_scope, build_retaining_monitor_with_budget_in_scope,
+    decide_long_run_workload, BudgetedProductError, LongRunResult, ProductKind,
 };
 use fsl_replay::{
-    LongRunProbabilityComponent, ProbabilityDocumentIoLimits,
     long_run_probability_certificate_document_with_work_scope,
     read_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document_with_work_scope,
     write_long_run_probability_certificate, write_weighted_long_run_probability_certificate,
+    LongRunProbabilityComponent, ProbabilityDocumentIoLimits,
 };
 use ix_trace_rs::implements;
 
@@ -428,8 +428,8 @@ fn every_scheduler(
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        FairProductError, LongRunResult, ProbStateId, ProductAction, decide_fair_long_run_mdp,
-        decide_long_run_mdp, deterministic_policy_is_fair, induced_chain, policy_action,
+        decide_fair_long_run_mdp, decide_long_run_mdp, deterministic_policy_is_fair, induced_chain,
+        policy_action, FairProductError, LongRunResult, ProbStateId, ProductAction,
     };
     let EveryScheduler {
         system,
@@ -776,8 +776,8 @@ fn fair_randomized_refutation(
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        ActionChoice, ProductAction as AnalyzerAction, decide_long_run_workload,
-        induced_fair_randomized_chain, policy_action,
+        decide_long_run_workload, induced_fair_randomized_chain, policy_action, ActionChoice,
+        ProductAction as AnalyzerAction,
     };
     let chain = match induced_fair_randomized_chain(product, &fair_witness.policy) {
         Ok(chain) => chain,
@@ -936,14 +936,7 @@ fn fair_randomized_refutation(
         tamper(&mut witness);
     }
     finish_replay(
-        replay_witness_with_work_scope(
-            system,
-            item,
-            &witness,
-            limits,
-            cancel,
-            budget.work_scope(),
-        ),
+        replay_witness_with_work_scope(system, item, &witness, limits, cancel, budget.work_scope()),
         claim,
         system,
         &witness,
@@ -1016,7 +1009,7 @@ fn components(
     policy: Option<(&ModelSystem<'_>, ComponentPolicy<'_>)>,
     budget: &mut CandidateBudget<'_>,
 ) -> Result<Vec<LongRunProbabilityComponent>, ProbabilityDocumentError> {
-    use crate::exact_probabilistic::{ProductAction, policy_action};
+    use crate::exact_probabilistic::{policy_action, ProductAction};
     if solution.components.len() != solution.gain_bias.len() {
         return Err(ProbabilityDocumentError::Malformed);
     }

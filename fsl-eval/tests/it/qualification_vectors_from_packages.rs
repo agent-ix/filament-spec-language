@@ -2,12 +2,12 @@
 //! Published package-selection vectors whose unit graph spans domain packages.
 
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use filament_specification::{QUALIFICATION_VECTORS, QualificationVector, TestCase};
+use filament_specification::{QualificationVector, TestCase, QUALIFICATION_VECTORS};
 use fsl_eval::value::S6aRewardEvaluator;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::intake::{PackageInput, admit_unit, package_input};
-use fsl_semantics::value::{DefinitionRole, admit_integer_division};
+use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput};
+use fsl_semantics::value::{admit_integer_division, DefinitionRole};
 use ix_trace_rs::trace;
 
 const P_WITH_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\

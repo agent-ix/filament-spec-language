@@ -389,11 +389,13 @@ fn operation_of(
         let source = node.at(*source);
         return Some(CoverageOperation {
             operator: CoverageOperator::Other(format!("query-{visit:?}").to_ascii_lowercase()),
-            operand_types: vec![if matches!(source.kind(), NodeKind::NamedPopulation { .. }) {
-                CoverageValueType::Collection
-            } else {
-                coverage_type(graph, source.value_type())
-            }],
+            operand_types: vec![
+                if matches!(source.kind(), NodeKind::NamedPopulation { .. }) {
+                    CoverageValueType::Collection
+                } else {
+                    coverage_type(graph, source.value_type())
+                },
+            ],
             result_type: coverage_type(graph, node.value_type()),
         });
     }

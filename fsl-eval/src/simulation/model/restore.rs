@@ -259,6 +259,7 @@ impl Restore<'_, '_, '_> {
             Err(bad())
         }
     }
+    #[ix_trace_rs::string_edge]
     fn value(
         &mut self,
         node: NodeRef<'_>,
@@ -647,6 +648,7 @@ impl Restore<'_, '_, '_> {
             _ => Err(bad()),
         }
     }
+    #[ix_trace_rs::string_edge]
     fn state(&mut self, root: NodeRef<'_>) -> Result<ModelState, ModelRestoreError> {
         let system = self.system;
         let mut field_index = BTreeMap::new();

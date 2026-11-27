@@ -73,6 +73,7 @@ impl ClauseProgress {
     ///
     /// # Errors
     /// `StateMismatch` for an invented covered prefix or sorting boundary.
+    #[ix_trace_rs::string_edge]
     pub fn validate_checkpoint(
         &self,
         decided: Option<&Self>,
@@ -190,6 +191,7 @@ impl ClauseProgress {
     /// # Errors
     /// The native progress contradiction, capacity limit, or fingerprint fault.
     /// Neither this tracker nor the input ledger changes on refusal.
+    #[ix_trace_rs::string_edge]
     pub fn admit(
         &mut self,
         ledger: &ProgressLedger,
@@ -268,6 +270,7 @@ impl ClauseProgress {
     ///
     /// # Errors
     /// `StateMismatch` for malformed, oversized or inconsistent metadata.
+    #[ix_trace_rs::string_edge]
     pub fn from_bytes(
         bytes: &[u8],
         kind: ClauseTraceKind,
