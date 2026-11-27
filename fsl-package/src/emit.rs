@@ -16,6 +16,8 @@ use std::{
 
 #[cfg(feature = "test-support")]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::cell::Cell;
 
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
@@ -85,6 +87,25 @@ fn is_body_binding(name: &str) -> bool {
 /// The FR-322 graph schema version every node carries.
 const GRAPH_V2: &str = "filament.checked-semantic-graph/v2";
 
+#[cfg(test)]
+thread_local! {
+    static USE_REPEATED_OPERAND_REWRITE: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            USE_REPEATED_OPERAND_REWRITE.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let previous = USE_REPEATED_OPERAND_REWRITE.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    f()
+}
+
 #[cfg(feature = "test-support")]
 static NODE_ID_REWRITE_CANDIDATE_CHECKS: AtomicUsize = AtomicUsize::new(0);
 
@@ -96,18 +117,6 @@ pub(crate) fn reset_node_id_rewrite_candidate_checks() {
 #[cfg(feature = "test-support")]
 pub(crate) fn node_id_rewrite_candidate_checks() -> usize {
     NODE_ID_REWRITE_CANDIDATE_CHECKS.load(Ordering::Relaxed)
-}
-
-#[cfg(feature = "test-support")]
-fn replace_node_id_with_counted_comparisons(
-    node: &mut CheckedSemanticNodeV2,
-    old: &CheckedNodeId,
-    new: &CheckedNodeId,
-) {
-    node.map_node_ids(|id| {
-        NODE_ID_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
-        (id == old).then(|| new.clone())
-    });
 }
 
 /// The diagnostics catalog the package's (empty) diagnostics are qualified
@@ -11072,6 +11081,7 @@ fn environment_ids<'a>(
 ///
 /// Returns the canonical output-limit failure or an identity invariant refusal.
 /// Earlier nodes may already be rewritten on failure; discard that conversion.
+#[implements("FSpec-FR-322-AC-280")]
 pub fn write_operand_slots(
     nodes: &mut [CheckedSemanticNodeV2],
     limits: EmitLimits,
@@ -11089,10 +11099,11 @@ pub fn write_operand_slots(
                 row.push(entry);
             }
         }
-        let mut changes = Vec::new();
+        let mut changes = BTreeMap::new();
         for id in reachable_ids(node) {
             let old = id.clone();
-            for segment in &mut id.path {
+            let mut new = old.clone();
+            for segment in &mut new.path {
                 let entry = match segment {
                     Segment::Index(index) => CheckedOperandEntry::Node(*index),
                     Segment::Dependency { package, node } => CheckedOperandEntry::Dependency(
@@ -11106,16 +11117,33 @@ pub fn write_operand_slots(
                 let slot = slots.get(&entry).ok_or(EmitRefusal::SourceMapInvariant)?;
                 *segment = Segment::Operand(*slot);
             }
-            if old != *id {
-                changes.push((old, id.clone()));
+            if old != new {
+                if changes
+                    .insert(old, new.clone())
+                    .is_some_and(|previous| previous != new)
+                {
+                    return Err(EmitRefusal::SourceMapInvariant);
+                }
             }
         }
-        for (old, new) in changes {
-            #[cfg(feature = "test-support")]
-            replace_node_id_with_counted_comparisons(node, &old, &new);
-            #[cfg(not(feature = "test-support"))]
-            node.replace_node_id(&old, &new);
+        #[cfg(test)]
+        if USE_REPEATED_OPERAND_REWRITE.with(Cell::get) {
+            for (old, new) in changes {
+                node.replace_node_id(&old, &new);
+            }
+        } else {
+            node.map_node_ids(|id| {
+                #[cfg(feature = "test-support")]
+                NODE_ID_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+                changes.get(id).cloned()
+            });
         }
+        #[cfg(not(test))]
+        node.map_node_ids(|id| {
+            #[cfg(feature = "test-support")]
+            NODE_ID_REWRITE_CANDIDATE_CHECKS.fetch_add(1, Ordering::Relaxed);
+            changes.get(id).cloned()
+        });
         rows.push(row);
     }
     Ok(rows)
