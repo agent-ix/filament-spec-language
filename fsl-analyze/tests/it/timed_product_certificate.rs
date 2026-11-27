@@ -881,28 +881,20 @@ fn quiescent_send(claim: &str) -> World {
     )
 }
 
-/// FR-921-AC-6, FR-231: a quiescent state keeps its enabled steps, so the
-/// target is reached from the initial state at 1 ms and the expected time is
-/// finite. A document with no value and no rank claims an infinity the
-/// checker's own graph denies: it is rejected `Malformed`, where a checker
-/// that gave the quiescent state no move would accept it for `>= 100 ms`. The
-/// control, a target no state reaches, is accepted as infinite.
+/// FR-921-AC-6, FR-231: a quiescent state keeps its enabled steps, so a
+/// target the steps never reach is still accepted as infinite. This is the
+/// control half only. The false half (a value-free infinity document for a
+/// target the quiescent `send` does reach) cannot be built from outside: the
+/// producer yields no document for a finite value over a quiescent state, and
+/// a forged one must carry the checker's own target keys. The checker rejects
+/// it `Malformed` (`check_expected_elapsed`, fsl-replay document/timed.rs);
+/// the forging test lands with the producer derivation in QSL-3537, which
+/// retains that document for `tamper` to strip.
 #[trace("TC-2490", "FR-921-AC-6")]
 #[test]
-fn a_quiescent_state_keeps_its_steps_so_a_false_infinity_is_rejected() {
-    // The false document: the control's own value-free infinity document,
-    // presented for a claim whose target the quiescent `send` reaches at 1 ms.
+fn a_quiescent_state_target_no_step_reaches_is_accepted_as_infinite() {
     let never = quiescent_send("holds(false) >= 100 ms");
     let control = document(&settle(&never, "MeanTime"));
-    let claim_100 = quiescent_send("holds(c.late) >= 100 ms");
-    // The producer's finite certificate for the reachable target, stripped of
-    // its values: a value-free document claims the infinity the
-    // checker's own graph denies, with the claim's own identity and objective.
-    let record = settle_tampered(&claim_100, "MeanTime", |certificate| {
-        certificate.values.clear();
-    });
-    assert_eq!(rejected_item_rule(&record), CertificateRule::Malformed);
-
     assert_eq!(control["values"], json!([]));
     assert!(matches!(
         check(&never, "MeanTime", &control),
