@@ -26,6 +26,7 @@ mod scale;
 mod search;
 mod settle;
 mod state_graph;
+mod state_graph_zones;
 mod task_certificate;
 mod task_product;
 mod task_symbolic;
