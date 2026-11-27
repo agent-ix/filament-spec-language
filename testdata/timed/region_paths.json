@@ -74,6 +74,35 @@
         {"op": "reset", "clock": 1, "value": 2, "expect": ["o0.1", "s"]},
         {"op": "succ", "expect": ["i1", "s"]}
       ]
+    },
+    {
+      "name": "a reset that empties a middle class renumbers the classes",
+      "caps": [4, 4, 4],
+      "steps": [
+        {"op": "start", "places": ["o0.1", "o0.2", "o0.3"]},
+        {"op": "reset", "clock": 1, "value": 0, "expect": ["o0.1", "i0", "o0.2"]},
+        {"op": "succ", "expect": ["o0.2", "o0.1", "o0.3"]}
+      ]
+    },
+    {
+      "name": "a reset to a nonzero value below the cap",
+      "caps": [4, 4],
+      "steps": [
+        {"op": "start", "places": ["o0.1", "o1.1"]},
+        {"op": "reset", "clock": 0, "value": 2, "expect": ["i2", "o1.1"]},
+        {"op": "succ", "expect": ["o2.1", "o1.2"]},
+        {"op": "succ", "expect": ["o2.1", "i2"]}
+      ]
+    },
+    {
+      "name": "one clock on its constant while another is below it",
+      "caps": [2, 4],
+      "steps": [
+        {"op": "start", "places": ["i1", "o0.1"]},
+        {"op": "succ", "expect": ["s", "o0.1"]},
+        {"op": "succ", "expect": ["s", "i1"]},
+        {"op": "succ", "expect": ["s", "o1.1"]}
+      ]
     }
   ]
 }
