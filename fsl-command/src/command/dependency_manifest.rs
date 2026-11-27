@@ -4,7 +4,8 @@
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::fmt;
 
-pub(super) const FORMAT: &str = fsl_foundation::wire_format::WireFormat::HandoffDependencies.as_str();
+pub(super) const FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffDependencies.as_str();
 
 pub(super) struct Manifest {
     pub(super) dependencies: Vec<Row>,

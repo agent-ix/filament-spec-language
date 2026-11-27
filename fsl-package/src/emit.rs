@@ -2790,8 +2790,9 @@ fn operation_term(
         laws.iter()
             .map(|law| {
                 Ok(ir::CheckedOperationLaw {
-                    role: ir::LawRole::from_wire(law.role.as_str())
-                        .ok_or_else(|| encoding("an operation law role is outside the IR vocabulary"))?,
+                    role: ir::LawRole::from_wire(law.role.as_str()).ok_or_else(|| {
+                        encoding("an operation law role is outside the IR vocabulary")
+                    })?,
                     definition: ir::CheckedArtifactRef {
                         authority: law.definition.authority.as_str().into(),
                         identity: law.definition.identity.as_str().into(),
@@ -2809,13 +2810,12 @@ fn operation_term(
                 fsl_semantics::check::OperationMode::TextProfile(value) => {
                     ("text_profile", value.as_str())
                 }
-                fsl_semantics::check::OperationMode::Absence(value) => {
-                    ("absence", value.as_str())
-                }
+                fsl_semantics::check::OperationMode::Absence(value) => ("absence", value.as_str()),
             };
             Ok::<_, EmitRefusal>(ir::CheckedOperationMode {
-                kind: ir::OperationModeKind::from_wire(kind)
-                    .ok_or_else(|| encoding("an operation mode kind is outside the IR vocabulary"))?,
+                kind: ir::OperationModeKind::from_wire(kind).ok_or_else(|| {
+                    encoding("an operation mode kind is outside the IR vocabulary")
+                })?,
                 value: value.into(),
             })
         })
@@ -2913,7 +2913,9 @@ fn member_value(
                     ir::CheckedFieldReadForm::Bare
                 }
             }),
-            population: population.as_ref().map(|population| node_id(ids, population)),
+            population: population
+                .as_ref()
+                .map(|population| node_id(ids, population)),
         },
         Member::Position {
             declaration,
@@ -2934,7 +2936,9 @@ fn member_value(
             declaration: node_id(ids, declaration),
             name: name.as_str().into(),
             destination_type: node_id(ids, destination_type),
-            population: population.as_ref().map(|population| node_id(ids, population)),
+            population: population
+                .as_ref()
+                .map(|population| node_id(ids, population)),
         },
         Member::Operation { declaration, name } => ir::CheckedOperationMember::Operation {
             declaration: node_id(ids, declaration),
@@ -2968,9 +2972,7 @@ fn member_value(
             interval: interval.map(|interval| ir::CheckedOperationInterval::Integer {
                 lower: integer(interval.lower()),
                 upper: match interval.upper() {
-                    fsl_foundation::bound::TemporalUpper::Finite(value) => {
-                        Some(integer(value))
-                    }
+                    fsl_foundation::bound::TemporalUpper::Finite(value) => Some(integer(value)),
                     fsl_foundation::bound::TemporalUpper::Open => None,
                 },
             }),

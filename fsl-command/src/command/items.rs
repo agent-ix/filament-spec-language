@@ -1252,7 +1252,8 @@ fn whole_request_failure(cause: &RunCause) -> bool {
 }
 
 fn is_compile_refusal(value: &Value) -> bool {
-    value.get("format").and_then(Value::as_str) == Some(fsl_foundation::wire_format::WireFormat::RunResult.as_str())
+    value.get("format").and_then(Value::as_str)
+        == Some(fsl_foundation::wire_format::WireFormat::RunResult.as_str())
         && value
             .get("disposition")
             .and_then(|disposition| disposition.get("stage"))

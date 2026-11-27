@@ -15,12 +15,10 @@ use std::collections::{HashMap, HashSet};
 
 use filament_checked::node::{NodeKind, Visit};
 use filament_contract_model::{
-    term_ordinals,
-    CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
+    term_ordinals, CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
     CheckedProtocolLocationOrigin, CheckedProtocolSemanticLocation,
 };
 use filament_exact::NodeKey;
-use ix_trace_rs::implements;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -28,6 +26,7 @@ use fsl_semantics::check::{
     BodyTerm, CheckedActivation, CheckedBody, CheckedGraph, CheckedLifetime, CheckedNode,
     CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag, Operator,
 };
+use ix_trace_rs::implements;
 
 use super::{checked_occurrence, EmitRefusal};
 
@@ -256,11 +255,19 @@ pub(super) fn ordered<L, R>(
     pending.sort_by(|left, right| {
         (&left.application, &left.occurrence)
             .cmp(&(&right.application, &right.occurrence))
-            .then(left.origin_name.as_bytes().cmp(right.origin_name.as_bytes()))
+            .then(
+                left.origin_name
+                    .as_bytes()
+                    .cmp(right.origin_name.as_bytes()),
+            )
             .then(left.visit.cmp(&right.visit))
     });
     // FR-322-AC-291: the IR's one ordinal function numbers the sorted rows.
-    let ordinals = term_ordinals(pending.iter().map(|row| (&row.application, &row.occurrence)));
+    let ordinals = term_ordinals(
+        pending
+            .iter()
+            .map(|row| (&row.application, &row.occurrence)),
+    );
     pending
         .into_iter()
         .zip(ordinals)

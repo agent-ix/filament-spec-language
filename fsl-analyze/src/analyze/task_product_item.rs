@@ -467,7 +467,8 @@ fn task_search_evidence(
             fsl_replay::shared_wire::DbmBound(Some((
                 filament_exact::Integer::from_big(at(row) - at(column)),
                 false,
-            ))).value()
+            )))
+            .value()
         };
         let zone: Vec<Vec<serde_json::Value>> = (0..=width)
             .map(|row| (0..=width).map(|column| bound(row, column)).collect())

@@ -192,7 +192,9 @@ fn an_emitted_application_operation_carries_its_laws_and_mode() {
     assert!(operation["mode"]["value"]
         .as_str()
         .is_some_and(|value| !value.is_empty()));
-    assert!(operation["laws"].as_array().is_some_and(|laws| !laws.is_empty()));
+    assert!(operation["laws"]
+        .as_array()
+        .is_some_and(|laws| !laws.is_empty()));
     assert!(operation["leaves"].is_array());
     assert!(matches!(read_back(&emission), Read::Verified { .. }));
 }

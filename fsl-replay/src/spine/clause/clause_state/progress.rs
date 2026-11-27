@@ -244,7 +244,9 @@ impl ClauseProgress {
     /// An internal fault if the typed metadata cannot be serialized.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ClauseRefusal> {
         let wire = Wire {
-            format: fsl_foundation::wire_format::WireFormat::ClauseProgress.as_str().to_owned(),
+            format: fsl_foundation::wire_format::WireFormat::ClauseProgress
+                .as_str()
+                .to_owned(),
             timestamped: self.timestamped,
             first: self.first,
             fixed: self.fixed,

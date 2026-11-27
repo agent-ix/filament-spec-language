@@ -8,9 +8,7 @@ use serde::de::{Deserialize, Deserializer, Error as _};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_json::Value;
 
-use super::{
-    closed_object, member, unique_object, RationalObject, WireDefect, WireDefectKind,
-};
+use super::{closed_object, member, unique_object, RationalObject, WireDefect, WireDefectKind};
 use crate::statistical::{BoundComparison, ClaimForm, VerdictBound};
 
 /// The `type` of a claim bound.
