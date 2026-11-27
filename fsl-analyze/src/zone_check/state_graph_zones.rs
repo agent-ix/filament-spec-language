@@ -300,15 +300,38 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                 None => unwritten = Some(node),
             }
         }
-        // A valuation with two. Sequences are read backwards from `Y`,
-        // shortest first, each as the valuations it leads from. Only those
-        // that still meet the states reachable from an `X` state are
-        // extended; while the claim holds they are pairwise disjoint there,
-        // so there are finitely many.
-        let seeds = sources
-            .iter()
-            .map(|&node| (self.of_node[node], self.graph.nodes[node].zone.clone()))
-            .collect();
+        // A valuation with two, at the earliest node that has one
+        // (FR-852): each node's search reads its sequences shortest first.
+        for &node in &sources {
+            let (stored, bytes) = (self.stored, self.bytes);
+            if let Some(decision) = self.pair_at(node, &y)? {
+                return Ok(decision);
+            }
+            // The zones a search without a pair held are dropped with it.
+            (self.stored, self.bytes) = (stored, bytes);
+        }
+        // No two sequences refute it with a path, so a violation no trap
+        // stem reaches is left without a counterexample.
+        Ok(match unwritten {
+            Some(node) => TimedStateGraphDecision::Unwritten { node },
+            None => TimedStateGraphDecision::Holds {
+                witness_paths: Vec::new(),
+                ef_nodes: Vec::new(),
+            },
+        })
+    }
+
+    /// The two sequences from a valuation of `node` to `y`, if it has two.
+    /// Sequences are read backwards from `Y`, shortest first, each as the
+    /// valuations it leads from. Only those that still meet the states
+    /// reachable from the node are extended; while the claim holds they are
+    /// pairwise disjoint there, so there are finitely many.
+    fn pair_at(
+        &mut self,
+        node: usize,
+        y: &[bool],
+    ) -> Result<Option<TimedStateGraphDecision>, ZoneCheckRefusal> {
+        let seeds = vec![(self.of_node[node], self.graph.nodes[node].zone.clone())];
         let (reachable, _) = self.search(seeds, None)?;
         let mut words = vec![Word {
             first: None,
@@ -321,14 +344,11 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                 words[0].zones.insert(state, vec![zone]);
             }
         }
-        let mut seen: BTreeMap<usize, Vec<(Dbm, usize)>> = BTreeMap::new();
+        let mut seen: Vec<(Dbm, usize)> = Vec::new();
         let mut at = 0;
         while at < words.len() {
             self.poll()?;
-            for &node in &sources {
-                let Some(zones) = words[at].zones.get(&self.of_node[node]) else {
-                    continue;
-                };
+            if let Some(zones) = words[at].zones.get(&self.of_node[node]) {
                 let mut fresh = Vec::new();
                 for zone in zones {
                     let mut here = zone.clone();
@@ -336,20 +356,20 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
                     if here.is_empty() {
                         continue;
                     }
-                    for (other, word) in seen.get(&node).into_iter().flatten() {
+                    for (other, word) in &seen {
                         self.charge_step()?;
                         let mut both = here.clone();
                         intersect(&mut both, other)?;
                         if !both.is_empty() {
                             let word = *word;
-                            return self.two_paths(node, both, &words, (word, at));
+                            return self.two_paths(node, both, &words, (word, at)).map(Some);
                         }
                     }
                     fresh.push(here);
                 }
                 for zone in fresh {
                     self.charge_zone(&zone)?;
-                    seen.entry(node).or_default().push((zone, at));
+                    seen.push((zone, at));
                 }
             }
             for (transition, zones) in self.extend(&words[at])? {
@@ -366,15 +386,7 @@ impl<'r, 's, 'a> Zones<'r, 's, 'a> {
             }
             at += 1;
         }
-        // No two sequences refute it with a path, so a violation no trap
-        // stem reaches is left without a counterexample.
-        Ok(match unwritten {
-            Some(node) => TimedStateGraphDecision::Unwritten { node },
-            None => TimedStateGraphDecision::Holds {
-                witness_paths: Vec::new(),
-                ef_nodes: Vec::new(),
-            },
-        })
+        Ok(None)
     }
 
     /// The sequences one transition longer than `word`, by that transition.

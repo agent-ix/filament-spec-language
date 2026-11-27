@@ -1890,6 +1890,143 @@ fn a_unique_path_trap_precedes_a_pair_and_is_compared_by_its_node() {
     assert_eq!(stem.steps.len(), 2, "{stem:?}");
 }
 
+/// The subject of the pair order: `a` takes phase 0 (node 0) to phase 1; `c`
+/// and `d` take phase 1 to phase 2, and `h` takes it to phase 3 (node 3); `f`
+/// and `g` take phase 3 to phase 2 at once; `e` at phase 2 has the guard
+/// `guard`, undefined there when it divides by `2 - phase`. The nodes are in
+/// that order. With `unique path` from `from` to phase 2 there is no trap;
+/// node 0 has its shortest pair (`a c`, `a d`) with sequences of two steps,
+/// and node 3 has its pair (`f`, `g`) with sequences of one step.
+fn pair_order_decision(
+    guard: &str,
+    from: &str,
+) -> fsl_analyze::zone_check::TimedStateGraphDecision {
+    let d_step = "pre D using v on M::Call::d { self.phase = 1 }\n\
+                  post DDone using v on M::Call::d { self.phase = 2 }\n";
+    let body = format!(
+        "{}\
+         pre A using v on M::Call::a {{ self.phase = 0 }}\n\
+         post ADone using v on M::Call::a {{ self.phase = 1 }}\n\
+         pre C using v on M::Call::c {{ self.phase = 1 }}\n\
+         post CDone using v on M::Call::c {{ self.phase = 2 }}\n\
+         {d_step}\
+         pre H using v on M::Call::h {{ self.phase = 1 }}\n\
+         post HDone using v on M::Call::h {{ self.phase = 3 }}\n\
+         pre F using v on M::Call::f {{ self.phase = 3 }}\n\
+         post FDone using v on M::Call::f {{ self.phase = 2 }}\n\
+         pre G using v on M::Call::g {{ self.phase = 3 }}\n\
+         post GDone using v on M::Call::g {{ self.phase = 2 }}\n\
+         pre E using v on M::Call::e {{ self.phase = 2 and {guard} }}\n\
+         post EDone using v on M::Call::e {{ self.phase = 2 }}\n\
+         function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
+         unique path Done using v over (c: M::Call) \
+         from ({from}) to (c.phase = 2);\n",
+        crate::timed_world::DENSE,
+    );
+    let ops: [(&str, &[&str]); 7] = [
+        ("a", &["phase"]),
+        ("c", &["phase"]),
+        ("d", &["phase"]),
+        ("e", &["phase"]),
+        ("f", &["phase"]),
+        ("g", &["phase"]),
+        ("h", &["phase"]),
+    ];
+    let world = crate::timed_world::world_with_mode(
+        &crate::timed_world::document(&["x"], &ops),
+        &format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        ),
+        &body,
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
+    let system = world.system();
+    let timed = fsl_eval::simulation::model::TimedSystem::new(&system, "M")
+        .expect("the source selects a timed model");
+    let limits = fsl_analyze::zone_check::ZoneCheckLimits::default();
+    let graph = fsl_analyze::zone_check::explore_timed_state_graph(
+        &timed,
+        limits,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the zone graph is explored");
+    let claim = world
+        .package
+        .graph()
+        .state_graph_claim("Done")
+        .expect("the source package has the claim");
+    let parameter = claim.over().expect("the claim is over a call");
+    let instance = system
+        .instances(&filament_exact::ValueType::Reference(parameter.object.clone()))
+        .expect("enumerate claim instances")
+        .into_iter()
+        .next()
+        .expect("one call instance");
+    let over = system
+        .bound_reference(parameter.object.clone(), &instance)
+        .expect("bind the claim instance");
+    fsl_analyze::zone_check::decide_timed_state_graph(
+        &timed,
+        &graph,
+        claim,
+        Some(&over),
+        limits,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the claim is decided")
+}
+
+/// A `unique path` pair is taken at the earliest node that has one, with that
+/// node's shortest sequences, though a later node has a pair of shorter
+/// sequences; an undefined reading at node 2 outranks a pair only at a later
+/// node.
+#[trace("TC-2412", "FR-852-AC-34")]
+#[test]
+fn a_unique_path_pair_is_taken_at_the_earliest_node() {
+    use fsl_analyze::zone_check::TimedStateGraphDecision;
+
+    let undefined_guard = "q(2 - self.phase) >= 0";
+    let both = "c.phase = 0 or c.phase = 3";
+    let late = "c.phase = 3";
+    for (guard, from, node, undefined) in [
+        // Pairs at nodes 0 and 3: node 0's, with two-step sequences.
+        ("true", both, 0, false),
+        // The same with an undefined reading at node 2: the pair at node 0
+        // is earlier, so it wins.
+        (undefined_guard, both, 0, false),
+        // Only node 3 is a source, and no undefined reading: node 3's pair,
+        // with one-step sequences.
+        ("true", late, 3, false),
+        // Only node 3 is a source, and node 2 reads undefined: node 2.
+        (undefined_guard, late, 2, true),
+    ] {
+        let decision = pair_order_decision(guard, from);
+        match (&decision, undefined) {
+            (TimedStateGraphDecision::Undefined { node: found, .. }, true) => {
+                assert_eq!(*found, node, "{decision:?}");
+            }
+            (
+                TimedStateGraphDecision::Refuted {
+                    node: found,
+                    stem,
+                    paths: Some((first, second)),
+                    ..
+                },
+                false,
+            ) => {
+                assert_eq!(*found, node, "{decision:?}");
+                // From node 0 each sequence has two steps, from node 3 one;
+                // node 0 is reached by no step.
+                let steps = if node == 0 { 2 } else { 1 };
+                assert_eq!((first.len(), second.len()), (steps, steps), "{decision:?}");
+                assert_eq!(stem.steps.len(), if node == 0 { 0 } else { 2 }, "{decision:?}");
+            }
+            _ => panic!("guard {guard}, from {from}: {decision:?}"),
+        }
+    }
+}
+
 /// FR-125 "Instancing": on the digital probabilistic route, the proved entry
 /// and the refuted binding of `over (c: Base)` name the admitted `Derived`,
 /// and the proof's certificate accepts that binding.
