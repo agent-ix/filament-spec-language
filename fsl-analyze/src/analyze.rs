@@ -2970,6 +2970,29 @@ pub fn analyze_items(
         .collect()
 }
 
+/// Run one state-graph item through the real analyze settlement path.
+///
+/// This adapter is available only to integration tests that exercise the
+/// package-backed state-graph item constructor directly.
+#[cfg(feature = "test-support")]
+pub fn test_support_state_graph_item<'a>(
+    engines: &Engines,
+    analysis: &RunInput<'a>,
+    binding: &SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    provision: &'a SourceProvision,
+    key: &OccurrenceKey,
+    index: RequestIndex,
+    form: &TemporalItem,
+    method: Option<&str>,
+    cancel: &Cancel,
+) -> Option<AnalyzeRecord> {
+    let item = state_graph_item::state_graph_item(
+        analysis, binding, limits, provision, key, index, form, method,
+    )?;
+    analyze_items(engines, vec![item], cancel).into_iter().next()
+}
+
 /// The caller's requiredness for one request index.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestRequirement {
