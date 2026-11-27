@@ -1206,6 +1206,7 @@ fn exact_every_scheduler_from_source() {
     assert!(text.contains("24") && text.contains("25"), "{text}");
 }
 
+#[trace("TC-2066", "FR-741-AC-2")]
 #[test]
 fn exact_fair_scheduler_from_source() {
     let checked_source = crate::prob_world::World::new(&crate::prob_world::link(FAIR_DELIVER));
