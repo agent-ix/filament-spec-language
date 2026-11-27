@@ -254,10 +254,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
                 (_, Some(StateGraphCertificateDecision::Violated)) => Some(false),
                 (ZoneCertificateVerdict::Rejected(rejection), None)
                     if rejection.rule == crate::CertificateRule::PredicateUndefined
-                        && matches!(
-                            envelope.family_payload(),
-                            GraphEvidence::Undefined { .. }
-                        ) =>
+                        && matches!(envelope.family_payload(), GraphEvidence::Undefined { .. }) =>
                 {
                     None
                 }

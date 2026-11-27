@@ -2212,8 +2212,8 @@ impl Fr852GapRun {
 
 fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
     use fsl_analyze::analyze::{
-        AnalyzeLimits, DeadlineSupply, Engines, RunInput, SourceProvision, SubjectBinding,
-        TemporalItem, test_support_state_graph_item,
+        test_support_state_graph_item, AnalyzeLimits, DeadlineSupply, Engines, RunInput,
+        SourceProvision, SubjectBinding, TemporalItem,
     };
     use fsl_foundation::RequestIndex;
 
@@ -2248,12 +2248,10 @@ fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
             .values_mut()
             .next()
             .expect("the U-P fixture has one initial snapshot");
-        let mut document: Value = serde_json::from_slice(snapshot)
-            .expect("the initial snapshot is valid JSON");
-        document["populations"][0]["objects"][0]["fields"]["phase"] =
-            json!({"integer": "2"});
-        *snapshot = serde_json::to_vec(&document)
-            .expect("the phase-2 snapshot serializes");
+        let mut document: Value =
+            serde_json::from_slice(snapshot).expect("the initial snapshot is valid JSON");
+        document["populations"][0]["objects"][0]["fields"]["phase"] = json!({"integer": "2"});
+        *snapshot = serde_json::to_vec(&document).expect("the phase-2 snapshot serializes");
     }
     let input = RunInput::source(package);
     let binding = SubjectBinding {
@@ -2327,7 +2325,9 @@ fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
                     .outcome_item(package)
                     .expect("the analyzed claim writes an outcome")
                     .unwrap_or_else(|error| {
-                        panic!("the outcome carries FR-286 and FR-393 evidence: {error}; {record:?}")
+                        panic!(
+                            "the outcome carries FR-286 and FR-393 evidence: {error}; {record:?}"
+                        )
                     })
             };
             serde_json::to_value(outcome).expect("the outcome serializes")
@@ -2368,7 +2368,10 @@ fn fr852_gap_assert_undefined_record(
     assert_eq!(evidence["cause"], "division-by-zero", "{item}");
     assert_eq!(evidence["where"]["position"], expected_position, "{item}");
     assert!(evidence["where"]["state_key"]["key"].is_string(), "{item}");
-    assert!(evidence["where"]["locus"]["occurrence"].is_object(), "{item}");
+    assert!(
+        evidence["where"]["locus"]["occurrence"].is_object(),
+        "{item}"
+    );
     match expected_locus {
         "target" => assert!(evidence["where"]["predicate"].is_string(), "{item}"),
         "guard" => assert!(evidence["where"]["transition"].is_object(), "{item}"),
@@ -2424,30 +2427,10 @@ fn fr852_gap_zone_route_refutes_undefined_target_for_always_and_unique() {
 #[test]
 fn fr852_gap_zone_route_refutes_undefined_terminal_and_constraint() {
     for (variant, claim, locus, name) in [
-        (
-            "U-T",
-            "UndefinedAlways",
-            "terminal",
-            "terminal-always",
-        ),
-        (
-            "U-C",
-            "UndefinedAlways",
-            "constraint",
-            "constraint-always",
-        ),
-        (
-            "U-T",
-            "UndefinedUnique",
-            "terminal",
-            "terminal-unique",
-        ),
-        (
-            "U-C",
-            "UndefinedUnique",
-            "constraint",
-            "constraint-unique",
-        ),
+        ("U-T", "UndefinedAlways", "terminal", "terminal-always"),
+        ("U-C", "UndefinedAlways", "constraint", "constraint-always"),
+        ("U-T", "UndefinedUnique", "terminal", "terminal-unique"),
+        ("U-C", "UndefinedUnique", "constraint", "constraint-unique"),
     ] {
         let run = fr852_gap_analyze(
             &format!("fr852-gap-zone-{name}"),
@@ -2538,9 +2521,24 @@ fn fr852_gap_digital_clocks_declines_unsupported_forms_for_all_sources() {
             "always-possible",
             "always possible",
         ),
-        ("U-G", "UndefinedAlways", "always-possible", "always possible"),
-        ("U-T", "UndefinedAlways", "always-possible", "always possible"),
-        ("U-C", "UndefinedAlways", "always-possible", "always possible"),
+        (
+            "U-G",
+            "UndefinedAlways",
+            "always-possible",
+            "always possible",
+        ),
+        (
+            "U-T",
+            "UndefinedAlways",
+            "always-possible",
+            "always possible",
+        ),
+        (
+            "U-C",
+            "UndefinedAlways",
+            "always-possible",
+            "always possible",
+        ),
         ("U-P", "UndefinedUnique", "unique-path", "unique path"),
         ("U-G", "UndefinedUnique", "unique-path", "unique path"),
         ("U-T", "UndefinedUnique", "unique-path", "unique path"),
