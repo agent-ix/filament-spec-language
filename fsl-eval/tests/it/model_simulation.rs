@@ -1699,8 +1699,19 @@ fn an_undecided_contract_is_an_undecided_successor() {
         let (bytes, _) = system
             .state_key(&state, fsl_foundation::IdentityLimits::default())
             .expect("a key");
+        // The fixture's contract has no value (ADR-018 UE-6): the successor
+        // names it, and the rest of the value is compared without it.
+        let strip = |mut undecided: UndecidedSuccessor| {
+            assert!(
+                undecided.undefined.is_some(),
+                "an undefined contract names itself"
+            );
+            undecided.undefined = None;
+            undecided
+        };
         let expected = UndecidedSuccessor {
             state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+            undefined: None,
         };
         let mut denied = RawKeyBudget {
             storage_limit: 0,
@@ -1722,23 +1733,27 @@ fn an_undecided_contract_is_an_undecided_successor() {
         assert_eq!(denied.cause, Some("storage"));
         let mut admitted = RawKeyBudget::unlimited();
         assert_eq!(
-            system
-                .actions_with_budget(
-                    &state,
-                    fsl_foundation::IdentityLimits::default(),
-                    &mut admitted,
-                    &Cancel::new()
-                )
-                .expect("fresh qualified scope")
-                .expect_err("undecided"),
+            strip(
+                system
+                    .actions_with_budget(
+                        &state,
+                        fsl_foundation::IdentityLimits::default(),
+                        &mut admitted,
+                        &Cancel::new()
+                    )
+                    .expect("fresh qualified scope")
+                    .expect_err("undecided")
+            ),
             expected
         );
 
         assert_eq!(
-            system
-                .actions(&state)
-                .expect("expands")
-                .expect_err("undecided"),
+            strip(
+                system
+                    .actions(&state)
+                    .expect("expands")
+                    .expect_err("undecided")
+            ),
             expected,
             "wobble = {wobble}"
         );
@@ -1753,7 +1768,7 @@ fn an_undecided_contract_is_an_undecided_successor() {
         else {
             panic!("UndecidedSuccessor (wobble = {wobble})");
         };
-        assert_eq!(undecided, expected);
+        assert_eq!(strip(undecided), expected);
         assert_eq!(
             sample_probabilistic(
                 &system,

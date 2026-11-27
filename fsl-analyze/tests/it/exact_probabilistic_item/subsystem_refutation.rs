@@ -18,10 +18,10 @@ const TRAFFIC: &str = "random Service::call(ok) ~ { true: 99, false: 1 };\n\
 const CALLS: &str = "reward calls on Service::call = 1;\n";
 
 // Hand-counted from the deterministic expected-reward subsystem charge path.
-// The first witness-production charge follows the 70,989-unit product prefix;
+// The first witness-production charge follows the 110,432-unit product prefix (70,989 plus the 39,443 read beyond decided control, ADR-018 UE-6);
 // production admits 169,184 units and independent replay admits 165,143.
 #[cfg(feature = "test-support")]
-const SUBSYSTEM_PREFIX_WORK: u64 = 70_989;
+const SUBSYSTEM_PREFIX_WORK: u64 = 110_432;
 #[cfg(feature = "test-support")]
 const SUBSYSTEM_PRODUCTION_WORK: u64 = 169_184;
 #[cfg(feature = "test-support")]
@@ -37,7 +37,7 @@ const SUBSYSTEM_TOTAL_WORK: u64 = SUBSYSTEM_PRODUCTION_END + SUBSYSTEM_REPLAY_WO
 // These are counted from its product, witness-production, and replay charge
 // paths; checkpoints below verify the independently counted phase boundaries.
 #[cfg(feature = "test-support")]
-const EVENT_SUBSYSTEM_PREFIX_WORK: u64 = 134_113;
+const EVENT_SUBSYSTEM_PREFIX_WORK: u64 = 165_671;
 #[cfg(feature = "test-support")]
 const EVENT_SUBSYSTEM_PRODUCTION_WORK: u64 = 45_897;
 #[cfg(feature = "test-support")]

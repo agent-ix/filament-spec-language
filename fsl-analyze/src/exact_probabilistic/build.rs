@@ -3,7 +3,9 @@
 //! "Behavior"): the product, its state numbering and its edge order are
 //! functions of the subject, the claim and the limits.
 
-use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
+use fsl_eval::simulation::model::{
+    ModelKeyBudget, ModelKeyError, ModelKeyExpansionError, UndecidedSuccessor,
+};
 use fsl_foundation::IdentityLimits;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -606,6 +608,13 @@ struct Builder<'r, 'c, 'p, 'k> {
     omitted: Vec<(usize, OmittedEdge)>,
 }
 
+/// Why reading a swept state's steps stopped.
+enum SweptStop {
+    /// Its expansion found a contract conjunction with no value.
+    Undefined(fsl_eval::simulation::model::UndefinedContract),
+    Halt(Halt),
+}
+
 /// A predicate that has no value at a model state.
 struct Hit {
     read: UndefinedRead,
@@ -745,6 +754,7 @@ impl Builder<'_, '_, '_, '_> {
             self.poll()?;
             self.expand(at)?;
         }
+        self.sweep()?;
         Ok(starts)
     }
 
@@ -890,7 +900,7 @@ impl Builder<'_, '_, '_, '_> {
                     let state_key =
                         state_key.ok_or_else(|| fault("legacy-reading-retains-state-key"))?;
                     return Ok(Err(Hit {
-                        read: *read,
+                        read: read.clone(),
                         cause,
                         state_key,
                         model,
@@ -981,6 +991,15 @@ impl Builder<'_, '_, '_, '_> {
         Ok(true)
     }
 
+    /// Whether node `at` has decided control: it is never expanded for
+    /// successors; [`Self::sweep`] reads what it reaches.
+    fn is_decided(&self, at: usize) -> bool {
+        let node = &self.nodes[at];
+        node.key.monitor.is_some_and(MonitorState::is_decided)
+            || (self.target_mode != CandidateTargetMode::Continue
+                && node.truths.first() == Some(&true))
+    }
+
     /// The state of `key`, numbered at its first discovery. A state with
     /// decided control is never expanded.
     fn intern(
@@ -1004,9 +1023,6 @@ impl Builder<'_, '_, '_, '_> {
         let initial = parent
             .map(|parent| self.nodes[parent].initial)
             .unwrap_or(initial);
-        let decided = key.monitor.is_some_and(MonitorState::is_decided)
-            || (self.target_mode != CandidateTargetMode::Continue
-                && target.truths.first() == Some(&true));
         self.reserve_key(
             key.model
                 .len()
@@ -1024,7 +1040,7 @@ impl Builder<'_, '_, '_, '_> {
             initial,
             resolution: target.resolution,
         });
-        if !decided {
+        if !self.is_decided(id) {
             self.queue.push_back(id);
         }
         Ok(id)
@@ -1182,6 +1198,181 @@ impl Builder<'_, '_, '_, '_> {
         Ok(Arrival { key, truths })
     }
 
+    /// What a state whose expansion left its successors unknown halts the
+    /// build with: an undefined contract conjunction refutes (ADR-018 UE-6)
+    /// with the path to the state; only a refused one is undecided.
+    fn undecided_successor(&self, at: usize, undecided: UndecidedSuccessor) -> Halt {
+        // The replay of a bounded measure's undefined path (`measure.rs`)
+        // does not yet read a contract site: that form stays undecided.
+        let contract = undecided
+            .undefined
+            .clone()
+            .filter(|_| !matches!(self.plan, Plan::Bounded(_)));
+        let Some(contract) = contract else {
+            return ProductRefusal::UndecidedSuccessor(undecided).into();
+        };
+        if self.key_policy.is_some() {
+            return Halt::UndefinedReading(contract.cause);
+        }
+        let node = &self.nodes[at];
+        let hit = Hit {
+            cause: contract.cause.clone(),
+            state_key: undecided.state,
+            model: node.key.model.clone(),
+            read: UndefinedRead::Contract(Box::new(contract)),
+        };
+        self.undefined(Some(at), None, None, node.initial, node.key.clone(), hit)
+    }
+
+    /// The model states a state of decided control reaches, each read once for
+    /// an undefined contract conjunction (ADR-018 UE-6): a qualified build
+    /// stops at the first target of a form that reads every position and
+    /// would otherwise settle past a guard no claim reads. The sweep adds no
+    /// node or edge and returns only the fact that a conjunction has no value,
+    /// for the caller to rebuild without admission, which keeps expanding past
+    /// a target and finds the path. A refused conjunction changes nothing, as
+    /// the decided verdict never read it.
+    fn sweep(&mut self) -> Step<()> {
+        // A bounded event reads positions to its horizon, and a bounded
+        // measure has no contract replay yet; only a form that reads every
+        // position (an unbounded one) reads all that is reachable.
+        if self.key_policy.is_none() || !matches!(self.plan, Plan::Labels) {
+            return Ok(());
+        }
+        let roots: Vec<usize> = (0..self.nodes.len())
+            .filter(|at| self.is_decided(*at) && self.nodes[*at].resolution.is_none())
+            .collect();
+        let mut visited = BTreeSet::new();
+        for at in 0..self.nodes.len() {
+            if !self.is_decided(at) {
+                visited.insert(self.nodes[at].key.model.clone());
+            }
+        }
+        for root in roots {
+            let start = self.nodes[root].model.clone();
+            if !self.admit_swept(&mut visited, &self.nodes[root].key.model.clone())? {
+                continue;
+            }
+            let mut swept = vec![start];
+            let mut next = 0;
+            while next < swept.len() {
+                self.poll()?;
+                let model = swept[next].clone();
+                match self.swept_steps(&model) {
+                    Ok(posts) => {
+                        for post in posts {
+                            let bytes = self.key_bytes(&post)?;
+                            if self.admit_swept(&mut visited, &bytes)? {
+                                swept.push(post);
+                            }
+                        }
+                    }
+                    Err(SweptStop::Undefined(contract)) => {
+                        return Err(Halt::UndefinedReading(contract.cause));
+                    }
+                    Err(SweptStop::Halt(halt)) => return Err(halt),
+                }
+                next += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the model state `bytes` is new to the sweep, counted against
+    /// the state limit like a product state.
+    fn admit_swept(&mut self, visited: &mut BTreeSet<Vec<u8>>, bytes: &[u8]) -> Step<bool> {
+        if visited.contains(bytes) {
+            return Ok(false);
+        }
+        if visited.len() >= self.max_states {
+            return Err(Self::stopped(
+                ModelCheckLimit::ExactProbMaxStates,
+                self.max_states,
+            ));
+        }
+        self.reserve_key(bytes.len().saturating_add(std::mem::size_of::<Vec<u8>>()))?;
+        visited.insert(bytes.to_vec());
+        Ok(true)
+    }
+
+    /// The post-states of the model steps out of `model`, or the undefined
+    /// contract conjunction its expansion found.
+    fn swept_steps(&mut self, model: &ModelSimState) -> Result<Vec<ModelSimState>, SweptStop> {
+        let mut steps = Vec::new();
+        match self.kind {
+            ProductKind::Dtmc => {
+                let workload = self
+                    .workload
+                    .ok_or_else(|| SweptStop::Halt(fault("a-dtmc-has-a-workload").into()))?;
+                let result = match self.key_policy {
+                    Some(policy) => self
+                        .system
+                        .weighted_steps_with_budget(
+                            model,
+                            workload,
+                            policy.identity,
+                            &mut **policy.budget.borrow_mut(),
+                            self.cancel,
+                        )
+                        .map_err(Self::expansion_error),
+                    None => self
+                        .system
+                        .weighted_steps_with_cancel(model, workload, self.cancel)
+                        .map_err(|stop| Halt::Refusal(ProductRefusal::Expansion(stop))),
+                };
+                self.poll().map_err(SweptStop::Halt)?;
+                match result.map_err(SweptStop::Halt)? {
+                    Ok(weighted) => {
+                        for step in weighted {
+                            if step.identity.is_some() {
+                                steps.push(step.post);
+                            }
+                        }
+                    }
+                    Err(Unsteppable::UndecidedSuccessor(undecided)) => {
+                        if let Some(contract) = undecided.undefined {
+                            return Err(SweptStop::Undefined(contract));
+                        }
+                    }
+                    Err(Unsteppable::NotMarkov(_)) => {}
+                }
+            }
+            ProductKind::Mdp => {
+                let result = match self.key_policy {
+                    Some(policy) => self
+                        .system
+                        .actions_with_budget(
+                            model,
+                            policy.identity,
+                            &mut **policy.budget.borrow_mut(),
+                            self.cancel,
+                        )
+                        .map_err(Self::expansion_error),
+                    None => self
+                        .system
+                        .actions_with_cancel(model, self.cancel)
+                        .map_err(|stop| Halt::Refusal(ProductRefusal::Expansion(stop))),
+                };
+                self.poll().map_err(SweptStop::Halt)?;
+                match result.map_err(SweptStop::Halt)? {
+                    Ok(actions) => {
+                        for action in actions {
+                            for draw in action.draws {
+                                steps.extend(draw.successors.into_iter().map(|(_, post)| post));
+                            }
+                        }
+                    }
+                    Err(undecided) => {
+                        if let Some(contract) = undecided.undefined {
+                            return Err(SweptStop::Undefined(contract));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(steps)
+    }
+
     fn expand(&mut self, at: usize) -> Step<()> {
         self.pending_keys.clear();
         // A full transition prefix never constructs another successor relation.
@@ -1285,7 +1476,7 @@ impl Builder<'_, '_, '_, '_> {
                 return Err(ProductRefusal::NotMarkov(not_markov).into());
             }
             Err(Unsteppable::UndecidedSuccessor(undecided)) => {
-                return Err(ProductRefusal::UndecidedSuccessor(undecided).into());
+                return Err(self.undecided_successor(at, undecided));
             }
         };
         let mut planned = Vec::new();
@@ -1339,7 +1530,7 @@ impl Builder<'_, '_, '_, '_> {
         let actions = match result? {
             Ok(actions) => actions,
             Err(undecided) => {
-                return Err(ProductRefusal::UndecidedSuccessor(undecided).into());
+                return Err(self.undecided_successor(at, undecided));
             }
         };
         if actions.is_empty() {

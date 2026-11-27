@@ -1407,7 +1407,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 PredicateReading::False => truths.push(false),
                 PredicateReading::Undefined { cause, .. } => {
                     return Ok(Err(Hit {
-                        read: *read,
+                        read: read.clone(),
                         cause,
                         state_key,
                     }));
