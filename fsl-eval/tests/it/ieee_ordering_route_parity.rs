@@ -1296,9 +1296,11 @@ fn probe_a_source_field_read_on_both_routes() {
         &mut source_meter,
     )
     .expect("the source route reads versionNumber");
-    assert_eq!(
-        source_evaluation.outcome,
-        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))),
+    assert!(
+        matches!(
+            &source_evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ),
         "the source field read returns true"
     );
 
@@ -1347,9 +1349,11 @@ fn probe_a_source_field_read_on_both_routes() {
         &mut native_budget,
     )
     .expect("the bytes route reads versionNumber without missing-type-representation");
-    assert_eq!(
-        bare_evaluation.outcome,
-        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))),
+    assert!(
+        matches!(
+            &bare_evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ),
         "the bytes route returns the same true result"
     );
     assert_eq!(
