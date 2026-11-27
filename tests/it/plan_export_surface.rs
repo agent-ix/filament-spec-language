@@ -3415,8 +3415,8 @@ fn a_plan_without_initial_refuses_its_missing_snapshot() {
 #[test]
 #[trace(
     "TC-2860",
-    "FR-1012-AC-10",
-    "FR-1012-AC-11",
+    "FR-1012-AC-12",
+    "FR-1012-AC-13",
     "FR-1013-AC-3",
     "FSpec-FR-806-AC-7",
     "FSpec-FR-803-AC-11"
@@ -3615,7 +3615,7 @@ fn genuine_spine_outcomes_preserve_status_members_and_typed_objective() {
 
 /// FR-1010 writes the whole no-instance plan document with zero exploration.
 #[test]
-#[trace("TC-2860", "FR-1010-AC-4", "FR-1012-AC-9", "FSpec-FR-803-AC-6")]
+#[trace("TC-2860", "FR-1010-AC-4", "FR-1012-AC-11", "FSpec-FR-803-AC-6")]
 fn a_plan_policy_with_no_admitted_instance_is_inconclusive() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -3664,10 +3664,10 @@ fn a_plan_policy_with_no_admitted_instance_is_inconclusive() {
     );
 }
 
-/// FR-1012-AC-9: with no requested policy, an empty population is not the
+/// FR-1012-AC-11: with no requested policy, an empty population is not the
 /// no-instance condition; the goal `true` holds of the empty plan.
 #[test]
-#[trace("TC-2862", "FR-1012-AC-9", "FSpec-FR-803-AC-6")]
+#[trace("TC-2862", "FR-1012-AC-11", "FSpec-FR-803-AC-6")]
 fn an_empty_policy_list_over_an_empty_population_is_not_no_instance() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -3720,7 +3720,7 @@ fn an_unknown_later_policy_refuses_before_no_instance() {
 /// Policy instances follow the snapshot list order, and max_work is charged
 /// once for the clause even when its second instance decides the result.
 #[test]
-#[trace("TC-2862", "FR-1012-AC-8", "FSpec-FR-803-AC-8")]
+#[trace("TC-2862", "FR-1012-AC-10", "FSpec-FR-803-AC-8")]
 fn two_instance_policy_preserves_snapshot_order_and_clause_work_charge() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();

@@ -1030,7 +1030,8 @@ pub enum InconclusiveCause {
     /// vacuous.
     NoAdmittedBehaviour,
     /// FR-235 (ADR-026 CT-2): EN-6 found a violating symbolic lasso, but no
-    /// concrete timed lasso through it was found.
+    /// concrete timed lasso through it was found; or a finite trap stem that
+    /// cannot show its final delay (FSpec FR-712).
     LassoNotConcretized,
     /// AMC-rtb's high-mode criterion failed; the test is sufficient and
     /// not necessary, so it decides nothing (ADR-026 RT-6).

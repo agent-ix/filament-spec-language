@@ -128,7 +128,7 @@ fn objective(checked: &CheckedSynthesis) -> PlanObjective {
 }
 
 /// Run `plan` over the plan synthesis.
-#[implements("FR-1012-AC-10", "FR-1012-AC-11", "FR-1013-AC-3")]
+#[implements("FR-1012-AC-12", "FR-1012-AC-13", "FR-1013-AC-3")]
 pub(super) fn run(
     plan: PlanRun<'_, '_>,
     overrides: &super::RequestOverrides<'_>,

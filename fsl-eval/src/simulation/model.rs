@@ -239,7 +239,7 @@ pub use timed::{
     TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
     TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
     TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, replay_timed_sample,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, advance_timed, replay_timed_sample,
     sample_timed, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
@@ -781,6 +781,8 @@ pub enum NativeCandidateEvent<'a> {
     Undetermined {
         /// The invocation being evaluated.
         transition: &'a ModelTransition,
+        /// The name of the contract clause that was not decided.
+        clause: &'a str,
         /// The closed native outcome classification.
         outcome: &'a ClauseOutcome,
     },
@@ -1350,7 +1352,7 @@ impl<'a> ModelSystem<'a> {
     /// The first population overlapping `over` that the initial snapshot did
     /// not list. This is a request refusal check, performed after policy
     /// declaration resolution and before policy instancing.
-    #[implements("FR-1012-AC-11", "FR-1013-AC-3")]
+    #[implements("FR-1012-AC-13", "FR-1013-AC-3")]
     pub fn unlisted_population_overlapping(
         &self,
         over: &ValueType,

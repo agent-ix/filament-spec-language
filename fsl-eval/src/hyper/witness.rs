@@ -399,14 +399,29 @@ impl<'r, 's> WitnessProduct<'r, 's> {
 
     /// The existential joint steps of `member`, expanded once for all the
     /// universal steps of a state.
-    fn expand(&self, member: &WitnessMember) -> Result<Expanded, ExpansionStop> {
+    fn expand(
+        &self,
+        member: &WitnessMember,
+        findings: &mut Vec<HyperFinding>,
+    ) -> Result<Expanded, ExpansionStop> {
         let mut options: Vec<Options> = Vec::with_capacity(member.states.len());
+        let mut unknown = false;
         for (offset, model) in member.states.iter().enumerate() {
             let stepping = self.joint.stepping(self.universal + offset, model)?;
-            if !stepping.contracts.is_empty() {
-                return Ok(None);
+            for contract in &stepping.contracts {
+                unknown = true;
+                if let Some(contract) = contract.undefined_contract() {
+                    findings.push(HyperFinding::MemberUndefined {
+                        component: self.universal + offset,
+                        contract,
+                        partner: member.partner.clone(),
+                    });
+                }
             }
             options.push(stepping.options);
+        }
+        if unknown {
+            return Ok(None);
         }
         self.joint.joint_steps(&options).map(Some)
     }
@@ -432,7 +447,7 @@ impl<'r, 's> WitnessProduct<'r, 's> {
                 ))));
             };
             if slot.is_none() {
-                let expanded = self.expand(member)?;
+                let expanded = self.expand(member, findings)?;
                 if expanded.is_none() {
                     findings.push(HyperFinding::MemberContract);
                 }

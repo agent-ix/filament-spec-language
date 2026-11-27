@@ -14,6 +14,8 @@ use crate::counter::{document, package_with_clauses, subject, Documents, CONTRAC
 const DIRECT_DENSE: &str =
     "dimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n";
 
+mod mutation;
+
 /// Dense delay tables preserve the original clock identities and exact valuations.
 #[trace("FR-940-AC-6", "FR-120")]
 #[test]
