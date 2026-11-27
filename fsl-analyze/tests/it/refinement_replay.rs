@@ -1325,3 +1325,63 @@ fn a_second_phase_fault_settles_the_item_failed_with_no_half_value() {
     assert_eq!(settled.liveness, None);
     assert_eq!(settled.fault, Some(fault));
 }
+
+const UE6_FUNCTION: &str = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+
+/// The counter pair under `contracts`, checked in `Kernel` mode.
+fn ue6_world(contracts: &str) -> World {
+    World::with_mode(
+        Variant::CAS,
+        &format!("{UE6_FUNCTION}{contracts}{}", cas_refines_counter()),
+        CheckMode::Kernel,
+    )
+}
+
+/// ADR-018 UE-6, ADR-020 RE-5: an undefined contract conjunction of either
+/// model refutes the refinement, the replay reproduces the failure
+/// `UndefinedContract` with the clause (the concrete model's state conjunction
+/// and the abstract model's guard are the two replay arms), and the item
+/// settles `refuted`.
+#[trace("FR-142-AC-9")]
+#[test]
+fn an_undefined_contract_replays_and_settles_refuted() {
+    for (contracts, clause) in [
+        (
+            "pre PeekPre using v on Impl::Counter::peek { q(2 - self.value) >= 0 }\n\
+             post PeekPost using v on Impl::Counter::peek { self.value = pre(self.value) }\n",
+            "PeekPre",
+        ),
+        (
+            "pre AbsGuard using v on Spec::Counter::inc { q(1 - self.value) >= 0 }\n\
+             post AbsPost using v on Spec::Counter::inc { true }\n",
+            "AbsGuard",
+        ),
+    ] {
+        let world = ue6_world(contracts);
+        let subject = cas(&world);
+        let outcome = check(&subject);
+        let payload = counterexample(outcome.clone());
+        let Some(RefinementFailure::UndefinedContract {
+            clause: named,
+            position,
+        }) = payload.refinement.clone()
+        else {
+            panic!("{clause}: an undefined contract: {:?}", payload.refinement);
+        };
+        assert_eq!(named, clause);
+        let settlement = replay(&subject, &payload).expect("replays");
+        assert!(
+            matches!(
+                &settlement,
+                RefinementTraceSettlement::Reproduced {
+                    failure: RefinementFailure::UndefinedContract { position: at, clause: also },
+                    ..
+                } if *at == position && also == clause
+            ),
+            "{clause}: {settlement:?}"
+        );
+        let record = settle(&subject, &outcome);
+        assert_eq!(record.value, TerminalValue::Refuted, "{clause}");
+        assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+    }
+}

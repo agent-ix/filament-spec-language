@@ -3272,3 +3272,40 @@ fn a_large_unique_float_set_is_admitted() {
     };
     assert_eq!(levels.elements().len(), 8192);
 }
+
+/// ADR-018 UE-6, V-6: a contract conjunction the evaluator refuses or leaves
+/// without a Boolean is no undefined value. The finding built from an
+/// undefined precondition, with its outcome replaced by a refused one, is not
+/// an undefined contract and is a refused one, so the successors stay
+/// undecided and no engine refutes on it.
+#[trace("FR-142-AC-9")]
+#[test]
+fn a_refused_contract_conjunction_is_not_an_undefined_contract() {
+    let world = OrdersWorld::new("pre Low using v on M::A::ready { self.ready() }");
+    let system = world.system();
+    let state = system.initial().remove(0);
+    let findings = system.successors(&state).expect("expands").findings;
+    let [ModelFinding::ContractUndetermined {
+        transition,
+        candidate,
+        clause,
+        evaluation,
+    }] = &findings[..]
+    else {
+        panic!("one contract finding: {findings:?}")
+    };
+    assert!(evaluation.undefined_cause().is_some());
+    let undefined = findings[0].undefined_contract().expect("undefined");
+    assert_eq!(undefined.guard_of.as_ref(), Some(transition));
+    assert!(!findings[0].is_refused_contract());
+    for refused in [ClauseOutcome::NotBoolean] {
+        let finding = ModelFinding::ContractUndetermined {
+            transition: transition.clone(),
+            candidate: candidate.clone(),
+            clause: clause.clone(),
+            evaluation: refused,
+        };
+        assert!(finding.undefined_contract().is_none(), "{finding:?}");
+        assert!(finding.is_refused_contract(), "{finding:?}");
+    }
+}

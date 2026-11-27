@@ -19,11 +19,11 @@ const CALLS: &str = "reward calls on Service::call = 1;\n";
 
 // Hand-counted from the deterministic expected-reward subsystem charge path.
 // The first witness-production charge follows the 110,432-unit product prefix (70,989 plus the 39,443 read beyond decided control, ADR-018 UE-6);
-// production admits 169,184 units and independent replay admits 165,143.
+// production admits 168,995 units (189 below its earlier 169,184 since QSL-3611, #4109) and independent replay admits 165,143.
 #[cfg(feature = "test-support")]
 const SUBSYSTEM_PREFIX_WORK: u64 = 110_432;
 #[cfg(feature = "test-support")]
-const SUBSYSTEM_PRODUCTION_WORK: u64 = 169_184;
+const SUBSYSTEM_PRODUCTION_WORK: u64 = 168_995;
 #[cfg(feature = "test-support")]
 const SUBSYSTEM_REPLAY_WORK: u64 = 165_143;
 #[cfg(feature = "test-support")]
