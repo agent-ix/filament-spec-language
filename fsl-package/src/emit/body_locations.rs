@@ -447,11 +447,16 @@ mod tests {
         );
     }
 
-    #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-490")]
+    #[ix_trace_rs::trace(
+        "FR-531-AC-39",
+        "FSpec-FR-322-AC-490",
+        "FSpec-FR-322-AC-540",
+        "FSpec-FR-322-AC-541"
+    )]
     #[test]
-    fn an_option_value_body_root_gets_no_body_location_row() {
+    fn option_value_body_roots_and_payloads_preserve_body_location_rows() {
         let (_, checked) = super::super::tests::package_from_text(
-            "function literal using v(): Option<Int[0, 9]> pure { Some(3) }\n\
+            "function literal using v(): Option<Integer> pure { Some(3) }\n\
              function plus using v(x: Integer): Option<Integer> pure { Some(x + 1) }\n",
         );
         let emission =
@@ -464,18 +469,13 @@ mod tests {
             CheckedPackageDispatchResult::AdmittedV2(package) => package,
             other => panic!("an option-value body root must read back: {other:?}"),
         };
-        let data = package.checked_term_data();
-        assert!(
-            data.is_none_or(|data| data.body_locations.is_empty()),
-            "the walk ends at each root: {data:?}"
-        );
         let nodes = &package.resolved_graph().nodes;
         let functions: Vec<_> = nodes
             .iter()
             .filter(|node| node.node_tag.as_ref() == "function")
             .collect();
         assert_eq!(functions.len(), 2);
-        for function in functions {
+        for function in &functions {
             let Some(CheckedTerm::Reference { target }) = body(function) else {
                 panic!("a function body is a reference: {function:?}");
             };
@@ -488,6 +488,57 @@ mod tests {
                 "{root:?}"
             );
         }
+        let rows = &package.checked_term_data().unwrap().body_locations;
+        let add = nodes
+            .iter()
+            .find(|node| {
+                matches!(&node.body, CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.integer.add"))
+            })
+            .expect("Some(x + 1) has one integer addition");
+        let addition_rows = rows
+            .iter()
+            .filter(|row| row.application == add.node_id)
+            .collect::<Vec<_>>();
+        assert_eq!(addition_rows.len(), 1, "the addition has one body row");
+        let row = addition_rows[0];
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+        let plus = functions
+            .iter()
+            .find(|candidate| candidate.node_id == *function)
+            .expect("the addition row belongs to a function");
+        let literal = functions
+            .iter()
+            .find(|candidate| candidate.node_id != plus.node_id)
+            .expect("Some(3) has no application row");
+        assert!(
+            !rows.iter().any(|row| matches!(
+                &row.location.origin,
+                CheckedBodyLocationOrigin::FunctionBody { function, .. }
+                    if function == &literal.node_id
+            )),
+            "literal function {:?} has no row; rows: {:?}",
+            literal.node_id,
+            rows.iter()
+                .map(|row| (&row.application, &row.location.origin))
+                .collect::<Vec<_>>()
+        );
+        assert!(add.occurrences.contains(&row.occurrence));
+        assert_eq!(row.term_ordinal, 0);
+        let mut cursor = package.body_locations(function, 10_000).unwrap();
+        let mut paired_views = 0;
+        while let Some(view) = cursor.next_location().unwrap() {
+            if *view.row == *row {
+                paired_views += 1;
+                assert_eq!(view.row.occurrence, row.occurrence);
+                assert_eq!(view.row.term_ordinal, row.term_ordinal);
+                assert_eq!(view.path, [CheckedKeyOrdinal::Safe(0)]);
+            }
+        }
+        assert_eq!(
+            paired_views, 1,
+            "the cursor returns the paired addition row"
+        );
     }
 
     #[ix_trace_rs::trace("FR-531-AC-39", "FSpec-FR-322-AC-510")]
