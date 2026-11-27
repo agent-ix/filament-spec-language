@@ -65,7 +65,7 @@ fsl-definitional-reference = { path = "../fsl-definitional-reference" }
 fsl-certificate-mutation = { path = "../fsl-certificate-mutation" }
 # QSL-3162: exercise the real CG temporal SMT runner against FSL's production
 # typed settlement API; kept dev-only because CG is not an analysis runtime dep.
-filament-contract-codegen = { git = "https://github.com/agent-ix/filament-contract-codegen", rev = "34ae50759b04bb27f612aa3af522bfc92435c54d" }
+filament-contract-codegen = { git = "https://github.com/agent-ix/filament-contract-codegen", rev = "a3d87f313c2d72bdece60357e3ebbd1ab2350982" }
 # FR-940-AC-24 compares complete tuple-evaluation charge logs on both routes.
 filament-exact = { workspace = true, features = ["test-support"] }
 filament-specification = { workspace = true }

@@ -355,12 +355,21 @@ fn expression(
                             declaration,
                             name,
                             read_form,
+                            population,
                         }) => encode(
                             b"field",
                             &[
                                 inputs.key(declaration, claim, budget)?,
                                 budget.copy(name.as_bytes())?,
                                 format!("{read_form:?}").into_bytes(),
+                                match population {
+                                    Some(population) => encode(
+                                        b"population",
+                                        &[inputs.key(population, claim, budget)?],
+                                        budget,
+                                    )?,
+                                    None => Vec::new(),
+                                },
                             ],
                             budget,
                         )?,
