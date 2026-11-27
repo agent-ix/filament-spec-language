@@ -333,7 +333,7 @@ pub(crate) fn simulate(
 fn not_simulated(refused: &NotSimulated) -> (Category, Value) {
     match refused.catalog_code() {
         Some(code) => (
-            fsl_foundation::diagnostic::category_of(&code).unwrap_or(Category::Refusal),
+            fsl_foundation::diagnostic::exit_category_of(&code).unwrap_or(Category::Refusal),
             json!({"code": code.code(), "kind": code.cause()}),
         ),
         // FR-101: an unbounded root, or an unbound capacity, requires a bound.

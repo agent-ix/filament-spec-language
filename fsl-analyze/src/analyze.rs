@@ -69,7 +69,7 @@ use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_eval::simulation::protocol::ProtocolTransition;
 use fsl_foundation::budget::Budget;
-use fsl_foundation::diagnostic::category_of;
+use fsl_foundation::diagnostic::exit_category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex, Setting};
 use fsl_package::CheckedPackage;
@@ -1498,7 +1498,7 @@ impl AnalyzeRefusal {
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
-                let category = category_of(&catalog).unwrap_or(Category::Refusal);
+                let category = exit_category_of(&catalog).unwrap_or(Category::Refusal);
                 OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
                     .with_diagnostics(vec![OutcomeDiagnostic::new(
                         Some(catalog.cause()),
@@ -1533,7 +1533,7 @@ pub(crate) fn refusal_document(
             });
             (
                 record.catalog,
-                category_of(&record.catalog).unwrap_or(Category::Refusal),
+                exit_category_of(&record.catalog).unwrap_or(Category::Refusal),
                 details,
             )
         }
@@ -3854,6 +3854,29 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+
+    /// FR-285-AC-1: an admission refusal carrying an unsupported code
+    /// (`unknown_required_feature`, `unsupported_construct`) is category
+    /// `unsupported`, exit 21, never the record map's `Refusal` (20).
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn an_unsupported_admission_refusal_is_category_unsupported_exit_21() {
+        for (code, cause) in [
+            ("unknown_required_feature", "unsupported-feature"),
+            ("unsupported_construct", "not-yet-implemented"),
+        ] {
+            let record = filament_semantic_value::admission::AdmissionRecord {
+                catalog: CatalogCode::new(code, cause),
+                fields: std::collections::BTreeMap::new(),
+                path: Vec::new(),
+                kernel: None,
+            };
+            let failure = AdmissionFailure::Refused(Box::new(record));
+            let document = refusal_document(Operation::Analyze, &failure, String::new());
+            assert_eq!(document.category(), Category::Unsupported, "{code}");
+            assert_eq!(document.category().exit_code(), 21, "{code}");
+        }
+    }
 
     fn engine(id: &str, kind: Capability) -> Engine {
         Engine::new(
