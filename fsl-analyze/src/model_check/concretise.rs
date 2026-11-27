@@ -23,6 +23,7 @@ use fsl_eval::simulation::{
     EncodingRefusal, ExpansionStop, Permutation, SubjectSystem, SymmetryGroup, TransitionSystem,
 };
 use fsl_replay::{CounterexampleKind, ModelStep};
+use ix_trace_rs::implements;
 
 use super::check::{fault, ModelCheckRefusal};
 
@@ -195,6 +196,7 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
     ///
     /// [`LiftStop`] when an expansion stops, the budget is spent, or the
     /// concrete step is not a step of the subject.
+    #[implements("FR-161-AC-5")]
     pub(super) fn edge(
         &mut self,
         transition: &S::TransitionId,

@@ -676,6 +676,7 @@ pub(crate) fn check_model_with_stutter_closure(
 /// re-search that ends undecided (a limit, a horizon, a memory bound) settles
 /// the item with that typed outcome: the later instance is never reported as
 /// the first refuted one.
+#[implements("FR-161-AC-5")]
 fn first_refuted_instance(
     mut limits: ModelCheckLimits,
     mut search: impl FnMut(
