@@ -244,12 +244,12 @@ pub use timed::admission::{
 };
 pub use timed::{
     advance_timed, sample_timed, sample_timed_from, sample_timed_race, BehaviourLetters,
-    BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, GuardedSteps, MoveRefusal,
-    PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock,
-    TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep,
-    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd, TimedSampleStop,
-    TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal, TimedSystem,
-    TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
+    BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, GuardedSteps,
+    MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding,
+    TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw,
+    TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd,
+    TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal,
+    TimedSystem, TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
 };
 pub(crate) use walk::{Applied, Budget};
 

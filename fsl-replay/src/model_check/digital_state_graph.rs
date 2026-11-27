@@ -304,7 +304,10 @@ fn limit_from_stop(stop: TimedStop, max_states: u64) -> DigitalGraphLimit {
         TimedStop::Undefined(_) => DigitalGraphLimit::UndefinedGuard,
         TimedStop::Undecided(reading)
             if reading.cause.is_some()
-                && matches!(reading.site, fsl_eval::simulation::model::TimedSite::Guard { .. }) =>
+                && matches!(
+                    reading.site,
+                    fsl_eval::simulation::model::TimedSite::Guard { .. }
+                ) =>
         {
             DigitalGraphLimit::UndefinedGuard
         }

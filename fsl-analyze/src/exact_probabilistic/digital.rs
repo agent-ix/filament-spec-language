@@ -28,7 +28,7 @@ use fsl_eval::probabilistic::TimedOperatorState;
 use fsl_eval::simulation::model::{
     same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
     PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
-    LOCKED_RUN_TERMINAL, UndecidedSuccessor,
+    UndecidedSuccessor, LOCKED_RUN_TERMINAL,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_replay::{

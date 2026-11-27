@@ -46,10 +46,10 @@ use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::object_environment::PlacePresences;
 use fsl_semantics::model::state::ModelState;
 
-use super::BROKEN;
 use super::encode::declaration_text;
 use super::state_predicate::PredicateReading;
 use super::walk::{expand_enabled_with_clock_selectors, stop};
+use super::BROKEN;
 use super::{ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::reduction::Permutation;
