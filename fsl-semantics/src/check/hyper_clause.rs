@@ -642,13 +642,17 @@ impl CheckedHyperClause {
     /// # Errors
     /// Refuses an unsupported profile, malformed arena, unknown alias or
     /// inconsistent atom slot; it never constructs a partial checked clause.
+    #[implements("FR-173-AC-3")]
     pub fn of_package_form(
         form: PackageHyperForm,
         types: &filament_semantic_value::declaration::TypeEnvironment,
         position_limit: u64,
     ) -> Result<Self, super::PackageClauseRefusal> {
         use super::PackageClauseRefusal::{Domains, Shape};
-        if form.profile != TemporalProfile::InfiniteTrace {
+        if !matches!(
+            form.profile,
+            TemporalProfile::InfiniteTrace | TemporalProfile::EventPositionFalseExtension
+        ) {
             return Err(super::PackageClauseRefusal::Profile(form.profile));
         }
         if form.subject_models.len() != form.aliases.len()

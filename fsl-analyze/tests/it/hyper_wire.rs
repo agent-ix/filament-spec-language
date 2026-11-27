@@ -399,18 +399,20 @@ fn package_hp4_projection_outside_safety_has_no_route() {
     assert_package_hyper_hp4_has_no_target_and_keeps_universal(&run);
 }
 
-/// FR-173-AC-3 / FR-173-AC-5 / FR-182-AC-1: a fixed-sample clause with no
-/// decided form settles V-8; an event-position Universal clause reaches EN-1,
-/// while HP-4 and the supported sibling keep their own negotiation outcomes.
+/// FR-173-AC-3 / FR-173-AC-5 / FR-182-AC-1: package negotiation settles a
+/// fixed-sample clause with no decided form as V-8; an event-position
+/// Universal clause reaches EN-1, while HP-4 keeps its own disposition.
 #[trace("FR-173-AC-3", "FR-173-AC-5", "FR-182-AC-1")]
 #[test]
 fn no_form_and_hp4_hyper_items_settle_v8_and_keep_the_universal_sibling() {
+    use crate::analyze_cli_support::{package_selection, HANDOFF};
+
     let declaration = r#"hyper Other using inf over behaviours (v: V::Vault)
         exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }
 hyper Universal using inf over behaviours (v: V::Vault)
         forall trace a of V { always holds(v.h @ a = v.h @ a) }
 hyper EventPosition using ep over behaviours (v: V::Vault)
-        forall trace a of V { always [0, 1] holds(v.h @ a = v.h @ a) }
+        forall trace a of V { true }
 hyper FixedSample using fs over behaviours (v: V::Vault)
         forall trace a of V { always [0, 1] holds(v.h @ a = v.h @ a) }"#;
     let (unit, model, snapshots) =
@@ -420,7 +422,7 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         "profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile fs = \"filament.temporal.fixed-sample.false-extension/v1\";",
     );
     let ws = Workspace::new("hyper-wire-fixed-sample-no-form");
-    let run = analyze(&request_over(
+    let source_path = request_over(
         &ws,
         &unit,
         &model,
@@ -428,12 +430,28 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         json!({"items": [
             {"claim": "Other"},
             {"claim": "Universal"},
-            {"claim": "EventPosition"},
+            {"claim": "EventPosition", "temporal": {"max_depth": 1}},
             {"claim": "FixedSample"}
         ]}),
-    ));
+    );
+    let source_document: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&source_path).expect("source request exists"),
+    )
+    .expect("source request is JSON");
+    let (members, _) = package_selection(&ws, &source_document["request"]);
+    ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+    .expect("remove the fixture's retained sources");
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let run = analyze(&package_path);
     let document = run.document();
     assert_eq!(run.exit, 21, "{document}");
+    assert_eq!(document["items"].as_array().map(Vec::len), Some(5), "{document}");
     let hp4 = run.item(0);
     assert_eq!(label(&hp4), "unsupported", "{document}");
     assert_eq!(
@@ -441,7 +459,8 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         "unsupported-requested-capability",
         "{document}"
     );
-    assert_eq!(hp4["request"]["candidates"]["backends"], json!([]));
+    assert!(hp4["request"].is_null(), "{document}");
+    assert!(hp4["certificate"].is_null(), "{document}");
     assert!(hp4["counterexample"].is_null(), "{document}");
     let universal = run.item(1);
     assert_eq!(label(&universal), "proved", "{document}");
@@ -462,10 +481,8 @@ hyper FixedSample using fs over behaviours (v: V::Vault)
         "unsupported-requested-capability",
         "{document}"
     );
-    assert_eq!(
-        fixed_sample["request"]["candidates"]["backends"],
-        json!([])
-    );
+    assert!(fixed_sample["request"].is_null(), "{document}");
+    assert!(fixed_sample["certificate"].is_null(), "{document}");
     assert!(fixed_sample["counterexample"].is_null(), "{document}");
 }
 
