@@ -82,9 +82,9 @@ fn format_expected(
     if let Some(token) = tokens.get(position) {
         if reserved_words.contains(token.spelling.as_ref())
             && expected.iter().any(|item| {
-                item == "identifier"
-                    || item.starts_with("identifier or ")
-                    || item.starts_with("type name other than ")
+                item.as_bytes() == b"identifier"
+                    || item.as_bytes().starts_with(b"identifier or ")
+                    || item.as_bytes().starts_with(b"type name other than ")
             })
         {
             return format!("`{}` is a reserved word", token.spelling);
@@ -109,24 +109,26 @@ fn format_expected(
     }
 
     if expected.len() > EXPECTED_ALTERNATIVE_BOUND {
-        return if expected.contains("decimal literal") || expected.contains("quoted string") {
+        return if expected.get("decimal literal").is_some()
+            || expected.get("quoted string").is_some()
+        {
             "expected an expression".into()
         } else {
             "expected a declaration".into()
         };
     }
 
-    let expression_start = expected.contains("true")
-        || expected.contains("false")
-        || expected.contains("decimal literal") && expected.contains("quoted string")
-        || expected.contains("identifier")
+    let expression_start = expected.get("true").is_some()
+        || expected.get("false").is_some()
+        || expected.get("decimal literal").is_some() && expected.get("quoted string").is_some()
+        || expected.get("identifier").is_some()
         || expected
             .iter()
-            .any(|item| item.starts_with("identifier or "));
+            .any(|item| item.as_bytes().starts_with(b"identifier or "));
     let mut alternatives = expected
         .iter()
-        .filter(|item| !item.starts_with("one of `"))
-        .filter(|item| !(expression_start && item.as_str() == "decimal literal"))
+        .filter(|item| !item.as_bytes().starts_with(b"one of `"))
+        .filter(|item| !(expression_start && item.as_bytes() == b"decimal literal"))
         .cloned()
         .collect::<Vec<_>>();
     if alternatives.is_empty() {
@@ -136,6 +138,7 @@ fn format_expected(
 }
 
 #[implements("FR-762-AC-7")]
+#[ix_trace_rs::string_edge]
 pub(super) fn parse(
     source: Source,
     limits: Limits,
@@ -165,12 +168,10 @@ pub(super) fn parse(
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, compounds, cancel)?;
     if diagnostics.len() > limits.diagnostics {
-        let cut_span = diagnostics[limits.diagnostics]
-            .byte_span()
-            .unwrap_or(Span {
-                start: source.text().len(),
-                end: source.text().len(),
-            });
+        let cut_span = diagnostics[limits.diagnostics].byte_span().unwrap_or(Span {
+            start: source.text().len(),
+            end: source.text().len(),
+        });
         diagnostics.truncate(limits.diagnostics);
         diagnostics.push(*super::diagnostic::error(
             &source,
@@ -445,6 +446,7 @@ type DeclarationRecovery = (
     "FR-002-AC-9",
     "FR-503-AC-1"
 )]
+#[ix_trace_rs::string_edge]
 fn parse_with_declaration_recovery(
     source: &Source,
     grammar: &Grammar,
@@ -776,8 +778,7 @@ fn parse_with_declaration_recovery(
                             },
                             str::to_owned,
                         );
-                        if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics
-                        {
+                        if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                             diagnostics.push(*super::diagnostic::error(
                                 source,
                                 CompleteCode::InvalidSyntax,
@@ -819,23 +820,23 @@ fn parse_with_declaration_recovery(
                         .collect::<Vec<_>>()
                         .join(" or ");
                     let message = derived_form(&tokens, &failure)
-                    .or_else(|| {
-                        declared_type_name_hint(
-                            &tokens,
-                            &Failure::expected(failure.position, expected.clone()),
-                        )
-                    })
-                    .map_or_else(
-                        || {
-                            format_expected(
+                        .or_else(|| {
+                            declared_type_name_hint(
                                 &tokens,
-                                failure.position,
-                                &failure.expected,
-                                reserved_words,
+                                &Failure::expected(failure.position, expected.clone()),
                             )
-                        },
-                        str::to_owned,
-                    );
+                        })
+                        .map_or_else(
+                            || {
+                                format_expected(
+                                    &tokens,
+                                    failure.position,
+                                    &failure.expected,
+                                    reserved_words,
+                                )
+                            },
+                            str::to_owned,
+                        );
                     if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                         diagnostics.push(*super::diagnostic::error(
                             source,
@@ -944,28 +945,27 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
             continue;
         }
         let mut at = after_name;
-        skip_ascii_space(bytes, &mut at);
+        skip_trivia(bytes, &mut at);
         if bytes.get(at) != Some(&b'(') {
             cursor = after_name;
             continue;
         }
         at += 1;
-        skip_ascii_space(bytes, &mut at);
+        skip_trivia(bytes, &mut at);
         let has_bits = bytes.get(at..at + 4) == Some(b"bits");
         if has_bits {
             at += 4;
-            skip_ascii_space(bytes, &mut at);
+            skip_trivia(bytes, &mut at);
         }
         let has_colon = bytes.get(at) == Some(&b':');
         if has_colon {
             at += 1;
-            skip_ascii_space(bytes, &mut at);
+            skip_trivia(bytes, &mut at);
         }
         let payload_start = at;
-        while bytes
-            .get(at)
-            .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b')')
-        {
+        while bytes.get(at).is_some_and(|byte| {
+            !byte.is_ascii_whitespace() && *byte != b')' && !bytes[at..].starts_with(b"//")
+        }) {
             at += 1;
         }
         let payload = &bytes[payload_start..at];
@@ -978,7 +978,7 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
             && payload[2..]
                 .iter()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
-        skip_ascii_space(bytes, &mut at);
+        skip_trivia(bytes, &mut at);
         let has_close = bytes.get(at) == Some(&b')');
         let valid = has_bits && has_colon && valid_payload && has_close;
         if !valid {
@@ -1007,9 +1007,22 @@ fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<Comple
     diagnostics
 }
 
-fn skip_ascii_space(bytes: &[u8], at: &mut usize) {
-    while bytes.get(*at).is_some_and(u8::is_ascii_whitespace) {
-        *at += 1;
+fn skip_trivia(bytes: &[u8], at: &mut usize) {
+    loop {
+        while bytes.get(*at).is_some_and(u8::is_ascii_whitespace) {
+            *at += 1;
+        }
+        if bytes.get(*at..).is_some_and(|tail| tail.starts_with(b"//")) {
+            *at += 2;
+            while bytes
+                .get(*at)
+                .is_some_and(|byte| *byte != b'\n' && *byte != b'\r')
+            {
+                *at += 1;
+            }
+        } else {
+            break;
+        }
     }
 }
 
@@ -1074,6 +1087,7 @@ fn header_start_for_failure(
     (!declaration_after_header).then_some(header)
 }
 
+#[ix_trace_rs::string_edge]
 fn next_header_resumption(
     grammar: &Grammar,
     tokens: &[Significant],
@@ -1109,6 +1123,7 @@ fn next_header_resumption(
     None
 }
 
+#[ix_trace_rs::string_edge]
 fn next_declaration_start(
     grammar: &Grammar,
     source: &Source,
@@ -2156,6 +2171,7 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
 
 /// Explain that query type arguments take declared names, not inline types,
 /// when parsing stops at the type argument.
+#[ix_trace_rs::string_edge]
 fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
     let position = failure.position;
     let is_query = |at: usize| {
@@ -2187,6 +2203,7 @@ fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<
 /// An empty unknown declaration body is malformed syntax, while a non-empty
 /// unselected extension-shaped form retains the unsupported cause. Keep the
 /// refusal located at the declaration word in either case.
+#[ix_trace_rs::string_edge]
 fn empty_unknown_declaration_body(tokens: &[Significant], position: usize) -> bool {
     tokens.get(position).is_some_and(Significant::names)
         && tokens.get(position + 1).is_some_and(Significant::names)

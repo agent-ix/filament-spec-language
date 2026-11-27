@@ -443,9 +443,16 @@ pub(crate) fn check<R: PlanRules>(
                             Control::Stop
                         }
                     },
-                    Event::Undetermined { outcome, .. } => match outcome {
+                    Event::Undetermined {
+                        outcome, clause, ..
+                    } => match outcome {
                         ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_) => {
-                            Control::Continue
+                            // No disabled invocation (ADR-018 UE-6).
+                            denied = Some(PlanStopCause::ContractUndefined {
+                                clause: clause.to_owned(),
+                                state: entry.key.state.clone(),
+                            });
+                            Control::Stop
                         }
                         ClauseOutcome::Incomplete(incomplete) => {
                             denied = Some(PlanStopCause::LimitReached {
@@ -487,6 +494,18 @@ pub(crate) fn check<R: PlanRules>(
                 Ok(expansion) => expansion,
                 Err(_) => return reject(CertificateRule::Closure, index),
             };
+            // A contract conjunction with no value is no disabled step
+            // (ADR-018 UE-6): a derivation resting on it is not a proof.
+            if let Some(contract) = expansion
+                .findings
+                .iter()
+                .find_map(fsl_eval::simulation::model::ModelFinding::undefined_contract)
+            {
+                return Err(PlanStopCause::ContractUndefined {
+                    clause: contract.clause,
+                    state: entry.key.state.clone(),
+                });
+            }
             derived = expansion
                 .successors
                 .into_iter()
@@ -805,4 +824,246 @@ fn prefix(entries: &[Entry], mut index: usize) -> (Vec<ModelSimState>, Vec<super
     states.reverse();
     steps.reverse();
     (states, steps)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use filament_exact::{Cancel, Rational, ScalarLimits};
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_eval::simulation::model::{
+        ExpansionLimits, ModelSimulationRequest, PopulationUniverse,
+    };
+    use fsl_eval::simulation::TransitionSystem;
+    use fsl_foundation::SourceIdentity;
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::intake::{admit_unit, package_input};
+    use fsl_semantics::model::observation::{document_reference, DocumentRef, ObservationLimits};
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    use super::*;
+    use crate::plan_search::{
+        Direction, MonitorStep, ObjectiveKind, PlanLengths, PlanRules, PlanSearchLimits, PlanStep,
+        PlanStopCause, PlanView, RuleStop,
+    };
+
+    struct Rules;
+
+    impl PlanRules for Rules {
+        type StepKey = ();
+
+        fn direction(&self) -> Direction {
+            Direction::Minimize
+        }
+
+        fn objective_kind(&self) -> ObjectiveKind {
+            ObjectiveKind::General
+        }
+
+        fn merges_prefixes(&self) -> bool {
+            false
+        }
+
+        fn step_key(&mut self, _: &PlanStep) -> Result<Self::StepKey, RuleStop> {
+            Ok(())
+        }
+
+        fn policy_count(&self) -> usize {
+            0
+        }
+
+        fn policy_start(&mut self, _: usize, _: &ModelSimState) -> Result<MonitorStep, RuleStop> {
+            unreachable!("the test has no policies")
+        }
+
+        fn policy_advance(
+            &mut self,
+            _: usize,
+            _: &[u8],
+            _: &ModelSimState,
+        ) -> Result<MonitorStep, RuleStop> {
+            unreachable!("the test has no policies")
+        }
+
+        fn policy_accepts(
+            &mut self,
+            _: usize,
+            _: &[u8],
+            _: &ModelSimState,
+        ) -> Result<bool, RuleStop> {
+            unreachable!("the test has no policies")
+        }
+
+        fn goal(&mut self, _: &PlanView<'_>) -> Result<bool, RuleStop> {
+            Ok(false)
+        }
+
+        fn step_cost(&mut self, _: &PlanView<'_>, _: usize) -> Result<Option<Rational>, RuleStop> {
+            Ok(Some(crate::plan_search::zero()))
+        }
+
+        fn objective(&mut self, _: &PlanView<'_>) -> Result<Option<Rational>, RuleStop> {
+            Ok(None)
+        }
+    }
+
+    fn with_system(test: impl FnOnce(&ModelSystem<'_>, ModelSimState)) {
+        let domain = filament_specification::published_file(
+            "proposals/planning-v1/fixtures/counter/model.semantic-ir.json",
+        )
+        .expect("FSpec publishes the planning counter model");
+        let packages = package_input([domain]).expect("the model package admits");
+        let unit = b"language \"ix:native\" edition \"1-draft\";\n\
+            profile v = \"filament.value.complete/v1\";\n\
+            model M = \"example/plan-counter\";\n\
+            function q using v(x: Integer): Integer pure { 6 mod x }\n\
+            pre CanDivide using v on M::Counter::inc { q(self.value - 1) > 0 }\n";
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("agent-ix", "qsl3561"),
+            "qsl3561.native",
+            unit,
+            fsl_cst::Limits::default(),
+        )
+        .expect("the unit parses");
+        assert!(
+            parsed.is_admissible(),
+            "S1 diagnostics: {:?}",
+            parsed.diagnostics()
+        );
+        let built = fsl_forms::build_unit(&parsed).expect("the unit forms build");
+        let models = admit_unit(
+            &built.selections().models,
+            &packages,
+            ModelNormalizationLimits::default(),
+        )
+        .expect("the model selection admits")
+        .with_parsed_operation_clauses(|text| {
+            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        })
+        .expect("the operation clause parses");
+        let declarations = fsl_semantics::check::PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "qsl3561".to_owned(),
+            built,
+            models,
+            Vec::new(),
+        )
+        .expect("the unit assembles");
+        let graph = declarations
+            .check(
+                CheckMode::Kernel,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .expect("the unit checks");
+        let package = fsl_package::CheckedPackage::link(graph);
+        let snapshot = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": "s0"},
+            "observation": "current",
+            "model": {"identity": "example/plan-counter"},
+            "anchor": {"kind": "initialization", "name": "start"},
+            "populations": [{
+                "population": "ix://example/plan-counter/counters",
+                "complete": true,
+                "objects": [{
+                    "key": "c",
+                    "type": "ix://example/plan-counter/Counter",
+                    "fields": {"value": {"integer": "1"}}
+                }]
+            }]
+        })
+        .to_string()
+        .into_bytes();
+        let reference = document_reference(&snapshot).expect("snapshot reference");
+        let snapshots = BTreeMap::from([(reference, snapshot)]);
+        let initial = vec![DocumentRef {
+            authority: "test".to_owned(),
+            identity: "s0".to_owned(),
+        }];
+        let system = ModelSystem::new(ModelSimulationRequest {
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
+            packages: &packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &snapshots,
+            initial,
+            universes: vec![PopulationUniverse {
+                population: filament_checked::key::DeclarationKey {
+                    package: "example/plan-counter".to_owned(),
+                    node: "ix://example/plan-counter/counters".to_owned(),
+                },
+                keys: vec!["c".to_owned()],
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: ScalarLimits {
+                integer_bits: 1 << 20,
+                decimal_digits: 1 << 20,
+                scale_expansion: 1 << 20,
+                text_input_bytes: 1 << 20,
+                text_scalars: 1 << 20,
+                normalized_scalars: 1 << 20,
+                unit_edges: 1 << 20,
+                value_occurrences: 1 << 20,
+                work_units: 1 << 30,
+                result_units: 1 << 30,
+            },
+            emit: fsl_package::EmitLimits::fixture(),
+        })
+        .expect("the model system admits");
+        let initial = system
+            .initial()
+            .into_iter()
+            .next()
+            .expect("one initial state");
+        test(&system, initial);
+    }
+
+    #[test]
+    #[trace("TC-2862", "FR-1012-AC-9")]
+    fn qsl3561_checker_reports_reachable_undefined_contract() {
+        with_system(|system, state| {
+            let key = system
+                .state_key(&state, fsl_foundation::IdentityLimits::default())
+                .expect("the initial state keys")
+                .0;
+            let certificate = Certificate {
+                kind: CertificateKind::Closure,
+                objective: ObjectiveKind::General,
+                merges: false,
+                entries: vec![Entry {
+                    key: super::super::NodeKey {
+                        state: key,
+                        monitors: Vec::new(),
+                        depth: 0,
+                        accumulated: None,
+                        prefix: None,
+                    },
+                    state,
+                    monitors: Vec::new(),
+                    parent: None,
+                    value: None,
+                    successors: Vec::<(PlanStep, usize)>::new(),
+                }],
+            };
+            let stop = check(
+                system,
+                &mut Rules,
+                &certificate,
+                PlanLengths::new(0, 1).expect("valid lengths"),
+                PlanSearchLimits::default(),
+                &Cancel::new(),
+                None,
+            )
+            .expect_err("the checker refuses its undefined reachable expansion");
+            assert!(matches!(
+                stop,
+                PlanStopCause::ContractUndefined { clause, .. } if clause == "CanDivide"
+            ));
+        });
+    }
 }

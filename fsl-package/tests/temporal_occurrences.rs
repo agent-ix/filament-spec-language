@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Temporal occurrence emission, row identity and clock-selection refusals.
 
+#![cfg(feature = "std")]
+
 use std::sync::Arc;
 
 use filament_contract_model::ClockConfiguration;

@@ -23,8 +23,8 @@ filament-exact = { workspace = true }
 quire-canonical = { workspace = true }
 filament-contract-model = { workspace = true }
 filament-semantic-value = { workspace = true }
-[dev-dependencies]
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+[dev-dependencies]
 fsl-cst = { path = "../fsl-cst" }
 fsl-forms = { path = "../fsl-forms" }
 fsl-replay = { path = "../fsl-replay", features = ["test-support"] }

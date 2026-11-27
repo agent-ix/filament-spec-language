@@ -12,7 +12,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, PackageDeclarations, SemanticCheckRefusal};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
@@ -31,7 +31,7 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 /// `declarations` as one unit, checked.
-fn compile(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn compile(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\

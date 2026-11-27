@@ -8,9 +8,10 @@
 //! **The closed condition (TA-2).** Before any state is explored, every
 //! clock constraint of the subject's guards and time invariants and every
 //! timed interval of the claim must be non-strict; a strict one declines
-//! the item naming it ([`DigitalRefusal::Strict`]). On closed subjects and
-//! claims digitisation decides the dense-time verdict (Henzinger, Manna and
-//! Pnueli), and every delay a counterexample takes is a valid dense delay.
+//! the item naming it ([`DigitalRefusal::Strict`]). A closed claim whose
+//! verdict digitisation does not preserve is declined next, naming the rule
+//! and the part ([`DigitalRefusal::NotDigitisable`], FR-243).
+//! Every delay a counterexample takes is a valid dense delay.
 //!
 //! **The reading (TA-3).** Every constant of the model and of the claim is
 //! scaled by their common denominator to whole units. A timed state is the
@@ -46,7 +47,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Integer, Meter, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    position_automaton, Atom, AutomatonError, ClockedEdge, Letter, PositionAutomaton, StateId,
+    position_automaton, translate_position_clause, Atom, AutomatonError, ClockedEdge, Letter,
+    Monitor, PositionAutomaton, StateId,
 };
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
@@ -55,18 +57,20 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::source::Span;
+use fsl_replay::NotDigitisable;
 use fsl_replay::{
     CounterexampleKind, IncompleteCause, Lasso, ModelCheckLimit, ModelCheckOutcome, ModelStep,
     NonZeno, ReachedLimit, RunStats, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
     UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{
-    CaptureSite, CheckedInterval, CheckedTemporalClause, ClockOp, FormulaNode,
+    CaptureSite, CheckedInterval, CheckedTemporalClause, ClockOp, FormulaNode, FormulaNodeId,
 };
 use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 
+use super::digitisable::{digitisation_decline, DigitalItem};
 use super::fair_walk::{fairness_constraints, FairModel};
 
 /// The budgets of one digital-clock run (FR-625's limits).
@@ -118,6 +122,9 @@ pub enum Strict {
 pub enum DigitalRefusal {
     /// TA-2: the subject or the claim is not closed; no state is explored.
     Strict(Strict),
+    /// FR-243: digitisation does not preserve the claim's verdict; no state
+    /// is explored.
+    NotDigitisable(NotDigitisable),
     /// The clause has no claim automaton the route reads: a punctual
     /// interval started at many positions, or more automaton clocks than the
     /// construction builds (as EN-6 reads them, `UnsupportedForm`).
@@ -145,13 +152,23 @@ impl From<DigitalRefusal> for Halt {
 /// # Errors
 ///
 /// [`DigitalRefusal::Strict`] before any search when the subject or the
-/// claim is not closed; the other [`DigitalRefusal`]s as they state.
+/// claim is not closed, [`DigitalRefusal::NotDigitisable`] when its verdict
+/// is not digitisable; the other [`DigitalRefusal`]s as they state.
+#[implements("FR-243-AC-5", "FR-243-AC-7")]
 pub fn check_digital<L: ModelLetters>(
     request: &DigitalRequest<'_, '_, '_, L>,
     cancel: &Cancel,
 ) -> Result<DigitalCheckOutcome, DigitalRefusal> {
     if let Some(strict) = strict_element(request.subject, request.clause) {
         return Err(DigitalRefusal::Strict(strict));
+    }
+    if let Some(declined) = digitisation_decline(DigitalItem::Temporal {
+        subject: request.subject,
+        clause: request.clause,
+    })
+    .map_err(DigitalRefusal::Fault)?
+    {
+        return Err(DigitalRefusal::NotDigitisable(declined));
     }
     let mut automaton = position_automaton(request.clause, request.limits.max_automaton_states)
         .map_err(|error| match error {
@@ -484,6 +501,26 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         state: &ModelSimState,
         initial: bool,
     ) -> Result<Reading, Halt> {
+        self.reading_atoms(
+            instance,
+            automaton.when(),
+            automaton.atoms(),
+            universal,
+            state,
+            initial,
+        )
+    }
+
+    /// The letter at `state` from an automaton's atom table.
+    fn reading_atoms(
+        &self,
+        instance: &ModelInstance,
+        when: Option<Atom>,
+        atoms: &[FormulaNodeId],
+        universal: bool,
+        state: &ModelSimState,
+        initial: bool,
+    ) -> Result<Reading, Halt> {
         if universal {
             return Ok(Reading::Defined(Letter::default()));
         }
@@ -491,7 +528,6 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let limits = self.timed().system().meter_limits();
         let atom_stop = |stop| DigitalRefusal::Atom(format!("{stop:?}"));
         let mut letter = Letter::default();
-        let when = automaton.when();
         if let Some(when) = when {
             let mut meter = Meter::new(limits);
             match letters
@@ -519,7 +555,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 return Ok(Reading::Undefined(UndefinedLocus::Capture(capture), cause));
             }
         }
-        for (index, atom) in automaton.atoms().iter().enumerate() {
+        for (index, atom) in atoms.iter().enumerate() {
             let mut meter = Meter::new(limits);
             match letters
                 .atom(*atom, instance, state, &mut meter)
@@ -979,14 +1015,77 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         Ok(Some((entry.index(), cycle)))
     }
 
+    /// A finite bad prefix at position 0 when the clause's safety monitor
+    /// rejects its initial letter. The GBA route still handles violations
+    /// that need an infinite continuation.
+    #[implements("FR-243-AC-8")]
+    fn initial_bad_prefix(
+        &mut self,
+        instance: &ModelInstance,
+    ) -> Result<Option<TemporalCounterexample>, Halt> {
+        let property = match translate_position_clause(
+            self.request.clause,
+            self.request.limits.max_automaton_states,
+        ) {
+            Ok(property) => property,
+            Err(AutomatonError::ProfileNotTranslated { .. }) => return Ok(None),
+            Err(error) => {
+                return self.automaton_stop::<()>(Err(error)).map(|()| None);
+            }
+        };
+        let mut monitor =
+            match Monitor::bad_prefix(property, self.request.limits.max_automaton_states) {
+                Ok(monitor) => monitor,
+                Err(AutomatonError::NotSafetyAutomaton { .. }) => return Ok(None),
+                Err(error) => {
+                    return self.automaton_stop::<()>(Err(error)).map(|()| None);
+                }
+            };
+        let start = self.automaton_stop(monitor.initial())?;
+        for (initial_state, initial) in self.timed().initial().iter().enumerate() {
+            self.poll()?;
+            let state = self.capped_state(initial);
+            let Reading::Defined(letter) = self.reading_atoms(
+                instance,
+                monitor.automaton().when(),
+                monitor.automaton().atoms(),
+                false,
+                state.discrete(),
+                true,
+            )?
+            else {
+                continue;
+            };
+            let after = self.automaton_stop(monitor.step(start, letter))?;
+            if self.automaton_stop(monitor.is_rejecting(after))? {
+                return Ok(Some(TemporalCounterexample {
+                    initial_state,
+                    prefix: Vec::new(),
+                    over_binding: Some(instance.clone()),
+                    fairness: self.request.clause.fairness().to_vec(),
+                    kind: CounterexampleKind::Formula,
+                    lasso: None,
+                    blocked: Vec::new(),
+                    refinement: None,
+                    final_delay: None,
+                    closure_stutters: Vec::new(),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     /// The decision over every instance (FR-240, FR-126).
-    #[implements("FR-232-AC-3")]
+    #[implements("FR-232-AC-3", "FR-243-AC-8")]
     fn decide(&mut self, automaton: &mut PositionAutomaton) -> Result<ModelCheckOutcome, Halt> {
         let system = self.timed().system();
         let instances = system
             .instances(&self.request.clause.over().1)
             .map_err(|_| DigitalRefusal::Fault("instances"))?;
         for instance in &instances {
+            if let Some(counterexample) = self.initial_bad_prefix(instance)? {
+                return Ok(self.violated(counterexample));
+            }
             let mut product = Product::default();
             let built = self.build(&mut product, automaton, false, instance)?;
             let automaton_states: BTreeSet<usize> = product

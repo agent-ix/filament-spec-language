@@ -13,11 +13,11 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    AdmissionFailure, AdmittedObservations, ClauseFacts, ClauseSelection, ClauseSelectionInput,
-    DocumentRef, ObservationLimits, OperationFacts, Provisions, admit_observations,
+    admit_observations, AdmissionFailure, AdmittedObservations, ClauseFacts, ClauseSelection,
+    ClauseSelectionInput, DocumentRef, ObservationLimits, OperationFacts, Provisions,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 #[path = "../support/tc2054_refunds.rs"]
 mod fixture;

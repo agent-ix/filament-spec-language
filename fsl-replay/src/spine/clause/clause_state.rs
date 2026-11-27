@@ -67,7 +67,7 @@ use super::{
 };
 
 /// The format member of [`ClauseState::to_bytes`].
-pub const CLAUSE_STATE_FORMAT: &str = "filament.clause-state/1";
+pub const CLAUSE_STATE_FORMAT: &str = fsl_foundation::wire_format::WireFormat::ClauseState.as_str();
 
 /// The kind of trace a carried clause state reads (FR-641).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -783,6 +783,7 @@ impl<'a> ClauseState<'a> {
     /// The identity the state keeps for the position `index` the caller names
     /// `reference`: its index, keeping the sample's text while it is held, for
     /// an indexed state.
+    #[ix_trace_rs::string_edge]
     fn cite(
         &mut self,
         index: u64,
@@ -1590,6 +1591,7 @@ impl<'a> ClauseState<'a> {
     /// order on the tape and in the positions seen, so the carried evaluation
     /// reads them at the positions the batch run gives them. Every earlier
     /// position is stamped below them (FR-643 "Order").
+    #[ix_trace_rs::string_edge]
     fn order_covered(&mut self, meter: &mut Meter) -> Result<(), ClauseRefusal> {
         if self.open.kind != ClauseTraceKind::Timestamped
             || !matches!(self.reading, Reading::Observed | Reading::Snapshot)
@@ -1818,6 +1820,7 @@ impl<'a> ClauseState<'a> {
     /// The `Timestamped` positions progress does not cover yet whose sample
     /// is read into its letter but still named by its text, which orders it
     /// (FR-501 "Canonical order"): each holds that value.
+    #[ix_trace_rs::string_edge]
     fn uncovered_texts(&self) -> u64 {
         if self.open.kind != ClauseTraceKind::Timestamped {
             return 0;
@@ -1931,6 +1934,7 @@ impl<'a> ClauseState<'a> {
     ///
     /// [`ClauseRefusal::StateMismatch`] for bytes that are not this clause's
     /// closed `filament.clause-state/1`.
+    #[ix_trace_rs::string_edge]
     pub fn from_bytes(
         package: &'a fsl_package::CheckedPackage,
         clause: &'a TemporalClauseNode,

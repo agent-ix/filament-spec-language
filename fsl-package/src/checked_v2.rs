@@ -720,7 +720,7 @@ impl SettingLimits for V2ReadLimits {
 
 /// The setting that raises each of IR's reader limits (FR-255's `i2.*`
 /// rows).
-const fn limit_setting(kind: CheckedPackageLimit) -> Setting {
+pub(crate) const fn limit_setting(kind: CheckedPackageLimit) -> Setting {
     match kind {
         CheckedPackageLimit::Bytes => Setting::I2InputBytes,
         CheckedPackageLimit::Nodes => Setting::I2Nodes,

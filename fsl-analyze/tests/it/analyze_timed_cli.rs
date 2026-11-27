@@ -149,6 +149,32 @@ fn a_zone_state_budget_is_incomplete() {
     assert_eq!(run.exit, 22);
 }
 
+/// FR-255-AC-25: a timed item's `temporal.limits.max_states` and the
+/// caller's `zone_check.max_symbolic_states` are one bound given twice.
+#[trace("FR-255-AC-25")]
+#[test]
+fn a_timed_item_limit_and_the_zone_setting_are_refused() {
+    let ws = Workspace::new("timed-zone-conflict");
+    let request = request_over(
+        &ws,
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Settles", "temporal": {"limits": {"max_states": 2}}}]}),
+    );
+    let run = crate::analyze_cli_support::analyze_under(
+        &request,
+        &[(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5)],
+    );
+    assert_eq!(run.exit, 20, "{}", run.document());
+    let document = run.document().to_string();
+    assert!(document.contains("items[0]"), "{document}");
+    assert!(
+        document.contains("zone_check.max_symbolic_states"),
+        "{document}"
+    );
+}
+
 /// QSL-2129: a clock bound of the wrong dimension (a bare number against a
 /// `Time` clock) is refused at check, before any item runs.
 #[trace("TC-1592", "FR-632-AC-1")]
@@ -914,4 +940,57 @@ fn digital_clocks_decide_claims_once_time_can_diverge() {
         stalling("timed-digital-stall-reset", true)[1..],
         expected_on_both_routes([("proved", ""), ("proved", ""), ("refuted", "")])[1..]
     );
+}
+
+/// FR-239-AC-10 and FR-243-AC-8: a false initial position refutes the claim
+/// on both the default temporal route and explicit EN-1 digital clocks.
+#[trace("FR-239-AC-10", "FR-243-AC-8")]
+#[test]
+fn an_initial_position_violation_is_refuted_on_both_timed_routes() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let body = format!(
+        "{}\
+         pre Block using v on M::Call::block {{ self.phase = 0 }}\n\
+         post Blocked using v on M::Call::block {{ self.phase = 2 }}\n\
+         pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Gone using v on M::Call::go {{ self.phase = 1 }}\n\
+         time invariant Locked when {{ self.phase = 2 }} {{ self.x <= 0 ms }}\n\
+         temporal InitialPhase using tt over (c: M::Call) clock \"model-time\" on origin {{ always holds(c.phase = 1) }}\n",
+        DENSE,
+    );
+    let unit = unit_text(PACKAGE, crate::zone_search::TIMED, &body);
+    let document = document(&["x"], &[("block", &["phase"]), ("go", &["phase"])]);
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "s0"},
+        "observation": "current",
+        "model": {"identity": PACKAGE},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": format!("ix://{PACKAGE}/calls"), "complete": true,
+            "objects": [{"key": "c", "type": format!("ix://{PACKAGE}/Call"),
+                "fields": {"phase": {"integer": "0"}, "inflight": {"boolean": false},
+                    "late": {"boolean": false}, "retried": {"boolean": false}}}]}],
+    })
+    .to_string()
+    .into_bytes();
+    let ws = Workspace::new("initial-position-refutation");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document,
+        &[snapshot],
+        json!({"items": [
+            {"claim": "InitialPhase"},
+            {"claim": "InitialPhase", "options": {"method": "digital-clocks"}}
+        ]}),
+    ));
+    let items = run.document()["items"].as_array().cloned().unwrap_or_default();
+    assert_eq!(items.len(), 2, "analysis result: {:#?}", run.document());
+
+    let outcomes = items.iter().map(label).collect::<Vec<_>>();
+    assert_eq!(outcomes, ["refuted", "refuted"], "route records: {items:#?}");
+    assert_eq!(items[0]["record"]["backend"], "en-6", "{items:#?}");
+    assert_eq!(items[1]["record"]["backend"], "en-1", "{items:#?}");
+    assert_eq!(run.exit, 10, "route records: {items:#?}");
 }

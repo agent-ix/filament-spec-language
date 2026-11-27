@@ -4,17 +4,20 @@
 
 use super::*;
 use crate::probability_certificate::document::{long_run, refutation};
+use ix_trace_rs::implements;
 
 /// Bind the evidence to the checked claim, rebuild the workload- or
 /// scheduler-induced chain and check its certificate in the counterexample
 /// role. A token is minted only after the strict refutation comparison and a
 /// final cancellation poll.
+#[implements("FR-203-AC-32")]
 pub(super) fn replay(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &ProbabilisticCounterexample,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let long_run_claim = matches!(claim.form, ProbForm::LongRunFraction { .. });
     let fair_minimum_ranked = !claim.fairness.is_empty()
@@ -185,6 +188,7 @@ pub(super) fn replay(
             &long_run_rows,
             document_limits,
             cancel,
+            work,
         )
         .map_err(member)?
         {
@@ -211,6 +215,7 @@ pub(super) fn replay(
             &rows,
             document_limits,
             cancel,
+            work,
         )
         .map_err(member)?
         {

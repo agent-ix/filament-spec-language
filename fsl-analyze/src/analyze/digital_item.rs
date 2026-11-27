@@ -6,30 +6,32 @@
 //! settled by FR-625's map with basis `exhaustive`, its counterexample
 //! replayed by FR-237's timed replay. A subject or claim that is not closed
 //! is declined `invalid-input` before any search, naming the strict
-//! constraint or interval.
+//! constraint or interval, and a closed claim digitisation does not preserve
+//! is declined with `not_digitisable` (FR-243).
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{DEFAULT_MAX_CLOCKS, ModelSystem, TimedSystem};
-use fsl_foundation::RequestIndex;
+use fsl_eval::simulation::model::{ModelSystem, TimedSystem, DEFAULT_MAX_CLOCKS};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    CertificateRequest, DeclineCode, ModelCheckItem, ProofRefusalCause, ReplayTargetMembers,
-    RequestTargetWire, TimedReplay, settle_model_check,
+    settle_model_check, CertificateRequest, DeclineCode, ModelCheckItem, NotDigitisable,
+    ProofRefusalCause, ReplayTargetMembers, RequestTargetWire, TimedReplay,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::Capability;
-use serde_json::{Map, json};
+use ix_trace_rs::implements;
+use serde_json::{json, Map};
 
-use super::clause_item::{CLAUSE_TRANSCRIPT, ReplayInputs, ReplayShape, clause_name, replay_over};
-use super::items::{BROKEN, CLAUSE_FAMILY, NOT_YET, admission};
+use super::clause_item::{clause_name, replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
+use super::items::{admission, BROKEN, CLAUSE_FAMILY, NOT_YET};
 use super::timed_item::{certificate_simulation, subject_refusal, timed_model};
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SourceProvision, SubjectBinding,
     TemporalItem,
 };
 use crate::model_check::digital::{
-    DigitalLimits, DigitalRefusal, DigitalRequest, Strict, check_digital,
+    check_digital, DigitalLimits, DigitalRefusal, DigitalRequest, Strict,
 };
 use crate::model_check::manifest as en1;
 
@@ -189,7 +191,25 @@ fn digital_refusal(refusal: &DigitalRefusal) -> Refusal {
                 detail,
             )
         }
+        DigitalRefusal::NotDigitisable(declined) => not_digitisable(*declined),
         DigitalRefusal::UnsupportedForm => Refusal::Unsupported(NOT_YET),
         DigitalRefusal::Atom(_) | DigitalRefusal::Fault(_) => Refusal::Failed(BROKEN),
     }
+}
+
+/// FR-243: an item digitisation does not preserve declines `invalid-input`
+/// with FSpec FR-272's `not_digitisable` member, before any search.
+#[implements("FR-243-AC-5", "FR-243-AC-6", "FR-243-AC-7")]
+pub(super) fn not_digitisable(declined: NotDigitisable) -> Refusal {
+    let Ok(member) = serde_json::to_value(declined) else {
+        return Refusal::Failed(BROKEN);
+    };
+    let mut detail = Map::new();
+    detail.insert(NotDigitisable::MEMBER.to_owned(), member);
+    Refusal::declined_with_detail(
+        ProofRefusalCause::InvalidInput,
+        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        NotDigitisable::CATALOG,
+        detail,
+    )
 }

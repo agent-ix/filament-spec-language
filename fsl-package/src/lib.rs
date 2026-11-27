@@ -419,7 +419,7 @@ pub use emit::{checked_node_id_of, emit_checked_with_fault};
 #[cfg(not(feature = "std"))]
 mod behind_std {}
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 const TEST_PACKAGE_NAME: &str = "pkg";
 
 #[cfg(feature = "std")]

@@ -41,9 +41,9 @@ pub use fsl_package::{
 use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
-    AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
-    ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
-    ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
+    AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, ClockSelectionFault, ExtensionCause,
+    Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, ProvedInterval,
+    RefinementCause, RowClass, SemanticCheckRefusal, ShadowedDeclaration, SourceObjectFault,
     TemporalCause, TimeTypeMismatchReason, TimeUnitCause, TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
@@ -296,21 +296,29 @@ pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, read_outcome_diagnostics,
     temporal_disposition_json, write_clause_run_result, write_clause_run_result_for,
-    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead, CallOriginRead,
-    ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead,
-    EffectiveIdRead, FairnessGranularityRead, FairnessKindRead, FairnessOperationRead,
-    FairnessRead, GuardRead, IndeterminateReasonRead, LocatedRead, ModelBindingRead, ModelStepRead,
-    ModelTransitionRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult,
-    NativeRunResultError, OutcomeDiagnosticRead, PositionRead, ProgressValueRead,
-    ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
-    ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError, ProtocolSettlementEntry,
-    RefusalLocusRead, SourceRefRead, SpanRead, StateRead, TemporalRecord, UndefinedLocusRead,
-    UnsupportedDiagnostic,
+    CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord, ClosureRead,
+    CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
+    FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
+    IndeterminateReasonRead, LocatedRead, ModelBindingRead, ModelStepRead, ModelTransitionRead,
+    NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError,
+    OutcomeDiagnosticRead, PositionRead, ProgressValueRead, ProtocolAnalysisKind,
+    ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
+    ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
+    TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
 };
 pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
+pub use native_result::{
+    write_clause_run_result_for_with_extraction, ExtractionBinding, ExtractionBody, ExtractionMap,
+    ExtractionOriginal, ExtractionOutcome, ExtractionPosition, ExtractionRecord, ExtractionRegion,
+    ExtractionSegment, ExtractionSpan,
+};
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
+};
+pub use quire_rs::semantic::{
+    AvailabilityState, ClauseRef, KindAvailability, SemanticDiagnostic, SemanticSeverity,
+    SourceLocus,
 };
 pub mod query_proof;
 mod request;
@@ -413,7 +421,7 @@ pub enum CompileRefusal {
     #[error("{}", check_message(.refusals))]
     Check {
         /// Every check refusal, never empty.
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         /// The region of the first refusal, when it names one.
         region: Option<SourceRegion>,
     },
@@ -421,7 +429,7 @@ pub enum CompileRefusal {
     #[error("the checker refused the package: {}", check_message(.refusals))]
     CheckDiagnostics {
         /// Every check refusal in deterministic source/check order.
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         /// Each refusal's first source region, aligned with `refusals`.
         regions: Vec<Option<SourceRegion>>,
     },
@@ -782,6 +790,8 @@ impl CompileRefusal {
                 | Setting::ZoneCheckMaxSymbolicTransitions
                 | Setting::ZoneCheckMaxAutomatonStates
                 | Setting::ZoneCheckMaxZoneBytes
+                | Setting::ZoneCheckMaxCheckWork
+                | Setting::AnalysisRetainedBytes
                 | Setting::CertificateCheckMaxCertificateEdges
                 | Setting::CertificateCheckMaxCertificateBytes
                 | Setting::CertificateCheckMaxWorkingBytes
@@ -1449,7 +1459,7 @@ fn interval_source(interval: &ProvedInterval) -> String {
 }
 
 /// A readable account of every checker refusal, in check order.
-fn check_message(refusals: &[CheckRefusal]) -> String {
+fn check_message(refusals: &[SemanticCheckRefusal]) -> String {
     if refusals.is_empty() {
         return "no refusal recorded".to_owned();
     }
@@ -1461,7 +1471,7 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
 }
 
 fn checked_diagnostic(
-    refusal: &CheckRefusal,
+    refusal: &SemanticCheckRefusal,
     region: Option<&SourceRegion>,
 ) -> crate::outcome::OutcomeDiagnostic {
     use crate::outcome::{OutcomeDiagnostic, OutcomeLocus};
@@ -1483,7 +1493,7 @@ fn checked_diagnostic(
     )
 }
 
-fn check_message_one(first: &CheckRefusal) -> String {
+fn check_message_one(first: &SemanticCheckRefusal) -> String {
     let mut message = first.cause.code().as_str().to_owned();
     if let Some(cause) = first.cause.cause() {
         message = format!("{message} ({cause})");
@@ -1787,9 +1797,9 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::RoleModel { role, context, .. } => format!(
                     "{message}: role `{role}` is on `{context}`, which is not a type a role takes"
                 ),
-                ProtocolAnchorCause::ConnectionAdmission { connection, detail, .. } => format!(
-                    "{message}: connection {}: {}", connection.node, detail
-                ),
+                ProtocolAnchorCause::ConnectionAdmission {
+                    connection, detail, ..
+                } => format!("{message}: connection {}: {}", connection.node, detail),
                 ProtocolAnchorCause::JoinList {
                     parallel, fault, ..
                 } => format!("{message}: the join of `{parallel}` is unsound ({fault:?})"),
@@ -3517,8 +3527,8 @@ mod tests {
     };
     use fsl_foundation::{Code, Setting, SettingLimits, SourceIdentity, Span};
     use fsl_semantics::check::{
-        CheckCause, CheckRefusal, HybridCause, ProtocolAnchorCause, RefinementCause,
-        RefinementRefusal, RefusedProtocolDependency, RowClass,
+        CheckCause, HybridCause, ProtocolAnchorCause, RefinementCause, RefinementRefusal,
+        RefusedProtocolDependency, RowClass, SemanticCheckRefusal,
     };
     use fsl_semantics::value::DefinitionRole;
     use ix_trace_rs::trace;
@@ -3527,7 +3537,7 @@ mod tests {
     #[trace("FR-135-AC-2", "FR-136-AC-2")]
     #[test]
     fn refinement_missing_row_messages_name_the_missing_subject() {
-        let refusal = |cause| CheckRefusal {
+        let refusal = |cause| SemanticCheckRefusal {
             location: Location::root(Origin::Expression),
             cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                 refinement: "ClientChargesOnce".to_owned(),
@@ -3642,7 +3652,7 @@ mod tests {
                     let location = Location::at(Origin::Expression, &[7, 2]);
                     assert_eq!(cause.type_check_stage(), Some(CheckingStage::Typing));
                     let refusal = CompileRefusal::Check {
-                        refusals: vec![CheckRefusal {
+                        refusals: vec![SemanticCheckRefusal {
                             cause: Box::new(cause),
                             location: location.clone(),
                         }],
@@ -3693,7 +3703,7 @@ mod tests {
         }));
         assert_eq!(cause.type_check_stage(), None);
         let refusal = CompileRefusal::Check {
-            refusals: vec![CheckRefusal {
+            refusals: vec![SemanticCheckRefusal {
                 location: Location::root(Origin::Expression),
                 cause: Box::new(cause),
             }],
@@ -3704,13 +3714,13 @@ mod tests {
         assert_eq!(refusal.fields(), None);
         let refusal = CompileRefusal::Check {
             refusals: vec![
-                CheckRefusal {
+                SemanticCheckRefusal {
                     location: Location::root(Origin::Expression),
                     cause: Box::new(CheckCause::IllTyped(
                         filament_exact::IllTypedCause::TypeMismatch,
                     )),
                 },
-                CheckRefusal {
+                SemanticCheckRefusal {
                     location: Location::root(Origin::Expression),
                     cause: Box::new(CheckCause::TypeCheckCapacity(StorageRequest::new(
                         23,
@@ -3745,7 +3755,7 @@ mod tests {
     #[trace("FR-447-AC-3")]
     #[test]
     fn hybrid_claim_refusal_message_does_not_mislabel_its_declaration() {
-        let refusal = CheckRefusal {
+        let refusal = SemanticCheckRefusal {
             location: Location::root(Origin::Expression),
             cause: Box::new(CheckCause::Hybrid(Box::new(
                 HybridCause::UnsupportedClock {
@@ -3888,7 +3898,7 @@ mod tests {
         ];
 
         for (cause, expected) in cases {
-            let refusal = CheckRefusal {
+            let refusal = SemanticCheckRefusal {
                 location: Location::root(Origin::Expression),
                 cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
             };
@@ -3902,7 +3912,7 @@ mod tests {
     #[trace("FR-509-AC-2", "TC-1304")]
     #[test]
     fn channel_delivery_range_message_names_the_channel_and_both_counts() {
-        let refusal = CheckRefusal {
+        let refusal = SemanticCheckRefusal {
             location: Location::root(Origin::Expression),
             cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
                 ProtocolAnchorCause::ChannelDeliveryRange {
@@ -3927,7 +3937,7 @@ mod tests {
     #[trace("FR-881-AC-1", "TC-2504")]
     #[test]
     fn fifo_key_instability_message_names_the_type_and_channel() {
-        let refusal = CheckRefusal {
+        let refusal = SemanticCheckRefusal {
             location: Location::root(Origin::Expression),
             cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
                 ProtocolAnchorCause::KeyEquality {
@@ -3950,7 +3960,7 @@ mod tests {
     #[trace("FR-383-AC-28")]
     #[test]
     fn refused_protocol_dependency_message_includes_typed_target_cause() {
-        let refusal = CheckRefusal {
+        let refusal = SemanticCheckRefusal {
             location: Location::root(Origin::Expression),
             cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
                 ProtocolAnchorCause::RefusedDependency {
@@ -4162,10 +4172,10 @@ mod tests {
         use filament_semantic_value::location::{
             ExpressionLocation as Location, ExpressionOwner as Origin,
         };
-        use fsl_semantics::check::{CheckCause, CheckRefusal, ProbabilisticCause};
+        use fsl_semantics::check::{CheckCause, ProbabilisticCause, SemanticCheckRefusal};
         let render = |cause: ProbabilisticCause| {
             CompileRefusal::Check {
-                refusals: vec![CheckRefusal {
+                refusals: vec![SemanticCheckRefusal {
                     location: Location::root(Origin::Expression),
                     cause: Box::new(CheckCause::Probabilistic(Box::new(cause))),
                 }],
@@ -4211,9 +4221,9 @@ mod tests {
         use filament_semantic_value::location::{
             ExpressionLocation as Location, ExpressionOwner as Origin,
         };
-        use fsl_semantics::check::{CheckCause, CheckRefusal, ProbabilisticCause};
+        use fsl_semantics::check::{CheckCause, ProbabilisticCause, SemanticCheckRefusal};
         let refusal = CompileRefusal::Check {
-            refusals: vec![CheckRefusal {
+            refusals: vec![SemanticCheckRefusal {
                 location: Location::root(Origin::Expression),
                 cause: Box::new(CheckCause::Probabilistic(Box::new(
                     ProbabilisticCause::UnitMismatch {

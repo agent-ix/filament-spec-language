@@ -220,6 +220,7 @@ fn declared_unit_name<'a>(table: &'a UnitTable, unit: &filament_exact::UnitId) -
         .map(String::as_str)
 }
 
+#[ix_trace_rs::string_edge]
 fn parse_integer(text: &str) -> Option<Integer> {
     let (negative, digits) = unsigned_body(text)?;
     if !natural(digits) || (negative && digits == "0") {
@@ -298,6 +299,7 @@ enum ParsedFloat {
     Extreme { overflow: bool, negative: bool },
 }
 
+#[ix_trace_rs::string_edge]
 fn parse_float(text: &str) -> Option<ParsedFloat> {
     if text == "inf" {
         return Some(ParsedFloat::Infinity(false));
@@ -408,6 +410,7 @@ fn unsigned_body(text: &str) -> Option<(bool, &str)> {
     (!digits.starts_with('+') && !digits.is_empty()).then_some((negative, digits))
 }
 
+#[ix_trace_rs::string_edge]
 fn natural(text: &str) -> bool {
     text == "0"
         || (text

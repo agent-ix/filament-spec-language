@@ -80,6 +80,7 @@ use filament_semantic_value::catalog::Category;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, CheckedModelRelation, FormulaNodeId, HyperForm};
+use ix_trace_rs::implements;
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::execute::ReplayRefusal;
@@ -445,9 +446,9 @@ pub fn check_match_witness(
     }
 }
 
-/// FR-183 "Match witness": `instance` binds each object parameter of the
-/// clause once, in parameter order, to a key of the universe of the
-/// parameter's population (FR-125).
+/// FR-183: `instance` binds each object parameter of the clause once, in
+/// parameter order, to an instance of that parameter (FR-125 "Instancing").
+#[implements("FR-183-AC-13")]
 fn instance_of_clause(
     replay: &HyperReplay<'_, '_>,
     instance: &[(String, String)],
@@ -474,11 +475,13 @@ fn instance_of_clause(
             })
             .ok_or_else(|| fault("a-parameter-alias-has-a-trace"))?;
         let listed = system
-            .hyper_instances(&parameter.population)
+            .instances(&filament_exact::ValueType::Reference(
+                parameter.object.clone(),
+            ))
             .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
         if !listed.iter().any(|instance| instance.key == *key) {
             return Err(shape_error(
-                "binds a parameter to a key outside its population's universe",
+                "binds a parameter to a key that is not one of its instances",
             ));
         }
     }
@@ -602,7 +605,7 @@ fn about_clause(
     if counterexample.instance != bound {
         return Err(shape_error("names an instance other than the request's"));
     }
-    Ok(())
+    instance_of_clause(replay, &counterexample.instance)
 }
 
 /// Every trace re-executed: one position per state, for each trace variable.
@@ -1094,7 +1097,8 @@ fn drops_a_member(finding: &HyperFinding) -> bool {
         HyperFinding::MatchUndefined { .. }
         | HyperFinding::MatchRefused
         | HyperFinding::ExistentialMatchUndefined { .. }
-        | HyperFinding::MemberContract => true,
+        | HyperFinding::MemberContract
+        | HyperFinding::MemberUndefined { .. } => true,
     }
 }
 

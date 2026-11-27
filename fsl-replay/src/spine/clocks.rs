@@ -495,7 +495,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                     .parameters()
                     .iter()
                     .filter(|parameter| parameter.alias == quantifier.alias)
-                    .map(|parameter| subject_authority(parameter.population.object().original()))
+                    .map(|parameter| subject_authority(parameter.object.original()))
                     .collect::<Vec<_>>();
                 types.sort();
                 types.dedup();
@@ -708,7 +708,7 @@ fn model_configuration(
 /// read (of another kind) is the declaration's kind mismatch.
 pub(crate) fn check_clock_refusal(
     clocks: &RequestClocks,
-    refusal: &fsl_semantics::check::CheckRefusal,
+    refusal: &fsl_semantics::check::SemanticCheckRefusal,
     regions: &fsl_semantics::check::DeclarationRegions,
 ) -> Option<Box<CompileRefusal>> {
     use fsl_semantics::check::{CheckCause, ClockSelectionFault, TemporalCause};

@@ -312,10 +312,10 @@ impl super::s6a::ReferenceEvaluation for ValueFunctionFamily {
 // FR-062-AC-8/FR-063-AC-6 (ADR-012 §5.1 S4, "each family Cause enum's
 // catalog_code()" seam-probe coverage) is real now, not deferred.
 // `Value`'s function-declaration family has a real `Cause`:
-// `ValueFunctionFamily::Cause = fsl_semantics::check::CheckRefusal`
+// `ValueFunctionFamily::Cause = fsl_semantics::check::SemanticCheckRefusal`
 // (`fsl_semantics::check::family`), returned through
 // `fsl_foundation::diagnostic::StageFailure::Refused` when `check` genuinely refuses
-// (an ill-typed or undefined body). `CheckRefusal`'s own `catalog_code()`
+// (an ill-typed or undefined body). `SemanticCheckRefusal`'s own `catalog_code()`
 // mapping (`CheckCause::code`/`CheckCause::cause`, `src/check/refusal.rs`)
 // already existed and was exhaustive by construction -- it is `Value`'s
 // pre-existing checking-refusal vocabulary, not a new enum authored to fill

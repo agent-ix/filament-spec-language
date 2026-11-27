@@ -136,6 +136,7 @@ impl TraceBinding {
     /// # Errors
     ///
     /// Returns the first differing profile, clock name, configuration or unit.
+    #[ix_trace_rs::string_edge]
     pub fn authenticate_model_time(
         &self,
         selection: &ClauseSelection<'_>,

@@ -42,12 +42,12 @@ use filament_semantic_value::step_simulation::{StepObligation, StepRowRef, StepS
 use fsl_forms::StateClauseKind;
 use fsl_foundation::source::provenance::OccurrenceKey;
 
-use super::claims::{RequirementRecord, wire};
+use super::claims::{wire, RequirementRecord};
 use super::family::OccurrenceRole;
 use super::references::ModelReferences;
 use super::refinement::RowRoots;
-use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{PopulationDomain, classify_refusal, record};
+use super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
+use super::state_clause::{classify_refusal, record, PopulationDomain};
 use super::{CheckedRefinement, CheckedStateClause};
 
 /// One per-step simulation record with its ADR-013 O-07 occurrence key.
@@ -106,7 +106,7 @@ pub(crate) fn simulation_records(
     refinement: &CheckedRefinement,
     clauses: &[CheckedStateClause],
     inputs: &ExtentInputs<'_>,
-) -> Result<Vec<(StepSimulationEntry, RequirementRecord)>, CheckRefusal> {
+) -> Result<Vec<(StepSimulationEntry, RequirementRecord)>, SemanticCheckRefusal> {
     let Some(roots) = &refinement.simulation else {
         return Ok(Vec::new());
     };
@@ -217,7 +217,7 @@ fn extent_record(
     populations: &BTreeSet<PopulationDomain>,
     operation: Option<(EffectiveId, String)>,
     inputs: &ExtentInputs<'_>,
-) -> Result<RequirementRecord, CheckRefusal> {
+) -> Result<RequirementRecord, SemanticCheckRefusal> {
     let location = inputs.location;
     let populations: Vec<(PopulationDomain, NodeKey)> = populations
         .iter()
@@ -251,8 +251,8 @@ fn extent_record(
 }
 
 /// A record S3 cannot key.
-fn fault(location: &Location) -> CheckRefusal {
-    CheckRefusal {
+fn fault(location: &Location) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::InternalFault(Box::new(
             KeyFault::UnkeyableRequirements,

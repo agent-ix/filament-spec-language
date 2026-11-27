@@ -20,8 +20,6 @@
 //!
 //! Reference-bearing certificates supply the original package-bound codec.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine as _;
 use filament_exact::Integer;
 use fsl_eval::simulation::model::{PlaceConstraint, TimedSystem};
 use fsl_eval::simulation::StateKey;
@@ -30,11 +28,12 @@ use serde_json::{json, Map, Value};
 
 use super::{CertEdge, CertNode, DivergenceWitness, DivergentTarget, ZoneCertificate};
 use crate::certificate::task_product::{
-    array, child, count, integer, member, object, rational, rational_wire, refuse,
+    array, child, count, integer, member, object, rational, refuse, shared_defect,
     source_transition, source_transition_wire, TaskProductCertificate, TaskProductShapeReason,
     TaskProductShapeRefusal, TaskTransitionTemplate,
 };
 use crate::certificate::zone::{LuBounds, Zone};
+use crate::shared_wire::{DbmBound, RationalObject, StateLocus};
 
 /// Why a certificate has no wire, or a wire no certificate.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -117,15 +116,10 @@ fn zone_wire(zone: &Zone) -> Result<Value, ZoneCertificateWireError> {
     for i in 0..dim {
         let mut row = Vec::with_capacity(dim);
         for j in 0..dim {
-            row.push(
-                match zone
-                    .bound(i, j)
-                    .map_err(|_| ZoneCertificateWireError::Unspelled)?
-                {
-                    Some((bound, strict)) => json!({"bound": bound.to_string(), "strict": strict}),
-                    None => json!("infinity"),
-                },
-            );
+            let bound = zone
+                .bound(i, j)
+                .map_err(|_| ZoneCertificateWireError::Unspelled)?;
+            row.push(DbmBound(bound).value());
         }
         rows.push(Value::Array(row));
     }
@@ -144,35 +138,29 @@ fn read_zone(value: &Value, pointer: &str) -> Result<Zone, TaskProductShapeRefus
         }
         for (j, entry) in row.iter().enumerate() {
             let at = child(&at, j);
-            if entry.as_str() == Some("infinity") {
-                cells.push(None);
-                continue;
-            }
-            let map = object(entry, &at, &["bound", "strict"], &[])?;
-            let bound = integer(member(map, "bound"), &child(&at, "bound"))?;
-            let Some(strict) = member(map, "strict").as_bool() else {
-                return refuse(&child(&at, "strict"), TaskProductShapeReason::WrongKind);
-            };
-            cells.push(Some((bound, strict)));
+            cells.push(read_bound(entry, &at)?);
         }
     }
     Zone::from_matrix(dim, cells).or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))
 }
 
-fn state_wire(key: &StateKey) -> Value {
-    json!({"key": URL_SAFE_NO_PAD.encode(key.as_bytes())})
+/// One FR-418 `DbmBound`, in this codec's refusals.
+fn read_bound(
+    value: &Value,
+    pointer: &str,
+) -> Result<Option<(Integer, bool)>, TaskProductShapeRefusal> {
+    if value.is_object() {
+        object(value, pointer, &DbmBound::MEMBERS, &[])?;
+    }
+    DbmBound::read(value)
+        .map(|bound| bound.0)
+        .map_err(|defect| shared_defect(pointer, defect))
 }
 
 fn read_state(value: &Value, pointer: &str) -> Result<StateKey, TaskProductShapeRefusal> {
-    let map = object(value, pointer, &["key"], &[])?;
-    let at = child(pointer, "key");
-    let Some(text) = member(map, "key").as_str() else {
-        return refuse(&at, TaskProductShapeReason::WrongKind);
-    };
-    let bytes = URL_SAFE_NO_PAD
-        .decode(text)
-        .or_else(|_| refuse(&at, TaskProductShapeReason::NotCanonical))?;
-    Ok(StateKey::from_canonical_bytes(bytes))
+    StateLocus::read(value)
+        .map(StateLocus::into_key)
+        .map_err(|defect| shared_defect(pointer, defect))
 }
 
 fn source_names(source: &TimedSystem<'_, '_>) -> Result<Vec<String>, ZoneCertificateWireError> {
@@ -186,21 +174,18 @@ fn source_names(source: &TimedSystem<'_, '_>) -> Result<Vec<String>, ZoneCertifi
 }
 
 fn lu_wire(value: &Option<Integer>) -> Value {
-    match value {
-        Some(value) => json!({"bound":value.to_string(),"strict":false}),
-        None => json!("infinity"),
-    }
+    DbmBound(value.clone().map(|bound| (bound, false))).value()
 }
 
+/// An LU bound: a `DbmBound` that is never strict.
 fn read_lu(value: &Value, at: &str) -> Result<Option<Integer>, TaskProductShapeRefusal> {
-    if value.as_str() == Some("infinity") {
-        return Ok(None);
+    if value.is_object() {
+        let row = object(value, at, &DbmBound::MEMBERS, &[])?;
+        if member(row, "strict") != &Value::Bool(false) {
+            return refuse(&child(at, "strict"), TaskProductShapeReason::NotCanonical);
+        }
     }
-    let row = object(value, at, &["bound", "strict"], &[])?;
-    if member(row, "strict") != &Value::Bool(false) {
-        return refuse(&child(at, "strict"), TaskProductShapeReason::NotCanonical);
-    }
-    integer(member(row, "bound"), &child(at, "bound")).map(Some)
+    read_bound(value, at).map(|bound| bound.map(|(bound, _)| bound))
 }
 
 fn op_text(op: ClockOp) -> &'static str {
@@ -226,7 +211,7 @@ fn read_constraint(value: &Value, at: &str) -> Result<PlaceConstraint, TaskProdu
             return refuse(
                 &child(at, "operator"),
                 TaskProductShapeReason::UnknownVariant,
-            )
+            );
         }
     };
     let place =
@@ -361,7 +346,7 @@ impl<O> ZoneCertificate<O> {
                     continue;
                 }
                 for (index, name) in names.iter().enumerate() {
-                    bounds.push(json!({"state":state_wire(&node.state_key),"clock":name,"lower":lu_wire(&self.lu_bounds.lower[index]),"upper":lu_wire(&self.lu_bounds.upper[index])}));
+                    bounds.push(json!({"state":StateLocus::from(&node.state_key),"clock":name,"lower":lu_wire(&self.lu_bounds.lower[index]),"upper":lu_wire(&self.lu_bounds.upper[index])}));
                 }
             }
         }
@@ -390,7 +375,7 @@ impl<O> ZoneCertificate<O> {
             if node.locked {
                 map.insert("locked".to_owned(), json!(true));
             }
-            map.insert("state".to_owned(), state_wire(&node.state_key));
+            map.insert("state".to_owned(), json!(StateLocus::from(&node.state_key)));
             map.insert("zone".to_owned(), zone_wire(&node.zone)?);
             nodes.push(Value::Object(map));
         }
@@ -407,7 +392,7 @@ impl<O> ZoneCertificate<O> {
                 row["part"] = json!(part);
             }
             if let Some(horizon) = &edge.horizon {
-                row["horizon"]=Value::Array(horizon.iter().map(|constraint|json!({"place":constraint.place(),"operator":op_text(constraint.op()),"bound":rational_wire(constraint.bound())})).collect());
+                row["horizon"]=Value::Array(horizon.iter().map(|constraint|json!({"place":constraint.place(),"operator":op_text(constraint.op()),"bound":RationalObject::value(constraint.bound())})).collect());
             }
             edges.push(row);
         }
@@ -515,7 +500,7 @@ impl<O> ZoneCertificate<O> {
                 Some(Value::Bool(true)) => true,
                 Some(_) => {
                     return refuse(&child(&at, "locked"), TaskProductShapeReason::NotCanonical)
-                        .map_err(Into::into)
+                        .map_err(Into::into);
                 }
             };
             nodes.push(CertNode {

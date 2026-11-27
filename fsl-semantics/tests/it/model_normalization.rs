@@ -5,7 +5,8 @@
 
 use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::accounting::{
-    NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationLimitKind,
 };
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, FieldMemberRecord, Multiplicity,
@@ -2225,7 +2226,9 @@ fn n01_charges_the_exact_ground_truth_sequence_in_order() {
         other => panic!("expected Completed, got {other:?}"),
     }
 
-    use NormalizationChargePoint::{NormalizeCycleCheck, NormalizeDeclaration, NormalizeFact, NormalizeRecord};
+    use NormalizationChargePoint::{
+        NormalizeCycleCheck, NormalizeDeclaration, NormalizeFact, NormalizeRecord,
+    };
     let expected = vec![
         NormalizeRecord,
         NormalizeRecord,
@@ -2599,7 +2602,10 @@ fn n06_conflict_check_charges_exactly_sigma_c_minus_1_times_f_o() {
             assert_eq!(incomplete.limit, 51);
             assert_eq!(incomplete.consumed, 51);
             assert_eq!(incomplete.next_charge, 14);
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeConflictCheck
+            );
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -3011,11 +3017,20 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
         let (limited, limited_meter) = normalize_with_meter(&domain_package, limits);
         match limited {
             NormalizeOutcome::Incomplete(incomplete) => {
-                assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
+                assert_eq!(
+                    incomplete.limit_kind,
+                    NormalizationLimitKind::DerivationFacts
+                );
                 assert_eq!(incomplete.consumed, fact_limit);
                 assert_eq!(incomplete.next_charge, fact_limit + 1);
-                assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
-                assert_eq!(limited_meter.consumed(NormalizationLimitKind::WorkUnits), expected_work);
+                assert_eq!(
+                    incomplete.charge_point,
+                    NormalizationChargePoint::NormalizeFact
+                );
+                assert_eq!(
+                    limited_meter.consumed(NormalizationLimitKind::WorkUnits),
+                    expected_work
+                );
             }
             other => panic!("expected operation fact cap {fact_limit} to deny, got {other:?}"),
         }
@@ -3147,7 +3162,10 @@ fn operation_redefinition_group_with_two_or_more_redefiners_is_charged_a_conflic
                 incomplete.next_charge, 4,
                 "(c-1) * (f(B)+f(B)) = 1 * (2+2) = 4"
             );
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeConflictCheck
+            );
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -3495,7 +3513,10 @@ fn conflict_check_charges_interleave_field_and_operation_groups_by_target_key() 
                 "model.A.a sorts before model.A.z, so the operation group's \
                  charge (12) is denied before the field group's (4)"
             );
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeConflictCheck
+            );
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -4910,7 +4931,10 @@ fn a_subsetting_field_derives_one_phase_4_subset_fact() {
         7,
         "four qualify, two inherit and one subset fact"
     );
-    assert_eq!(count(NormalizationChargePoint::NormalizeRedefinitionCheck), 0);
+    assert_eq!(
+        count(NormalizationChargePoint::NormalizeRedefinitionCheck),
+        0
+    );
     assert_eq!(count(NormalizationChargePoint::NormalizeConflictCheck), 0);
     assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 17);
 
@@ -4933,8 +4957,14 @@ fn a_subsetting_field_derives_one_phase_4_subset_fact() {
     limits.derivation_facts = 6;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
+            assert_eq!(
+                incomplete.limit_kind,
+                NormalizationLimitKind::DerivationFacts
+            );
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeFact
+            );
             assert_eq!(incomplete.next_charge, 7);
         }
         other => panic!("expected the subset fact to be denied, got {other:?}"),

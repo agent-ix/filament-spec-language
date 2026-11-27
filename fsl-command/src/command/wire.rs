@@ -93,6 +93,7 @@ const fn linked() -> CheckMode {
 
 /// FR-952: `"linked"` or `"kernel"`; any other value, a non-string or
 /// `null` included, refuses naming the member.
+#[ix_trace_rs::string_edge]
 fn check_mode<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<CheckMode, D::Error> {
     match serde_json::Value::deserialize(decoder)? {
         serde_json::Value::String(mode) if mode == "linked" => Ok(CheckMode::Linked),
@@ -139,6 +140,7 @@ pub(super) enum HandoffCorpus {
     Standard,
 }
 
+#[ix_trace_rs::string_edge]
 fn handoff_corpus<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<HandoffCorpus, D::Error> {
     let value = String::deserialize(decoder)?;
     match value.as_str() {
@@ -926,6 +928,12 @@ impl ClocksRequest for Request {
     }
 }
 
+impl ClocksRequest for MonitorRequest {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
 impl ClocksRequest for CompileRequest {
     fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
         self.clocks
@@ -1035,6 +1043,7 @@ struct MonitorTargetMembers {
 }
 
 impl<'de> serde::Deserialize<'de> for MonitorTargetWire {
+    #[ix_trace_rs::string_edge]
     fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
         use serde::de::Error as _;
 

@@ -870,7 +870,7 @@ fn a_requirement_with_a_protocol_profile_emits_a_protocol_node() {
 }
 
 /// The refusals of `clauses` checked over [`model`] with `profiles`.
-fn refusals_of(profiles: &str, clauses: &str) -> Vec<fsl_semantics::check::CheckRefusal> {
+fn refusals_of(profiles: &str, clauses: &str) -> Vec<fsl_semantics::check::SemanticCheckRefusal> {
     let document = model();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let unit = format!(
@@ -908,7 +908,8 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
         )
     );
     let refusals = refusals_of(PROFILES, &unit);
-    let name = |refusal: &fsl_semantics::check::CheckRefusal| match &refusal.location.origin {
+    let name = |refusal: &fsl_semantics::check::SemanticCheckRefusal| match &refusal.location.origin
+    {
         filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name } => {
             name.clone()
         }

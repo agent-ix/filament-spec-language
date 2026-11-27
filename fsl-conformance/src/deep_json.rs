@@ -11,7 +11,8 @@ impl DeepJson {
         use quire_canonical::{Node, NodeRef};
 
         let byte_bound = u64::try_from(bytes.len()).map_err(|error| error.to_string())?;
-        let document = quire_canonical::read(bytes, byte_bound).map_err(|error| error.to_string())?;
+        let document =
+            quire_canonical::read(bytes, byte_bound).map_err(|error| error.to_string())?;
         enum Task<'a> {
             Read(NodeRef<'a>),
             Array(usize),
@@ -24,8 +25,9 @@ impl DeepJson {
                 Task::Read(node) => match node.node() {
                     Node::Null => Value::Null,
                     Node::Bool(value) => Value::Bool(value),
-                    Node::Number(number) => serde_json::from_str(number.text())
-                        .map_err(|error| error.to_string())?,
+                    Node::Number(number) => {
+                        serde_json::from_str(number.text()).map_err(|error| error.to_string())?
+                    }
                     Node::String(value) => Value::String(value.to_owned()),
                     Node::Array(items) => {
                         let items = items.collect::<Vec<_>>();
