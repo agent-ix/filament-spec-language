@@ -1969,7 +1969,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     /// it enters the state ([`Self::badness`] for a claim or deadlock-freedom
     /// item, the liveness product's `take` without a fairness). Every other
     /// route is undecided there (ADR-018 UE-6).
-    fn refutes_undefined_guards(&self) -> bool {
+    pub(super) fn refutes_undefined_guards(&self) -> bool {
         match &self.judged {
             Judged::Claim(_) | Judged::DeadlockFreedom => true,
             Judged::Liveness(claim) => claim.clause.fairness().is_empty(),

@@ -1008,7 +1008,10 @@ impl<'c> Builder<'_, '_, 'c> {
             .into(),
             TimedStop::Undecided(reading)
                 if reading.cause.is_some()
-                    && matches!(reading.site, fsl_eval::simulation::model::TimedSite::Guard { .. }) =>
+                    && matches!(
+                        reading.site,
+                        fsl_eval::simulation::model::TimedSite::Guard { .. }
+                    ) =>
             {
                 ProductRefusal::UndecidedSuccessor(UndecidedSuccessor {
                     state: StateKey::from_canonical_bytes(key.clone()),
