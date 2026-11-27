@@ -150,6 +150,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
     let floor_identity = fsl_replay::DefinitionRole::IntegerDivisionFloor.identity();
     let alternate_identity =
         fsl_replay::DefinitionRole::IntegerDivisionTruncating.identity();
+    let unlisted_identity = "filament.value.integer-division.ceiling/v1";
     let original: serde_json::Value =
         serde_json::from_slice(emitted.package().bytes()).expect("emitted JSON");
     let floor_row = original["lock"]["definition_selections"]
@@ -247,13 +248,25 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
     let graph = serde_json::to_value(admitted.graph()).expect("admitted graph");
     assert!(contains_pair(&graph, &floor_authority, alternate_identity));
 
+    let mut unlisted_pair = original.clone();
+    assert!(
+        replace_pair(
+            &mut unlisted_pair,
+            &floor_authority,
+            floor_identity,
+            &floor_authority,
+            unlisted_identity,
+        ) >= 2,
+        "the unlisted law is paired in the lock and operation"
+    );
+    let unlisted_bytes = serde_json::to_vec(&unlisted_pair).expect("serialize unlisted pair");
     let refusal = match read_checked_package(
-        &bytes,
+        &unlisted_bytes,
         CheckedPackageReadLimits::bounded(),
         emitted.evidence(),
     ) {
         CheckedPackageDispatchResult::Refused(refusal) => refusal,
-        other => panic!("catalog-bound reader admitted law absent from evidence: {other:?}"),
+        other => panic!("catalog-bound reader admitted unlisted law: {other:?}"),
     };
     assert_eq!(
         refusal.code,
