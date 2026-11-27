@@ -414,14 +414,30 @@ pub fn encode_smt_query(
     }
     // Only a TP-2 item is read past the end of a finite behaviour.
     let infinite = bounded.is_none();
-    // Rows 4 to 8: the subject.
+    // Row 4: the subject's admission.
     let system = ModelSystem::new(subject.simulation.clone())
         .map_err(|failure| Refusal::SubjectAdmission(Box::new(failure)))?;
+    // Rows 5 to 8: FR-125's instancing outcomes in its order, from the one
+    // `claim_instances`, before the subject rows that follow them.
+    let claimed = match clause {
+        Some(clause) => {
+            if !matches!(&clause.over().1, filament_exact::ValueType::Reference(_)) {
+                return Err(fault("an `over` that is no reference"));
+            }
+            Some(
+                system
+                    .claim_instances(&clause.over().1)
+                    .map_err(Refusal::from)?,
+            )
+        }
+        None => None,
+    };
+    // Rows 9 to 13: the subject.
     let symbolic = system.symbolic()?;
     let layout = StateLayout::of(&symbolic)?;
-    // Row 9: parameter-domain.
+    // Row 12: parameter-domain.
     check_domains(&symbolic)?;
-    // Row 10: field-domain. The copy-0 reading expands what the query
+    // Row 13: field-domain. The copy-0 reading expands what the query
     // expands, so it finds the refusal before the rows after it.
     let expands = !infinite || clause.is_none();
     let mut apps = None;
@@ -443,21 +459,15 @@ pub fn encode_smt_query(
         apps = Some(built);
     }
 
-    // Rows 11 to 14: the instances.
+    // Row 14: the instances' types.
     let mut instances = Vec::new();
     let mut node = None;
-    if let Some(clause) = clause {
+    if let (Some(clause), Some(found)) = (clause, &claimed) {
         let over = match &clause.over().1 {
             filament_exact::ValueType::Reference(over) => over.clone(),
             _ => return Err(fault("an `over` that is no reference")),
         };
-        let found = system
-            .instances(&clause.over().1)
-            .map_err(Refusal::RequiresBound)?;
-        if found.is_empty() {
-            return Err(Refusal::NoInstance.into());
-        }
-        for instance in &found {
+        for instance in found.as_slice() {
             let position = symbolic
                 .objects
                 .iter()

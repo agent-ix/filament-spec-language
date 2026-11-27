@@ -823,6 +823,10 @@ mod tests {
             settled(StatisticalRefusal::NoTest).value,
             TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
         );
+        assert_eq!(
+            settled(StatisticalRefusal::NoInstance).value,
+            TerminalValue::Inconclusive(InconclusiveCause::NoInstance)
+        );
         let precision = settled(StatisticalRefusal::ConfidenceBeyondPrecision);
         let TerminalValue::Unsupported(cause) = &precision.value else {
             panic!("unsupported: {precision:?}")

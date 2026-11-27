@@ -27,7 +27,8 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_eval::automaton::{translate_body, AutomatonError, Monitor, PropertyAutomaton, StateId};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    advance_timed, ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading,
+    advance_timed, ModelSimState, ModelSimulationRequest, ModelSystem, NoClaimInstances,
+    PredicateReading,
     TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState, TimedStop,
     TimedSystem, TransitionId,
 };
@@ -420,18 +421,13 @@ fn bindings(
     let ValueType::Reference(object) = &over.value_type else {
         return Err(fault("over-is-an-object-type"));
     };
-    // FR-125 "Instancing": the one derivation, `claim_instances`.
-    let instances = match system.claim_instances(&over.value_type) {
-        Ok(instances) => instances.as_slice().to_vec(),
-        Err(fsl_eval::simulation::model::NoClaimInstances::NotSimulated(NotSimulated::RequiresBound(bound))) => {
-            return Err(StatisticalRefusal::RequiresBound(bound))
-        }
-        Err(fsl_eval::simulation::model::NoClaimInstances::NotSimulated(_)) => return Err(fault("over-instances-classify")),
-        Err(fsl_eval::simulation::model::NoClaimInstances::NoInitialState) => return Err(StatisticalRefusal::NoTest),
-        Err(fsl_eval::simulation::model::NoClaimInstances::NoInstance) => return Err(StatisticalRefusal::NoInstance),
-    };
+    let instances = system
+        .claim_instances(&over.value_type)
+        .map_err(instancing_refusal)?;
     instances
-        .into_iter()
+        .as_slice()
+        .iter()
+        .cloned()
         .map(|instance| {
             let reference = system
                 .written_reference(object.clone(), &instance)
@@ -439,6 +435,31 @@ fn bindings(
             Ok((Some(instance), Some(reference)))
         })
         .collect()
+}
+
+/// The refusal of a claim with no admitted instance: the bound by its own
+/// refusal, every other cause by the one `instance_stop` mapping (no initial
+/// state is the request having no test).
+fn instancing_refusal(failure: NoClaimInstances) -> StatisticalRefusal {
+    use crate::analyze::items::{instance_stop, InstanceStop};
+    use fsl_replay::InconclusiveCause;
+    if let NoClaimInstances::NotSimulated(NotSimulated::RequiresBound(bound)) = failure {
+        return StatisticalRefusal::RequiresBound(bound);
+    }
+    if let NoClaimInstances::NotSimulated(NotSimulated::ConflictingIdentity(conflict)) = failure {
+        return StatisticalRefusal::Admission(Box::new(conflict.admission_failure()));
+    }
+    match instance_stop(failure) {
+        InstanceStop::Inconclusive(InconclusiveCause::NoInitialState) => {
+            StatisticalRefusal::NoTest
+        }
+        InstanceStop::Inconclusive(InconclusiveCause::NoInstance) => {
+            StatisticalRefusal::NoInstance
+        }
+        InstanceStop::Inconclusive(_) | InstanceStop::Refused(_) => {
+            fault("over-instances-classify")
+        }
+    }
 }
 
 /// What a sample of the claim reads, and how its reading is judged.
