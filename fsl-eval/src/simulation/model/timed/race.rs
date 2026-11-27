@@ -169,8 +169,8 @@ pub enum TimedSampleStop {
     /// A tick subject's untimed step (FSpec FR-420 "Tick subjects") stopped.
     #[error("the tick subject's step stopped: {0:?}")]
     Step(Box<SampleStop>),
-    /// An unbounded walk reached a time-lock, which no long-run fraction
-    /// reads.
+    /// An unbounded walk reached a time-lock, which a long-run fraction
+    /// counts as 0 (FSpec FR-420-AC-19).
     #[error("the timed walk reached a time-lock at {state:?}")]
     TimeLockedSample {
         /// The key of the time-locked state.

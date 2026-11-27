@@ -1363,9 +1363,6 @@ impl OutcomeItem {
                         item.state = Some(state.into());
                         item.idle_tail = Some(true);
                     }
-                    UnavailabilityCause::TimeLockedSample { state } => {
-                        item.state = Some(state.into());
-                    }
                 }
                 Some(item)
             }

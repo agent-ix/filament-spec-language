@@ -44,7 +44,7 @@ fn sample_halt(
             Ended::Halt(halt) => halt,
             Ended::Undecided => return Ok(None),
         },
-        // Only an unbounded walk refuses a time-lock.
+        // Only an unbounded walk meets a time-lock, and it counts it as 0.
         TimedSampleStop::TimeLockedSample { .. } | TimedSampleStop::Race(_) => broken(),
     })
 }
@@ -339,13 +339,13 @@ impl Shared<'_, '_, '_> {
     }
 
     /// A fraction over the positions of a time window (FSpec FR-407
-    /// "Fraction", "Time windows"). How a fraction reads a run that ends in a
-    /// time-lock is not decided, so such a sample is unsupported (FSpec
-    /// FR-420 "Sampling timed runs").
+    /// "Fraction", "Time windows"). A run that ends in a time-lock counts 0,
+    /// the value the exact route gives (FSpec FR-420-AC-19, FR-421-AC-14).
     #[implements("FR-254-AC-4")]
     #[implements("FR-254-AC-5")]
     #[implements("FR-254-AC-7")]
     #[implements("FR-254-AC-8")]
+    #[implements("FR-420-AC-19")]
     pub(super) fn timed_fraction(
         &self,
         test: &TestSubject,
@@ -360,11 +360,7 @@ impl Shared<'_, '_, '_> {
         let Some(run) = self.timed_run(test, binding, seed, trace, horizon, None)? else {
             return Ok(undecided());
         };
-        if let TimedSampleEnd::TimeLock { state } = &run.end {
-            return Err(SampleHalt::TimeLockedSample {
-                state: state.clone(),
-            });
-        }
+        let locked = matches!(run.end, TimedSampleEnd::TimeLock { .. });
         let reads = [(
             UndefinedLocus::ClaimPredicate(ClaimPredicate::Target),
             &fraction.predicate,
@@ -380,6 +376,9 @@ impl Shared<'_, '_, '_> {
         let origin = TemporalPosition::new(0);
         let mut meter = self.reading_meter();
         let reading = match &fraction.weight {
+            // A locked run counts 0 in numerator and denominator under every
+            // weighting (FR-420-AC-19).
+            _ if locked => Ok(MeasureReading::Value(zero())),
             None if run.end == TimedSampleEnd::DenseIdleTail => {
                 let held = holds.iter().filter(|held| **held).count();
                 let held = u64::try_from(held).map_err(|_| broken())?;

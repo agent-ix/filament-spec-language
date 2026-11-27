@@ -1268,7 +1268,6 @@ fn timed_halt(stop: TimedSampleStop) -> SampleHalt {
         TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
             SampleHalt::NotStochastic { state, identity }
         }
-        TimedSampleStop::TimeLockedSample { state } => SampleHalt::TimeLockedSample { state },
         TimedSampleStop::Race(TimedRaceStop::Timed(TimedStop::Expansion(stop))) => {
             SampleHalt::Expansion(stop)
         }
@@ -1375,9 +1374,16 @@ impl ModelWalk<'_, '_, '_> {
                 step: u64::try_from(walk.steps.len()).map_err(|_| broken())?,
                 choice: 0,
             };
-            match advance_timed(timed, &walk.state, workload, at, timed_sampling.q)
-                .map_err(timed_halt)?
-            {
+            let advance = match advance_timed(timed, &walk.state, workload, at, timed_sampling.q) {
+                Ok(advance) => advance,
+                // The behaviour ends in a time-lock and counts 0 (FR-420-AC-19).
+                Err(TimedSampleStop::TimeLockedSample { .. }) => {
+                    self.timed = Some(walk);
+                    return Ok(WalkStep::TimeLocked);
+                }
+                Err(stop) => return Err(timed_halt(stop).into()),
+            };
+            match advance {
                 TimedAdvance::Terminal => {
                     self.timed = Some(walk);
                     return Ok(WalkStep::Terminal { holds });
@@ -1576,7 +1582,6 @@ impl From<SampleHalt> for WitnessReadStop {
             SampleHalt::NotStochastic { .. }
             | SampleHalt::NotStochasticIdleTail { .. }
             | SampleHalt::IdleTailUndecided(_)
-            | SampleHalt::TimeLockedSample { .. }
             | SampleHalt::MaxSampleSteps { .. } => {
                 return Self::Sample(Box::new(SampleStop::Expansion(ExpansionStop {
                     cause: CatalogCode::new("runtime_invariant", "established-invariant-broken"),
@@ -1660,7 +1665,6 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                 .map_err(|halt| match halt {
                     SampleHalt::NotStochastic { .. }
                     | SampleHalt::NotStochasticIdleTail { .. }
-                    | SampleHalt::TimeLockedSample { .. }
                     | SampleHalt::MaxSampleSteps { .. } => WitnessReadStop::TimedNotRegenerated,
                     other => WitnessReadStop::from(other),
                 })?;
