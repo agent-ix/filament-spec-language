@@ -1201,14 +1201,11 @@ fn population_refusal(population: &str) -> Value {
                 "fields": {"population": population},
             },
             "stage": "admit",
-            "truth": null,
         },
         "basis": "unavailable",
         "axes": {
             "activation": "unavailable",
-            "execution": null,
             "settlement": "unavailable",
-            "truth": null,
         },
         "usage": {
             "admission": {"document_bytes": 0, "objects": 0, "values": 0},
@@ -1290,7 +1287,11 @@ fn invariant_result(
     refusal: Option<Value>,
     usage: &fsl_semantics::model::observation::AdmissionUsage,
 ) -> Value {
-    let mut disposition = json!({"category": category, "stage": stage, "truth": truth});
+    // FSpec FR-352: an absent member is the form; `null` is not.
+    let mut disposition = json!({"category": category, "stage": stage});
+    if let Some(truth) = truth {
+        disposition["truth"] = json!(truth);
+    }
     if stage == "evaluate" {
         if let Some(value) = truth {
             disposition["outcome"] = json!({
@@ -1303,6 +1304,16 @@ fn invariant_result(
         disposition["refusal"] = refusal;
     }
     let settled = truth.is_some();
+    let mut axes = json!({
+        "activation": if settled { "active" } else { "unavailable" },
+        "settlement": if settled { "closed-scope" } else { "unavailable" },
+    });
+    if stage == "evaluate" {
+        axes["execution"] = json!("completed");
+    }
+    if let Some(truth) = truth {
+        axes["truth"] = json!(if truth { "true" } else { "false" });
+    }
     json!({
         "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
         "disposition": disposition,
@@ -1316,12 +1327,7 @@ fn invariant_result(
             "evaluation_consumed": [],
         },
         "basis": if settled { "closed-scope" } else { "unavailable" },
-        "axes": {
-            "activation": if settled { "active" } else { "unavailable" },
-            "execution": if stage == "evaluate" { Some("completed") } else { None::<&str> },
-            "settlement": if settled { Some("closed-scope") } else { Some("unavailable") },
-            "truth": truth.map(|truth| if truth { "true" } else { "false" }),
-        },
+        "axes": axes,
     })
 }
 
@@ -1336,18 +1342,19 @@ mod tests {
             .map_err(|error| error.to_string())
     }
 
-    /// FR-267-AC-8: the item-level documents that carry the label. A settled
-    /// invariant result reads as a clause run. The population refusal writes
-    /// `"truth": null`, which the strict reader refuses naming
-    /// `disposition.truth` (an absent member is the form FSpec FR-352 allows).
+    /// FR-267-AC-8, FSpec FR-352: the item-level documents that carry the
+    /// label omit an absent member (never `null`), and both read as clause
+    /// runs.
     #[ix_trace_rs::trace("FR-267-AC-8")]
     #[test]
     fn the_item_documents_with_the_run_result_label_are_read_by_the_strict_reader() {
         let usage = fsl_semantics::model::observation::AdmissionUsage::default();
         let settled = invariant_result("success", "evaluate", Some(true), None, &usage);
         assert_eq!(read_label(&settled), Ok(()));
-        let refusal = read_label(&population_refusal("Order")).expect_err("null truth is refused");
-        assert!(refusal.contains("disposition.truth"), "{refusal}");
+        let refusal = population_refusal("Order");
+        assert_eq!(read_label(&refusal), Ok(()));
+        assert!(refusal["disposition"].get("truth").is_none());
+        assert!(refusal["axes"].get("truth").is_none());
     }
 
     #[test]

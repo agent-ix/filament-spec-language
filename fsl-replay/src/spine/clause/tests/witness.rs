@@ -1076,6 +1076,36 @@ fn native_result_two_writer_round_trips_extraction_diagnostics_and_clauses() {
     assert_eq!(serde_json::to_value(read.extraction()).unwrap(), expected);
 }
 
+/// FR-267-AC-17: an extraction map with no segments is refused at
+/// `extraction.map.segments`, by the document type and not by a later check.
+#[trace("TC-109", "FR-267-AC-17")]
+#[test]
+fn native_result_two_refuses_an_extraction_map_with_no_segments() {
+    let record: crate::spine::ExtractionRecord = serde_json::from_value(json!({
+        "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+        "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+        "binding": {"clause": "check", "package": "fixture/package"},
+        "outcome": {"availability": {"state": "available", "reason": null, "lossy": false}},
+        "map": {"region": {"start": 0, "end": 1}, "segments": [
+            {"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+    }))
+    .unwrap();
+    let report = run("AllBelow", Snapshot::High, "mid");
+    let bytes =
+        crate::spine::write_clause_run_result_for_with_extraction(&report, None, Some(record))
+            .unwrap();
+    assert!(crate::spine::read_native_run_result(&bytes).is_ok());
+
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    document["extraction"]["map"]["segments"] = json!([]);
+    let edited = serde_json::to_vec(&document).unwrap();
+    let error = crate::spine::read_native_run_result(&edited).unwrap_err();
+    assert!(
+        error.to_string().contains("extraction.map.segments"),
+        "{error}"
+    );
+}
+
 /// FR-267-AC-2: each independent malformed witness, basis and format edit
 /// refuses at the member it changed.
 #[trace("TC-742", "FR-267-AC-2")]
