@@ -303,12 +303,9 @@ fn fair_components(
 /// not a scheduler decision at which operation enabledness is tested.
 #[implements("FR-200-AC-11")]
 fn is_row_dispatch_state(product: &ProbProduct, state: usize) -> bool {
-    product
-        .outgoing(ProbStateId(state))
-        .first()
-        .is_some_and(|edge| {
-            matches!(&edge.choice, ProductAction::FreeDelays(rows) if rows.is_empty())
-        })
+    product.outgoing(ProbStateId(state)).first().is_some_and(
+        |edge| matches!(&edge.choice, ProductAction::FreeDelays(rows) if rows.is_empty()),
+    )
 }
 
 fn fairness_actions<'a>(
