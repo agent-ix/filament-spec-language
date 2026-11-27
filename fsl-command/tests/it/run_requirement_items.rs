@@ -1096,6 +1096,20 @@ fn require_certified_withholds_a_call_s_trusted_items() {
         json!([{"parameter": "n", "value": {"type":"integer","value":"4"}}]),
         Some(json!({"backend": PROVIDER})),
     );
+    let default = run_with_providers(
+        &path,
+        Scenario::Limits {
+            deadline_ms: 250,
+            max_frame_bytes: 1_048_576,
+        },
+    )
+    .expect("the run-side provider entry");
+    let defaults = entries(&default.document);
+    assert!(!defaults.is_empty(), "{}", default.document);
+    for item in defaults {
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+        assert_eq!(item["record"]["certification"], "trusted", "{item}");
+    }
     let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     request["request"]["require_certified"] = json!(true);
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
