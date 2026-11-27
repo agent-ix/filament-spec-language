@@ -34,6 +34,7 @@
 use filament_exact::NodeKey;
 use std::collections::BTreeMap;
 
+use filament_contract_model::CheckedSchedulabilityKind;
 use filament_exact::{Meter, Rational, ScalarLimits, ValueType};
 use filament_semantic_value::catalog::{Category, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
@@ -46,11 +47,12 @@ use fsl_eval::model_subject::{
 };
 use fsl_eval::simulation::model::{
     ClauseLetters, DecisiveObservation, ExpansionLimits, ModelSimState, ModelSimulationRequest,
-    ModelSystem, PopulationUniverse, TerminalClass,
+    ModelSystem, PopulationUniverse, ProtocolDefinition, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    check_protocol_bounds, live_instance_bound, protocol_constraints, Capacities, CapacityRefusal,
-    CarriedComponent, MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolLoopProofKind,
+    check_package_protocol_bounds, check_protocol_bounds, live_instance_bound,
+    protocol_constraints, Capacities, CapacityRefusal, CarriedComponent, MemoryModel,
+    PackageProtocolProgram, ProtocolFairness, ProtocolFairnessError, ProtocolLoopProofKind,
     ProtocolLoopProofTarget, ProtocolRefusal, ProtocolSystem, ProtocolTransition, ResolvedMemory,
     Sc, SendRecord, StepKind, SubjectMemory,
 };
@@ -1012,15 +1014,60 @@ fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> Re
 }
 
 /// FR-531 "Dependency artifact names": a join's refusal of an artifact name is
-/// the refusal handoff admission gives that name. A native join refusal stays
-/// the internal fault.
+/// the refusal handoff admission gives that name. A native join refusal goes
+/// through [`native_join_refusal`].
 #[implements("FR-531-AC-61")]
-pub(super) fn handoff_join_refusal(refusal: fsl_package::DependencyJoinRefusal) -> ReplayRefusal {
+pub(super) fn handoff_join_refusal(
+    refusal: fsl_package::DependencyJoinRefusal,
+    budget: &filament_contract_model::NativeJoinBudget,
+) -> ReplayRefusal {
     match refusal {
         fsl_package::DependencyJoinRefusal::Name { .. } => {
             ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed)
         }
-        fsl_package::DependencyJoinRefusal::Native(_) => fault("handoff-supply-joins"),
+        fsl_package::DependencyJoinRefusal::Native(failure) => {
+            native_join_refusal(failure, budget, "handoff-supply-joins")
+        }
+    }
+}
+
+/// FR-531 "The native join budget": a denied identity-row charge of the
+/// handoff read is the stage-limit refusal of the join; any other refusal of
+/// the identity file stays the internal fault `handoff-identities-admit`.
+pub(super) fn handoff_identities_refusal(
+    refusal: fsl_package::IdentityFileRefusal,
+    budget: &filament_contract_model::NativeJoinBudget,
+) -> ReplayRefusal {
+    match refusal {
+        fsl_package::IdentityFileRefusal::Native(error) => native_join_refusal(
+            fsl_package::NativeJoinFailure::from(error),
+            budget,
+            "handoff-identities-admit",
+        ),
+        fsl_package::IdentityFileRefusal::Rows(error) => native_join_refusal(
+            fsl_package::NativeJoinFailure::Rows(error),
+            budget,
+            "handoff-identities-admit",
+        ),
+        _ => fault("handoff-identities-admit"),
+    }
+}
+
+/// FR-531 "The native join budget": a native failure whose charge `budget`
+/// denied settles as the `stage_limit_exceeded`-class refusal of that charge's
+/// limit, never as an internal fault. A failure that is no resource denial
+/// stays the internal fault `invariant`.
+fn native_join_refusal(
+    failure: fsl_package::NativeJoinFailure,
+    budget: &filament_contract_model::NativeJoinBudget,
+    invariant: &'static str,
+) -> ReplayRefusal {
+    match failure.with_budget(budget).limit() {
+        Some(limit) => ReplayRefusal::Recompile {
+            refusal: Box::new(crate::spine::CompileRefusal::Limit(limit.clone())),
+            pointer: None,
+        },
+        None => fault(invariant),
     }
 }
 
@@ -1133,7 +1180,7 @@ pub fn replay_model_trace_from_package(
         &mut budget,
     )?;
     let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
-        .map_err(|_| fault("handoff-identities-admit"))?;
+        .map_err(|refusal| handoff_identities_refusal(refusal, &budget))?;
     let equality = supply
         .equality
         .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
@@ -1152,7 +1199,11 @@ pub fn replay_model_trace_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(handoff_join_refusal)?;
+        .map_err(|refusal| handoff_join_refusal(refusal, &budget))?;
+    refuse_model_alphabet_for_a_task_item(names_package_task_product_item(
+        &bare,
+        envelope.occurrence_key(),
+    )?)?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
             .map_err(|_| fault("package-route-input"))?;
@@ -1305,12 +1356,10 @@ pub fn replay_model_trace_with_temporal_selections(
         temporal_selections,
         replay_limits,
         |package, simulation, meter| {
-            if names_task_product_item(package.0, envelope.occurrence_key()) {
-                return Err(refused(ModelTraceRefusal::TraceAlphabet {
-                    required: "task",
-                    supplied: "model",
-                }));
-            }
+            refuse_model_alphabet_for_a_task_item(names_task_product_item(
+                package.0,
+                envelope.occurrence_key(),
+            ))?;
             if let Some(clause) = resolve_invariant(envelope, package.0)? {
                 let system =
                     ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;
@@ -1509,35 +1558,8 @@ pub fn replay_protocol_trace_with_temporal_selections(
             )?;
             let payload = envelope.family_payload();
             let simulation = simulation(&subject.model);
-            let protocol = package
-                .0
-                .graph()
-                .protocol(&subject.protocol)
-                .ok_or_else(|| {
-                    refused(ModelTraceRefusal::Protocol(
-                        ProtocolRefusal::UnknownProtocol {
-                            protocol: subject.protocol.clone(),
-                        },
-                    ))
-                })?;
             let model = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
-            let capacities =
-                Capacities::admit(protocol, &subject.capacities).map_err(|refusal| {
-                    refused(ModelTraceRefusal::Protocol(ProtocolRefusal::Capacity(
-                        refusal,
-                    )))
-                })?;
-            // FSpec FR-785-AC-5: a counterexample's subject without a
-            // capacity its clause names lacks the member `capacities`.
-            if let Some(unbound) = capacities.unbound().first() {
-                return Err(refused(ModelTraceRefusal::Protocol(
-                    ProtocolRefusal::Capacity(CapacityRefusal::Missing {
-                        name: unbound.name.clone(),
-                    }),
-                )));
-            }
-            check_protocol_bounds(&model, protocol, &capacities, package.0, BOUND_POSITIONS)
-                .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+            admit_protocol_capacities(&model, &simulation, subject)?;
             let protocol_subject = ProtocolSubject {
                 model: ModelSubject {
                     simulation,
@@ -1655,7 +1677,7 @@ pub fn replay_protocol_trace_from_package(
         &mut budget,
     )?;
     let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
-        .map_err(|_| fault("handoff-identities-admit"))?;
+        .map_err(|refusal| handoff_identities_refusal(refusal, &budget))?;
     let equality = supply
         .equality
         .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
@@ -1674,7 +1696,7 @@ pub fn replay_protocol_trace_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(handoff_join_refusal)?;
+        .map_err(|refusal| handoff_join_refusal(refusal, &budget))?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
             .map_err(|_| fault("package-route-input"))?;
@@ -1813,6 +1835,7 @@ pub fn replay_protocol_trace_from_package(
         }
         Some(clause)
     };
+    admit_protocol_capacities(&model, &protocol_subject.model.simulation, subject)?;
     let replayed = ProtocolReplay {
         payload,
         clause: clause.as_ref(),
@@ -2145,6 +2168,74 @@ fn names_task_product_item(package: &CheckedPackage, occurrence: &OccurrenceKey)
                     .any(|r| r.task_set() == set.name)
             })
     })
+}
+
+/// [`names_task_product_item`] over an admitted package read from its bytes.
+fn names_package_task_product_item(
+    package: &fsl_package::BarePackage<'_>,
+    occurrence: &OccurrenceKey,
+) -> Result<bool, ReplayRefusal> {
+    let roots = fsl_package::schedulability_roots(package.package())
+        .map_err(|_| fault("schedulability-roots"))?;
+    Ok(roots.iter().any(|root| {
+        root.occurrence() == occurrence
+            && root.claim().kind() == CheckedSchedulabilityKind::Schedulable
+            && root.claim().release_bindings().next().is_some()
+    }))
+}
+
+/// FR-237: a task-product item replays over the task alphabet, so a
+/// model-alphabet payload for one is refused before any step, on both routes.
+#[implements("FR-237-AC-13")]
+fn refuse_model_alphabet_for_a_task_item(task_item: bool) -> Result<(), ReplayRefusal> {
+    if task_item {
+        return Err(refused(ModelTraceRefusal::TraceAlphabet {
+            required: "task",
+            supplied: "model",
+        }));
+    }
+    Ok(())
+}
+
+/// FSpec FR-785-AC-5: a protocol counterexample's subject binds every capacity
+/// its protocol names and satisfies every `requires` bound, whether the
+/// protocol was read from source or from package bytes.
+#[implements("FR-217-AC-10")]
+fn admit_protocol_capacities(
+    model: &ModelSystem<'_>,
+    simulation: &ModelSimulationRequest<'_>,
+    subject: &ProtocolTraceSubject,
+) -> Result<(), ReplayRefusal> {
+    let built = |refusal| refused(ModelTraceRefusal::Protocol(refusal));
+    let not_simulated = |refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal)));
+    let input = &simulation.input;
+    let capacities =
+        Capacities::admit_input(input, &subject.protocol, &subject.capacities).map_err(built)?;
+    // A subject without a capacity its clause names lacks `capacities`.
+    if let Some(unbound) = capacities.unbound().first() {
+        return Err(built(ProtocolRefusal::Capacity(CapacityRefusal::Missing {
+            name: unbound.name.clone(),
+        })));
+    }
+    match input.protocol_definition(&subject.protocol) {
+        Some(ProtocolDefinition::Source(protocol)) => check_protocol_bounds(
+            model,
+            protocol,
+            &capacities,
+            input.evaluator,
+            BOUND_POSITIONS,
+        )
+        .map_err(not_simulated),
+        Some(ProtocolDefinition::Package(form)) => {
+            let program = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
+                .map_err(|refusal| built(refusal.into_protocol()))?;
+            check_package_protocol_bounds(model, &program, &capacities, BOUND_POSITIONS)
+                .map_err(not_simulated)
+        }
+        None => Err(built(ProtocolRefusal::UnknownProtocol {
+            protocol: subject.protocol.clone(),
+        })),
+    }
 }
 
 fn resolve_item<'p, T: SubjectTransition>(

@@ -71,6 +71,7 @@ fn run(world: &World, claim: &OccurrenceKey, max_cases: Option<u64>) -> AnalyzeR
             request,
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0)
 }
@@ -119,6 +120,7 @@ fn an_inapplicable_request_does_not_change_the_state_clause_record() {
             ),
         ],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
 
     assert_eq!(records.len(), 2);
@@ -570,6 +572,7 @@ mod simulation {
                 request,
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     }
@@ -828,6 +831,7 @@ fn assert_no_per_step_reading(
                 request,
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         let TerminalValue::Unsupported(cause) = terminal(&record) else {
@@ -1047,6 +1051,7 @@ fn a_source_enum_argument_and_result_are_spelled_in_a_source_operation_counterex
             request,
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(
