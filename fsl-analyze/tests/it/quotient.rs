@@ -831,18 +831,30 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
             meter(work_units),
         )
     };
-    let counter_minimum_work = |max_transitions: usize, succeeds: bool| {
-        (0..=4096)
-            .find(|work| {
-                counter_with_budgets(max_transitions, *work).is_ok_and(|outcome| {
-                    matches!(outcome, ModelCheckOutcome::Violated { .. }) == succeeds
-                })
+    let counter_exploration_work = (0..=4096)
+        .find(|work| {
+            counter_with_budgets(counter_edges, *work).is_ok_and(|outcome| {
+                matches!(
+                    outcome,
+                    ModelCheckOutcome::Stopped {
+                        limit: Some(ReachedLimit {
+                            limit: ModelCheckLimit::MaxTransitions,
+                            ..
+                        }),
+                        ..
+                    }
+                )
             })
-            .expect("the bounded counter run reaches the requested result")
-    };
+        })
+        .expect("the bounded counter run reaches its transition limit");
+    let counter_completion_work = (0..=4096)
+        .find(|work| {
+            counter_with_budgets(counter_edges + 6, *work)
+                .is_ok_and(|outcome| matches!(outcome, ModelCheckOutcome::Violated { .. }))
+        })
+        .expect("the bounded counter run reaches the requested violation");
     assert_eq!(
-        counter_minimum_work(counter_edges, false)
-            .abs_diff(counter_minimum_work(counter_edges + 6, true)),
+        counter_completion_work - counter_exploration_work,
         6
     );
 
