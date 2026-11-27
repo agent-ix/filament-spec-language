@@ -406,7 +406,7 @@ fn nesting_depth_is_no_limit() {
 /// 11-record fixture admits at the default `model.declaration_records`, and
 /// refuses typed one record short of its 1,011, naming the limit, the bound
 /// and the count reached, not crashing or running on unbounded.
-#[trace("FR-255-AC-45", "FR-506-AC-1")]
+#[trace("FR-255-AC-45", "FR-255-AC-46", "FR-506-AC-1")]
 #[test]
 fn a_thousand_declarations_admit_at_the_default_and_refuse_typed_one_short() {
     let mut document = document_of(framed_operation());
@@ -452,6 +452,8 @@ fn a_thousand_declarations_admit_at_the_default_and_refuse_typed_one_short() {
                 denial.setting(),
                 fsl_foundation::Setting::ModelDeclarationRecords
             );
+            // A size counter reports the size reached, not consumed + size.
+            assert_eq!(denial.actual(), 1_011);
         }
         other => panic!("expected a denied declaration_records charge, got {other:?}"),
     }
