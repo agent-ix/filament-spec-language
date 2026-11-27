@@ -1494,8 +1494,47 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
     ))
 }
 
+trait FormulaResidual: Clone + std::fmt::Debug + Eq + Ord {
+    fn verdict(&self) -> Option<bool>;
+    fn canonical_member(&self, subdivisions: u64) -> JsonValue;
+}
+
+trait FormulaMonitor<R: FormulaResidual> {
+    fn initial(&self) -> R;
+    fn horizon(&self) -> u64;
+    fn delay(
+        &self,
+        system: &ModelSystem<'_>,
+        binding: Option<&filament_exact::ObjectReference>,
+        state: &ModelSimState,
+        previous: &R,
+        elapsed: u64,
+        deadline: u64,
+        cancel: &Cancel,
+    ) -> Result<R, ProbabilityDocumentError>;
+    fn observe(
+        &self,
+        system: &ModelSystem<'_>,
+        binding: Option<&filament_exact::ObjectReference>,
+        state: &ModelSimState,
+        previous: &R,
+        elapsed: u64,
+        deadline: u64,
+        cancel: &Cancel,
+    ) -> Result<R, ProbabilityDocumentError>;
+}
+
+impl FormulaResidual for () {
+    fn verdict(&self) -> Option<bool> {
+        None
+    }
+    fn canonical_member(&self, _subdivisions: u64) -> JsonValue {
+        JsonValue::Null
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Phase {
+enum Phase<R = ()> {
     Pending,
     Accepted,
     Rejected,
@@ -1514,9 +1553,11 @@ enum Phase {
         fsl_eval::probabilistic::TimedOperatorState,
         fsl_eval::probabilistic::TimedOperatorState,
     ),
+    /// A residual owned by the independent window-formula checker.
+    Window(R),
 }
 
-impl Phase {
+impl<R: FormulaResidual> Phase<R> {
     #[implements("FR-204-AC-21")]
     fn decided(&self) -> bool {
         match self {
@@ -1524,13 +1565,14 @@ impl Phase {
             Self::Bounded(operator) | Self::NestedBounded(operator, _) => {
                 operator.phase != fsl_eval::probabilistic::DeadlinePhase::Pending
             }
+            Self::Window(residual) => residual.verdict().is_some(),
             _ => true,
         }
     }
 }
 
 #[implements("FR-204-AC-21")]
-fn phase_value(phase: &Phase) -> Option<bool> {
+fn phase_value<R: FormulaResidual>(phase: &Phase<R>) -> Option<bool> {
     use fsl_eval::probabilistic::DeadlinePhase as MonitorPhase;
     match phase {
         Phase::Accepted => Some(true),
@@ -1545,11 +1587,12 @@ fn phase_value(phase: &Phase) -> Option<bool> {
             MonitorPhase::Reject => Some(false),
             MonitorPhase::Pending => None,
         },
+        Phase::Window(residual) => residual.verdict(),
         _ => None,
     }
 }
 
-fn monitor_json(phase: &Phase) -> JsonValue {
+fn monitor_json<R: FormulaResidual>(phase: &Phase<R>, subdivisions: u64) -> JsonValue {
     use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase, TimedOperatorState};
     let kind_name = |kind| match kind {
         DeadlineKind::Eventually => "eventually",
@@ -1589,6 +1632,7 @@ fn monitor_json(phase: &Phase) -> JsonValue {
         Phase::Pending => json!(["deadline", "eventually", "pending"]),
         Phase::Accepted => json!(["deadline", "eventually", "accept"]),
         Phase::Rejected => json!(["deadline", "eventually", "reject"]),
+        Phase::Window(residual) => residual.canonical_member(subdivisions),
         _ => JsonValue::Null,
     }
 }
@@ -1605,7 +1649,7 @@ struct ElapsedWatch<'a> {
 
 /// What the enumerator observes along a run: FR-204's deadline event, or
 /// FR-877's elapsed measure.
-enum Watch<'a> {
+enum Watch<'a, R: FormulaResidual = ()> {
     Deadline(&'a fsl_semantics::check::CheckedPredicate),
     Bounded {
         root: fsl_eval::probabilistic::TimedOperatorState,
@@ -1618,12 +1662,13 @@ enum Watch<'a> {
         predicate: &'a fsl_semantics::check::CheckedPredicate,
         horizon: u64,
     },
+    Formula(&'a dyn FormulaMonitor<R>),
     Elapsed(ElapsedWatch<'a>),
 }
 
-impl Watch<'_> {
+impl<R: FormulaResidual> Watch<'_, R> {
     #[implements("FR-204-AC-21")]
-    fn start(&self) -> Phase {
+    fn start(&self) -> Phase<R> {
         match self {
             Self::Deadline(_) => Phase::Pending,
             Self::Bounded { root, .. } => Phase::Bounded(*root),
@@ -1634,6 +1679,7 @@ impl Watch<'_> {
                 root.elapsed = u64::MAX;
                 Phase::NestedBounded(root, *nested)
             }
+            Self::Formula(monitor) => Phase::Window(monitor.initial()),
             Self::Elapsed(_) => Phase::Inactive,
         }
     }
@@ -1642,6 +1688,7 @@ impl Watch<'_> {
     fn horizon(&self) -> u64 {
         match self {
             Self::Bounded { horizon, .. } | Self::Nested { horizon, .. } => *horizon,
+            Self::Formula(monitor) => monitor.horizon(),
             _ => 0,
         }
     }
@@ -1659,11 +1706,11 @@ impl Watch<'_> {
         system: &ModelSystem<'_>,
         binding: Option<&filament_exact::ObjectReference>,
         state: &ModelSimState,
-        previous: Phase,
+        previous: Phase<R>,
         elapsed: u64,
         deadline: u64,
         cancel: &Cancel,
-    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
+    ) -> Result<(Phase<R>, u64), ProbabilityDocumentError> {
         match self {
             Self::Deadline(_) => {
                 let phase = match previous {
@@ -1676,6 +1723,18 @@ impl Watch<'_> {
                 Phase::Bounded(bounded_at(previous, *root, elapsed)),
                 elapsed,
             )),
+            Self::Formula(monitor) => {
+                let Phase::Window(previous) = previous else {
+                    return Err(ProbabilityDocumentError::Malformed);
+                };
+                Ok((
+                    Phase::Window(
+                        monitor
+                            .delay(system, binding, state, &previous, elapsed, deadline, cancel)?,
+                    ),
+                    elapsed,
+                ))
+            }
             Self::Nested { .. } | Self::Elapsed(_) => {
                 self.observe(system, binding, state, previous, elapsed, deadline, cancel)
             }
@@ -1692,13 +1751,13 @@ impl Watch<'_> {
         system: &ModelSystem<'_>,
         binding: Option<&filament_exact::ObjectReference>,
         state: &ModelSimState,
-        previous: Phase,
+        previous: Phase<R>,
         elapsed: u64,
         deadline: u64,
         cancel: &Cancel,
-    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
+    ) -> Result<(Phase<R>, u64), ProbabilityDocumentError> {
         match self {
-            Self::Nested { .. } => Ok((previous, elapsed)),
+            Self::Nested { .. } | Self::Formula(_) => Ok((previous, elapsed)),
             Self::Deadline(_) | Self::Bounded { .. } | Self::Elapsed(_) => {
                 self.observe(system, binding, state, previous, elapsed, deadline, cancel)
             }
@@ -1715,16 +1774,25 @@ impl Watch<'_> {
         system: &ModelSystem<'_>,
         binding: Option<&filament_exact::ObjectReference>,
         state: &ModelSimState,
-        previous: Phase,
+        previous: Phase<R>,
         elapsed: u64,
         deadline: u64,
         cancel: &Cancel,
-    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
-        let watch = match self {
+    ) -> Result<(Phase<R>, u64), ProbabilityDocumentError> {
+        let watch =
+            match self {
             Self::Deadline(predicate) => {
                 let phase = match previous {
                     Phase::Accepted | Phase::Rejected => previous,
-                    _ => phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?,
+                        _ => match phase_at(
+                            system, predicate, binding, state, elapsed, deadline, cancel,
+                        )? {
+                            Phase::Pending => Phase::Pending,
+                            Phase::Accepted => Phase::Accepted,
+                            Phase::Rejected => Phase::Rejected,
+                            Phase::Window(_) => return Err(ProbabilityDocumentError::Malformed),
+                            _ => return Err(ProbabilityDocumentError::Malformed),
+                        },
                 };
                 return Ok((phase, elapsed));
             }
@@ -1766,6 +1834,17 @@ impl Watch<'_> {
                 );
                 return Ok((Phase::NestedBounded(root, nested), elapsed));
             }
+                Self::Formula(monitor) => {
+                    let Phase::Window(previous) = previous else {
+                        return Err(ProbabilityDocumentError::Malformed);
+                    };
+                    return Ok((
+                        Phase::Window(monitor.observe(
+                            system, binding, state, &previous, elapsed, deadline, cancel,
+                        )?),
+                        elapsed,
+                    ));
+                }
             Self::Elapsed(watch) => watch,
         };
         let holds = |predicate| -> Result<bool, ProbabilityDocumentError> {
@@ -1803,7 +1882,7 @@ impl Watch<'_> {
 
     /// FR-877's terminal reward `[M <= c] - q` (`[M < c] - q` when strict) of
     /// a decided elapsed measure; a censored measure exceeds every threshold.
-    fn reward(&self, phase: &Phase, elapsed: u64) -> Option<(Rational, bool)> {
+    fn reward(&self, phase: &Phase<R>, elapsed: u64) -> Option<(Rational, bool)> {
         let Self::Elapsed(watch) = self else {
             return None;
         };
@@ -1822,8 +1901,8 @@ impl Watch<'_> {
 /// with its clock at `elapsed`: a pending one is decided once the clock is
 /// past its window.
 #[implements("FR-204-AC-21")]
-fn bounded_at(
-    previous: Phase,
+fn bounded_at<R>(
+    previous: Phase<R>,
     root: fsl_eval::probabilistic::TimedOperatorState,
     elapsed: u64,
 ) -> fsl_eval::probabilistic::TimedOperatorState {
@@ -1907,10 +1986,10 @@ fn deadline_timeout(
 }
 
 #[derive(Clone)]
-struct RegionState {
+struct RegionState<R = ()> {
     timed: TimedState,
     elapsed: u64,
-    phase: Phase,
+    phase: Phase<R>,
     tail: DigitalTail,
 }
 
@@ -2054,7 +2133,8 @@ fn enumerate_digital_deadline(
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
-            | Phase::NestedBounded(_, _) => {}
+            | Phase::NestedBounded(_, _)
+            | Phase::Window(_) => {}
         }
         if current.tail != DigitalTail::Running {
             let mut choices = Vec::new();
@@ -2387,12 +2467,12 @@ fn enumerate_digital_deadline(
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
 #[implements("FR-204-AC-21")]
-fn enumerate_region_deadline(
+fn enumerate_region_deadline<R: FormulaResidual>(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
     claim: &CheckedProbabilisticClaim,
     binding: Option<&filament_exact::ObjectReference>,
-    watch: &Watch<'_>,
+    watch: &Watch<'_, R>,
     deadline: u64,
     key_scale: u64,
     scale: u64,
@@ -2458,7 +2538,7 @@ fn enumerate_region_deadline(
         first_key
             .as_bytes()
             .len()
-            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, RegionState)>()),
+            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, RegionState<R>)>()),
         limits,
     )?;
     let mut pending = VecDeque::from([first_key.clone()]);
@@ -2535,7 +2615,8 @@ fn enumerate_region_deadline(
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
-            | Phase::NestedBounded(_, _) => {
+            | Phase::NestedBounded(_, _)
+            | Phase::Window(_) => {
                 if current.phase == Phase::Active {
                     activated.insert(key.clone());
                 }
@@ -2808,11 +2889,11 @@ fn quantized_clocks(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
-fn region_key(
+fn region_key<R: FormulaResidual>(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
     binding: Option<&filament_exact::ObjectReference>,
-    state: &RegionState,
+    state: &RegionState<R>,
     caps: &[u64],
     base_scale: u64,
     subdivisions: u64,
@@ -2878,7 +2959,7 @@ fn region_key(
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(&state.phase);
+    let monitor = monitor_json(&state.phase, subdivisions);
     let mut keyed_clocks = clocks
         .into_iter()
         .map(|(identity, value, cap)| {
@@ -3056,7 +3137,7 @@ fn digital_key(
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(&state.phase);
+    let monitor = monitor_json(&state.phase, 1);
     digital_probability_product_key(DigitalProductKeyInput {
         binding,
         discrete,
@@ -4440,15 +4521,15 @@ fn digital_state_after_delay(
 /// Interim: part of a walk over a finer grid, not the symbolic region MDP of
 /// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
 #[implements("FR-922-AC-4")]
-fn lower_fractions(
-    watch: &Watch<'_>,
-    current: &RegionState,
+fn lower_fractions<R: FormulaResidual>(
+    watch: &Watch<'_, R>,
+    current: &RegionState<R>,
     caps: &[u64],
     subdivisions: u64,
     scale: u64,
     deadline: u64,
-) -> Result<RegionState, ProbabilityDocumentError> {
-    if matches!(watch, Watch::Nested { .. }) {
+) -> Result<RegionState<R>, ProbabilityDocumentError> {
+    if matches!(watch, Watch::Nested { .. } | Watch::Formula(_)) {
         return Ok(current.clone());
     }
     let mut units = Vec::with_capacity(caps.len() + 1);
@@ -4500,19 +4581,19 @@ fn lower_fractions(
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
 #[implements("FR-204-AC-21", "FR-922-AC-4")]
-fn next_region_delay(
+fn next_region_delay<R: FormulaResidual>(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
-    watch: &Watch<'_>,
+    watch: &Watch<'_, R>,
     binding: Option<&filament_exact::ObjectReference>,
-    current: &RegionState,
+    current: &RegionState<R>,
     caps: &[u64],
     base_scale: u64,
     subdivisions: u64,
     scale: u64,
     deadline: u64,
     cancel: &Cancel,
-) -> Result<Option<(ProbabilityProductKey, RegionState)>, ProbabilityDocumentError> {
+) -> Result<Option<(ProbabilityProductKey, RegionState<R>)>, ProbabilityDocumentError> {
     let current_key = region_key(
         system,
         timed,
@@ -4591,10 +4672,10 @@ fn next_region_delay(
     Ok(None)
 }
 
-fn admit_region_state(
+fn admit_region_state<R: Clone>(
     key: ProbabilityProductKey,
-    state: RegionState,
-    reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
+    state: RegionState<R>,
+    reached: &mut BTreeMap<ProbabilityProductKey, RegionState<R>>,
     pending: &mut VecDeque<ProbabilityProductKey>,
     limits: ProbabilityDocumentLimits,
     storage: &mut u64,
@@ -4616,7 +4697,7 @@ fn admit_region_state(
         storage,
         key.as_bytes()
             .len()
-            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, RegionState)>()),
+            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, RegionState<R>)>()),
         limits,
     )?;
     reached.insert(key.clone(), state);
