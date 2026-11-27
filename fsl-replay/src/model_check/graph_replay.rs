@@ -292,6 +292,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             &system,
             package,
             Some(package),
+            None,
             clause,
             envelope.family_payload(),
             model_limits.limits.max_states,

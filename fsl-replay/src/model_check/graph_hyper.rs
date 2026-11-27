@@ -47,6 +47,7 @@ pub(super) fn replay_evidence(
     system: &ModelSystem<'_>,
     evaluator: &dyn ModelEvaluator,
     checked_package: Option<&fsl_package::CheckedPackage>,
+    contract_name: Option<&str>,
     clause: &CheckedHyperClause,
     evidence: &GraphEvidence,
     max_states: usize,
@@ -150,6 +151,7 @@ pub(super) fn replay_evidence(
             let reproduced = replay_undefined(
                 system,
                 checked_package,
+                contract_name,
                 clause,
                 &letters,
                 &bindings,
@@ -373,6 +375,7 @@ pub(super) fn atom_location(
 fn replay_undefined(
     system: &ModelSystem<'_>,
     package: Option<&fsl_package::CheckedPackage>,
+    contract_name: Option<&str>,
     clause: &CheckedHyperClause,
     letters: &CheckedHyperLetters<'_, '_>,
     bindings: &[ParameterBinding],
@@ -391,7 +394,7 @@ fn replay_undefined(
     // precondition names the transition it guards; a postcondition names
     // none (ADR-018 UE-6).
     if undefined.predicate.is_none() {
-        let clause_name = undefined.contract_name.clone().or_else(|| {
+        let clause_name = contract_name.map(str::to_owned).or_else(|| {
             let expected_locus = undefined.locus.as_ref()?;
             package?
                 .graph()

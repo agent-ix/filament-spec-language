@@ -427,8 +427,6 @@ pub struct GraphUndefined {
     pub state_key: StateKey,
     /// The expression with no value, when the evaluator located it.
     pub locus: Option<Location>,
-    /// The admitted state-clause name for an undefined contract conjunction.
-    pub(crate) contract_name: Option<String>,
     /// The catalogued reason.
     pub cause: UndefinedCause,
 }

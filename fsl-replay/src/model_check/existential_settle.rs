@@ -186,11 +186,12 @@ fn settle_existential_from(
     let mut evidence = None;
     let mut undefined = None;
     let mut end = None;
-    let mut replay = |candidate: GraphEvidence, decided: Row| {
+    let mut replay = |candidate: GraphEvidence, decided: Row, contract_name: Option<&str>| {
         let replayed = super::graph_hyper::replay_evidence(
             &system,
             request.evaluator(),
             request.checked_package(),
+            contract_name,
             clause,
             &candidate,
             method.limits.limits.max_states,
@@ -249,6 +250,7 @@ fn settle_existential_from(
                         Certification::Certified,
                         SettlementBasis::DecisiveWitness,
                     ),
+                    None,
                 ),
                 ProductClosureCheck::Rejected(rejection) => {
                     Row::inconclusive(InconclusiveCause::CertificateRejected {
@@ -284,6 +286,7 @@ fn settle_existential_from(
                         .map(|witness| witness.source.clone())
                         .collect(),
                 }),
+                None,
             )
         }
         ExistentialOutcome::ClosedWitnessed { .. } => {
@@ -296,6 +299,7 @@ fn settle_existential_from(
                 over: over.clone(),
             },
             Row::refuted(SettlementBasis::ClosedScope),
+            None,
         ),
         ExistentialOutcome::Undefined {
             stem,
@@ -312,10 +316,6 @@ fn settle_existential_from(
                     UndefinedLocus::Contract(name) => request.contract_location(name),
                     _ => None,
                 },
-                contract_name: match &finding.site.locus {
-                    UndefinedLocus::Contract(name) => Some(name.clone()),
-                    _ => None,
-                },
                 cause: finding.cause.clone(),
             };
             undefined = Some(found.clone());
@@ -326,6 +326,10 @@ fn settle_existential_from(
                     over: over.clone(),
                 },
                 Row::refuted(SettlementBasis::DecisiveCounterexample),
+                match &finding.site.locus {
+                    UndefinedLocus::Contract(name) => Some(name.as_str()),
+                    _ => None,
+                },
             )
         }
         ExistentialOutcome::NoInitialState => Row::inconclusive(InconclusiveCause::NoInitialState),
