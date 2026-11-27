@@ -3,7 +3,7 @@
 use super::bounded::{alter_keys, document, mutate, request_with, request_with_accounting, run};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const CYCLIC_MDP_PRODUCER_WORK: u64 = 10_000_000;
@@ -234,7 +234,7 @@ fn strict_rows_boundaries_and_quantitative_source_scope_are_closed() {
         let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
             panic!("threshold {threshold} is a checking refusal: {refusal:?}");
         };
-        let [fsl_semantics::check::CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        let [fsl_semantics::check::SemanticCheckRefusal { cause, .. }] = refusals.as_slice() else {
             panic!("one refusal for threshold {threshold}: {refusals:?}");
         };
         let fsl_semantics::check::CheckCause::Probabilistic(cause) = cause.as_ref() else {

@@ -1054,24 +1054,20 @@ mod tests {
         ])
         .expect("the four finite valuations fit the checked state cap");
         assert_eq!(states.len(), 4);
-        assert!(
-            ReferenceFiniteState::enumerate(vec![(
-                "a".to_owned(),
-                "large".to_owned(),
-                (0..=65_536)
-                    .map(|value| Value::Integer(Integer::from(value as i64)))
-                    .collect(),
-            )])
-            .is_err()
-        );
-        assert!(
-            ReferenceFiniteState::enumerate(vec![(
-                "a".to_owned(),
-                "rational".to_owned(),
-                vec![Value::Rational(Rational::from_integer(Integer::one()))],
-            )])
-            .is_err()
-        );
+        assert!(ReferenceFiniteState::enumerate(vec![(
+            "a".to_owned(),
+            "large".to_owned(),
+            (0..=65_536)
+                .map(|value| Value::Integer(Integer::from(value as i64)))
+                .collect(),
+        )])
+        .is_err());
+        assert!(ReferenceFiniteState::enumerate(vec![(
+            "a".to_owned(),
+            "rational".to_owned(),
+            vec![Value::Rational(Rational::from_integer(Integer::one()))],
+        )])
+        .is_err());
     }
 
     #[trace("FR-1051-AC-19")]

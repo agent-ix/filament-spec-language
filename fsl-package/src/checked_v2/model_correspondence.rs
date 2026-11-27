@@ -13,6 +13,7 @@ use fsl_semantics::model::normalize::ViewEntry;
 /// Each body starts with a row count, followed by the closed preimage grammar
 /// documented by the writer. Only literal terms from admitted model-
 /// correspondence nodes are considered.
+#[ix_trace_rs::string_edge]
 pub(super) fn read(package: &CheckedPackageV2) -> Result<Vec<EffectiveDeclarationPreimage>, ()> {
     let mut rows = Vec::new();
     for node in &package.graph().nodes {
@@ -108,6 +109,7 @@ impl Cursor<'_> {
         Ok(count)
     }
 
+    #[ix_trace_rs::string_edge]
     fn optional_effective_id(&mut self) -> Result<Option<EffectiveId>, ()> {
         let marker = self.text()?;
         if marker == "none" {
@@ -161,6 +163,7 @@ impl Cursor<'_> {
         })
     }
 
+    #[ix_trace_rs::string_edge]
     fn fact(&mut self) -> Result<Fact, ()> {
         let ordinal = self.integer()?;
         let rule = match self.text()?.as_str() {

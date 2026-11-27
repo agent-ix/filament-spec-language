@@ -2,11 +2,11 @@
 //! QSL-2740 PR 2a: source navigation follows the model relationships listed
 //! by a native-run snapshot, with concrete workflow object keys.
 
-use crate::command_harness::{Output, run_file};
+use crate::command_harness::{run_file, Output};
 use crate::workflow_population_aggregates::{rename, source};
 use fsl_command::command::{self, RunError, RunLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 pub(super) const PACKAGE: &str = "test/workflow-relationships";

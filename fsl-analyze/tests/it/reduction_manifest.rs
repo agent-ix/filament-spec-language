@@ -345,7 +345,10 @@ fn en6_advertises_temporal_satisfaction_bounded_and_unbounded() {
                 Capability::TemporalSatisfaction.to_wire(),
                 Mode::Unbounded.to_wire(),
             ),
-            (Capability::Schedulability.to_wire(), Mode::Bounded.to_wire()),
+            (
+                Capability::Schedulability.to_wire(),
+                Mode::Bounded.to_wire()
+            ),
         ])
     );
 }

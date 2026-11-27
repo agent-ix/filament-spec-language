@@ -13,12 +13,12 @@ use fsl_forms::{
     TypeFormHead,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use super::super::tests::view::{node_ref, preimage};
-use super::super::{Lowering, SemanticGraph, SemanticNode, generated_location, type_declaration};
+use super::super::{generated_location, type_declaration, Lowering, SemanticGraph, SemanticNode};
 use super::*;
-use crate::check::checked_dispatch::{DispatchRoot, OperationClauses, checked_dispatch_operation};
+use crate::check::checked_dispatch::{checked_dispatch_operation, DispatchRoot, OperationClauses};
 use crate::check::family::fixtures::{empty_scope, fixture_source};
 use crate::check::family::{OccurrenceMap, OccurrenceRole};
 use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, Scope};
@@ -32,7 +32,7 @@ use crate::model::domain_package::{
     StateMachineRecord, StateMachineStateRecord, StateMachineTransitionRecord, ValueTypeRef,
     VariantRecord,
 };
-use crate::model::normalize::{NormalizeOutcome, normalize};
+use crate::model::normalize::{normalize, NormalizeOutcome};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
@@ -983,8 +983,8 @@ fn unmappable_model_inputs_are_internal_faults() {
                 lowering.model_node(&key("Order/total"), &location),
             )
         });
-    let fault = |result: Result<NodeKey, CheckRefusal>| match result {
-        Err(CheckRefusal { cause, .. }) => match *cause {
+    let fault = |result: Result<NodeKey, SemanticCheckRefusal>| match result {
+        Err(SemanticCheckRefusal { cause, .. }) => match *cause {
             CheckCause::InternalFault(fault) => *fault,
             cause => panic!("expected an internal fault cause, got {cause:?}"),
         },
@@ -1033,7 +1033,7 @@ fn keying_a_second_declaration_onto_a_recorded_node_refuses() {
         let keyed = lowering.model_node(&d2, &location);
         (keyed, lowering.correspondence.resolve(n.clone()).cloned())
     });
-    let Err(CheckRefusal { ref cause, .. }) = keyed else {
+    let Err(SemanticCheckRefusal { ref cause, .. }) = keyed else {
         panic!("expected an internal fault, got {keyed:?}");
     };
     let CheckCause::InternalFault(fault) = cause.as_ref() else {
@@ -1252,7 +1252,7 @@ mod quantities {
     mod bounded;
     use crate::value::nominal_payload::NominalPayload;
     use crate::value::semantic_node::{NodeOwner, OwnerSelection, OwnerSubject};
-    use crate::value::unit::{DimensionPreimage, UnitPreimage, admit_unit_graph};
+    use crate::value::unit::{admit_unit_graph, DimensionPreimage, UnitPreimage};
     use filament_semantic_value::quantity::UnitTable;
 
     fn owner() -> NodeOwner {
@@ -1455,11 +1455,9 @@ mod quantities {
             parameter(graph, "a", 0).semantic_type(),
             Some(node_key(METRE))
         );
-        assert!(
-            graph
-                .nodes()
-                .all(|node| node.semantic_form() != "compound_unit")
-        );
+        assert!(graph
+            .nodes()
+            .all(|node| node.semantic_form() != "compound_unit"));
         // The type node is the unit's nominal node, typed by its dimension's
         // nominal node, which the graph holds too.
         let metre = graph.node(node_key(METRE)).expect("the metre unit node");
@@ -1497,7 +1495,7 @@ mod quantities {
         );
         assert_ne!(u1, node_key(METRE));
 
-        use filament_semantic_value::quantity::{UnitOperation, result_unit};
+        use filament_semantic_value::quantity::{result_unit, UnitOperation};
         let table = units();
         let unit = |hex: &str| {
             table
@@ -1963,11 +1961,9 @@ mod quantities {
         assert_ne!(keys[0], keys[2]);
         assert_ne!(keys[0], keys[3]);
         assert_eq!(keys[4], keys[5], "equal Rational carriers share one node");
-        assert!(
-            graph
-                .nodes()
-                .any(|node| node.semantic_form() == "rational_range")
-        );
+        assert!(graph
+            .nodes()
+            .any(|node| node.semantic_form() == "rational_range"));
         for key in [&keys[0], &keys[2], &keys[3], &keys[4]] {
             let node = graph.node((*key).clone()).expect("the carried type node");
             assert_eq!(node.node_tag(), NodeTag::ScalarType);
@@ -2109,7 +2105,7 @@ mod quantities {
         let (result, graph) = lower(&[], units(), |lowering| {
             lowering.type_node(&ValueType::Quantity(unheld.clone()), &generated_location())
         });
-        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+        assert!(matches!(result, Err(SemanticCheckRefusal { cause, .. })
             if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldUnit(unheld))));
         assert_eq!(graph.nodes().count(), 0);
     }
@@ -2132,7 +2128,7 @@ mod quantities {
         let (result, graph) = lower(&[], table, |lowering| {
             lowering.type_node(&quantity(METRE), &generated_location())
         });
-        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+        assert!(matches!(result, Err(SemanticCheckRefusal { cause, .. })
             if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldNominal(node_key(METRE)))));
         assert_eq!(graph.nodes().count(), 0);
     }

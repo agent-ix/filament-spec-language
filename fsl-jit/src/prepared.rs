@@ -8,7 +8,9 @@ use filament_eval::{
     CallFailure, EnvironmentRefusal, Evaluation, ExecutionBackendChoice, FamilyOutcome,
     UnsupportedCause, UnsupportedEntry,
 };
-use filament_exact::{Cancel, Charge, ChargePoint, Integer, Meter, Outcome, Refusal, ScalarLimits, Value};
+use filament_exact::{
+    Cancel, Charge, ChargePoint, Integer, Meter, Outcome, Refusal, ScalarLimits, Value,
+};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::location::ExpressionLocation;
@@ -469,7 +471,10 @@ impl PreparedEntries for PreparedJit<'_> {
             &mut meter,
             &self.ops,
             graph,
-            input.current.as_ref().map(|observation| &observation.environment),
+            input
+                .current
+                .as_ref()
+                .map(|observation| &observation.environment),
             peak_live_occurrences,
         );
         let arguments = registers(compiled, &clause_arguments, &mut frame)?;

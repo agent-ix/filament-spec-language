@@ -273,7 +273,11 @@ impl Ranking {
     }
 
     fn subtree(&self, node: usize) -> usize {
-        if node == NIL { 0 } else { self.size[node] }
+        if node == NIL {
+            0
+        } else {
+            self.size[node]
+        }
     }
 
     /// The in-order position of class `node`.

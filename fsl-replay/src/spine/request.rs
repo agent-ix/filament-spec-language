@@ -11,20 +11,20 @@ use filament_exact::{CollectionKind, Identifier, Integer, Rational, ScalarLimits
 use fsl_eval::temporal::{LateCutoff, StampInterval};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_semantics::model::observation::{
-    AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide, DocumentRef, NativeKind,
-    ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor, SelectedObject,
-    SnapshotValue, collection_kind_of_tag,
+    collection_kind_of_tag, AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide,
+    DocumentRef, NativeKind, ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor,
+    SelectedObject, SnapshotValue,
 };
 use ix_trace_rs::implements;
 use quire_canonical::{Node, NodeRef};
 use serde_json::value::RawValue;
 
 use super::{
-    ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
-    DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion, ProgressClosure,
-    ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation, SpineLimits,
-    TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, sample_position,
+    sample_position, ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection,
+    ClauseRunSource, DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion,
+    ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation,
+    SpineLimits, TimedObservation, TimestampedCover, TimestampedMissingValuation,
+    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 
 /// A selected observation whose bytes and document identity were admitted by
@@ -206,6 +206,7 @@ impl<'de> serde::Deserialize<'de> for PositionWire {
                 Ok(PositionWire::Key(key.to_owned()))
             }
 
+            #[ix_trace_rs::string_edge]
             fn visit_map<M: serde::de::MapAccess<'de>>(
                 self,
                 mut map: M,
@@ -671,6 +672,7 @@ impl ClauseRunSelectionWire {
     }
 
     /// The closed selection this member set names.
+    #[ix_trace_rs::string_edge]
     pub fn into_parts(&self) -> Result<ClauseSelectionPartsKind, ClauseRequestReadError> {
         let count = usize::from(self.clause.is_some())
             + usize::from(self.frame.is_some())
@@ -1885,6 +1887,7 @@ fn trace_binding(wire: BindingWire) -> TraceBinding {
 ///
 /// # Errors
 /// A malformed canonical argument, unbound observation or invalid selection.
+#[ix_trace_rs::string_edge]
 pub fn read_canonical_clause_run_request(
     parts: ClauseRequestParts,
     supplied: filament_semantic_value::supplied_stop::SuppliedLimits,
@@ -2020,8 +2023,8 @@ pub fn read_sample_text(raw: &RawValue, member: &str) -> Result<String, ClauseRe
 mod tests {
     use super::snapshot_value;
     use super::{
-        ClauseRunSelection, ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind,
-        SuppliedObservation, TemporalTraceParts, selection,
+        selection, ClauseRunSelection, ClauseRunSelectionWire, ClauseSelectionParts,
+        ClauseSelectionPartsKind, SuppliedObservation, TemporalTraceParts,
     };
     use filament_exact::CollectionKind;
     use fsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};

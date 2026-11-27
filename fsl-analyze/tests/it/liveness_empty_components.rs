@@ -4,9 +4,9 @@
 
 use filament_exact::Cancel;
 use fsl_replay::{
-    CertificateLocus, CertificateMember, CertificateRule, ClosureCertificate, Component,
-    ComponentCertificate, ComponentWitness, ModelCheckLimits, ModelCheckOutcome, ProductStateRef,
-    ProofCertificate, TemporalCertificateCheck, check_components,
+    check_components, CertificateLocus, CertificateMember, CertificateRule, ClosureCertificate,
+    Component, ComponentCertificate, ComponentWitness, ModelCheckLimits, ModelCheckOutcome,
+    ProductStateRef, ProofCertificate, TemporalCertificateCheck,
 };
 use ix_trace_rs::trace;
 

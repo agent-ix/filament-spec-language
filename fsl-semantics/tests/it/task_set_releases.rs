@@ -9,7 +9,9 @@
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, TemporalCause, TimedConstruct};
+use fsl_semantics::check::{
+    CheckCause, CheckedGraph, SemanticCheckRefusal, TemporalCause, TimedConstruct,
+};
 use ix_trace_rs::trace;
 use serde_json::json;
 
@@ -40,7 +42,7 @@ fn unit_text(declarations: &str) -> String {
     format!("{SET}{declarations}\n")
 }
 
-fn check(declarations: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     admit_and_assemble_with_profiles(&document(), PROFILES, &unit_text(declarations))
         .expect("S2 keeps the release declarations")
         .check(

@@ -4,8 +4,9 @@
 
 use filament_exact::Rational;
 use fsl_replay::{
-    Certification, EXPLICIT_STATE, Execution, InconclusiveCause, ProofBasis, ResultLabel, RunStats,
+    Certification, Execution, InconclusiveCause, ProofBasis, ResultLabel, RunStats,
     SettlementBasis, StateGraphMethod, StateGraphRecord, TerminalRecord, TerminalValue, Truth,
+    EXPLICIT_STATE,
 };
 use ix_trace_rs::implements;
 
@@ -213,10 +214,10 @@ fn weakest(proofs: &[InstanceProof<'_>]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Certification::{Certified, Trusted, Uncertified};
     use fsl_replay::{SolverHorizon, SolverMethod, WitnessSource};
     use ix_trace_rs::trace;
     use std::collections::BTreeSet;
+    use Certification::{Certified, Trusted, Uncertified};
 
     fn bounded(depth: u64) -> ProofBasis {
         ProofBasis::BoundedComplete { depth }

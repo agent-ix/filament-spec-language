@@ -84,6 +84,7 @@ impl BarePackage<'_> {
     /// Read and project a value `synthesis_request` node from this admitted
     /// package. `declaration` must be selected through this package's
     /// `claim_names` rows by the caller.
+    #[ix_trace_rs::string_edge]
     pub fn project_value_synthesis(
         &self,
         declaration: &CheckedNodeId,
@@ -204,6 +205,7 @@ impl BarePackage<'_> {
 /// Whether the `synthesis_request` node `declaration` names a model object
 /// type as its grammar, which makes it a plan synthesis rather than a value
 /// synthesis (FR-1037).
+#[ix_trace_rs::string_edge]
 pub fn is_plan_synthesis(package: &CheckedPackageV2, declaration: &CheckedNodeId) -> bool {
     let nodes = &package.resolved_graph().nodes;
     let Some(grammar) = nodes
@@ -224,6 +226,7 @@ pub fn is_plan_synthesis(package: &CheckedPackageV2, declaration: &CheckedNodeId
 /// The source-plan binder is a plan record, never its object grammar.
 /// Generic graph admission supplies identity and reference validity; this
 /// FSL declaration rule checks the parameter's admitted type family.
+#[ix_trace_rs::string_edge]
 pub(crate) fn plan_candidate_refusal(
     package: &CheckedPackageV2,
 ) -> Option<filament_contract_model::CheckedPackageRefusal> {
@@ -294,6 +297,7 @@ pub(crate) fn plan_candidate_refusal(
 
 /// Locate only a strict parameter-type refusal at the uniquely joined plan
 /// candidate binding. The original refusal code, cause and node are retained.
+#[ix_trace_rs::string_edge]
 pub(crate) fn locate_plan_candidate_refusal(
     bytes: &[u8],
     refusal: &mut filament_contract_model::CheckedPackageRefusal,

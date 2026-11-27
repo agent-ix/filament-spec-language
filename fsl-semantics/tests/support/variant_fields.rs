@@ -15,7 +15,7 @@
 #![allow(dead_code, reason = "each test binary uses part of the shared fixture")]
 
 use fsl_semantics::model::intake::meaning;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[path = "tc235_k2.rs"]
 #[allow(dead_code, reason = "this fixture uses part of the shared K2 builder")]
@@ -24,7 +24,7 @@ use serde_json::{Value, json};
     reason = "a test binary also loads the K2 builder directly"
 )]
 mod base;
-pub(crate) use base::{PACKAGE, id};
+pub(crate) use base::{id, PACKAGE};
 
 /// A variant type's source position, which the reader requires of every
 /// case.

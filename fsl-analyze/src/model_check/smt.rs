@@ -2,7 +2,7 @@
 //! Production settlement of an SMT temporal proof through FSL's FR-314 checker.
 
 use filament_exact::Cancel;
-use fsl_foundation::{BackendId, RequestIndex, source::provenance::OccurrenceKey};
+use fsl_foundation::{source::provenance::OccurrenceKey, BackendId, RequestIndex};
 use fsl_replay::{
     CertificateCheckLimits, CertificateRequest, ModelCheckItem, SmtProofOutcome,
     SmtProofSettlement, SubjectIdentity,

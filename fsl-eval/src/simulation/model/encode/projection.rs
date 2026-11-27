@@ -12,8 +12,8 @@ use filament_exact::{
 };
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObject};
-use quire_canonical::{Error, Limits, Sink, Writer};
 use ix_trace_rs::implements;
+use quire_canonical::{Error, Limits, Sink, Writer};
 
 use super::{DeclarationRecord, Enc, KeyNames, Placeholder, Typing};
 
@@ -133,8 +133,7 @@ pub(super) type InitialOverrides = BTreeMap<usize, BTreeMap<DeclarationKey, Valu
 
 /// Object-key renames a canonical symmetry permutation applies to identities
 /// and nested references during virtual key projection.
-pub(super) type InitialRenaming =
-    Vec<(Vec<filament_exact::UniverseId>, BTreeMap<String, String>)>;
+pub(super) type InitialRenaming = Vec<(Vec<filament_exact::UniverseId>, BTreeMap<String, String>)>;
 
 enum Frame {
     Object {

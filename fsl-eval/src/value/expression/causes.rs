@@ -494,7 +494,10 @@ mod tests {
                 enclosing_row: None,
             };
             let record = cause.undefined_record();
-            assert_eq!(record.fields.get("row").map(String::as_str), Some(expected_row));
+            assert_eq!(
+                record.fields.get("row").map(String::as_str),
+                Some(expected_row)
+            );
             assert_eq!(
                 record.fields.get("locus").map(String::as_str),
                 Some(expected_locus)

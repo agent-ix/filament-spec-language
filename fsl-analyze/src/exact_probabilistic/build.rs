@@ -14,13 +14,13 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
-    Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov, PredicateReading,
-    ScheduledIdentity, Unsteppable, same_rewards,
+    same_rewards, Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov,
+    PredicateReading, ScheduledIdentity, Unsteppable,
 };
 use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
+use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
@@ -365,7 +365,7 @@ pub(crate) fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{OmittedEdge, PlanFault, ProductRefusal, lower_completion, plan_refusal};
+    use super::{lower_completion, plan_refusal, OmittedEdge, PlanFault, ProductRefusal};
     use crate::exact_probabilistic::{
         ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction, ProductKind,
     };

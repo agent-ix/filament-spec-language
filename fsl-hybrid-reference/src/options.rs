@@ -67,6 +67,7 @@ fn positive_rational(text: &str) -> bool {
 /// # Errors
 ///
 /// [`OptionRefusal`] naming that option and value.
+#[ix_trace_rs::string_edge]
 pub fn check(options: &BTreeMap<String, String>) -> Result<(), OptionRefusal> {
     for (option, value) in options {
         let admitted = match option.as_str() {

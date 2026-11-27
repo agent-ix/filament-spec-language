@@ -144,6 +144,7 @@ impl Forms<'_> {
         })
     }
 
+    #[ix_trace_rs::string_edge]
     fn canonical_input(
         &self,
         form: &Json,
@@ -691,6 +692,7 @@ fn declaration_form(key: &NodeKey) -> Result<Json, ReadStop> {
 
 /// Preserve the typed reader's refusal while locating it in the caller's
 /// canonical tree, including record slots and native optional-field wrappers.
+#[ix_trace_rs::string_edge]
 fn canonical_pointer(mut canonical: &Json, mut native: &Json, pointer: &str) -> String {
     let mut path = Path::new();
     let mut segments = pointer

@@ -22,14 +22,14 @@ mod interpreter;
 mod model;
 pub use fragment::validate_tiny_fragment;
 pub use interpreter::{
-    ReferenceClockState, ReferenceFiniteState, ReferenceLasso, ReferenceMeasureOutcome,
-    ReferenceTimedTrace, ReferenceTransitionGraph, checked_random_operation_mdp,
-    checked_support_expected_reward, checked_support_probability, evaluate_boolean,
-    evaluate_finite_value, measure_mass_at_most,
+    checked_random_operation_mdp, checked_support_expected_reward, checked_support_probability,
+    evaluate_boolean, evaluate_finite_value, measure_mass_at_most, ReferenceClockState,
+    ReferenceFiniteState, ReferenceLasso, ReferenceMeasureOutcome, ReferenceTimedTrace,
+    ReferenceTransitionGraph,
 };
 pub use model::{
-    ReferenceModel, ReferenceObject, ReferenceOperation, can_reach_target,
-    decide_bounded_probability_claim, has_exactly_one_path,
+    can_reach_target, decide_bounded_probability_claim, has_exactly_one_path, ReferenceModel,
+    ReferenceObject, ReferenceOperation,
 };
 
 /// Maximum horizon enumerated by the reference's finite-horizon solver.
@@ -389,7 +389,7 @@ mod tests {
     #[trace("FR-1051-AC-19")]
     #[test]
     fn quantile_refuses_some_but_preserves_every_and_workload_schedulers() {
-        use super::{ReferenceSchedulerQuantifier, validate_quantile_scheduler};
+        use super::{validate_quantile_scheduler, ReferenceSchedulerQuantifier};
 
         assert_eq!(
             validate_quantile_scheduler(&ReferenceSchedulerQuantifier::Some)

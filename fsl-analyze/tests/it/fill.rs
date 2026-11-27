@@ -466,7 +466,7 @@ pub(crate) fn package_over_with_mode(
 /// located at, when it has a source region.
 pub(crate) fn check_refusals(
     body: &str,
-) -> Vec<(fsl_semantics::check::CheckRefusal, Option<String>)> {
+) -> Vec<(fsl_semantics::check::SemanticCheckRefusal, Option<String>)> {
     let declarations = declarations_over(document(), "package", "", body);
     let regions = declarations.regions();
     let text = unit_text_with("", body);
