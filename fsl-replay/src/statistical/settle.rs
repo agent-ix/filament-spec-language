@@ -313,6 +313,9 @@ pub fn settle_statistical_refusal(
         StatisticalRefusal::NoTest => StatisticalRecord::of(TerminalValue::Inconclusive(
             InconclusiveCause::NoInitialState,
         )),
+        StatisticalRefusal::NoInstance => {
+            StatisticalRecord::of(TerminalValue::Inconclusive(InconclusiveCause::NoInstance))
+        }
         StatisticalRefusal::Internal(fault) => StatisticalRecord::failed(fault.catalog_code()),
     })
 }
@@ -816,6 +819,10 @@ mod tests {
         assert_eq!(
             settled(StatisticalRefusal::NoTest).value,
             TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
+        );
+        assert_eq!(
+            settled(StatisticalRefusal::NoInstance).value,
+            TerminalValue::Inconclusive(InconclusiveCause::NoInstance)
         );
         let precision = settled(StatisticalRefusal::ConfidenceBeyondPrecision);
         let TerminalValue::Unsupported(cause) = &precision.value else {
