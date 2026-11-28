@@ -85,6 +85,7 @@ impl ModelSystem<'_> {
                 .evaluate_clause(
                     &clause.qualified,
                     &observations,
+                    self.types,
                     &mut self.evaluation_meter(),
                 )
                 .map_err(|_| stop(BROKEN))?;

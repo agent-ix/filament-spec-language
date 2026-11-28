@@ -20,6 +20,7 @@ pub use application_observation::{
 use application_observation::{ApplicationObserver, OperationCapture};
 mod bare;
 pub(crate) use bare::evaluate_model_relation_tuple;
+pub(crate) use bare::evaluate_state_clause_with_types;
 mod causes;
 mod clause_set;
 mod closure;
@@ -39,7 +40,8 @@ pub(crate) use bare::evaluate_generated_package_protocol_slot;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
 pub use bare::{
-    evaluate_bare_expression, evaluate_bare_refinement_row, evaluate_bare_source_operation_clause,
+    evaluate_bare_expression, evaluate_bare_refinement_row,
+    evaluate_bare_refinement_row_with_types, evaluate_bare_source_operation_clause,
     BareSourceOperationEvaluationFailure,
 };
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};
@@ -72,6 +74,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub(crate) use clause_set::evaluate_with_meter_factory as evaluate_clause_set_with_meter_factory;
+pub(crate) use clause_set::evaluate_with_meter_factory_and_types as evaluate_clause_set_with_types;
 pub use clause_set::{ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome};
 pub use closure::{PackageClosure, PackageTask};
 pub use evaluate::{convert_text_value, refusal_record};

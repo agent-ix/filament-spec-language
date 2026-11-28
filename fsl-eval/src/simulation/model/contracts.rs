@@ -137,6 +137,7 @@ fn evaluate_invariants(
             let evaluation = match system.evaluator().evaluate_clause(
                 &clause.qualified,
                 &observations,
+                system.types,
                 &mut walk.meter(),
             ) {
                 Ok(evaluation) => evaluation,
@@ -341,7 +342,7 @@ pub(super) fn conjunction(
     let evaluation = walk
         .system
         .evaluator()
-        .evaluate_clause_set(&set, &mut || {
+        .evaluate_clause_set(&set, walk.system.types, &mut || {
             let meter = walk.system.fresh_meter();
             match &walk.cancel {
                 Some(cancel) => meter.with_cancel(cancel.clone()),

@@ -9,7 +9,7 @@ use fsl_route::{EvidenceKind, ItemEvidence};
 use fsl_semantics::check::Capability;
 use ix_trace_rs::implements;
 
-use super::super::{candidate_list, invalid_kind, unknown_option, ItemSelection, ResolvedClaim};
+use super::super::{ItemSelection, ResolvedClaim, candidate_list, invalid_kind, unknown_option};
 use super::{ClaimReads, PackageRunError, Resolution};
 
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
@@ -37,7 +37,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::ProbabilisticSatisfaction,
@@ -61,7 +61,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         name,
                         "probabilistic",
-                    )))
+                    )));
                 }
             };
         if probability.evidence == EvidenceKind::Statistical {

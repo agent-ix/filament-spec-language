@@ -182,6 +182,12 @@ fn digital_refusal(refusal: &DigitalRefusal) -> Refusal {
                         json!({"start": span.start, "end": span.end}),
                     );
                 }
+                Strict::PackageConstraint(node) => {
+                    detail.insert(
+                        "strict_constraint".to_owned(),
+                        json!({"package_node": node.to_string()}),
+                    );
+                }
                 Strict::Interval(interval) => {
                     detail.insert("strict_interval".to_owned(), json!(interval));
                 }

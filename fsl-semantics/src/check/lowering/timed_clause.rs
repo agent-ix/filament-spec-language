@@ -236,7 +236,9 @@ impl Lowering<'_> {
                 None => guards.push(GuardNodes {
                     operation,
                     point_anchor,
-                    span: guard.span(),
+                    span: guard
+                        .span()
+                        .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
                     parts,
                 }),
             }
@@ -314,7 +316,9 @@ impl Lowering<'_> {
                     point_anchor: point_anchor.clone(),
                     target,
                     value: reset.value().clone(),
-                    span: reset.span(),
+                    span: reset
+                        .span()
+                        .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
                 });
             }
         }
@@ -372,7 +376,9 @@ impl Lowering<'_> {
                 predicate,
                 binders,
                 bounds,
-                span: invariant.span(),
+                span: invariant.span().ok_or_else(|| {
+                    super::fault(input.declaration, KeyFault::UnkeyableRequirements)
+                })?,
             });
         }
         Ok(TimedClauseNodes {
@@ -440,7 +446,9 @@ impl Lowering<'_> {
                 },
                 comparison: constraint.op(),
                 bound: constraint.bound().clone(),
-                span: constraint.span(),
+                span: constraint
+                    .span()
+                    .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
             }),
             None => self.place_constraint(constraint, context, location, slot_binders),
         }
@@ -478,7 +486,9 @@ impl Lowering<'_> {
             },
             comparison: constraint.op(),
             bound: constraint.bound().clone(),
-            span: constraint.span(),
+            span: constraint
+                .span()
+                .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
         })
     }
 
@@ -555,7 +565,12 @@ impl Lowering<'_> {
         predicate: &CheckedTimedPredicate,
         site: &Location,
     ) -> Result<NodeKey, SemanticCheckRefusal> {
-        let body = predicate.checked_body();
+        let Some(body) = predicate.checked_body() else {
+            return Err(super::union_fault(
+                site,
+                "source-timed-predicate-has-checked-body",
+            ));
+        };
         let mut scope = Vec::new();
         for (slot, (name, value_type)) in predicate.parameters().iter().enumerate() {
             if !body.reads_local(slot) {
@@ -1081,10 +1096,12 @@ impl Lowering<'_> {
             let mut conjuncts =
                 self.self_presences(clocks, alternative.presences(), context.clone(), site)?;
             let data = alternative.predicate();
-            let trivial = matches!(
-                data.checked_body().root().kind(),
-                NodeKind::Literal(CheckedLiteral(Value::Boolean(true)))
-            );
+            let trivial = data.checked_body().is_some_and(|body| {
+                matches!(
+                    body.root().kind(),
+                    NodeKind::Literal(CheckedLiteral(Value::Boolean(true)))
+                )
+            });
             if conjuncts.is_empty() || !trivial {
                 conjuncts.push(self.timed_predicate(data, site)?);
             }

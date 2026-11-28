@@ -650,11 +650,11 @@ pub use temporal_clause::{
     PackageClauseForm, PackageClauseRefusal, PackageFormulaNode, PackagePropertyRefusal,
 };
 pub use timed_model::{
-    CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,
-    ClockParameterRange, ClockReset, ClockResets, CollectionWrite, ConstraintNodes,
+    invariant_site, CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId,
+    ClockOp, ClockParameterRange, ClockReset, ClockResets, CollectionWrite, ConstraintNodes,
     ConstraintTargetNodes, ConvexPart, ElementBinding, GuardNodes, InvariantNodes, PartNodes,
     QuantifiedFamily, ResetNodes, ResetTargetNodes, SlotRef, SlotSelection, StateAlternative,
-    TimeInvariant, TimedClauseNodes, TimedModel, Urgency, Written,
+    TimeInvariant, TimedClauseNodes, TimedModel, TimedSite, Urgency, Written,
 };
 
 /// A checked function.

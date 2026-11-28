@@ -10,6 +10,7 @@ use filament_contract_model::{
     CheckedNodeId, CheckedNodeKind, CheckedNodeTag, CheckedSemanticNodeV2, CompositeTypeForm,
     ModelForm, ScalarTypeForm, StateForm,
 };
+use ix_trace_rs::implements;
 
 use crate::BarePackage;
 
@@ -49,6 +50,7 @@ impl UnreadModelForm {
     }
 }
 
+#[implements("FR-940-AC-39")]
 fn unread(package: &BarePackage<'_>, node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
     let kind = CheckedNodeTag::from_wire(&node.node_tag)
         .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))?;
@@ -57,7 +59,9 @@ fn unread(package: &BarePackage<'_>, node: &CheckedSemanticNodeV2) -> Option<Unr
             StateForm::StateClause | StateForm::Frame | StateForm::OperationAnchor,
         ) => None,
         CheckedNodeKind::State(_) => Some(UnreadModelForm::State),
-        CheckedNodeKind::TimedModel(_) => Some(UnreadModelForm::TimedModel),
+        // Timed nodes are read atomically by PackageModelInput's dense model
+        // reader. That reader refuses unsupported clock forms with the exact
+        // timed node, so rejecting them here would prevent it from running.
         // FR-940: protocol declarations are read through
         // `AnalysisView::protocol_execution_named` and the typed package
         // control/role surfaces in `protocol_view`.

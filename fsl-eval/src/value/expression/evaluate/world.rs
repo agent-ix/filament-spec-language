@@ -24,6 +24,12 @@ pub(crate) enum World<'a> {
     },
     /// A package read from its bytes alone.
     Bytes(&'a BareWorld),
+    /// A package read from its bytes, evaluated against the model system's
+    /// admitted type environment while retaining the package's enum metadata.
+    BytesWithTypes {
+        world: &'a BareWorld,
+        types: &'a TypeEnvironment,
+    },
 }
 
 impl<'a> World<'a> {
@@ -32,6 +38,7 @@ impl<'a> World<'a> {
         match self {
             Self::Checked { scope, .. } => scope.types(),
             Self::Bytes(world) => world.types(),
+            Self::BytesWithTypes { types, .. } => types,
         }
     }
 
@@ -48,6 +55,14 @@ impl<'a> World<'a> {
                     .iter()
                     .position(|candidate| candidate.name() == field.name())
             }
+            Self::BytesWithTypes { types, .. } => {
+                let CompositeShape::Record(fields) = types.composite(declaration)?.shape() else {
+                    return None;
+                };
+                fields
+                    .iter()
+                    .position(|candidate| candidate.name() == field.name())
+            }
         }
     }
 
@@ -55,7 +70,7 @@ impl<'a> World<'a> {
     pub(crate) fn has_ieee_profile(self) -> bool {
         match self {
             Self::Checked { scope, .. } => scope.ieee_profile().is_some(),
-            Self::Bytes(world) => world.has_ieee_profile(),
+            Self::Bytes(world) | Self::BytesWithTypes { world, .. } => world.has_ieee_profile(),
         }
     }
 
@@ -63,7 +78,7 @@ impl<'a> World<'a> {
     pub(crate) fn enum_member_index(self) -> &'a EnumMemberIndex {
         match self {
             Self::Checked { scope, .. } => scope.enum_member_index(),
-            Self::Bytes(world) => world.enum_members(),
+            Self::Bytes(world) | Self::BytesWithTypes { world, .. } => world.enum_members(),
         }
     }
 
@@ -72,7 +87,7 @@ impl<'a> World<'a> {
     pub(crate) fn graph(self) -> Option<&'a CheckedGraph> {
         match self {
             Self::Checked { graph, .. } => Some(graph),
-            Self::Bytes(_) => None,
+            Self::Bytes(_) | Self::BytesWithTypes { .. } => None,
         }
     }
 
@@ -81,7 +96,7 @@ impl<'a> World<'a> {
     pub(crate) fn dispatch_operations(self) -> &'a [DispatchOperation] {
         match self {
             Self::Checked { scope, .. } => scope.dispatch_operations(),
-            Self::Bytes(_) => &[],
+            Self::Bytes(_) | Self::BytesWithTypes { .. } => &[],
         }
     }
 
@@ -91,7 +106,7 @@ impl<'a> World<'a> {
             Self::Checked { graph, .. } => graph
                 .object_type_key(object_type)
                 .map(|key| key.node.clone()),
-            Self::Bytes(_) => None,
+            Self::Bytes(_) | Self::BytesWithTypes { .. } => None,
         }
     }
 
@@ -99,7 +114,7 @@ impl<'a> World<'a> {
     pub(crate) fn imported(self, callee: &NodeKey) -> Option<&'a CheckedGraph> {
         match self {
             Self::Checked { graph, .. } => graph.scope().imported_graph(callee),
-            Self::Bytes(_) => None,
+            Self::Bytes(_) | Self::BytesWithTypes { .. } => None,
         }
     }
 }

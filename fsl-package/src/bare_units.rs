@@ -32,7 +32,7 @@ pub(crate) struct UnitDefinitions {
 
 impl UnitDefinitions {
     /// Read the authentic closure for a source-owned base Time dimension
-    /// and a direct non-affine unit. Derived units remain unsupported here.
+    /// and a non-affine unit, including its declared target-unit chain.
     pub(crate) fn direct_time_nodes(
         &self,
         package: &CheckedPackageV2,
@@ -52,9 +52,7 @@ impl UnitDefinitions {
         }
         let (unit_definition, _) = self.units.iter().find(|(_, key)| key == unit)?;
         let payload = UnitPayload::of(unit_definition)?;
-        if payload.dimension() != dimension
-            || payload.target().is_some()
-            || payload.offset().numerator() != &Integer::from(0_i64)
+        if payload.dimension() != dimension || payload.offset().numerator() != &Integer::from(0_i64)
         {
             return None;
         }
@@ -106,18 +104,39 @@ impl UnitDefinitions {
                 dimension_definition,
             ))),
         };
-        let unit_node = TimeNominalNode {
-            key: unit.clone(),
-            form: TimeNominalForm::Unit,
-            origin: origin(
-                unit,
-                unit_definition.owner(),
-                unit_definition.qualified_declaration(),
-            )?,
-            dependencies: vec![dimension.clone()],
-            nominal: Some(NominalPayload::Unit(payload)),
-        };
-        Some((unit_name.clone(), vec![dimension_node, unit_node]))
+        let mut chain = Vec::new();
+        let mut current = unit.clone();
+        let mut seen = std::collections::BTreeSet::new();
+        loop {
+            if !seen.insert(current.clone()) {
+                return None;
+            }
+            let (definition, key) = self.units.iter().find(|(_, key)| key == &current)?;
+            let payload = UnitPayload::of(definition)?;
+            if payload.dimension() != dimension
+                || payload.offset().numerator() != &Integer::from(0_i64)
+            {
+                return None;
+            }
+            chain.push((definition, key.clone(), payload));
+            match chain.last()?.2.target() {
+                Some(target) => current = target.clone(),
+                None => break,
+            }
+        }
+        chain.reverse();
+        let mut nodes = vec![dimension_node];
+        for (definition, key, payload) in chain {
+            let target = payload.target().cloned();
+            nodes.push(TimeNominalNode {
+                key: key.clone(),
+                form: TimeNominalForm::Unit,
+                origin: origin(&key, definition.owner(), definition.qualified_declaration())?,
+                dependencies: std::iter::once(dimension.clone()).chain(target).collect(),
+                nominal: Some(NominalPayload::Unit(payload)),
+            });
+        }
+        Some((unit_name.clone(), nodes))
     }
 
     /// Read clock metadata from the table admitted with these definitions.

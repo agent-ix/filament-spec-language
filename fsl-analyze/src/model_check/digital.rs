@@ -117,6 +117,8 @@ pub enum Strict {
     /// A strict clock constraint of a guard or a time invariant, by its
     /// source span.
     Constraint(Span),
+    /// A strict clock constraint read from a package, by its checked node.
+    PackageConstraint(filament_exact::NodeKey),
     /// A strict (open or half-open) timed interval of the claim, spelled in
     /// the clause's time unit.
     Interval(String),
@@ -222,7 +224,12 @@ fn strict_element(timed: &TimedSystem<'_, '_>, clause: &CheckedTemporalClause) -
         .into_iter()
         .find(|constraint| matches!(constraint.op(), ClockOp::Less | ClockOp::Greater));
     if let Some(constraint) = constraint {
-        return Some(Strict::Constraint(constraint.span()));
+        return Some(match constraint.site() {
+            fsl_semantics::check::TimedSite::Source(span) => Strict::Constraint(*span),
+            fsl_semantics::check::TimedSite::PackageOrigin(node) => {
+                Strict::PackageConstraint(node.clone())
+            }
+        });
     }
     clause.formula().nodes().iter().find_map(|node| match node {
         FormulaNode::Unary {

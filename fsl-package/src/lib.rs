@@ -90,6 +90,7 @@ mod bare_term;
 mod bare_terminal;
 #[cfg(feature = "std")]
 mod bare_timed;
+pub use bare_timed::BareTimedModelFailure;
 #[cfg(feature = "std")]
 mod bare_units;
 #[cfg(feature = "std")]

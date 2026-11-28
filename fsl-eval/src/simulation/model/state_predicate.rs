@@ -165,6 +165,7 @@ impl ModelSystem<'_> {
                 (None, Some(occurrence)) => self.evaluator().evaluate_state_graph_predicate(
                     occurrence,
                     *role,
+                    self.input().types,
                     &walk.observation.environment,
                     bound,
                     Vec::new(),
@@ -241,7 +242,9 @@ impl ModelSystem<'_> {
             if let Some(cancel) = cancel {
                 meter = meter.with_cancel(cancel.clone());
             }
-            let evaluation = if let Some(package) = self.source_package() {
+            let evaluation = if let Some(package) =
+                self.source_package().filter(|_| predicate.body().is_some())
+            {
                 evaluate_state_predicate_with_reference_bindings(
                     package,
                     *predicate,
@@ -265,6 +268,7 @@ impl ModelSystem<'_> {
                 self.evaluator()
                     .evaluate_state_predicate(
                         *predicate,
+                        self.input().types,
                         &walk.observation.environment,
                         bound,
                         further.clone(),

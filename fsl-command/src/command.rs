@@ -1160,6 +1160,29 @@ pub enum RunCause {
         /// The package node the gap is at, in words, when the gap has one.
         locus: Option<String>,
     },
+    /// A timed package operation joins one clock clause to more than one
+    /// matching state precondition. This is an explicit unsupported shape,
+    /// not a missing implementation cause.
+    #[error(
+        "unsupported_construct/ambiguous-timed-precondition: timed operation at {node:?} has {count} matching preconditions"
+    )]
+    AnalyzeAmbiguousTimedPrecondition {
+        /// The operation anchor whose precondition join was ambiguous.
+        node: fsl_package::CheckedNodeId,
+        /// Number of matching preconditions.
+        count: usize,
+    },
+    /// A timed package operation joins one reset to more than one matching
+    /// state postcondition. This is an explicit unsupported shape.
+    #[error(
+        "unsupported_construct/ambiguous-timed-postcondition: timed operation at {node:?} has {count} matching postconditions"
+    )]
+    AnalyzeAmbiguousTimedPostcondition {
+        /// The operation anchor whose postcondition join was ambiguous.
+        node: fsl_package::CheckedNodeId,
+        /// Number of matching postconditions.
+        count: usize,
+    },
     /// FR-624: the shared subject binding or source provision of an
     /// analyze request was refused before any item ran.
     #[error("{0}")]
@@ -1362,6 +1385,8 @@ impl RunCause {
             Self::AnalyzeMemory { .. } => Code::InvalidRuntimeInput,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
+            Self::AnalyzeAmbiguousTimedPrecondition { .. }
+            | Self::AnalyzeAmbiguousTimedPostcondition { .. } => Code::UnsupportedConstruct,
             Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
             Self::TlClause { .. } => Code::MissingDeclaration,
             Self::SynthesisSnapshot { record, .. } | Self::TlSubject(record) => {
@@ -1797,6 +1822,23 @@ impl RunError {
                         locus.as_ref().map(|occurrence| OutcomeLocus::Occurrence {
                             occurrence: occurrence.clone(),
                         }),
+                        self.outcome_message(),
+                    ),
+                ])
+            }
+            RunCause::AnalyzeAmbiguousTimedPrecondition { .. }
+            | RunCause::AnalyzeAmbiguousTimedPostcondition { .. } => {
+                let cause = match &self.cause {
+                    RunCause::AnalyzeAmbiguousTimedPrecondition { .. } => {
+                        "ambiguous-timed-precondition"
+                    }
+                    _ => "ambiguous-timed-postcondition",
+                };
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some(cause),
+                        self.cause.code().as_str(),
+                        None,
                         self.outcome_message(),
                     ),
                 ])
@@ -5942,7 +5984,9 @@ mod tests {
                     fsl_package::PackageAdmissionRefusal {
                         limit: None,
                         code: Code::InvalidPackage,
-                        cause: Some("invalid-value".to_owned()),
+                        cause: Some(
+                            filament_contract_model::CheckedPackageRefusalCause::InvalidValue,
+                        ),
                         pointer: Some("/claim_names/2".to_owned()),
                         identity: None,
                         host_allocation_failure: None,

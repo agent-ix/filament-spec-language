@@ -399,6 +399,24 @@ pub enum PendingPackageForm {
         /// The first node of that form, in the package's node order.
         node: CheckedNodeId,
     },
+    /// The timed model joins an operation to multiple precondition clauses,
+    /// a package form the dense timed reader does not support.
+    #[error("the timed model has multiple matching preconditions at {node:?} ({count})")]
+    MultipleTimedPreconditions {
+        /// The operation anchor whose precondition join was ambiguous.
+        node: CheckedNodeId,
+        /// Number of matching precondition clauses.
+        count: usize,
+    },
+    /// The timed model joins an operation to multiple postcondition clauses,
+    /// a package form the dense timed reader does not support.
+    #[error("the timed model has multiple matching postconditions at {node:?} ({count})")]
+    MultipleTimedPostconditions {
+        /// The operation anchor whose postcondition join was ambiguous.
+        node: CheckedNodeId,
+        /// Number of matching postcondition clauses.
+        count: usize,
+    },
     /// The package's declarations could not be read from its nodes and
     /// identity rows.
     #[error("the package's declarations are not readable: {0:?}")]
@@ -738,9 +756,17 @@ impl<'p> PackageModelInput<'p> {
         } else {
             package
                 .direct_dense_tables(&model)
-                .map_err(|node| PendingPackageForm::Form {
-                    form: UnreadModelForm::TimedModel,
-                    node,
+                .map_err(|failure| match failure {
+                    fsl_package::BareTimedModelFailure::Unread(node) => PendingPackageForm::Form {
+                        form: UnreadModelForm::TimedModel,
+                        node,
+                    },
+                    fsl_package::BareTimedModelFailure::MultiplePreconditions { node, count } => {
+                        PendingPackageForm::MultipleTimedPreconditions { node, count }
+                    }
+                    fsl_package::BareTimedModelFailure::MultiplePostconditions { node, count } => {
+                        PendingPackageForm::MultipleTimedPostconditions { node, count }
+                    }
                 })?
         };
         world
@@ -1181,6 +1207,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         clause: &QualifiedName,
         observations: &AdmittedObservations,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure>;
 
@@ -1193,6 +1220,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure>;
 
@@ -1393,6 +1421,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_state_predicate(
         &self,
         predicate: &dyn StatePredicate,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
@@ -1428,6 +1457,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
@@ -1460,6 +1490,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         key: ObjectReference,
         binding: String,
@@ -1899,6 +1930,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         clause: &QualifiedName,
         observations: &AdmittedObservations,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_clause(self, clause, observations, meter)
@@ -1907,6 +1939,7 @@ impl ModelEvaluator for CheckedPackage {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
         crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
@@ -2120,6 +2153,7 @@ impl ModelEvaluator for CheckedPackage {
     fn evaluate_state_predicate(
         &self,
         predicate: &dyn StatePredicate,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
@@ -2167,6 +2201,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
@@ -2180,6 +2215,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         key: ObjectReference,
         binding: String,
@@ -2504,21 +2540,31 @@ impl ModelEvaluator for BarePackage<'_> {
         Ok(self.admit_protocol_state(model, packages, limits, state, identity))
     }
 
+    #[implements("FR-940-AC-39")]
     fn evaluate_clause(
         &self,
         clause: &QualifiedName,
         observations: &AdmittedObservations,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_clause(self, clause, observations, meter)
+        crate::value::evaluate_bare_state_clause_with_types(
+            self,
+            clause,
+            observations,
+            types,
+            meter,
+        )
     }
 
+    #[implements("FR-940-AC-39")]
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
-        crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
+        crate::value::evaluate_clause_set_with_types(self, clauses, Some(types), fresh_meter)
     }
 
     fn evaluate_holds(
@@ -2742,15 +2788,66 @@ impl ModelEvaluator for BarePackage<'_> {
         )
     }
 
+    #[implements("FR-940-AC-39")]
     fn evaluate_state_predicate(
         &self,
-        _predicate: &dyn StatePredicate,
-        _current: &ObjectEnvironment,
-        _over: Option<ObjectReference>,
-        _further: Vec<Value>,
-        _meter: &mut Meter,
+        predicate: &dyn StatePredicate,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
-        Err(SOURCE_FORM)
+        let expression = predicate
+            .package_expression()
+            .ok_or_else(|| InternalFault::new("FR-940", "package-timed-predicate-is-present"))?;
+        let projected = self
+            .project_timed_predicate(expression)
+            .map_err(|_| InternalFault::new("FR-940", "timed-predicate-projection-is-admitted"))?;
+        let world = self
+            .world()
+            .map_err(|_| InternalFault::new("FR-940", "timed-predicate-world-is-admitted"))?;
+        if projected.projection().has_unrepresented_types(types) {
+            return Err(InternalFault::new(
+                "FR-940",
+                "timed-predicate-types-have-runtime-representations",
+            ));
+        }
+        let mut bindings = vec![None; projected.projection().frame_slots()];
+        let values = over
+            .map(Value::Reference)
+            .into_iter()
+            .chain(further)
+            .collect::<Vec<_>>();
+        if values.len() != projected.parameters().len() {
+            return Err(InternalFault::new(
+                "FR-940",
+                "timed-predicate-binding-count-matches-package-slots",
+            ));
+        }
+        for ((_, slot), value) in projected.parameters().iter().zip(values) {
+            let Some(target) = bindings.get_mut(*slot) else {
+                return Err(InternalFault::new(
+                    "FR-940",
+                    "timed-predicate-binder-slot-is-in-projection",
+                ));
+            };
+            *target = Some(value);
+        }
+        let bindings = bindings
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                InternalFault::new("FR-940", "timed-predicate-projection-has-contiguous-slots")
+            })?;
+        crate::value::evaluate_bare_refinement_row_with_types(
+            &world,
+            types,
+            projected.projection(),
+            current,
+            bindings,
+            meter,
+        )
     }
 
     fn evaluate_state_predicate_at_absent_key(
@@ -2786,10 +2883,12 @@ impl ModelEvaluator for BarePackage<'_> {
         crate::value::package_term_reads(predicate.projection(), world.types(), model, &over)
     }
 
+    #[implements("FR-940-AC-39")]
     fn evaluate_state_graph_predicate(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
@@ -2800,7 +2899,7 @@ impl ModelEvaluator for BarePackage<'_> {
             crate::value::StateGraphOver::Bound,
         );
         crate::value::evaluate_bare_state_graph_predicate(
-            self, claim, role, current, over, further, meter,
+            self, types, claim, role, current, over, further, meter,
         )
     }
 
@@ -2808,6 +2907,7 @@ impl ModelEvaluator for BarePackage<'_> {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         key: ObjectReference,
         binding: String,
@@ -2815,6 +2915,7 @@ impl ModelEvaluator for BarePackage<'_> {
     ) -> Result<Evaluation, InternalFault> {
         crate::value::evaluate_bare_state_graph_predicate(
             self,
+            types,
             claim,
             role,
             current,

@@ -611,6 +611,12 @@ fn package_input_refusal(
             ),
             locus: None,
         },
+        PendingPackageForm::MultipleTimedPreconditions { node, count } => {
+            RunCause::AnalyzeAmbiguousTimedPrecondition { node, count }
+        }
+        PendingPackageForm::MultipleTimedPostconditions { node, count } => {
+            RunCause::AnalyzeAmbiguousTimedPostcondition { node, count }
+        }
         refusal @ (PendingPackageForm::ProbabilisticNodes(_)
         | PendingPackageForm::Probabilistic(_)
         | PendingPackageForm::SourceModel(_)) => RunCause::AnalyzePackage {
@@ -738,6 +744,55 @@ mod package_intake_tests {
             "test",
         );
         assert_eq!(cause.code().as_str(), "incomplete_population");
+    }
+
+    /// FR-940-AC-39: ambiguous timed preconditions and postconditions remain
+    /// named unsupported causes instead of being reported as missing code.
+    #[trace("FR-940-AC-39")]
+    #[test]
+    fn timed_clause_ambiguities_keep_distinct_typed_causes() {
+        let node = || fsl_package::CheckedNodeId {
+            package: "test/timed".into(),
+            path: Vec::new(),
+            ordinal: 0,
+        };
+        let precondition = package_input_refusal(
+            PendingPackageForm::MultipleTimedPreconditions {
+                node: node(),
+                count: 2,
+            },
+            "test/timed",
+        );
+        assert!(matches!(
+            precondition,
+            RunCause::AnalyzeAmbiguousTimedPrecondition { count: 2, .. }
+        ));
+        assert_eq!(
+            precondition.code(),
+            fsl_foundation::Code::UnsupportedConstruct
+        );
+        assert!(precondition
+            .to_string()
+            .starts_with("unsupported_construct/ambiguous-timed-precondition:"));
+
+        let postcondition = package_input_refusal(
+            PendingPackageForm::MultipleTimedPostconditions {
+                node: node(),
+                count: 2,
+            },
+            "test/timed",
+        );
+        assert!(matches!(
+            postcondition,
+            RunCause::AnalyzeAmbiguousTimedPostcondition { count: 2, .. }
+        ));
+        assert_eq!(
+            postcondition.code(),
+            fsl_foundation::Code::UnsupportedConstruct
+        );
+        assert!(postcondition
+            .to_string()
+            .starts_with("unsupported_construct/ambiguous-timed-postcondition:"));
     }
 
     /// A real builder domain limit retains its configured bound and limit class.

@@ -428,6 +428,8 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::AnalyzeMemory { .. }
         | RunCause::AnalyzeUniverse(_)
         | RunCause::AnalyzeNotYetImplemented { .. }
+        | RunCause::AnalyzeAmbiguousTimedPrecondition { .. }
+        | RunCause::AnalyzeAmbiguousTimedPostcondition { .. }
         | RunCause::AnalyzeRefused(_)
         | RunCause::AnalyzeEmission(_)
         | RunCause::MonitorRefused(_)

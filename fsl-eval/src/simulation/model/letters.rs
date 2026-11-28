@@ -427,6 +427,7 @@ impl ClauseLetters<'_, '_> {
             match self.bound(&observed.rows, instance) {
                 Some(bound) => self.system.evaluator().evaluate_state_predicate(
                     &condition,
+                    self.system.input().types,
                     &observed.observation.environment,
                     Some(bound),
                     further,

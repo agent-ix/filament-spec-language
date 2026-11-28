@@ -56,7 +56,10 @@ pub struct ReaderProtocolProjection {
 impl ReaderProtocolProjection {
     /// Resolve runtime representations against the closed declarations. A
     /// native-authenticated reference needs no object population environment.
-    pub(crate) fn has_unrepresented_types(&self, types: &TypeEnvironment) -> bool {
+    /// Whether any projected value requires a runtime type absent from the
+    /// supplied model environment.
+    #[ix_trace_rs::implements("FR-940-AC-39")]
+    pub fn has_unrepresented_types(&self, types: &TypeEnvironment) -> bool {
         self.nodes.iter().any(|node| {
             let mut pending = vec![node.value_type.clone()];
             if let NodeKind::Case { declaration, .. } | NodeKind::UnionValue { declaration, .. } =
@@ -532,6 +535,13 @@ impl ReaderProtocolProjection {
     /// The local slot a supplied binder is read through.
     pub fn local_slot(&self, binder: &NodeKey) -> Option<usize> {
         self.locals.get(binder).copied()
+    }
+
+    /// Whether any projected expression reads a local parameter slot.
+    pub fn reads_local(&self, slot: usize) -> bool {
+        self.nodes
+            .iter()
+            .any(|node| matches!(node.kind, NodeKind::Local(read) if read == slot))
     }
 
     /// Join a projected HP-1 read to its admitted symbolic execution owner.

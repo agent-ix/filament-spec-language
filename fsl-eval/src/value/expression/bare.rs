@@ -376,6 +376,33 @@ pub(crate) fn evaluate_generated_package_protocol_slot(
     )
 }
 
+/// Evaluate an admitted refinement row using the selected model system's
+/// type environment and the package's enum metadata.
+#[implements("FR-940-AC-39")]
+pub fn evaluate_bare_refinement_row_with_types(
+    world: &BareWorld,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    expression: &fsl_package::ReaderProtocolProjection,
+    current: &ObjectEnvironment,
+    bindings: Vec<Value>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let reads = BTreeMap::new();
+    Machine::with_world(
+        World::BytesWithTypes { world, types },
+        current,
+        None,
+        Some(&reads),
+        meter,
+        &[],
+    )
+    .run(
+        ReaderNode::root(expression),
+        expression.frame_slots(),
+        bindings,
+    )
+}
+
 fn evaluate_selected_protocol_slot_with(
     package: &BarePackage<'_>,
     slot: &BareSlot,
@@ -638,6 +665,20 @@ fn evaluate_state_clause(
     observations: &fsl_semantics::model::observation::AdmittedObservations,
     meter: &mut Meter,
 ) -> Result<ClauseEvaluation, CallFailure> {
+    let world = package
+        .world()
+        .map_err(|failure| refusal(package, failure))?;
+    evaluate_state_clause_with_types(package, name, observations, world.types(), meter)
+}
+
+#[implements("FR-940-AC-39")]
+pub(crate) fn evaluate_state_clause_with_types(
+    package: &BarePackage<'_>,
+    name: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    meter: &mut Meter,
+) -> Result<ClauseEvaluation, CallFailure> {
     use fsl_semantics::model::clause_observation::Observation;
     let clause = state_clause(package, name, observations)?;
     let world = package
@@ -677,17 +718,26 @@ fn evaluate_state_clause(
             .into_iter()
             .map(|location| (location, Observation::Pre))
             .collect();
-    let (evaluation, trail) =
-        Machine::with_world(World::Bytes(&world), current, pre, Some(&reads), meter, &[])
-            .with_clock_declarations(clock_declarations(package)?)
-            .with_reference_origins(reference_origins)
-            .with_trail(trail)
-            .run_traced(
-                ReaderNode::root(clause.projection()),
-                clause.projection().frame_slots(),
-                bindings,
-            )
-            .map_err(CallFailure::Fault)?;
+    let (evaluation, trail) = Machine::with_world(
+        World::BytesWithTypes {
+            world: &world,
+            types,
+        },
+        current,
+        pre,
+        Some(&reads),
+        meter,
+        &[],
+    )
+    .with_clock_declarations(clock_declarations(package)?)
+    .with_reference_origins(reference_origins)
+    .with_trail(trail)
+    .run_traced(
+        ReaderNode::root(clause.projection()),
+        clause.projection().frame_slots(),
+        bindings,
+    )
+    .map_err(CallFailure::Fault)?;
     Ok(ClauseEvaluation::new(evaluation, trail, receiver_path))
 }
 
@@ -703,8 +753,10 @@ fn evaluate_state_clause(
 ///
 /// An internal fault when the claim or its predicate does not read, which
 /// the package form of the claim has already established.
+#[implements("FR-940-AC-39")]
 pub(crate) fn evaluate_state_graph_predicate(
     package: &BarePackage<'_>,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
     claim: &fsl_foundation::source::provenance::OccurrenceKey,
     role: fsl_semantics::check::PredicateRole,
     objects: &ObjectEnvironment,
@@ -716,7 +768,7 @@ pub(crate) fn evaluate_state_graph_predicate(
     let predicate = package
         .project_state_graph_predicate(claim, role)
         .map_err(|_| fault("state-graph-predicate-projects"))?;
-    evaluate_projected_state_predicate(package, &predicate, objects, over, further, meter)
+    evaluate_projected_state_predicate(package, types, &predicate, objects, over, further, meter)
 }
 
 pub(crate) fn evaluate_probability_predicate(
@@ -729,12 +781,24 @@ pub(crate) fn evaluate_probability_predicate(
     let predicate = package
         .project_probability_predicate(claim)
         .map_err(|_| InternalFault::new("FR-940", "probability-predicate-projects"))?;
+    let world = package
+        .world()
+        .map_err(|_| InternalFault::new("FR-940", "state-graph-predicate-world"))?;
     let over = over.map_or(StateGraphOver::None, StateGraphOver::Bound);
-    evaluate_projected_state_predicate(package, &predicate, objects, over, Vec::new(), meter)
+    evaluate_projected_state_predicate(
+        package,
+        world.types(),
+        &predicate,
+        objects,
+        over,
+        Vec::new(),
+        meter,
+    )
 }
 
 fn evaluate_projected_state_predicate(
     package: &BarePackage<'_>,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
     predicate: &fsl_package::BareStatePredicate,
     objects: &ObjectEnvironment,
     over: StateGraphOver,
@@ -758,7 +822,10 @@ fn evaluate_projected_state_predicate(
     // reads carry FR-107's model-read charge; the same family here.
     let reads = std::collections::BTreeMap::new();
     let mut machine = Machine::with_world(
-        World::Bytes(&world),
+        World::BytesWithTypes {
+            world: &world,
+            types,
+        },
         objects,
         None,
         Some(&reads),
@@ -929,6 +996,16 @@ impl super::clause_set::ClauseHost for BarePackage<'_> {
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
         evaluate_state_clause(self, name, observations, meter)
+    }
+
+    fn clause_with_types(
+        &self,
+        name: &QualifiedName,
+        observations: &fsl_semantics::model::observation::AdmittedObservations,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure> {
+        evaluate_state_clause_with_types(self, name, observations, types, meter)
     }
 }
 const SOURCE_DECLARATION: &str = "needs-source-declaration";

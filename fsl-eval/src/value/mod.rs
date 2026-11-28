@@ -14,6 +14,7 @@ pub mod collections;
 pub mod composite;
 mod expression;
 pub(crate) use expression::evaluate_clause_set_with_meter_factory;
+pub(crate) use expression::evaluate_clause_set_with_types;
 pub(crate) use expression::evaluate_generated_package_protocol_slot;
 pub use expression::{
     convert_text_value, evaluate_model_relation, evaluate_model_relation_transitions,
@@ -77,6 +78,7 @@ pub(crate) fn ordered_map_entries(
 // impl here is E0116: `CheckedPackage` is `fsl-package`'s own type (X-7).
 pub use expression::collection_write::{Provenance, WrittenCollection};
 pub(crate) use expression::evaluate_over_admitted_environment;
+pub(crate) use expression::evaluate_state_clause_with_types as evaluate_bare_state_clause_with_types;
 pub(crate) use expression::evaluate_state_predicate_at_absent_key_with_reference_bindings;
 pub(crate) use expression::evaluate_state_predicate_with_reference_bindings;
 pub use expression::object_environment_refusal;
@@ -104,6 +106,7 @@ pub use expression::{
 pub use expression::{bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub use expression::{
     bare_evaluate_selected_protocol_slot, evaluate_bare_expression, evaluate_bare_refinement_row,
+    evaluate_bare_refinement_row_with_types,
 };
 pub(crate) use expression::{
     bare_post_targets, evaluate_bare_probability_predicate, evaluate_bare_state_graph_predicate,
