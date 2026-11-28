@@ -11521,101 +11521,134 @@ pub(crate) fn document_nodes(
     use filament_contract_model::{CheckedNodePathSegment as Segment, CheckedOperandEntry};
     #[cfg(feature = "test-support")]
     let mut diagnostics = DocumentNodeDiagnostics::default();
+    #[cfg(feature = "test-support")]
+    let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+    #[cfg(not(feature = "test-support"))]
+    let repeated_reference = false;
     for (node, row) in graph.nodes.iter_mut().zip(&graph.operand_rows) {
-        let mut changes = Vec::new();
-        for id in reachable_ids(node) {
-            #[cfg(feature = "test-support")]
-            {
-                diagnostics.linear_work_units = diagnostics
-                    .linear_work_units
-                    .saturating_add(1 + id.path.len());
-            }
-            let old = id.clone();
-            for segment in &mut id.path {
-                if let Segment::Operand(slot) = segment {
-                    #[cfg(feature = "test-support")]
-                    {
-                        diagnostics.operand_row_lookups =
-                            diagnostics.operand_row_lookups.saturating_add(1);
-                        diagnostics.linear_work_units =
-                            diagnostics.linear_work_units.saturating_add(1);
+        if repeated_reference {
+            let mut changes = Vec::new();
+            for id in reachable_ids(node) {
+                #[cfg(feature = "test-support")]
+                {
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
+                }
+                let old = id.clone();
+                for segment in &mut id.path {
+                    if let Segment::Operand(slot) = segment {
+                        #[cfg(feature = "test-support")]
+                        {
+                            diagnostics.operand_row_lookups =
+                                diagnostics.operand_row_lookups.saturating_add(1);
+                            diagnostics.linear_work_units =
+                                diagnostics.linear_work_units.saturating_add(1);
+                        }
+                        let entry = usize::try_from(*slot)
+                            .ok()
+                            .and_then(|slot| row.get(slot))
+                            .ok_or(EmitRefusal::SourceMapInvariant)?;
+                        *segment = match entry {
+                            CheckedOperandEntry::Node(index) => Segment::Index(*index),
+                            CheckedOperandEntry::Dependency(operand) => {
+                                Segment::Dependency {
+                                    package: operand.package.clone(),
+                                    node: operand.node,
+                                }
+                            }
+                        };
                     }
-                    let entry = usize::try_from(*slot)
-                        .ok()
-                        .and_then(|slot| row.get(slot))
-                        .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    *segment = match entry {
-                        CheckedOperandEntry::Node(index) => Segment::Index(*index),
-                        CheckedOperandEntry::Dependency(operand) => Segment::Dependency {
-                            package: operand.package.clone(),
-                            node: operand.node,
-                        },
-                    };
+                }
+                if old != *id {
+                    changes.push((old, id.clone()));
                 }
             }
-            if old != *id {
-                changes.push((old, id.clone()));
-            }
-        }
-        let mut changes_by_id = BTreeMap::new();
-        for (old, new) in &changes {
-            #[cfg(feature = "test-support")]
-            {
-                diagnostics.linear_work_units = diagnostics
-                    .linear_work_units
-                    .saturating_add(1 + old.path.len());
-            }
-            if changes_by_id
-                .insert(old.clone(), new.clone())
-                .is_some_and(|previous| previous != *new)
-            {
-                return Err(EmitRefusal::SourceMapInvariant);
-            }
-        }
-        #[cfg(feature = "test-support")]
-        let change_count = changes.len();
-        #[cfg(feature = "test-support")]
-        let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
-        #[cfg(feature = "test-support")]
-        let mut node_id_slots = 0_usize;
-        #[cfg(feature = "test-support")]
-        let mut node_path_units = 0_usize;
-        #[cfg(feature = "test-support")]
-        if repeated_reference {
+            let change_count = changes.len();
             for (old, new) in changes {
                 node.replace_node_id(&old, &new);
             }
-            node.map_node_ids(|id| {
-                node_id_slots = node_id_slots.saturating_add(1);
-                node_path_units = node_path_units.saturating_add(id.path.len());
-                None
-            });
+            #[cfg(feature = "test-support")]
+            {
+                let mut node_id_slots = 0_usize;
+                let mut node_path_units = 0_usize;
+                node.map_node_ids(|id| {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    node_path_units = node_path_units.saturating_add(id.path.len());
+                    None
+                });
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(one_pass_slot_work);
+                diagnostics.repeated_scan_work_units = diagnostics
+                    .repeated_scan_work_units
+                    .saturating_add(one_pass_slot_work.saturating_mul(change_count));
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(change_count);
+            }
         } else {
+            #[cfg(feature = "test-support")]
+            let mut node_id_slots = 0_usize;
+            #[cfg(feature = "test-support")]
+            let mut changed_ids = 0_usize;
+            let mut invalid_operand = false;
             node.map_node_ids(|id| {
                 #[cfg(feature = "test-support")]
                 {
                     node_id_slots = node_id_slots.saturating_add(1);
-                    node_path_units = node_path_units.saturating_add(id.path.len());
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
                 }
-                changes_by_id.get(id).cloned()
+                let mut replacement = id.clone();
+                for segment in &mut replacement.path {
+                    if let Segment::Operand(slot) = segment {
+                        #[cfg(feature = "test-support")]
+                        {
+                            diagnostics.operand_row_lookups =
+                                diagnostics.operand_row_lookups.saturating_add(1);
+                            diagnostics.linear_work_units =
+                                diagnostics.linear_work_units.saturating_add(1);
+                        }
+                        let Some(entry) = usize::try_from(*slot)
+                            .ok()
+                            .and_then(|slot| row.get(slot))
+                        else {
+                            invalid_operand = true;
+                            return None;
+                        };
+                        *segment = match entry {
+                            CheckedOperandEntry::Node(index) => Segment::Index(*index),
+                            CheckedOperandEntry::Dependency(operand) => {
+                                Segment::Dependency {
+                                    package: operand.package.clone(),
+                                    node: operand.node,
+                                }
+                            }
+                        };
+                    }
+                }
+                if replacement != *id {
+                    #[cfg(feature = "test-support")]
+                    {
+                        changed_ids = changed_ids.saturating_add(1);
+                    }
+                    Some(replacement)
+                } else {
+                    None
+                }
             });
-        }
-        #[cfg(not(feature = "test-support"))]
-        node.map_node_ids(|id| changes_by_id.get(id).cloned());
-        #[cfg(feature = "test-support")]
-        {
-            diagnostics.one_pass_id_slots =
-                diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
-            let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
-            diagnostics.linear_work_units = diagnostics
-                .linear_work_units
-                .saturating_add(one_pass_slot_work);
-            if repeated_reference {
-                diagnostics.repeated_scan_work_units = diagnostics
-                    .repeated_scan_work_units
-                    .saturating_add(one_pass_slot_work.saturating_mul(change_count));
+            if invalid_operand {
+                return Err(EmitRefusal::SourceMapInvariant);
             }
-            diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(change_count);
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changed_ids);
+            }
         }
     }
     #[cfg(feature = "test-support")]
@@ -11812,104 +11845,113 @@ fn write_index_segments(
     let mut graph_wire: HashMap<NodeKey, CheckedNodeId> = HashMap::with_capacity(nodes.len());
     #[cfg(feature = "test-support")]
     let mut diagnostics = WriteIndexDiagnostics::default();
+    #[cfg(feature = "test-support")]
+    let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+    #[cfg(not(feature = "test-support"))]
+    let repeated_reference = false;
     for (node, key) in nodes.iter_mut().zip(&graph_keys) {
         let holder = node.node_id.clone();
-        let mut seen: HashSet<NodeKey> = HashSet::new();
-        let mut changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
-        for id in reachable_ids(node) {
+        if repeated_reference {
             #[cfg(feature = "test-support")]
             {
-                diagnostics.linear_work_units = diagnostics
-                    .linear_work_units
-                    .saturating_add(1 + id.path.len());
-            }
-            if holds_segment(id, is_operand) {
-                #[cfg(feature = "test-support")]
-                {
-                    for operand in id.path.iter().filter_map(|segment| match segment {
-                        Segment::Node(operand) => Some(operand),
-                        _ => None,
-                    }) {
-                        diagnostics.structural_key_lookups =
-                            diagnostics.structural_key_lookups.saturating_add(2);
-                        diagnostics.linear_work_units = diagnostics
-                            .linear_work_units
-                            .saturating_add(2 + 2 * operand.path.len());
-                    }
-                    diagnostics.structural_key_lookups =
-                        diagnostics.structural_key_lookups.saturating_add(1);
+                let mut seen: HashSet<NodeKey> = HashSet::new();
+                let mut changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
+                for id in reachable_ids(node) {
                     diagnostics.linear_work_units = diagnostics
                         .linear_work_units
                         .saturating_add(1 + id.path.len());
+                    if holds_segment(id, is_operand) {
+                        for operand in id.path.iter().filter_map(|segment| match segment {
+                            Segment::Node(operand) => Some(operand),
+                            _ => None,
+                        }) {
+                            diagnostics.structural_key_lookups =
+                                diagnostics.structural_key_lookups.saturating_add(2);
+                            diagnostics.linear_work_units = diagnostics
+                                .linear_work_units
+                                .saturating_add(2 + 2 * operand.path.len());
+                        }
+                        let new = wire_of(&mut keys, &holder, id)?;
+                        if seen.insert(keys.key(id).map_err(invariant)?) {
+                            changes.push((id.clone(), new.clone()));
+                        }
+                        *id = new;
+                    }
                 }
-                let new = wire_of(&mut keys, &holder, id)?;
-                if seen.insert(keys.key(id).map_err(invariant)?) {
-                    changes.push((id.clone(), new.clone()));
+                // IR's substitution reaches IDs nested in closed records,
+                // views, nominal bodies and refinement bodies.
+                for (old, new) in &changes {
+                    node.replace_node_id(old, new);
                 }
-                *id = new;
-            }
-        }
-        let mut changes_by_id = BTreeMap::new();
-        for (old, new) in &changes {
-            #[cfg(feature = "test-support")]
-            {
+                let mut node_id_slots = 0_usize;
+                let mut node_path_units = 0_usize;
+                node.map_node_ids(|id| {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    node_path_units = node_path_units.saturating_add(id.path.len());
+                    None
+                });
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
                 diagnostics.linear_work_units = diagnostics
                     .linear_work_units
-                    .saturating_add(1 + old.path.len());
+                    .saturating_add(one_pass_slot_work);
+                diagnostics.repeated_scan_work_units = diagnostics
+                    .repeated_scan_work_units
+                    .saturating_add(one_pass_slot_work.saturating_mul(changes.len()));
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changes.len());
             }
-            if changes_by_id
-                .insert(old.clone(), new.clone())
-                .is_some_and(|previous| previous != *new)
-            {
-                return Err(EmitRefusal::SourceMapInvariant);
-            }
-        }
-        // IR's own substitution reaches the ids held where this emitter
-        // cannot (an operation's closed record and views, a nominal or
-        // refinement body). Every id it can reach already holds index
-        // segments, so it never matches a structural id deep in a chain.
-        #[cfg(feature = "test-support")]
-        let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
-        #[cfg(feature = "test-support")]
-        let mut node_id_slots = 0_usize;
-        #[cfg(feature = "test-support")]
-        let mut node_path_units = 0_usize;
-        #[cfg(feature = "test-support")]
-        if repeated_reference {
-            for (old, new) in &changes {
-                node.replace_node_id(old, new);
-            }
-            node.map_node_ids(|id| {
-                node_id_slots = node_id_slots.saturating_add(1);
-                node_path_units = node_path_units.saturating_add(id.path.len());
-                None
-            });
         } else {
+            #[cfg(feature = "test-support")]
+            let mut node_id_slots = 0_usize;
+            #[cfg(feature = "test-support")]
+            let mut changed_ids = 0_usize;
+            let mut refusal = None;
             node.map_node_ids(|id| {
                 #[cfg(feature = "test-support")]
                 {
                     node_id_slots = node_id_slots.saturating_add(1);
-                    node_path_units = node_path_units.saturating_add(id.path.len());
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
                 }
-                changes_by_id.get(id).cloned()
+                if !holds_segment(id, is_operand) {
+                    return None;
+                }
+                #[cfg(feature = "test-support")]
+                for operand in id.path.iter().filter_map(|segment| match segment {
+                    Segment::Node(operand) => Some(operand),
+                    _ => None,
+                }) {
+                    diagnostics.structural_key_lookups =
+                        diagnostics.structural_key_lookups.saturating_add(2);
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(2 + 2 * operand.path.len());
+                }
+                match wire_of(&mut keys, &holder, id) {
+                    Ok(replacement) => {
+                        #[cfg(feature = "test-support")]
+                        {
+                            changed_ids = changed_ids.saturating_add(1);
+                        }
+                        Some(replacement)
+                    }
+                    Err(error) => {
+                        refusal = Some(error);
+                        None
+                    }
+                }
             });
-        }
-        #[cfg(not(feature = "test-support"))]
-        node.map_node_ids(|id| changes_by_id.get(id).cloned());
-        #[cfg(feature = "test-support")]
-        {
-            diagnostics.one_pass_id_slots =
-                diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
-            let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
-            diagnostics.linear_work_units = diagnostics
-                .linear_work_units
-                .saturating_add(one_pass_slot_work);
-            if repeated_reference {
-                diagnostics.repeated_scan_work_units = diagnostics
-                    .repeated_scan_work_units
-                    .saturating_add(one_pass_slot_work.saturating_mul(changes.len()));
+            if let Some(error) = refusal {
+                return Err(error);
             }
-            diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changes.len());
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changed_ids);
+            }
         }
         graph_wire.insert(key.clone(), node.node_id.clone());
     }
