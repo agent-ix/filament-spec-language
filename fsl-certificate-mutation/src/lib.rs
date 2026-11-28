@@ -309,6 +309,7 @@ fn mutations(document: &Value) -> Vec<Mutant> {
 }
 
 #[implements("FR-1051-AC-11")]
+#[ix_trace_rs::string_edge]
 fn walk(root: &Value, value: &Value, path: &str, out: &mut Vec<Mutant>) {
     match value {
         Value::Object(object) => {
@@ -477,6 +478,7 @@ fn decoded_key(value: &Value) -> Vec<u8> {
         .unwrap_or_else(|| value.as_str().unwrap_or_default().as_bytes().to_vec())
 }
 
+#[ix_trace_rs::string_edge]
 fn flip_side(value: &Value) -> Option<Value> {
     match value.as_str()? {
         "lower" => Some(Value::String("upper".into())),
@@ -485,6 +487,7 @@ fn flip_side(value: &Value) -> Option<Value> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn change_identity(value: &Value) -> Option<Value> {
     match value {
         Value::String(text) => Some(Value::String(format!("{text}#mutation"))),

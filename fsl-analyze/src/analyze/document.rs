@@ -5215,6 +5215,7 @@ fn name_rejection_locus(verdict: &mut Value, locus: &Value) {
 }
 
 /// One FR-621 item from the FR-286 item `written`.
+#[ix_trace_rs::string_edge]
 #[implements("FR-191-AC-3", "FR-191-AC-4")]
 fn item_document(written: Value, members: ItemMembers) -> Value {
     let ItemMembers {

@@ -11473,13 +11473,12 @@ pub fn write_operand_slots(
                 let slot = slots.get(&entry).ok_or(EmitRefusal::SourceMapInvariant)?;
                 *segment = Segment::Operand(*slot);
             }
-            if old != new {
-                if changes
+            if old != new
+                && changes
                     .insert(old, new.clone())
                     .is_some_and(|previous| previous != new)
-                {
-                    return Err(EmitRefusal::SourceMapInvariant);
-                }
+            {
+                return Err(EmitRefusal::SourceMapInvariant);
             }
         }
         #[cfg(test)]
@@ -11551,12 +11550,10 @@ pub(crate) fn document_nodes(
                             .ok_or(EmitRefusal::SourceMapInvariant)?;
                         *segment = match entry {
                             CheckedOperandEntry::Node(index) => Segment::Index(*index),
-                            CheckedOperandEntry::Dependency(operand) => {
-                                Segment::Dependency {
-                                    package: operand.package.clone(),
-                                    node: operand.node,
-                                }
-                            }
+                            CheckedOperandEntry::Dependency(operand) => Segment::Dependency {
+                                package: operand.package.clone(),
+                                node: operand.node,
+                            },
                         };
                     }
                 }
@@ -11612,21 +11609,18 @@ pub(crate) fn document_nodes(
                             diagnostics.linear_work_units =
                                 diagnostics.linear_work_units.saturating_add(1);
                         }
-                        let Some(entry) = usize::try_from(*slot)
-                            .ok()
-                            .and_then(|slot| row.get(slot))
+                        let Some(entry) =
+                            usize::try_from(*slot).ok().and_then(|slot| row.get(slot))
                         else {
                             invalid_operand = true;
                             return None;
                         };
                         *segment = match entry {
                             CheckedOperandEntry::Node(index) => Segment::Index(*index),
-                            CheckedOperandEntry::Dependency(operand) => {
-                                Segment::Dependency {
-                                    package: operand.package.clone(),
-                                    node: operand.node,
-                                }
-                            }
+                            CheckedOperandEntry::Dependency(operand) => Segment::Dependency {
+                                package: operand.package.clone(),
+                                node: operand.node,
+                            },
                         };
                     }
                 }

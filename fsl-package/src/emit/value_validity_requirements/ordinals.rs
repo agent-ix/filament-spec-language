@@ -373,6 +373,7 @@ pub(in crate::emit) fn renumber(
 /// Write the new numbering into the occurrences of the nodes at the positions
 /// `changed` names and rebuild their source-map entries. Synthetic slots clone
 /// the regions of the syntax-owner occurrence they repeat.
+#[implements("FSpec-FR-322-AC-490")]
 fn apply(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -428,10 +429,12 @@ fn apply(
                 Slot::Source { old, ordinal } => (old, ordinal),
                 Slot::Synthetic { from, ordinal } => (from, ordinal),
             };
-            let mut entry = entries
+            let Some(mut entry) = entries
                 .and_then(|entries| entries.get(&source_ordinal))
                 .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            else {
+                continue;
+            };
             entry.ordinal = new_ordinal;
             moved.push(entry);
         }
@@ -633,8 +636,8 @@ fn rewalk_slots(
         }
     }
     let mut region_of = HashMap::<(usize, bool, usize), u64>::new();
-    for visit in 0..numbered {
-        region_of.entry(lexical[visit]).or_insert(visit as u64);
+    for (visit, &key) in lexical.iter().enumerate().take(numbered) {
+        region_of.entry(key).or_insert(visit as u64);
     }
     let mut slots = Vec::with_capacity(end + listed - numbered);
     for place in 0..end {

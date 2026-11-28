@@ -8,7 +8,7 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_command::command::{self, RequestOverrides, RunLimits};
 use fsl_foundation::Setting;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const NESTED: usize = 1_000;
 
@@ -84,8 +84,8 @@ impl fsl_analyze::analyze::document::Negotiate for FslNegotiate {
         Option<fsl_analyze::analyze::Diagnostic>,
     ) {
         use fsl_analyze::analyze::{Diagnostic, Payload};
-        use fsl_route::NegotiationOutcome;
         use fsl_route::routing::Disposition;
+        use fsl_route::NegotiationOutcome;
 
         match candidates {
             fsl_route::CandidateOutcome::UnknownBackend(backend) => (
