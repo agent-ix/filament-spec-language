@@ -5694,6 +5694,7 @@ mod tests {
         assert!(blank_json["locus"].is_null(), "{blank_json}");
 
         let parsed = fsl_forms::cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("agent-ix", "test:model"),
             "model.fsl",
             b"@",
