@@ -280,10 +280,7 @@ pub fn admit(model: &CheckedHybridModel, trace: &HybridTrace) -> Result<(), Trac
 }
 
 pub(super) fn rational_wire(value: &Rational) -> serde_json::Value {
-    serde_json::json!({
-        "numerator": value.numerator().to_string(),
-        "denominator": value.denominator().to_string(),
-    })
+    crate::shared_wire::RationalObject::value(value)
 }
 
 fn interval_wire(value: &ExactInterval) -> serde_json::Value {

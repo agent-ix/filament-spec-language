@@ -13,8 +13,8 @@ use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
 use fsl_eval::smt::{
-    Measure, MonitorTable, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtItem, SmtQueryKind,
-    encode_smt_query,
+    encode_smt_query, Measure, MonitorTable, Refusal, SmtEncodingLimits, SmtEncodingRefusal,
+    SmtItem, SmtQueryKind,
 };
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
@@ -25,7 +25,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 const PACKAGE: &str = "test/smt";
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
@@ -708,11 +708,9 @@ fn bounded_on_each_queries_use_the_finite_monitor_and_end_letter() {
         .iter()
         .filter_map(implication_target)
         .collect();
-    assert!(
-        !step_implication_targets
-            .iter()
-            .any(|target| target.starts_with("(= m0.0 "))
-    );
+    assert!(!step_implication_targets
+        .iter()
+        .any(|target| target.starts_with("(= m0.0 ")));
     assert!(step_assertions.contains(
         &"(not (and (= h1 h0) (or h1 (= s1.c.value s0.c.value)) (= m1.0 m0.0)))".to_owned()
     ));
@@ -1727,7 +1725,8 @@ fn terminal_when_smt_reads_constants_once_and_refuses_population_outside_its_fra
 // The `Tally` subject of FR-315-AC-4 and the scripts read as text.
 // ---------------------------------------------------------------------------
 
-const TALLY_CONTRACT: &str = "pre G using v on M::Tally::bump { self.tally < 3 and self.next = self.tally + 1 }\n\
+const TALLY_CONTRACT: &str =
+    "pre G using v on M::Tally::bump { self.tally < 3 and self.next = self.tally + 1 }\n\
      post B using v on M::Tally::bump { self.tally - pre(self.tally) = 1 }\n\
      post C using v on M::Tally::bump { self.tally < 3 and self.next = self.tally + 1 }\n";
 

@@ -18,18 +18,18 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
-use fsl_forms::{ClauseKind, build_unit};
-use fsl_foundation::SourceIdentity;
+use fsl_forms::{build_unit, ClauseKind};
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use super::mint_union_member_key;
 use super::{ExhaustivenessObligation, SumCaseCause};
-use crate::check::check::{Scope, Signatures, Typer, bind_parameters};
+use crate::check::check::{bind_parameters, Scope, Signatures, Typer};
 use crate::check::ir::{CheckedBody, CheckedNode, Slot};
 use crate::check::{
-    CheckCause, CheckRefusal, CheckingLimitKind, EnumBinding, PackageDeclarations,
-    QualifiedCandidate,
+    CheckCause, CheckingLimitKind, EnumBinding, PackageDeclarations, QualifiedCandidate,
+    SemanticCheckRefusal,
 };
 use crate::value::enumeration::{mint_union_variant_id, mint_variant_id};
 
@@ -99,7 +99,7 @@ impl Unit {
         &self,
         clause: ClauseKind,
         limits: CheckingLimits,
-    ) -> (Result<CheckedBody, CheckRefusal>, u64) {
+    ) -> (Result<CheckedBody, SemanticCheckRefusal>, u64) {
         self.type_body_in(&self.scope(), clause, limits)
     }
 
@@ -123,7 +123,7 @@ impl Unit {
         scope: &Scope,
         clause: ClauseKind,
         limits: CheckingLimits,
-    ) -> (Result<CheckedBody, CheckRefusal>, u64) {
+    ) -> (Result<CheckedBody, SemanticCheckRefusal>, u64) {
         let package = &self.package;
         let (parameters, result) = package
             .resolved_signatures
@@ -143,13 +143,13 @@ impl Unit {
 }
 
 /// `declarations` plus function `f`, typed as a function body.
-fn check(result: &str, body: &str) -> (Unit, Result<CheckedBody, CheckRefusal>) {
+fn check(result: &str, body: &str) -> (Unit, Result<CheckedBody, SemanticCheckRefusal>) {
     let unit = unit(&format!("{SHAPE}{}", function(result, body)));
     let (typed, _) = unit.type_body(ClauseKind::Body, CheckingLimits::default());
     (unit, typed)
 }
 
-fn refused(result: &str, body: &str) -> (Unit, CheckRefusal) {
+fn refused(result: &str, body: &str) -> (Unit, SemanticCheckRefusal) {
     let (unit, typed) = check(result, body);
     match typed {
         Err(refusal) => (unit, refusal),
@@ -171,7 +171,9 @@ fn locals(node: CheckedNode<'_>) -> Vec<(Slot, ValueType)> {
 }
 
 /// The exhaustiveness refusal `refusal` carries.
-fn exhaustiveness(refusal: &CheckRefusal) -> (&NodeKey, &[String], ExhaustivenessObligation) {
+fn exhaustiveness(
+    refusal: &SemanticCheckRefusal,
+) -> (&NodeKey, &[String], ExhaustivenessObligation) {
     let CheckCause::SumCase(cause) = refusal.cause.as_ref() else {
         panic!("a SumCase cause, not {:?}", refusal.cause)
     };
@@ -419,7 +421,7 @@ fn nesting_is_bounded_only_by_the_node_ceiling() {
         ClauseKind::Body,
         CheckingLimits::default().with_nodes(needed - 1),
     );
-    let Err(CheckRefusal { ref cause, .. }) = typed else {
+    let Err(SemanticCheckRefusal { ref cause, .. }) = typed else {
         panic!("one node short is a limit, not {typed:?}")
     };
     let CheckCause::ResourceExhausted(limit) = cause.as_ref() else {
@@ -478,11 +480,9 @@ fn a_case_adds_no_claim_and_its_arm_bodies_are_claim_sites() {
     .expect("the claims walk finds the binders of every arm");
     // `r * r`, `(r * r) * 3` and `w * h`; none at the `case` itself.
     assert_eq!(claims.len(), 3);
-    assert!(
-        claims
-            .iter()
-            .all(|claim| claim.site().location() != &Unit::body())
-    );
+    assert!(claims
+        .iter()
+        .all(|claim| claim.site().location() != &Unit::body()));
 }
 
 /// A function `f` with the given parameter list over the standard unions and
@@ -603,7 +603,7 @@ fn measure_unit(measure: &str) -> Unit {
     ))
 }
 
-fn type_measure(unit: &Unit) -> Result<CheckedBody, CheckRefusal> {
+fn type_measure(unit: &Unit) -> Result<CheckedBody, SemanticCheckRefusal> {
     let scope = unit.scope();
     let function = &unit.package.functions[0];
     let signatures = Signatures::default();
@@ -713,7 +713,7 @@ fn scope_over(unit: &Unit, extra: Vec<CompositeDeclaration>, enums: Vec<EnumBind
 
 const Q: &str = "union q { m(Integer) }\nenum E { m, z }\n";
 
-fn ambiguity(refusal: &CheckRefusal) -> (&str, &[QualifiedCandidate]) {
+fn ambiguity(refusal: &SemanticCheckRefusal) -> (&str, &[QualifiedCandidate]) {
     let CheckCause::AmbiguousQualified(ambiguous) = refusal.cause.as_ref() else {
         panic!("an ambiguous qualified reference, not {:?}", refusal.cause)
     };
@@ -726,7 +726,7 @@ fn a_qualified_member_with_two_candidates_is_ambiguous_and_names_each() {
     for call in ["q::m(1)", "q::m"] {
         let unit = unit(&format!("{Q}function f using v(): q pure {{ {call} }}"));
         let first = unit.key("q");
-        let located = |refusal: &CheckRefusal| {
+        let located = |refusal: &SemanticCheckRefusal| {
             assert_eq!(refusal.cause.code(), Code::AmbiguousDeclaration);
             assert_eq!(refusal.cause.cause(), Some("ambiguous-name"));
             assert_eq!(refusal.location, Unit::body(), "{call}");
@@ -955,7 +955,7 @@ fn check_over(
     parameters: &str,
     result: &str,
     body: &str,
-) -> (Unit, Result<CheckedBody, CheckRefusal>) {
+) -> (Unit, Result<CheckedBody, SemanticCheckRefusal>) {
     let unit = unit(&format!(
         "{SHAPE}function f using v(s: Shape{parameters}): {result} pure {{ {body} }}"
     ));
@@ -963,7 +963,7 @@ fn check_over(
     (unit, typed)
 }
 
-fn refused_over(parameters: &str, result: &str, body: &str) -> CheckRefusal {
+fn refused_over(parameters: &str, result: &str, body: &str) -> SemanticCheckRefusal {
     match check_over(parameters, result, body).1 {
         Err(refusal) => refusal,
         Ok(_) => panic!("{body}: the typer refuses"),

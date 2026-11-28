@@ -32,16 +32,18 @@ use std::collections::BTreeSet;
 
 use filament_exact::{LimitKind, Meter};
 use fsl_eval::hyper::{
-    closed_executions, horizon, judge_closed_tuple, match_closed_step, search_partner,
-    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, MatchPart, MatchReading,
-    ParameterBinding, PartnerSearch, Tuples,
+    closed_executions, closed_found_state_key, horizon, judge_closed_tuple, match_closed_step,
+    read_closed_undefined, search_partner, ClosedExecution, ClosedInputs, ClosedLocus, ClosedRead,
+    ClosedStop, ClosedUndefined, ClosedVerdict, MatchPart, MatchReading, ParameterBinding,
+    PartnerSearch, Tuples,
 };
-use fsl_eval::simulation::ConstraintValue;
+use fsl_eval::simulation::{ConstraintValue, TransitionSystem};
 use fsl_replay::{
     AppliedReduction, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
-    HyperTrace, IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark,
-    UndecidedCause,
+    HyperTrace, HyperUndefined, IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit,
+    StepMark, UndecidedCause,
 };
+use ix_trace_rs::implements;
 
 use super::{
     ends_search, exhausted, fault, restated, stopped, widen, Ending, HyperRefusal, Run, Totals,
@@ -54,6 +56,13 @@ enum Reading {
     Continue,
     /// The tuple is a counterexample at this position.
     Refuted(u64),
+    /// An expression has no value on the tuple (ADR-023 HV-8): the clause is
+    /// refuted over the tuple extended with the existential executions at
+    /// these indices, none for an HP-2 clause.
+    Undefined {
+        found: Box<ClosedUndefined>,
+        existentials: Vec<usize>,
+    },
     /// The run ended with this outcome.
     Ended(HyperOutcome),
 }
@@ -93,7 +102,7 @@ impl Run<'_, '_> {
                     totals.states = totals.states.saturating_add(widen(list.len()));
                     lists.push(list);
                 }
-                Err(stop) => return self.closed_stop(stop, index, &totals),
+                Err(stop) => return self.closed_stop(stop, index, instances, &totals),
             }
         }
         totals.depth = depth;
@@ -158,6 +167,21 @@ impl Run<'_, '_> {
                     Reading::Ended(outcome) => {
                         first_open.get_or_insert(outcome);
                         continue 'instances;
+                    }
+                    Reading::Undefined {
+                        found,
+                        existentials,
+                    } => {
+                        let mut tuple = universal.clone();
+                        for (slot, index) in self.slots.iter().skip(universals).zip(&existentials) {
+                            tuple.push(
+                                lists
+                                    .get(*slot)
+                                    .and_then(|list| list.get(*index))
+                                    .ok_or_else(|| fault("a-partner-execution-is-listed"))?,
+                            );
+                        }
+                        return self.undefined_outcome(instance, &tuple, *found, &totals);
                     }
                     Reading::Refuted(position) => {
                         let counterexample = HyperCounterexample {
@@ -318,7 +342,19 @@ impl Run<'_, '_> {
             match match_closed_step(inputs, tuple, position, MatchPart::Universal) {
                 Ok(MatchReading::Holds) => {}
                 Ok(MatchReading::Fails) => return Ok(ConstraintReading::Unmatched),
-                Ok(MatchReading::Undefined { .. } | MatchReading::Refused { .. }) => {
+                Ok(MatchReading::Undefined { conjunct, cause }) => {
+                    return Ok(ConstraintReading::Stopped(ClosedVerdict::Undefined(
+                        Box::new(ClosedUndefined {
+                            position: widen(position),
+                            locus: ClosedLocus::Match { conjunct },
+                            components: (0..tuple.len()).collect(),
+                            transition: None,
+                            state: None,
+                            cause,
+                        }),
+                    )));
+                }
+                Ok(MatchReading::Refused { .. }) => {
                     return Ok(ConstraintReading::Stopped(ClosedVerdict::MatchUndetermined));
                 }
                 Ok(MatchReading::Fault(internal)) => {
@@ -379,6 +415,10 @@ impl Run<'_, '_> {
                 Reading::Continue
             }
             ClosedVerdict::Violated { at } => Reading::Refuted(at),
+            ClosedVerdict::Undefined(found) => Reading::Undefined {
+                found,
+                existentials: Vec::new(),
+            },
             stopped => self.stopped_reading(stopped, totals)?,
         })
     }
@@ -397,6 +437,13 @@ impl Run<'_, '_> {
                 Reading::Continue
             }
             PartnerSearch::Exhausted { position } => Reading::Refuted(position),
+            PartnerSearch::Undefined {
+                found,
+                existentials,
+            } => Reading::Undefined {
+                found,
+                existentials,
+            },
             PartnerSearch::TooMany { limit } => Reading::Ended(stopped(
                 IncompleteCause::ResourceExhausted,
                 Some(ReachedLimit {
@@ -422,7 +469,8 @@ impl Run<'_, '_> {
                 cause: UndecidedCause::MatchUndetermined,
                 stats: totals.stats(),
             })),
-            ClosedVerdict::Undefined => Err(HyperRefusal::ClosedUndefined.into()),
+            // The callers that hold the tuple build the refutation.
+            ClosedVerdict::Undefined(_) => Err(fault("an-undefined-reading-is-a-refutation")),
             ClosedVerdict::Incomplete(counter) => {
                 if self.cancel.poll() {
                     return self.cancelled(totals).map(Reading::Ended);
@@ -449,10 +497,12 @@ impl Run<'_, '_> {
 
     /// The outcome a stopped enumeration of subject `index`'s executions
     /// settles.
+    #[implements("FR-173-AC-7")]
     fn closed_stop(
         &self,
         stop: ClosedStop,
         index: usize,
+        instances: &[Vec<ParameterBinding>],
         totals: &Totals,
     ) -> Result<HyperOutcome, ModelCheckRefusal> {
         match stop {
@@ -461,6 +511,44 @@ impl Run<'_, '_> {
             ClosedStop::Executions { limit } => {
                 Ok(exhausted(ModelCheckLimit::MaxStates, widen(limit), totals))
             }
+            ClosedStop::Undefined { prefix, .. } => {
+                // A contract conjunction with no value at a reachable state
+                // refutes (ADR-018 UE-6, ADR-023 HV-8). The tuple is that
+                // prefix for the variables over this subject and the initial
+                // state of every other, read for its first expression with no
+                // value by the replay's own reading.
+                let instance = instances
+                    .first()
+                    .ok_or_else(|| fault("an-undefined-stop-has-an-instance"))?;
+                let mut executions = Vec::with_capacity(self.slots.len());
+                for slot in &self.slots {
+                    if *slot == index {
+                        executions.push(ClosedExecution::clone(&prefix));
+                        continue;
+                    }
+                    let system = self
+                        .systems
+                        .get(*slot)
+                        .ok_or_else(|| fault("an-undefined-subject-is-admitted"))?;
+                    let Some(initial) = system.initial().into_iter().next() else {
+                        return Ok(HyperOutcome::Undecided {
+                            cause: UndecidedCause::UndecidedSuccessor,
+                            stats: totals.stats(),
+                        });
+                    };
+                    executions.push(ClosedExecution {
+                        initial: 0,
+                        states: vec![initial],
+                        steps: Vec::new(),
+                    });
+                }
+                let tuple: Vec<&ClosedExecution> = executions.iter().collect();
+                self.read_prefix_undefined(instance, &tuple, totals)
+            }
+            ClosedStop::Refused => Ok(HyperOutcome::Undecided {
+                cause: UndecidedCause::UndecidedSuccessor,
+                stats: totals.stats(),
+            }),
             ClosedStop::Expansion(stop) => {
                 let component = self.slots.iter().position(|slot| *slot == index);
                 Ok(match self.expansion_ending(component, stop)? {
@@ -469,6 +557,100 @@ impl Run<'_, '_> {
                 })
             }
         }
+    }
+
+    /// The outcome of a joint prefix `tuple` that reaches a contract
+    /// conjunction with no value (ADR-018 UE-6): the first expression with no
+    /// value in the replay's reading order refutes; a prefix the clause's
+    /// `match` rejects, or whose contract the replay does not read, leaves the
+    /// successors unknown.
+    pub(super) fn read_prefix_undefined(
+        &self,
+        instance: &[ParameterBinding],
+        tuple: &[&ClosedExecution],
+        totals: &Totals,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let inputs = ClosedInputs {
+            clause: self.request.clause,
+            instance,
+            letters: self.request.letters,
+            matcher: self.request.matcher,
+            meter: self.request.meter,
+            cancel: self.cancel,
+        };
+        let systems = self
+            .slots
+            .iter()
+            .map(|slot| self.systems.get(*slot))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| fault("a-prefix-component-has-a-system"))?;
+        match read_closed_undefined(&inputs, &systems, tuple) {
+            ClosedRead::Undefined(found) => self.undefined_outcome(instance, tuple, *found, totals),
+            ClosedRead::Unmatched | ClosedRead::Clear => Ok(HyperOutcome::Undecided {
+                cause: UndecidedCause::UndecidedSuccessor,
+                stats: totals.stats(),
+            }),
+            ClosedRead::Expansion { component, stop } => {
+                match self.expansion_ending(Some(component), stop)? {
+                    Ending::Stopped(cause, limit, count) => {
+                        Ok(stopped(cause, limit, count, totals))
+                    }
+                    Ending::Complete => Err(fault("a-stopped-expansion-stops")),
+                }
+            }
+            ClosedRead::Stopped(verdict) => match self.stopped_reading(verdict, totals)? {
+                Reading::Ended(outcome) => Ok(outcome),
+                _ => Err(fault("a-stopped-prefix-reading-ends-the-item")),
+            },
+        }
+    }
+
+    /// The refutation of a tuple of closed executions on which `found` has no
+    /// value (ADR-023 HV-8): the counterexample names the evaluation and
+    /// holds every variable's trace, of whatever length.
+    #[implements("FR-173-AC-7")]
+    pub(super) fn undefined_outcome(
+        &self,
+        instance: &[ParameterBinding],
+        tuple: &[&ClosedExecution],
+        found: ClosedUndefined,
+        totals: &Totals,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let variables = self.variables();
+        let mut state_keys = Vec::with_capacity(found.components.len());
+        let mut named = Vec::with_capacity(found.components.len());
+        for component in &found.components {
+            let system = self
+                .slots
+                .get(*component)
+                .and_then(|slot| self.systems.get(*slot))
+                .ok_or_else(|| fault("an-undefined-component-has-a-system"))?;
+            let execution = tuple
+                .get(*component)
+                .ok_or_else(|| fault("an-undefined-component-is-traced"))?;
+            let key = closed_found_state_key(system, self.request.clause, execution, &found)
+                .map_err(ModelCheckRefusal::Encoding)?
+                .ok_or_else(|| fault("an-undefined-position-is-a-state"))?;
+            state_keys.push(key);
+            named.push(
+                variables
+                    .get(*component)
+                    .cloned()
+                    .ok_or_else(|| fault("an-undefined-component-is-quantified"))?,
+            );
+        }
+        let position = found.position;
+        Ok(HyperOutcome::Violated {
+            counterexample: Box::new(HyperCounterexample {
+                kind: HyperCounterexampleKind::Undefined(HyperUndefined::of_closed(
+                    found, state_keys, named,
+                )),
+                instance: Self::instance_of(instance),
+                traces: self.closed_traces(tuple)?,
+                trace_position: position,
+            }),
+            stats: totals.stats(),
+        })
     }
 
     /// One trace per variable of `executions`, in quantifier order.

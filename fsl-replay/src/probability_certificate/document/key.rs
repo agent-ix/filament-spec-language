@@ -123,8 +123,8 @@ pub(crate) fn formula_product_key_with_budget(
     budget: &mut dyn fsl_eval::simulation::model::ModelKeyBudget,
     cancel: &Cancel,
 ) -> Result<ProbabilityProductKey, fsl_eval::simulation::model::ModelKeyError> {
-    use fsl_eval::simulation::EncodingRefusal;
     use fsl_eval::simulation::model::ModelKeyError;
+    use fsl_eval::simulation::EncodingRefusal;
     use quire_canonical::{Reservation, ReservationDenied};
     struct Reserve<'a>(&'a mut dyn fsl_eval::simulation::model::ModelKeyBudget);
     impl Reservation for Reserve<'_> {
@@ -301,6 +301,10 @@ pub(super) fn model_form(node: NodeRef<'_>) -> bool {
     }
 }
 
+#[allow(
+    clippy::needless_bool,
+    reason = "False exits the whole validator; it is not an absent-deadline value."
+)]
 fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
     let boundary = matches!(
         parts.first().map(|part| part.node()),
@@ -654,19 +658,17 @@ mod tests {
             }
         }
         for model in models {
-            assert!(
-                model_product_key(
-                    None,
-                    model,
-                    None,
-                    ProbabilityDocumentIoLimits {
-                        storage_bytes: individual,
-                        ..defaults
-                    },
-                    &cancel,
-                )
-                .is_ok()
-            );
+            assert!(model_product_key(
+                None,
+                model,
+                None,
+                ProbabilityDocumentIoLimits {
+                    storage_bytes: individual,
+                    ..defaults
+                },
+                &cancel,
+            )
+            .is_ok());
         }
     }
 

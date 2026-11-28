@@ -150,6 +150,12 @@ impl QualifiedBoundedMonitor {
         self.translation.atom()
     }
 
+    /// The horizon: the last counted position the clause reads, so a state at
+    /// a position below it has its step read (ADR-018 UE-6, ADR-028 XV-8).
+    pub fn horizon(&self) -> u64 {
+        self.translation.horizon()
+    }
+
     /// Canonical control before the first observation, for an undefined read.
     pub fn unread_key(&self) -> Result<AutomatonStateKey, QualifiedBoundedError> {
         Ok(self.translation.key(BoundedState::Open {

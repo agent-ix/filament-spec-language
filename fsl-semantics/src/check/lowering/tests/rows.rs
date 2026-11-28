@@ -7,9 +7,9 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_forms::Accumulation;
 
 use super::*;
-use crate::check::Obligation;
 use crate::check::check::EnumBinding;
-use crate::value::definition::{DefinitionRole, admit_ieee_profile};
+use crate::check::Obligation;
+use crate::value::definition::{admit_ieee_profile, DefinitionRole};
 use filament_exact::IllTypedCause;
 
 /// FSL's text-profile definition, the law a text operation names.
@@ -1130,7 +1130,7 @@ fn a_decimal_constructor_lowers_with_its_written_scale_and_a_scale_past_65535_is
             .map(preimage)
             .collect();
         assert_eq!(literals.len(), 1, "{coefficient}/{scale}");
-        Ok::<_, Vec<CheckRefusal>>(literals[0]["body"].clone())
+        Ok::<_, Vec<SemanticCheckRefusal>>(literals[0]["body"].clone())
     };
     for (coefficient, scale, text) in [
         (125, 2, "1.25"),

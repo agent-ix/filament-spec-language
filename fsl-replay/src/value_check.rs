@@ -49,6 +49,7 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::limits::AccountingLimits;
 use crate::spine::kernel_undefined_reason;
+use ix_trace_rs::implements;
 
 /// The claim form a target selects (FSpec FR-484 "Forms").
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -122,6 +123,12 @@ pub enum ParameterDomain {
     /// A type the arm does not enumerate.
     Unsupported(UnsupportedDomain),
 }
+
+/// The published default for `max_cases` (FSpec FR-483): the function-body
+/// evaluations one assignment may spend when a caller names no case budget
+/// (`evaluate` and `replay`). `fsl-analyze`'s value-validity descriptor
+/// publishes the same value.
+pub const DEFAULT_MAX_CASES: u64 = 1_048_576;
 
 /// One parameter of the claim's function.
 #[derive(Clone, Debug)]
@@ -587,12 +594,13 @@ impl<'p> ValueTarget<'p> {
     ///
     /// An [`InternalFault`] when the evaluator breaks one of its invariants
     /// or `assignment` does not fit the target's parameters.
+    #[implements("FR-255-AC-47")]
     pub fn evaluate(
         &self,
         assignment: &[Value],
         cancel: &Cancel,
     ) -> Result<Verdict, InternalFault> {
-        self.evaluate_with_case_budget(assignment, cancel, u64::MAX)
+        self.evaluate_with_case_budget(assignment, cancel, DEFAULT_MAX_CASES)
             .map(|(verdict, _)| verdict)
     }
 
@@ -805,13 +813,14 @@ impl<'p> ValueTarget<'p> {
     /// # Errors
     ///
     /// As [`Self::evaluate`].
+    #[implements("FR-255-AC-47")]
     pub fn replay(
         &self,
         assignment: &[Value],
         expected: &Violation,
         cancel: &Cancel,
     ) -> Result<Option<ReproducedViolation>, InternalFault> {
-        self.replay_with_case_budget(assignment, expected, cancel, u64::MAX)
+        self.replay_with_case_budget(assignment, expected, cancel, DEFAULT_MAX_CASES)
             .map(|(reproduced, _, _)| reproduced)
     }
 

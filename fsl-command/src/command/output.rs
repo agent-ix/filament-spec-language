@@ -134,7 +134,7 @@ impl NativeResult {
     /// The FR-190 result record of a direct model-based test request.
     pub(super) fn model_based_test_document(record: Value) -> Self {
         Self(serde_json::json!({
-            "format": "native-run-result/2",
+            "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
             "model_based_test": record,
         }))
     }
@@ -178,6 +178,7 @@ fn diagnostic(value: &Diagnostic) -> types::Diagnostic<'_> {
 
 #[implements("FR-026-AC-3")]
 #[implements("FR-026-AC-4")]
+#[ix_trace_rs::string_edge]
 pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_json::Error> {
     let (stage, details) = match &error.cause {
         RunCause::Io { path, error } => (
@@ -306,6 +307,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
+        | RunCause::OverrideUnapplied { .. }
         | RunCause::OutputExists { .. }
         | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
         RunCause::TransferSelection { stage, details, .. } => (
@@ -698,13 +700,12 @@ fn extraction_regions_for_locus(
     record: &fsl_replay::spine::ExtractionRecord,
     map: &fsl_foundation::source_map::SourceMap,
 ) -> super::Result<Option<Vec<fsl_replay::spine::ExtractionRegion>>> {
-    use fsl_replay::spine::RefusalLocusRead;
+    use fsl_replay::spine::RefusalLocus;
 
-    let decoded: RefusalLocusRead =
-        serde_json::from_value(locus.clone()).map_err(RunCause::Output)?;
+    let decoded: RefusalLocus = serde_json::from_value(locus.clone()).map_err(RunCause::Output)?;
     let body = map.body();
     let span = match decoded {
-        RefusalLocusRead::Region { source, start, end }
+        RefusalLocus::Region { source, start, end }
             if source.authority == body.identity().authority
                 && source.identity == body.identity().identity =>
         {
@@ -713,7 +714,7 @@ fn extraction_regions_for_locus(
             };
             fsl_foundation::Span { start, end }
         }
-        RefusalLocusRead::Located(fsl_replay::spine::LocatedRead::Native { file, span })
+        RefusalLocus::Located(fsl_replay::spine::Located::Native { file, span })
             if file == body.path() =>
         {
             fsl_foundation::Span {
@@ -1157,6 +1158,28 @@ fn clock_selection_refusal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FR-267-AC-8, FSpec FR-352-AC-8: the model-based-test document carries
+    /// the run-result label with no clause-run or command-error members, so
+    /// the strict reader refuses it at its unknown `model_based_test` member
+    /// (the defect that it is no FR-352 form is tracked separately).
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn the_model_based_test_document_is_refused_by_the_run_result_reader() {
+        let result = NativeResult::model_based_test_document(serde_json::json!({}));
+        let bytes = result.to_bytes().expect("canonical bytes");
+        let Err(fsl_replay::spine::NativeRunReadError::MalformedMember { source, .. }) =
+            fsl_replay::spine::read_native_run_result(&bytes)
+        else {
+            panic!("expected a refusal at the unknown member");
+        };
+        assert!(
+            source
+                .to_string()
+                .starts_with("unknown field `model_based_test`"),
+            "{source}"
+        );
+    }
     use crate::formal_source::FormalSource;
     use filament_contract_model as ir;
     use filament_semantic_value::catalog::Category;
@@ -1204,7 +1227,7 @@ mod tests {
         assert_eq!(
             result.value.as_value(),
             &serde_json::json!({
-                "format": "spine-run-result/1",
+                "format": fsl_foundation::wire_format::WireFormat::SpineRunResult.as_str(),
                 "source": {
                     "authority": "agent-ix",
                     "identity": "test:spine-run",

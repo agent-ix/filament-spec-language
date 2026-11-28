@@ -252,7 +252,11 @@ fn queue_document(variant: Variant) -> Vec<u8> {
             &node(QUEUE, "Digit"),
         ));
     }
-    if variant.boxed_reference || variant.tuple_reference || variant.union_reference || variant.parcel_reference {
+    if variant.boxed_reference
+        || variant.tuple_reference
+        || variant.union_reference
+        || variant.parcel_reference
+    {
         types.push(ring_queue::declaration(
             QUEUE,
             "Box",
@@ -412,7 +416,11 @@ fn ring_document(variant: Variant) -> Vec<u8> {
         ring_queue::bounded(RING, "Digit", 1),
         ring_queue::bounded(RING, "Two", 2),
     ];
-    if variant.boxed_reference || variant.tuple_reference || variant.union_reference || variant.parcel_reference {
+    if variant.boxed_reference
+        || variant.tuple_reference
+        || variant.union_reference
+        || variant.parcel_reference
+    {
         types.push(ring_queue::declaration(
             RING,
             "Box",
@@ -818,10 +826,23 @@ impl RingWorld {
             }}});
         }
         if variant.tuple_reference {
-            queue_fields["pair"] = json!({"absent": {}});
+            queue_fields["pair"] = json!({"present": {"tuple": {
+                "type": node(QUEUE, "Pair"),
+                "components": [
+                    {"reference": {"population": node(QUEUE, "queues"), "key":
+                        if variant.composite_two_targets { "b" } else { "r" }}},
+                    {"boolean": true}
+                ]
+            }}});
         }
         if variant.union_reference {
-            queue_fields["holder"] = json!({"absent": {}});
+            queue_fields["holder"] = json!({"present": {"variant": {
+                "type": node(QUEUE, "Holder"),
+                "case": "Has",
+                "components": [{"reference": {"population": node(QUEUE, "queues"), "key":
+                    if variant.composite_two_targets { "b" } else { "r" }}}
+                ]
+            }}});
         }
         if variant.parcel_reference {
             let owners = if variant.composite_two_targets {
@@ -874,10 +895,23 @@ impl RingWorld {
             }}});
         }
         if variant.tuple_reference {
-            ring_fields["pair"] = json!({"absent": {}});
+            ring_fields["pair"] = json!({"present": {"tuple": {
+                "type": node(RING, "Pair"),
+                "components": [
+                    {"reference": {"population": node(RING, "rings"), "key":
+                        if variant.composite_two_targets { "b" } else { "r" }}},
+                    {"boolean": true}
+                ]
+            }}});
         }
         if variant.union_reference {
-            ring_fields["holder"] = json!({"absent": {}});
+            ring_fields["holder"] = json!({"present": {"variant": {
+                "type": node(RING, "Holder"),
+                "case": "Has",
+                "components": [{"reference": {"population": node(RING, "rings"), "key":
+                    if variant.composite_two_targets { "b" } else { "r" }}}
+                ]
+            }}});
         }
         if variant.parcel_reference {
             let owners = if variant.composite_two_targets {

@@ -17,7 +17,7 @@ use fsl_foundation::selection::DefinitionRef;
 use fsl_semantics::model::observation::AdmissionFailure;
 
 use crate::proof_result::SymmetryRefusal;
-use crate::UndefinedEvaluation;
+use crate::{ProbabilityDocumentError, UndefinedEvaluation};
 
 mod result_reader;
 mod settle;
@@ -29,8 +29,8 @@ pub use settle::{
     SubjectLimits, UnsettledRefusal,
 };
 pub use witness::{
-    replay_sampled_witness, replay_timed_sampled_witness, SampledParity, SampledWitnessRefusal,
-    SampledWitnessReplay, WitnessReadStop, WitnessReader, WitnessReading, WitnessReplay,
+    replay_sampled_witness, SampledParity, SampledWitnessRefusal, SampledWitnessReplay,
+    WitnessReadStop, WitnessReader, WitnessReading, WitnessReplay,
 };
 
 /// How a request decides a claim from its samples (FR-189, FR-190;
@@ -686,11 +686,6 @@ pub enum StatisticalUnsupported {
         /// The idle tail's first timed state.
         state: fsl_eval::simulation::StateKey,
     },
-    /// A local time-lock was reached before the timed sample horizon.
-    TimeLockedSample {
-        /// The time-locked state.
-        state: fsl_eval::simulation::StateKey,
-    },
 }
 
 /// The outcome of a statistical run (FR-189 `StatisticalOutcome`).
@@ -715,6 +710,23 @@ pub enum StatisticalOutcome {
         /// The tests begun and the traces they used.
         provenance: StatisticalProvenance,
     },
+}
+
+/// FR-875 "Profile boundary": what reading an `on each` claim's instance set
+/// found when statistical evidence was requested. No sample is drawn.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OnEachRead {
+    /// The instance set is empty: the item settles `no-instance`.
+    NoInstance,
+    /// The set is not empty. FR-875 admits only exact evidence, so the item is
+    /// not yet implemented.
+    Unimplemented,
+    /// The request was cancelled while the set was read.
+    Cancelled(CancelCause),
+    /// FR-120's admission of the subject failed.
+    Admission(Box<AdmissionFailure>),
+    /// The claim or its populations could not be read.
+    Document(ProbabilityDocumentError),
 }
 
 /// Why EN-4 refuses a request with no outcome (FR-189 `StatisticalRefusal`).
@@ -743,6 +755,10 @@ pub enum StatisticalRefusal {
     /// expected-reward form (ADR-028 XF-4, XF-5, XF-7).
     #[error("this claim form is decided by exact evidence only")]
     ExactOnlyForm,
+    /// An `on each` claim, which no sample decides (FR-875 "Profile
+    /// boundary"), with what reading its instance set found.
+    #[error("an `on each` claim is not sampled: {0:?}")]
+    OnEach(Box<OnEachRead>),
     /// A claim that states no confidence parameters is decided by exact
     /// evidence only (ADR-024 PF-10).
     #[error("a claim with no confidence parameters is decided by exact evidence only")]

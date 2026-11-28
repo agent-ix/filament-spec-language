@@ -222,7 +222,7 @@ pub(super) fn run_model(
             max_candidates: *max_candidates,
         },
         meter: run.accounting,
-        emit: fsl_package::EmitLimits::new(u64::MAX),
+        emit: run.emit,
     };
     let system = match ModelSystem::new(request) {
         Ok(system) => system,
@@ -385,7 +385,7 @@ pub(super) fn run_behaviours(
             max_candidates: crate::spine::DEFAULT_MODEL_MAX_CANDIDATES,
         },
         meter: run.accounting,
-        emit: fsl_package::EmitLimits::new(u64::MAX),
+        emit: run.emit,
     };
     let system = match ModelSystem::new(request) {
         Ok(system) => system,
@@ -437,6 +437,9 @@ pub struct PackageBehaviours<'a> {
     pub accounting: filament_exact::ScalarLimits,
     /// The longest behaviour, in steps.
     pub max_steps: usize,
+    /// The ceiling on the bytes of each package emission the run makes
+    /// (`emit.output_bytes`).
+    pub emit: fsl_package::EmitLimits,
 }
 
 /// [`run_behaviours`] over a checked package: the valuation of the clause
@@ -463,6 +466,7 @@ pub fn run_package_behaviours(
         observation_limits,
         accounting,
         max_steps,
+        emit,
     } = request;
     let Some(mut universes) = universes(snapshots, std::slice::from_ref(initial)) else {
         return Err(Box::new(
@@ -484,7 +488,7 @@ pub fn run_package_behaviours(
             max_candidates: crate::spine::DEFAULT_MODEL_MAX_CANDIDATES,
         },
         meter: accounting,
-        emit: fsl_package::EmitLimits::new(u64::MAX),
+        emit,
     })
     .map_err(|failure| Box::new(ClauseDisposition::Admit(failure)))?;
     let Ok(instances) = system.instances(&clause.over().1) else {

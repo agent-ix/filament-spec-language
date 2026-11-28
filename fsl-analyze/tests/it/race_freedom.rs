@@ -1844,6 +1844,7 @@ fn protocol_run<'c>(
             max_messages: None,
             max_live_instances: None,
         },
+        engines: Default::default(),
         replay: Box::new(move |payload| {
             if race {
                 case.replay_race(selection, payload.clone())
@@ -1914,6 +1915,7 @@ fn analyzed(items: Vec<fsl_analyze::analyze::AnalyzeItem<'_>>) -> Vec<AnalyzeRec
         &Engines::fsl().expect("the layer-A manifests register"),
         items,
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
 }
 

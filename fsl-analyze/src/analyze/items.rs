@@ -6,22 +6,22 @@
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ClauseOutcome, DEFAULT_MAX_CLOCKS, ModelSystem};
+use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
 use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, ProtocolTransition};
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use fsl_replay::statistical::{SubjectLimits, settle_statistical, settle_statistical_refusal};
+use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
 use fsl_replay::{
-    CertificateCheckLimits, CertificateRequest, DeclineCode, ModelTraceRefusal,
-    ModelTraceReplayResult, ProofRefusalCause, RefinementTraceSettlement, ReplayRefusal,
-    SubjectRefusal, TemporalCounterexample, TerminalValue, UnavailabilityCause,
-    ZoneCertificateRequest, check_zone_certificate, settle_hyper_form,
+    check_zone_certificate, settle_hyper_form, CertificateCheckLimits, CertificateRequest,
+    DeclineCode, ModelTraceRefusal, ModelTraceReplayResult, ProofRefusalCause,
+    RefinementTraceSettlement, ReplayRefusal, SubjectRefusal, TemporalCounterexample,
+    TerminalValue, UnavailabilityCause, ZoneCertificateRequest,
 };
 use fsl_replay::{ModelCheckItem, ModelCheckLimits, ProtocolCertificateRequest, SubjectIdentity};
-use fsl_route::Mode;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::request::{DerivedLimit, DerivedLimits, ItemKind, RequestItem, RequirementItem};
+use fsl_route::Mode;
 use fsl_semantics::check::{
     Capability, CheckedTemporalClause, DeclarationFamily, HyperForm, TerminalKeys, TerminalMismatch,
 };
@@ -31,18 +31,18 @@ use ix_trace_rs::implements;
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
 
-use super::{AnalyzeItem, EngineReport, Refusal};
+use super::{AnalyzeItem, EngineBounds, EngineReport, Refusal};
 use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    HyperRefusal, LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
-    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1,
+    check_model_with_stutter_closure, check_protocol_retaining, manifest as en1, HyperRefusal,
+    LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
-use crate::statistical::{StatisticalRequest, check_statistical, manifest as en4};
+use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
-    TimedLivenessHalf, TimedRefinementOutcome, TimedRefinementRefusal, TimedRefinementRequest,
-    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest,
-    ZoneItem, certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
-    settle_timed_refinement, settle_zone_check,
+    certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
+    settle_timed_refinement, settle_zone_check, TimedLivenessHalf, TimedRefinementOutcome,
+    TimedRefinementRefusal, TimedRefinementRequest, TimedSafetyOutcome, ZoneCheckItem,
+    ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
 };
 
 /// The FR-396/FR-399 negotiation seam for a routed hyper item. HP-4 calls
@@ -107,6 +107,9 @@ pub struct ModelItem<'a> {
     pub certificate: CertificateRequest<'a>,
     /// Replays the run's counterexample.
     pub replay: Box<CounterexampleReplayFn<'a>>,
+    /// The caller's engine settings: the run stores its states within their
+    /// `analysis.retained_bytes` (FR-255).
+    pub engines: EngineBounds,
 }
 
 /// The replay of an EN-1 counterexample (FR-128).
@@ -222,13 +225,15 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
         stutter_closure,
         certificate,
         replay,
+        engines,
     } = item;
+    let retained = engines.item_budget(request.subject.simulation.meter, cancel);
     let limits = request.limits;
     let method = request.reductions.constraint.as_ref().map_or_else(
         || fsl_replay::EXPLICIT_STATE.to_owned(),
         |constraint| format!("{} (constraint: {constraint})", fsl_replay::EXPLICIT_STATE),
     );
-    match check_model_with_stutter_closure(request, cancel, stutter_closure) {
+    match check_model_with_stutter_closure(request, cancel, stutter_closure, &retained) {
         Ok(outcome) => {
             let allocation = super::document::effect_decision::ReplayAllocation::default();
             let replay = |payload: &TemporalCounterexample| allocation.capture(replay(payload));
@@ -265,6 +270,8 @@ pub struct ProtocolItem<'a> {
     pub certificate: ProtocolCertificateRequest<'a>,
     /// Replays the run's counterexample.
     pub replay: Box<ProtocolReplayFn<'a>>,
+    /// The caller's engine settings, as [`ModelItem::engines`].
+    pub engines: EngineBounds,
 }
 
 /// The replay of an EN-1 counterexample over a protocol subject (FR-217).
@@ -323,7 +330,9 @@ pub(super) fn settle_protocol_item(
         request,
         certificate,
         replay,
+        engines,
     } = item;
+    let retained = engines.item_budget(request.subject.model.simulation.meter, cancel);
     let limits = request.limits;
     let protocol = request.subject.protocol.clone();
     let on_each = request
@@ -350,7 +359,7 @@ pub(super) fn settle_protocol_item(
         .collect();
     let over = request.subject.over.clone();
     let simulation = request.subject.model.simulation.clone();
-    match check_protocol_constrained(request, constraint, cancel) {
+    match check_protocol_retaining(request, constraint, cancel, &retained) {
         Ok(outcome) => {
             let allocation = super::document::effect_decision::ReplayAllocation::default();
             let record = fsl_replay::settle_protocol_check(
@@ -399,12 +408,6 @@ pub fn statistical_item<'a>(
         Mode::Unbounded,
         en4::BACKEND_ID,
         move |cancel| {
-            if matches!(
-                request.claim.activation,
-                fsl_semantics::check::ClaimActivation::Each { .. }
-            ) {
-                return super::exact::statistical_on_each(request.subject, request.claim, cancel);
-            }
             let simulation = &request.subject.simulation;
             let expansion = simulation.expansion;
             let meter = simulation.meter;
@@ -416,6 +419,15 @@ pub fn statistical_item<'a>(
                         meter: &meter,
                     },
                 ))),
+                Err(fsl_replay::statistical::StatisticalRefusal::OnEach(read)) => {
+                    super::exact::statistical_on_each(
+                        *read,
+                        SubjectLimits {
+                            expansion,
+                            meter: &meter,
+                        },
+                    )
+                }
                 Err(refusal) => statistical_refusal(&refusal),
             }
         },
@@ -1237,17 +1249,14 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
         // The forms and subjects EN-1 does not decide yet: a liveness or
         // refinement form, a protocol refinement or abstract side, a liveness
-        // clause over an `ra` `parallel`, and an undefined read on a closed tuple.
+        // clause over an `ra` `parallel`.
         ModelCheckRefusal::ProtocolRefinement
         | ModelCheckRefusal::FormNotDecided { form: Some(_) }
         | ModelCheckRefusal::WeakLiveness
         | ModelCheckRefusal::ProtocolAbstractSide
-        | ModelCheckRefusal::Hyper(
-            HyperRefusal::ClosedUndefined
-            | HyperRefusal::FormNotDecided {
-                form: Some(fsl_semantics::check::HyperForm::Other { .. }),
-            },
-        ) => Refusal::Unsupported(NOT_YET),
+        | ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+            form: Some(fsl_semantics::check::HyperForm::Other { .. }),
+        }) => Refusal::Unsupported(NOT_YET),
         // Characterization only: FR-337-AC-12 requires CaptureRead to produce
         // no engine verdict. These assertions document the current mapping of
         // that refusal, an undefined hyper constraint and missing form data;
@@ -1574,7 +1583,6 @@ mod tests {
             ModelCheckRefusal::FormNotDecided {
                 form: Some(filament_semantic_value::fairness::PropertyForm::Liveness),
             },
-            ModelCheckRefusal::Hyper(HyperRefusal::ClosedUndefined),
             ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
                 form: Some(fsl_semantics::check::HyperForm::Other {
                     reason: fsl_semantics::check::HyperUnsupported::ExistentialBeforeUniversal,

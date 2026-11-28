@@ -96,7 +96,10 @@ fn run_applies_request_extension_definitions() {
     let result = fsl_command::command::run(&request, &crate::negotiation::Fr290)
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert_eq!(result.exit_code, 0, "{}", result.value);
-    assert!(result.value.to_string().contains("\"type\":\"integer\",\"value\":\"7\""));
+    assert!(result
+        .value
+        .to_string()
+        .contains("\"type\":\"integer\",\"value\":\"7\""));
 }
 
 /// FR-660: source-only check admits the extension form supplied in its check
@@ -349,9 +352,9 @@ fn assert_document_refusal(
     assert_eq!(record.code(), Some("invalid_runtime_input"));
     assert_eq!(record.cause(), Some(cause));
     let fields = record.fields().expect("the refusal carries fields");
-    assert_eq!(fields.get("member").map(String::as_str), field_member);
-    assert_eq!(fields.get("field").map(String::as_str), field);
-    let Some(fsl_replay::spine::RefusalLocusRead::Document {
+    assert_eq!(fields.get("member").as_deref(), field_member);
+    assert_eq!(fields.get("field").as_deref(), field);
+    let Some(fsl_replay::spine::RefusalLocus::Document {
         document: Some(Some(identity)),
         path: Some(Some(path)),
         pointer: actual_pointer,

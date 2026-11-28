@@ -39,6 +39,10 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-088
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-1040
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-829
+    type: references
 ---
 # FR-650: Carry every argument and result kind of a run in the native value grammar
 
@@ -205,7 +209,7 @@ The forms this requirement adds to FR-106's grammar are these:
   `duplicate-member` at `/map/<index>/key`. The writer writes the entries
   ascending by the RFC 8785 bytes of each key's run value form, with a
   Decimal key normalized, as FR-106 orders a set, so a map has one written
-  form whatever entry order was supplied. Any traversal of a Map value, a closure walk or a first-reference search, visits the entries' values in FSpec FR-144 canonical key order, mathematical for Int and Decimal keys; a Map key is always scalar (FSpec FR-144) and never holds a reference, as [filament-semantic-value FR-106](ix://agent-ix/filament-semantic-value/FR-106) states.
+  form whatever entry order was supplied. Any traversal of a Map value, a closure walk or a first-reference search, visits the entries' values in FSpec FR-144 canonical key order, mathematical for Int and Decimal keys; a Map key is always scalar (FSpec FR-144). The native `Reference<Clock>` type is a scalar clock-place value and may be a key (FR-1040-AC-11 and FSpec FR-829-AC-9); an object reference is not an eligible key.
 - **Quantity.** A `Quantity<u>` value, and a value of a carried quantity
   `Quantity<u, C>`, is FR-106's Quantity object `{"kind": "quantity",
   "unit": N, "magnitude": M}`. A `Quantity<u>[min, max]` (BoundedQuantity)

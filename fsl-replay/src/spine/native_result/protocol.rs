@@ -14,6 +14,7 @@ use filament_contract_model::CheckedNodeId;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
+use super::wire::{present, RunResultFormat};
 use super::{read_typed, NativeRunReadError};
 use crate::model_check::settle::{Execution, ResultLabel, Truth};
 use crate::proof_result::{
@@ -439,7 +440,7 @@ impl ProtocolAnalysisRecord {
     /// record built by [`Self::new`] or read by the strict reader does.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ProtocolRecordError> {
         let document = DocumentWire {
-            format: RunResultFormat::V2,
+            format: RunResultFormat,
             analysis: AnalysisWire {
                 kind: self.kind(),
                 key: RawValue::from_string(self.key.to_json()?)?,
@@ -562,23 +563,6 @@ fn max_depth(key: &ProtocolAnalysisKey) -> u64 {
         ProtocolAnalysisKey::Projection(key) => key.bounds.max_depth,
         ProtocolAnalysisKey::Realizability(key) => key.bounds.max_depth,
     }
-}
-
-/// A member present with a value; `null` is refused by the value's type.
-fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(deserializer).map(Some)
-}
-
-/// The one identifier of the wire, which the dispatching reader checked
-/// before choosing this form.
-#[derive(Serialize, Deserialize)]
-enum RunResultFormat {
-    #[serde(rename = "native-run-result/2")]
-    V2,
 }
 
 #[derive(Serialize, Deserialize)]

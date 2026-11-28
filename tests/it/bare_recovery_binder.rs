@@ -680,9 +680,7 @@ fn a_selected_union_with_an_unrepresented_payload_refuses_before_charging() {
     assert!(meter.admitted_charges().is_empty());
 }
 
-fn assert_case_arm_union(
-    unrelated: &str,
-) -> Vec<Vec<filament_exact::AdmittedCharge>> {
+fn assert_case_arm_union(unrelated: &str) -> Vec<Vec<filament_exact::AdmittedCharge>> {
     use fsl_foundation::SourceIdentity;
     use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits, SuppliedLibrary};
 

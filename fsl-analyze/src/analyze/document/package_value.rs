@@ -68,7 +68,10 @@ pub(super) fn extent(package: &BarePackage<'_>, row: &RequirementItemRow) -> Opt
 pub(crate) fn operation_contract_record<'row>(
     package: &BarePackage<'_>,
     row: &'row RequirementItemRow,
-) -> Option<(&'row filament_contract_model::OperationContractRecord, ClaimExtent)> {
+) -> Option<(
+    &'row filament_contract_model::OperationContractRecord,
+    ClaimExtent,
+)> {
     if row.kind != CapabilityKind::OperationContract {
         return None;
     }

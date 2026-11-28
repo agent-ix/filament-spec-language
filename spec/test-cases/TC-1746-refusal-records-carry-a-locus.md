@@ -92,7 +92,7 @@ Tag the tests `#[trace("TC-1746", "<AC id>")]`.
 - Step 2: `unknown-member` with `member` `extra` and its pointer.
 - Step 3: `locus` present and `null`.
 - Step 4: each adapter preserves stage S3 and the original code/cause,
-  exits 20 and creates no checked package or synthesis request. Its
+  exits 21 (the `unsupported` category of `unsupported_projection`, FR-285) and creates no checked package or synthesis request. Its
   diagnostic locus is exactly TC-3081's imported-point vector. No endpoint
   has a `byte` member; no native source-label pair is attached to the
   imported path and point. The command-error envelope contains `details`

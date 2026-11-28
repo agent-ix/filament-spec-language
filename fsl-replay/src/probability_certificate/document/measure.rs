@@ -9,12 +9,16 @@ use fsl_eval::probabilistic::{
 use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, PredicateReading};
 use fsl_semantics::check::{BoundedMeasure, CheckedPredicate, Event, Weighting};
 use ix_trace_rs::implements;
-use quire_canonical::{Encode, Error, Node, Sink, Writer};
+use quire_canonical::{Error, Node};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(super) const PROFILE: &str = "filament.probability-objective/finite-horizon-measure/v1";
 pub(in crate::probability_certificate) mod bounds;
+mod wire;
+#[cfg(test)]
+mod wire_tests;
+use wire::{Events, ReadBody, ReadDocument, ReadObjective, WireDocument};
 
 /// Terminal-payoff role of a finite-horizon measure proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +44,7 @@ impl MeasurePayoffKind {
             Self::Fraction => "fraction",
         }
     }
+    #[ix_trace_rs::string_edge]
     fn read(text: &str) -> Result<Self, ProbabilityDocumentError> {
         match text {
             "event" => Ok(Self::Event),
@@ -144,6 +149,7 @@ pub(super) struct CheckOptions<'a> {
     pub(super) role: super::CertificateRole,
     pub(super) limits: ProbabilityDocumentLimits,
     pub(super) cancel: &'a Cancel,
+    pub(super) work: Option<&'a filament_exact::WorkScope>,
 }
 
 pub(in crate::probability_certificate) fn ordered(
@@ -1029,14 +1035,10 @@ fn enumerate(
                             }))
                         })?;
                     action_labels.push(None);
-                    vec![
-                        steps
-                            .into_iter()
-                            .map(|step| {
-                                Successor::Position(step.probability, step.post, step.rewards)
-                            })
-                            .collect::<Vec<_>>(),
-                    ]
+                    vec![steps
+                        .into_iter()
+                        .map(|step| Successor::Position(step.probability, step.post, step.rewards))
+                        .collect::<Vec<_>>()]
                 } else {
                     let actions = system
                         .actions_with_budget(
@@ -1375,44 +1377,6 @@ fn distribution_error(
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireMeasure {
-    kind: String,
-    window: u64,
-    reward: Option<(Box<serde_json::value::RawValue>, String)>,
-    unit: Box<serde_json::value::RawValue>,
-    comparison: Option<String>,
-    threshold: Option<WireRational>,
-    level: Option<WireRational>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireObjective {
-    profile: String,
-    payoff: String,
-    measure: WireMeasure,
-    optimization: String,
-    fairness: Vec<Box<serde_json::value::RawValue>>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireDocument {
-    identity: WireIdentity,
-    objective: WireObjective,
-    kind: String,
-    values: Vec<WireValue>,
-    ranking: Vec<WireRank>,
-    conditional: Option<WireConditional>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireConditional {
-    mode: String,
-    numerator: Option<Box<WireDocument>>,
-    denominator: Option<Box<WireDocument>>,
-}
-
 fn decode_state(
     text: &str,
     limits: ProbabilityDocumentLimits,
@@ -1473,8 +1437,9 @@ fn decode_state(
     Ok(ProbabilityProductKey::from_canonical_bytes(bytes))
 }
 
+#[ix_trace_rs::string_edge]
 fn read_wire(
-    wire: WireDocument,
+    wire: ReadBody,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
@@ -1598,9 +1563,10 @@ fn read_wire(
                 "ratio" if objective.optimization == ProbabilityObjective::Workload => {
                     Conditional::Ratio(
                         Box::new(read_wire(
-                            *conditional
+                            conditional
                                 .numerator
-                                .ok_or(ProbabilityDocumentError::MalformedMember("numerator"))?,
+                                .ok_or(ProbabilityDocumentError::MalformedMember("numerator"))?
+                                .0,
                             limits,
                             cancel,
                             meter,
@@ -1608,9 +1574,10 @@ fn read_wire(
                             depth + 1,
                         )?),
                         Box::new(read_wire(
-                            *conditional
+                            conditional
                                 .denominator
-                                .ok_or(ProbabilityDocumentError::MalformedMember("denominator"))?,
+                                .ok_or(ProbabilityDocumentError::MalformedMember("denominator"))?
+                                .0,
                             limits,
                             cancel,
                             meter,
@@ -1665,9 +1632,9 @@ pub(super) fn decode_measure_probability_certificate(
             .unwrap_or(u64::MAX)
             .saturating_mul(4),
     )?;
-    let wire: WireDocument =
+    let wire: ReadDocument =
         serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
-    let document = read_wire(wire, limits, cancel, meter, storage, 0)?;
+    let document = read_wire(wire.0, limits, cancel, meter, storage, 0)?;
     let canonical = encode_with_storage(&document, limits, cancel, storage)?;
     if canonical != bytes {
         return Err(ProbabilityDocumentError::Noncanonical);
@@ -1682,7 +1649,7 @@ pub fn read_measure_probability_certificate(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let document =
         decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut 0)?;
     validate_ranges(&document, cancel, &mut meter)?;
@@ -1697,7 +1664,7 @@ pub(super) fn identity(
         bytes,
         limits,
         cancel,
-        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+        &mut limits.accounting_meter(cancel),
         &mut 0,
     )?
     .identity)
@@ -1745,163 +1712,6 @@ fn validate_ranges(
     Ok(())
 }
 
-struct Events<'a> {
-    document: &'a MeasureProbabilityDocument,
-    text: writer::Text<'a>,
-}
-impl Events<'_> {
-    fn rational<S: Sink + ?Sized>(
-        &self,
-        value: &Rational,
-        writer: &mut Writer<'_, S>,
-    ) -> Result<(), Error> {
-        writer.begin_object()?;
-        writer.name("numerator")?;
-        self.text.integer(value.numerator(), writer)?;
-        writer.name("denominator")?;
-        self.text.integer(value.denominator(), writer)?;
-        writer.end_object()
-    }
-}
-impl Encode for Events<'_> {
-    fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
-        self.text.poll()?;
-        let document = self.document;
-        writer.begin_object()?;
-        writer.name("identity")?;
-        writer.begin_object()?;
-        writer.name("node_id")?;
-        fsl_foundation::node_wire::encode_node_key(document.identity.node(), writer)?;
-        writer.name("model")?;
-        match document.identity.model() {
-            Some(model) => writer.string(model.as_str())?,
-            None => writer.null()?,
-        }
-        writer.name("ordinal")?;
-        writer.integer(i128::from(document.identity.ordinal()))?;
-        writer.end_object()?;
-        writer.name("objective")?;
-        writer.begin_object()?;
-        writer.name("profile")?;
-        writer.string(PROFILE)?;
-        writer.name("payoff")?;
-        writer.string(document.payoff.text())?;
-        writer.name("measure")?;
-        writer.begin_object()?;
-        writer.name("kind")?;
-        writer.string(document.objective.kind)?;
-        writer.name("window")?;
-        writer.integer(i128::from(document.objective.window))?;
-        writer.name("reward")?;
-        match &document.objective.reward {
-            None => writer.null()?,
-            Some(reward) => {
-                writer.begin_array()?;
-                fsl_foundation::node_wire::encode_node_key(&reward.model, writer)?;
-                writer.string(reward.name.as_str())?;
-                writer.end_array()?;
-            }
-        }
-        writer.name("unit")?;
-        self.text.unit(
-            document
-                .objective
-                .reward
-                .as_ref()
-                .and_then(|reward| reward.unit.as_ref()),
-            writer,
-        )?;
-        writer.name("comparison")?;
-        match document.objective.comparison {
-            None => writer.null()?,
-            Some(comparison) => writer.string(match comparison {
-                MeasureComparison::Le => "le",
-                MeasureComparison::Lt => "lt",
-                MeasureComparison::Ge => "ge",
-            })?,
-        }
-        writer.name("threshold")?;
-        match &document.objective.threshold {
-            None => writer.null()?,
-            Some(value) => self.rational(value, writer)?,
-        }
-        writer.name("level")?;
-        match &document.objective.level {
-            None => writer.null()?,
-            Some(value) => self.rational(value, writer)?,
-        }
-        writer.end_object()?;
-        writer.name("optimization")?;
-        writer.string(match document.objective.optimization {
-            ProbabilityObjective::Minimum => "minimum",
-            ProbabilityObjective::Maximum => "maximum",
-            ProbabilityObjective::Workload => "workload",
-            ProbabilityObjective::WorkloadMinimum => "workload-minimum",
-            ProbabilityObjective::WorkloadMaximum => "workload-maximum",
-        })?;
-        writer.name("fairness")?;
-        writer.begin_array()?;
-        for constraint in &document.objective.fairness {
-            self.text.poll()?;
-            constraint.encode_into(writer)?;
-        }
-        writer.end_array()?;
-        writer.end_object()?;
-        writer.name("kind")?;
-        writer.string(if document.conditional.is_some() {
-            "conditional"
-        } else {
-            "exact"
-        })?;
-        writer.name("values")?;
-        writer.begin_array()?;
-        for (index, row) in document.values.iter().enumerate() {
-            writer.begin_object()?;
-            writer.name("state")?;
-            self.text.key(&row.state, writer, index != 0)?;
-            writer.name("value")?;
-            self.rational(&row.value, writer)?;
-            writer.end_object()?;
-        }
-        writer.end_array()?;
-        writer.name("ranking")?;
-        writer.begin_array()?;
-        for (index, (state, rank)) in document.ranking.iter().enumerate() {
-            writer.begin_object()?;
-            writer.name("state")?;
-            self.text.key(state, writer, index != 0)?;
-            writer.name("rank")?;
-            writer.integer(i128::from(*rank))?;
-            writer.end_object()?;
-        }
-        writer.end_array()?;
-        if let Some(conditional) = &document.conditional {
-            writer.name("conditional")?;
-            writer.begin_object()?;
-            writer.name("mode")?;
-            match conditional.as_ref() {
-                Conditional::Vacuous => writer.string("vacuous")?,
-                Conditional::Ratio(numerator, denominator) => {
-                    writer.string("ratio")?;
-                    writer.name("numerator")?;
-                    Events {
-                        document: numerator,
-                        text: writer::Text::new(self.text.limits(), self.text.cancel()),
-                    }
-                    .encode_into(writer)?;
-                    writer.name("denominator")?;
-                    Events {
-                        document: denominator,
-                        text: writer::Text::new(self.text.limits(), self.text.cancel()),
-                    }
-                    .encode_into(writer)?;
-                }
-            }
-            writer.end_object()?;
-        }
-        writer.end_object()
-    }
-}
 pub(super) fn encode(
     document: &MeasureProbabilityDocument,
     limits: ProbabilityDocumentLimits,
@@ -1959,6 +1769,31 @@ pub fn measure_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    measure_probability_certificate_document_with_work_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        payoff,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+/// Build an unchecked exact measure document under the item's shared allowance.
+#[implements("FR-203-AC-29")]
+#[allow(clippy::too_many_arguments)]
+pub fn measure_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    payoff: MeasurePayoffKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     producer_document(
         system,
         claims,
@@ -1968,6 +1803,7 @@ pub fn measure_probability_certificate_document(
         false,
         limits,
         cancel,
+        work,
     )
 }
 
@@ -1985,6 +1821,31 @@ pub fn partial_lower_measure_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    partial_lower_measure_probability_certificate_document_with_work_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        payoff,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+/// Build a partial lower measure document under the item's shared allowance.
+#[implements("FR-203-AC-29")]
+#[allow(clippy::too_many_arguments)]
+pub fn partial_lower_measure_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    payoff: MeasurePayoffKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     producer_document(
         system,
         claims,
@@ -1994,6 +1855,7 @@ pub fn partial_lower_measure_probability_certificate_document(
         true,
         limits,
         cancel,
+        work,
     )
 }
 
@@ -2007,9 +1869,10 @@ fn producer_document(
     partial_lower: bool,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     let claim = bind_claim(claims, item, cancel)?;
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let plan = plan(
         system,
@@ -2059,11 +1922,26 @@ pub fn vacuous_measure_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    vacuous_measure_probability_certificate_document_with_work_scope(
+        system, claims, item, limits, cancel, None,
+    )
+}
+
+/// Build value-free vacuous evidence under the item's shared allowance.
+#[implements("FR-203-AC-29")]
+pub fn vacuous_measure_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     let claim = bind_claim(claims, item, cancel)?;
     if !matches!(claim.form, ProbForm::Quantile { .. }) {
         return Err(ProbabilityDocumentError::MalformedMember("mode"));
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let selected = plan(
         system,
@@ -2395,7 +2273,7 @@ fn acceptance(
     })
 }
 
-#[implements("FR-1043-AC-1")]
+#[implements("FR-203-AC-30", "FR-1043-AC-1")]
 #[implements("FR-1042-AC-27", "FR-1042-AC-29", "FR-1042-AC-30", "FR-1043-AC-10")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -2410,8 +2288,9 @@ pub(super) fn check(
         role,
         limits,
         cancel,
+        work,
     } = options;
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let document = match decode_measure_probability_certificate(
         bytes,
@@ -2472,7 +2351,7 @@ pub(super) fn check(
             }
             poll(cancel)?;
             return Ok(ExactProbabilityCertificateCheck::AcceptedVacuous(
-                ProbabilityVacuityAcceptance {
+                ProbabilityValueFreeAcceptance {
                     document: bytes.to_vec().into_boxed_slice(),
                     side: if plan.strict {
                         ProbabilityBoundSide::AtLeast
@@ -3141,6 +3020,7 @@ pub(in crate::probability_certificate) enum MeanRefutationCheck {
     Rejected(ProbabilityCertificateRejection),
     PolicyParity,
 }
+#[implements("FR-203-AC-32")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check_mean_refutation(
     system: &ModelSystem<'_>,
@@ -3150,6 +3030,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<MeanRefutationCheck, ProbabilityDocumentError> {
     poll(cancel)?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limits.bytes {
@@ -3160,9 +3041,9 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
         ));
     }
     if bounds::is_bound(bytes)? {
-        return bounds::check(system, claim, item, bytes, scheduler, limits, cancel);
+        return bounds::check(system, claim, item, bytes, scheduler, limits, cancel, work);
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let document =
         decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut storage)?;

@@ -289,6 +289,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     use fsl_analyze::analyze::document::{
         resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{AnalyzeLimits, Counterexample, Engines, SubjectBinding};
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PopulationUniverse,
@@ -376,7 +377,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     };
     let limits = AnalyzeLimits {
         emit: compiled.emit_limits(),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let items = resolve_items(
         checked,
@@ -389,12 +390,14 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     );
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: checked,
             binding,
             provision: compiled.sources().clone(),
             items,
             engines: &engines,
             limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),
@@ -735,6 +738,7 @@ fn package_replay_authenticates_owner_ordinal_model_and_slice(claim: &str) {
             world.request("TooLikely", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(

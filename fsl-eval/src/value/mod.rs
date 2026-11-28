@@ -15,12 +15,12 @@ pub mod composite;
 mod expression;
 pub(crate) use expression::evaluate_clause_set_with_meter_factory;
 pub(crate) use expression::evaluate_generated_package_protocol_slot;
-pub(crate) use expression::{
-    evaluate_hyper_holds_with_component_bindings, evaluate_model_relation_tuple,
-};
 pub use expression::{
     convert_text_value, evaluate_model_relation, evaluate_model_relation_transitions,
     ModelRelationEvaluation, S6aRewardEvaluator,
+};
+pub(crate) use expression::{
+    evaluate_hyper_holds_with_component_bindings, evaluate_model_relation_tuple,
 };
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their

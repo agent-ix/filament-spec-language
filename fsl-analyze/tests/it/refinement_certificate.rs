@@ -70,6 +70,7 @@ fn run(world: &World) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -376,7 +377,9 @@ fn each_corrupted_field_is_rejected() {
                 Taken::Abstract(_) => Taken::Stutter,
                 Taken::CandidateSteps(_) => Taken::Stutter,
                 Taken::Protocol(_) => Taken::Stutter,
-                Taken::ProtocolTraces(_) | Taken::Failing => Taken::Stutter,
+                Taken::ProtocolTraces(_) | Taken::ProtocolPathRefs(_) | Taken::Failing => {
+                    Taken::Stutter
+                }
             };
             let (rule, _) = rejected(check(&world, &tampered));
             assert_eq!(rule, CertificateRule::PostDiffers);
@@ -765,6 +768,7 @@ fn run_to(world: &World, max_depth: Option<usize>) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

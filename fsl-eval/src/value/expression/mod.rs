@@ -273,6 +273,7 @@ impl fsl_semantics::check::RewardEvaluator for S6aRewardEvaluator {
             }
         }
 
+        #[ix_trace_rs::string_edge]
         fn code(catalog: CatalogCode) -> Code {
             match catalog.code() {
                 "ill_typed" => Code::IllTyped,
@@ -519,6 +520,7 @@ pub fn evaluate_model_relation_transitions(
     settle_model_relation_evaluation(evaluation)
 }
 
+#[ix_trace_rs::string_edge]
 pub(crate) fn bind_model_relation_transitions(
     executions: &[(String, fsl_semantics::check::OperationKey)],
     parameters: &[(String, ValueType)],

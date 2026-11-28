@@ -6,6 +6,7 @@
 use crate::refinement_protocol_support::cas_twice;
 use filament_exact::Cancel;
 use filament_semantic_value::checking::CheckMode;
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply};
 use fsl_analyze::model_check::{check_refinement, ModelCheckRefusal, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::operation_identity_text;
@@ -14,10 +15,11 @@ use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{
     check_protocol_initial, check_protocol_step, check_simulation_certificate,
     open_protocol_systems, replay_protocol_assumption_witness, replay_refinement_trace,
-    settle_refinement_safety, settle_refinement_safety_with_assumption_replay, Certification,
-    ClosureRefusal, ConcreteStep, ModelCheckLimits, ProofBasis, ProtocolAssumptionReplaySettlement,
-    RefinementPosition, RefinementTraceSettlement, SafetyOutcome, SettlementBasis,
-    SimulationCertificateRequest, SimulationRefusal, StepVerdict, Taken, TerminalValue,
+    replay_refinement_trace_retained, settle_refinement_safety,
+    settle_refinement_safety_with_assumption_replay, Certification, ClosureRefusal, ConcreteStep,
+    ModelCheckLimits, ProofBasis, ProtocolAssumptionReplaySettlement, RefinementPosition,
+    RefinementTraceSettlement, SafetyOutcome, SettlementBasis, SimulationCertificateRequest,
+    SimulationRefusal, StepVerdict, Taken, TerminalValue,
 };
 use ix_trace_rs::trace;
 
@@ -97,6 +99,7 @@ fn a_twice_protocol_refinement_holds_uncertified() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -126,6 +129,69 @@ fn a_twice_protocol_refinement_holds_uncertified() {
         }
     );
     assert_eq!(settled.basis, SettlementBasis::ClosedScope);
+}
+
+/// FR-255-AC-29: a one-byte retention allowance stops a protocol refinement
+/// at its first closure path, before that path is stored.
+#[trace("FR-255-AC-29")]
+#[test]
+fn a_one_byte_retention_allowance_stops_a_protocol_refinement_at_its_first_closure_path() {
+    use fsl_foundation::{budget::Budget, Setting};
+    let source = cas_twice(false, false);
+    let world = World::with_internals(
+        Variant {
+            peek: false,
+            intended_terminal: true,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+    );
+    let run = |bound: Option<u64>| -> (SafetyOutcome, Budget) {
+        let mut engines = fsl_analyze::analyze::EngineBounds::default();
+        if let Some(bound) = bound {
+            assert!(engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let retained = engines.item_budget(UNLIMITED, &Cancel::new());
+        let outcome = check_refinement(
+            RefinementCheckRequest {
+                refinement: world.refinement(),
+                concrete: ModelSubject {
+                    simulation: world.concrete_request(UNLIMITED),
+                    proof_bounds: Vec::new(),
+                },
+                abstract_package: world.package(),
+                abstract_initial: vec![world.abstract_initial()].into(),
+                abstract_protocol_binding: Some(protocol_binding()),
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                retained: Some(&retained),
+            },
+            &Cancel::new(),
+        )
+        .expect("the abstract protocol subject is admitted")
+        .safety;
+        (outcome, retained)
+    };
+    let (stopped, retained) = run(Some(1));
+    assert_eq!(retained.consumed(Setting::AnalysisRetainedBytes), 0);
+    let SafetyOutcome::Stopped { cause, limit, .. } = &stopped else {
+        panic!("expected a stop, got {stopped:?}");
+    };
+    assert_eq!(*cause, fsl_replay::IncompleteCause::ResourceExhausted);
+    assert_eq!(
+        *limit,
+        Some(fsl_replay::ReachedLimit {
+            limit: fsl_replay::ModelCheckLimit::AnalysisRetainedBytes,
+            value: 1,
+        })
+    );
+    assert_eq!(format!("{stopped:?}"), format!("{:?}", run(Some(1)).0));
+    let (published, _) = run(None);
+    assert!(
+        matches!(published, SafetyOutcome::HoldsUncertified { .. }),
+        "{published:?}"
+    );
 }
 
 /// FR-899-AC-10 (TC-552): the weak `inc` requirement settles over protocol
@@ -163,6 +229,7 @@ fn a_protocol_refinement_checks_hidden_fairness_state_liveness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -214,6 +281,7 @@ fn cas_twice_without_peek_holds_weak_abstract_inc_fairness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -310,6 +378,7 @@ fn a_stronger_concrete_assumption_never_settles_proved() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -353,6 +422,228 @@ fn a_stronger_concrete_assumption_never_settles_proved() {
     ));
 }
 
+/// FR-255-AC-47 (QSL-3573): a replay over a protocol system stores no closure
+/// path past its `analysis.retained_bytes` allowance and expands no more
+/// transitions than the published `model_check.max_transitions` for a direct
+/// caller: with one byte, `check_protocol_initial` stops at its first closure
+/// path naming the limit. The assumption-witness replay charges the closure
+/// states it stores, the root first, through the same allowance: one byte
+/// stops it at the root.
+#[trace("FR-255-AC-47")]
+#[test]
+fn a_direct_protocol_check_stops_at_the_retained_allowance() {
+    let source = cas_twice(true, false)
+        .replace(
+            "protocol Twice",
+            "pre PeekPre using v on Impl::Counter::peek { self.value = 2 }\nprotocol Twice",
+        )
+        .replace(
+            "step Impl::Counter::peek -> stutter;",
+            "step Impl::Counter::peek -> stutter;\nassume fair weak whole Impl::Counter::beginA;",
+        );
+    let world = World::with_internals(
+        Variant {
+            peek: true,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done","Spec::Twice::a1"]}]),
+    );
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            retained: None,
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+    let SafetyOutcome::Undecided {
+        cause: fsl_replay::SafetyUndecided::ProtocolAssumptionNotEstablished(witness),
+        ..
+    } = &outcome.safety
+    else {
+        panic!("the strengthened assumption is not established");
+    };
+    let systems = open_protocol_systems(
+        world.refinement(),
+        &world.concrete_request(UNLIMITED),
+        world.package(),
+        vec![world.abstract_initial()],
+        protocol_binding().over,
+        &[],
+    )
+    .expect("the assumption lasso replays over its admitted systems");
+    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+    let reached = fsl_replay::ReachedLimit {
+        limit: fsl_replay::ModelCheckLimit::AnalysisRetainedBytes,
+        value: 1,
+    };
+    assert_eq!(protocol.replay_transitions(), (100_000_000, 0));
+    assert_eq!(
+        protocol
+            .replay_retained()
+            .bound(fsl_foundation::Setting::AnalysisRetainedBytes),
+        4_294_967_296
+    );
+    assert_eq!(fsl_replay::value_check::DEFAULT_MAX_CASES, 1_048_576);
+    protocol.bound_replay_retained(1);
+    let initial = systems.concrete.initial_states()[0].clone();
+    let verdict = check_protocol_initial(
+        world.refinement(),
+        &systems.concrete,
+        &systems.abstract_system,
+        protocol,
+        0,
+        initial.state(),
+    )
+    .expect("the initial state settles")
+    .verdict;
+    assert!(
+        matches!(&verdict, StepVerdict::Stopped(stop) if *stop == reached),
+        "{verdict:?}"
+    );
+    // The replay stores the root it queues, so one byte stops it there.
+    protocol.bound_replay_retained(1);
+    assert_eq!(
+        replay_protocol_assumption_witness(world.refinement(), &systems, witness)
+            .expect("the replay settles"),
+        ProtocolAssumptionReplaySettlement::Stopped(reached)
+    );
+    protocol.bound_replay_retained(4_294_967_296);
+    assert!(!matches!(
+        replay_protocol_assumption_witness(world.refinement(), &systems, witness)
+            .expect("the replay settles"),
+        ProtocolAssumptionReplaySettlement::Stopped(_)
+    ));
+}
+
+/// FR-255-AC-47 (QSL-3573): the assumption-witness replay charges each state
+/// of a non-empty internal initial closure to `analysis.retained_bytes`. With
+/// the first step (`a1`) internal, the closure to the state after it holds the
+/// root and one successor: an allowance of the root's bytes admits the root
+/// and stops at the successor, naming the allowance.
+#[trace("FR-255-AC-47")]
+#[test]
+fn a_witness_replay_over_a_non_empty_initial_closure_stops_at_the_retained_allowance() {
+    let source = cas_twice(true, false)
+        .replace(
+            "protocol Twice",
+            "pre PeekPre using v on Impl::Counter::peek { self.value = 2 }\nprotocol Twice",
+        )
+        .replace(
+            "step Impl::Counter::peek -> stutter;",
+            "step Impl::Counter::peek -> stutter;\nassume fair weak whole Impl::Counter::beginA;",
+        );
+    let world = World::with_internals(
+        Variant {
+            peek: true,
+            ..Variant::CAS
+        },
+        &source,
+        serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done","Spec::Twice::a1"]}]),
+    );
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            retained: None,
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+    let SafetyOutcome::Undecided {
+        cause: fsl_replay::SafetyUndecided::ProtocolAssumptionNotEstablished(witness),
+        ..
+    } = &outcome.safety
+    else {
+        panic!("the strengthened assumption is not established");
+    };
+    let systems = open_protocol_systems(
+        world.refinement(),
+        &world.concrete_request(UNLIMITED),
+        world.package(),
+        vec![world.abstract_initial()],
+        protocol_binding().over,
+        &[],
+    )
+    .expect("the assumption lasso replays over its admitted systems");
+    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+    let root = protocol
+        .initial()
+        .next()
+        .expect("a root")
+        .expect("the root opens");
+    let (root_key, _) = protocol.state_key(&root).expect("the root has a key");
+    let expansion = protocol.successors(&root).expect("the root expands");
+    let (_, after) = expansion
+        .successors
+        .into_iter()
+        .find(|(transition, _)| {
+            fsl_replay::protocol_transition_class(protocol, transition)
+                .is_some_and(|class| class.as_str() == "Twice::a1")
+        })
+        .expect("the root has the internal step a1");
+    let (target, _) = protocol.state_key(&after).expect("the successor has a key");
+    let mut witness = witness.clone();
+    witness.path.protocol_initial = target;
+    let node_bytes = |key: &[u8]| {
+        256_u64
+            + key.len() as u64
+            + std::mem::size_of::<fsl_eval::simulation::protocol::ProtocolTransition>() as u64
+    };
+    let reached = |bound| {
+        ProtocolAssumptionReplaySettlement::Stopped(fsl_replay::ReachedLimit {
+            limit: fsl_replay::ModelCheckLimit::AnalysisRetainedBytes,
+            value: bound,
+        })
+    };
+    // The root alone is more than one byte.
+    protocol.bound_replay_retained(1);
+    assert_eq!(
+        replay_protocol_assumption_witness(world.refinement(), &systems, &witness)
+            .expect("the replay settles"),
+        reached(1)
+    );
+    // The root fits exactly; the closure's successor does not.
+    let allowance = node_bytes(&root_key);
+    protocol.bound_replay_retained(allowance);
+    assert_eq!(
+        replay_protocol_assumption_witness(world.refinement(), &systems, &witness)
+            .expect("the replay settles"),
+        reached(allowance)
+    );
+    assert_eq!(
+        protocol
+            .replay_retained()
+            .consumed(fsl_foundation::Setting::AnalysisRetainedBytes),
+        allowance
+    );
+    // Under the default allowance the closure is stored whole.
+    protocol.bound_replay_retained(4_294_967_296);
+    assert!(!matches!(
+        replay_protocol_assumption_witness(world.refinement(), &systems, &witness)
+            .expect("the replay settles"),
+        ProtocolAssumptionReplaySettlement::Stopped(_)
+    ));
+}
+
 /// FR-148-AC-6 (TC-553): the protocol's derived weak whole scheduler
 /// constraint is checked over protocol transitions and implies the matching
 /// concrete weak whole operation assumption on the paired product.
@@ -389,6 +680,7 @@ fn protocol_scheduler_fairness_can_imply_a_concrete_assumption() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -486,6 +778,7 @@ fn one_protocol_class_does_not_imply_a_second_concrete_operation_assumption() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -618,6 +911,7 @@ fn a_protocol_product_limit_stops_assumption_decision_incomplete() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -694,6 +988,7 @@ fn required_strong_each_fairness_implies_concrete_weak_whole() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -733,6 +1028,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -888,6 +1184,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: limited,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -954,6 +1251,7 @@ fn a_satisfied_ensure_does_not_change_the_assumption_relation() {
                 abstract_protocol_binding: Some(protocol_binding()),
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                retained: None,
             },
             &Cancel::new(),
         )
@@ -1127,6 +1425,7 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
         }),
         max_depth: None,
         limits: ModelCheckLimits::default(),
+        retained: None,
     };
     let memory_fairness = preopened
         .abstract_protocol
@@ -1285,6 +1584,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1397,6 +1697,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: limited,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1469,6 +1770,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1522,10 +1824,36 @@ fn assert_refuted_and_replayed(
     protocol_name: &str,
     expected_position: u64,
 ) {
+    let (settled, _) = refuted_and_replayed_under(
+        source,
+        variant,
+        refinement_name,
+        protocol_name,
+        expected_position,
+        &fsl_replay::ModelCheckLimits::default(),
+    );
+    assert!(matches!(
+        settled,
+        RefinementTraceSettlement::Reproduced { .. }
+    ));
+}
+
+/// The settlement of replaying the protocol refinement's counterexample under
+/// `limits`, after checking that the run refutes it at `expected_position`,
+/// with the protocol transitions the replay expanded.
+fn refuted_and_replayed_with(
+    source: String,
+    variant: Variant,
+    refinement_name: &str,
+    expected_position: Option<u64>,
+    internal: &[&str],
+    limits: &fsl_replay::ModelCheckLimits,
+    retained: Option<&fsl_foundation::budget::Budget>,
+) -> (RefinementTraceSettlement, u64, u64) {
     let world = World::with_internals(
         variant,
         &source,
-        serde_json::json!([{"refinement":refinement_name,"internal":[format!("Spec::{protocol_name}::Done")]}]),
+        serde_json::json!([{"refinement":refinement_name,"internal":internal}]),
     );
     let outcome = check_refinement(
         RefinementCheckRequest {
@@ -1539,6 +1867,7 @@ fn assert_refuted_and_replayed(
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained,
         },
         &Cancel::new(),
     )
@@ -1546,10 +1875,15 @@ fn assert_refuted_and_replayed(
     let SafetyOutcome::Violated { counterexample, .. } = outcome.safety else {
         panic!("protocol refinement is refuted: {:?}", outcome.safety);
     };
-    assert!(matches!(
-        counterexample.refinement,
-        Some(fsl_replay::RefinementFailure::NoAbstractMatch { position }) if position == expected_position
-    ));
+    if let Some(expected_position) = expected_position {
+        assert!(matches!(
+            counterexample.refinement,
+            Some(fsl_replay::RefinementFailure::NoAbstractMatch { position }) if position == expected_position
+        ));
+    }
+    let checked = retained.map_or(0, |budget| {
+        budget.consumed(fsl_foundation::Setting::AnalysisRetainedBytes)
+    });
     let systems = open_protocol_systems(
         world.refinement(),
         &world.concrete_request(UNLIMITED),
@@ -1559,11 +1893,139 @@ fn assert_refuted_and_replayed(
         &[],
     )
     .expect("replay opens the same abstract protocol system");
+    let settled = replay_refinement_trace_retained(
+        world.refinement(),
+        &systems,
+        &counterexample,
+        limits,
+        retained,
+    )
+    .expect("counterexample replay runs");
+    let (_, expanded) = systems
+        .abstract_protocol
+        .as_ref()
+        .expect("a protocol subject")
+        .replay_transitions();
+    (settled, expanded, checked)
+}
+
+/// [`refuted_and_replayed_with`] under the default item allowance.
+fn refuted_and_replayed_under(
+    source: String,
+    variant: Variant,
+    refinement_name: &str,
+    protocol_name: &str,
+    expected_position: u64,
+    limits: &fsl_replay::ModelCheckLimits,
+) -> (RefinementTraceSettlement, u64) {
+    let (settled, expanded, _) = refuted_and_replayed_with(
+        source,
+        variant,
+        refinement_name,
+        Some(expected_position),
+        &[&format!("Spec::{protocol_name}::Done")],
+        limits,
+        None,
+    );
+    (settled, expanded)
+}
+
+/// FR-255-AC-28 (FR-255-AC-47): an item's `analysis.retained_bytes`
+/// allowance is one allowance for the check and the replay of its
+/// counterexample. Bounded one byte over what the check retained, the check
+/// holds and the replay's protocol closure stops at that bound.
+#[trace("FR-255-AC-28", "FR-255-AC-47")]
+#[test]
+fn an_item_retained_allowance_bounds_the_check_and_the_counterexample_replay() {
+    use fsl_foundation::Setting;
+    let item = |bound: Option<u64>| {
+        let mut engines = fsl_analyze::analyze::EngineBounds::default();
+        if let Some(bound) = bound {
+            assert!(engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        engines.item_budget(
+            AnalyzeLimits::published(DeadlineSupply::Unbounded).accounting,
+            &Cancel::new(),
+        )
+    };
+    let run = |budget: &fsl_foundation::budget::Budget| {
+        refuted_and_replayed_with(
+            cas_twice(false, true),
+            Variant {
+                peek: false,
+                ..Variant::LOST_UPDATE
+            },
+            "CasTwice",
+            None,
+            &["Spec::Twice::Done", "Spec::Twice::a1"],
+            &fsl_replay::ModelCheckLimits::default(),
+            Some(budget),
+        )
+    };
+    let measured = item(None);
+    let (_, _, checked) = run(&measured);
+    let total = measured.consumed(Setting::AnalysisRetainedBytes);
+    assert!(
+        total > checked,
+        "the replay's closure retains bytes after the check's {checked}: {total}"
+    );
+    // One byte over what the check retained: the check holds, and the
+    // replay's first closure node stops at that bound.
+    let bound = checked + 1;
+    let (stopped, _, _) = run(&item(Some(bound)));
+    let RefinementTraceSettlement::Stopped(reached) = stopped else {
+        panic!("the replay stops at the item's allowance");
+    };
+    assert_eq!(
+        reached,
+        fsl_replay::ReachedLimit {
+            limit: fsl_replay::ModelCheckLimit::AnalysisRetainedBytes,
+            value: bound
+        }
+    );
+}
+
+/// FR-255-AC-30: a replay bounded to two protocol transitions stops at the
+/// first closure that needs more, naming `max_transitions` and its value,
+/// where the same replay at the default reproduces the counterexample.
+#[trace("FR-255-AC-30")]
+#[test]
+fn a_replay_with_a_two_transition_allowance_stops_a_protocol_refinement_step() {
+    let at = |transitions: usize| {
+        let mut limits = fsl_replay::ModelCheckLimits::default();
+        limits.limits.max_transitions = transitions;
+        refuted_and_replayed_under(
+            cas_twice(false, true),
+            Variant {
+                peek: false,
+                ..Variant::LOST_UPDATE
+            },
+            "CasTwice",
+            "Twice",
+            4,
+            &limits,
+        )
+    };
+    let (stopped, expanded) = at(2);
+    let RefinementTraceSettlement::Stopped(reached) = stopped else {
+        panic!("two transitions stop the replay");
+    };
+    assert_eq!(
+        reached,
+        fsl_replay::ReachedLimit {
+            limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+            value: 2
+        }
+    );
+    assert_eq!(reached.limit.setting(), "model_check.max_transitions");
+    // The closures expanded no third transition.
+    assert!(expanded <= 2, "{expanded} transitions expanded");
+    let (reproduced, needed) = at(usize::MAX);
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
-            .expect("counterexample replay runs"),
+        reproduced,
         RefinementTraceSettlement::Reproduced { .. }
     ));
+    assert!(needed >= 3, "the check needs at least three: {needed}");
 }
 
 /// FR-148-AC-3 (TC-553): a lost update fails at the commit that leaves the
@@ -1631,6 +2093,7 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1675,8 +2138,13 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
-            .expect("protocol divergence replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &counterexample,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("protocol divergence replay runs"),
         RefinementTraceSettlement::Reproduced { .. }
     ));
 }
@@ -1712,6 +2180,7 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1744,8 +2213,13 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
-            .expect("counterexample replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &counterexample,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced {
             failure: fsl_replay::RefinementFailure::RefusalNotPermitted { .. },
             ..
@@ -1758,8 +2232,13 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
         label.step.push_str("/forged");
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_label)
-            .expect("wrong refusal label replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &wrong_label,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("wrong refusal label replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
     let mut wrong_position = counterexample.as_ref().clone();
@@ -1769,8 +2248,13 @@ fn a_terminal_refusal_of_a_protocol_event_replays() {
         *position = position.saturating_add(1);
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_position)
-            .expect("wrong refusal position replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &wrong_position,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("wrong refusal position replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
 }
@@ -1815,6 +2299,7 @@ fn a_refusal_is_permitted_when_one_stable_protocol_candidate_refuses() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1865,6 +2350,7 @@ fn an_incoming_step_rule_failure_precedes_refusal_at_the_same_state() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1927,6 +2413,7 @@ fn an_intended_protocol_terminal_mismatch_replays() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1959,8 +2446,13 @@ fn an_intended_protocol_terminal_mismatch_replays() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
-            .expect("counterexample replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &counterexample,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced {
             failure: fsl_replay::RefinementFailure::TerminalSuccessMismatch { .. },
             ..
@@ -1973,8 +2465,13 @@ fn an_intended_protocol_terminal_mismatch_replays() {
         *position = 1;
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_position)
-            .expect("wrong terminal position replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &wrong_position,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("wrong terminal position replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
     let mut wrong_direction = counterexample.as_ref().clone();
@@ -1984,8 +2481,13 @@ fn an_intended_protocol_terminal_mismatch_replays() {
         *direction = fsl_replay::TerminalSuccessDirection::ConcreteOnly;
     }
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &wrong_direction)
-            .expect("wrong terminal direction replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &wrong_direction,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("wrong terminal direction replay runs"),
         RefinementTraceSettlement::Inconclusive(_)
     ));
 }
@@ -2037,6 +2539,7 @@ fn a_concrete_terminal_success_mismatch_replays() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2064,8 +2567,13 @@ fn a_concrete_terminal_success_mismatch_replays() {
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(world.refinement(), &systems, &counterexample)
-            .expect("counterexample replay runs"),
+        replay_refinement_trace(
+            world.refinement(),
+            &systems,
+            &counterexample,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced {
             failure: fsl_replay::RefinementFailure::TerminalSuccessMismatch { .. },
             ..
@@ -2097,6 +2605,7 @@ fn model_abstract_refinements_exclude_protocol_refusal_and_terminal_failures() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2306,10 +2815,14 @@ fn an_any_row_can_take_a_visible_protocol_transition() {
     let (position, concrete_state, _) = apply(&position, &initial_state, "beginA", 1);
     let (post, _concrete_state, taken) = apply(&position, &concrete_state, "commitA", 2);
     let transitions: Vec<_> = match &*taken {
-        fsl_replay::Taken::Protocol(transitions) => transitions.iter().collect(),
+        fsl_replay::Taken::Protocol(transitions) => transitions.clone(),
         fsl_replay::Taken::ProtocolTraces(paths) => paths
             .iter()
-            .flat_map(|path| path.transitions.iter())
+            .flat_map(|path| path.transitions.iter().cloned())
+            .collect(),
+        fsl_replay::Taken::ProtocolPathRefs(paths) => paths
+            .iter()
+            .flat_map(|path| path.to_trace().transitions)
             .collect(),
         other => panic!("any selects a visible protocol transition: {other:?}"),
     };
@@ -2395,7 +2908,9 @@ fn a_node_row_matches_the_attempt_identity_and_binder() {
     let (post, _, taken) = apply(&position, &concrete_state, "commitA", 2);
     assert!(matches!(
         *taken,
-        fsl_replay::Taken::Protocol(_) | fsl_replay::Taken::ProtocolTraces(_)
+        fsl_replay::Taken::Protocol(_)
+            | fsl_replay::Taken::ProtocolTraces(_)
+            | fsl_replay::Taken::ProtocolPathRefs(_)
     ));
     assert_eq!(counter_value(&post.abstract_states[0]), 1);
 }
@@ -2516,8 +3031,12 @@ fn a_protocol_node_row_lifts_by_the_declared_field_type() {
             };
             // The matched node transition carries `r` lifted to the declared
             // type's reference.
-            let fsl_replay::Taken::ProtocolTraces(traces) = *taken else {
-                panic!("the node row takes a protocol trace");
+            let traces = match *taken {
+                fsl_replay::Taken::ProtocolTraces(traces) => traces,
+                fsl_replay::Taken::ProtocolPathRefs(paths) => {
+                    paths.iter().map(|path| path.to_trace()).collect()
+                }
+                other => panic!("the node row takes a protocol trace: {other:?}"),
             };
             let record = traces
                 .iter()
@@ -2570,6 +3089,7 @@ fn the_engine_refuses_a_refinement_over_a_protocol() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     );
@@ -2597,6 +3117,7 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2710,6 +3231,7 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
                 abstract_protocol_binding: Some(abstract_binding),
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                retained: None,
             },
             &Cancel::new(),
         )
@@ -2769,6 +3291,7 @@ fn an_absent_abstract_subject_starts_a_protocol_abstract_side_at_the_mapped_stat
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2841,6 +3364,7 @@ fn check_forever(
             abstract_protocol_binding: Some(forever_binding(unit)),
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -2917,8 +3441,13 @@ fn a_protocol_enabled_class_the_concrete_loop_never_takes_is_hidden_unfair_and_r
     )
     .expect("replay opens the same abstract protocol system");
     assert!(matches!(
-        replay_refinement_trace(unfair.refinement(), &systems, &counterexample)
-            .expect("counterexample replay runs"),
+        replay_refinement_trace(
+            unfair.refinement(),
+            &systems,
+            &counterexample,
+            &fsl_replay::ModelCheckLimits::default()
+        )
+        .expect("counterexample replay runs"),
         RefinementTraceSettlement::Reproduced { .. }
     ));
 }
@@ -3101,6 +3630,20 @@ fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<(StepKind, String
                     .collect()
             })
             .collect(),
+        Taken::ProtocolPathRefs(paths) => paths
+            .iter()
+            .map(|path| {
+                path.to_trace()
+                    .transitions
+                    .iter()
+                    .map(|step| {
+                        let label = fsl_replay::protocol_observation_label(protocol, step)
+                            .expect("the step has an observation label");
+                        (step.kind(), label.step)
+                    })
+                    .collect()
+            })
+            .collect(),
         Taken::Stutter => Vec::new(),
         other => panic!("the last step takes protocol traces or stutters: {other:?}"),
     }
@@ -3239,13 +3782,23 @@ fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
     let world = failing_compensation();
     let systems = counter_protocol_systems(&world);
     let taken = last_taken(&world, &systems, &["bump"]);
-    let Taken::ProtocolTraces(paths) = &taken else {
-        panic!("protocol traces: {taken:?}");
+    let kinds: Vec<StepKind> = match &taken {
+        Taken::ProtocolTraces(paths) => paths
+            .iter()
+            .flat_map(|path| path.transitions.iter().map(|step| step.kind()))
+            .collect(),
+        Taken::ProtocolPathRefs(paths) => paths
+            .iter()
+            .flat_map(|path| {
+                path.to_trace()
+                    .transitions
+                    .iter()
+                    .map(|step| step.kind())
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+        other => panic!("protocol traces: {other:?}"),
     };
-    let kinds: Vec<StepKind> = paths
-        .iter()
-        .flat_map(|path| path.transitions.iter().map(|step| step.kind()))
-        .collect();
     assert!(kinds.contains(&StepKind::CFail), "{kinds:?}");
     assert!(!kinds.contains(&StepKind::CAttempt), "{kinds:?}");
 
@@ -3261,6 +3814,42 @@ fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
         .map(|class| class.is_taken_by(&taken))
         .collect();
     assert_eq!(takes, [true, false], "add, then inc");
+}
+
+/// FR-148-AC-15 (TC-553): the repeated compensation shape reaches the
+/// hand-set depth-2 horizon.
+#[trace("TC-553", "FR-148-AC-15")]
+#[test]
+fn a_loop_of_failed_compensation_attempts_reaches_the_hand_set_depth_two_horizon() {
+    let world = failing_compensation();
+    let limits = ModelCheckLimits::default();
+    let outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: Some(2),
+            limits,
+            retained: None,
+        },
+        &Cancel::new(),
+    )
+    .expect("the abstract protocol subject is admitted");
+
+    assert!(
+        matches!(
+            outcome.safety,
+            SafetyOutcome::BoundReached { depth: 2, stats }
+                if stats.depth == 2 && stats.product_edges >= 2
+        ),
+        "the repeated compensation shape reaches the hand-set depth-2 horizon: {:?}",
+        outcome.safety
+    );
 }
 
 /// FR-148-AC-8 (TC-553): repeated failed compensation attempts do not make
@@ -3283,6 +3872,7 @@ fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: None,
             limits,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -3305,43 +3895,24 @@ fn a_loop_of_failed_compensation_attempts_leaves_the_operation_unfair() {
     );
 }
 
-/// FR-148-AC-8 (TC-553): initial protocol closure work shares one product
+/// FR-148-AC-15 (TC-553): initial protocol closure work shares one product
 /// transition budget across distinct concrete initial states.
-#[trace("TC-553", "FR-148-AC-8")]
+#[trace("TC-553", "FR-148-AC-15")]
 #[test]
 fn protocol_initial_closures_share_the_product_transition_budget() {
-    let mut world = failing_compensation();
+    let mut world = World::with(
+        Variant {
+            peek: false,
+            ..Variant::CAS
+        },
+        &cas_twice(false, false),
+    );
     let first = world.concrete_initial();
     let second = world.concrete_initial_busy_a();
     let mut concrete = world.concrete_request(UNLIMITED);
     concrete.initial = vec![first, second];
-    let systems = open_protocol_systems(
-        world.refinement(),
-        &concrete,
-        world.package(),
-        vec![world.abstract_initial()],
-        protocol_binding().over,
-        &[],
-    )
-    .expect("the abstract protocol subject is admitted");
-    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
-    let initial = &systems.concrete.initial_states()[0];
-    let closure_work = check_protocol_initial(
-        world.refinement(),
-        &systems.concrete,
-        &systems.abstract_system,
-        protocol,
-        0,
-        initial.state(),
-    )
-    .expect("the first initial closure is checked")
-    .abstract_successors;
-    assert!(closure_work > 0, "the initial protocol closure has work");
-    drop(systems);
-
     let mut limits = ModelCheckLimits::default();
-    limits.limits.max_transitions =
-        usize::try_from(closure_work).expect("the fixture closure work fits in usize");
+    limits.limits.max_transitions = 1;
     let outcome = check_refinement(
         RefinementCheckRequest {
             refinement: world.refinement(),
@@ -3354,6 +3925,7 @@ fn protocol_initial_closures_share_the_product_transition_budget() {
             abstract_protocol_binding: Some(protocol_binding()),
             max_depth: Some(0),
             limits,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -3369,7 +3941,7 @@ fn protocol_initial_closures_share_the_product_transition_budget() {
                     value
                 }),
                 ..
-            } if value == closure_work
+            } if value == 1
         ),
         "the second initial closure exceeds the shared budget: {:?}",
         outcome.safety

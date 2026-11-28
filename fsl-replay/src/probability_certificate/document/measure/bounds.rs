@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Lower and upper fraction expectations in the mean-refutation role.
 use super::*;
+use ix_trace_rs::implements;
 
 pub(in crate::probability_certificate) const PROFILE: &str =
     "filament.probability-objective/value-bounds/v1";
@@ -9,7 +10,7 @@ pub(in crate::probability_certificate) const PROFILE: &str =
 #[serde(deny_unknown_fields)]
 struct WireBoundObjective {
     profile: String,
-    base: WireObjective,
+    base: ReadObjective,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +79,7 @@ pub(super) fn admit(
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 pub(in crate::probability_certificate) fn admit_subsystem(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
@@ -102,7 +104,7 @@ pub(in crate::probability_certificate) fn admit_subsystem(
     if wire.objective.profile != PROFILE {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     let document = read_wire(
         WireDocument {
             identity: wire.identity,
@@ -145,6 +147,8 @@ fn policy_action(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-32")]
+#[ix_trace_rs::string_edge]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -153,6 +157,7 @@ pub(super) fn check(
     scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<MeanRefutationCheck, ProbabilityDocumentError> {
     let mut storage = 0;
     admit(bytes, limits, cancel, &mut storage)?;
@@ -173,7 +178,7 @@ pub(super) fn check(
         "upper" => false,
         _ => return Err(ProbabilityDocumentError::MalformedMember("kind")),
     };
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let selected = plan(
         system,
         claim,

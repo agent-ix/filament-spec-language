@@ -9,12 +9,13 @@
 use std::num::NonZeroU64;
 
 use filament_exact::{length_amount, Cancel, Charge, ChargePoint, Incomplete, Meter};
-use filament_semantic_value::catalog::Category;
+use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_eval::simulation::model::{
     enumerate_model, sample_model_runs, ClauseOutcome, ModelFinding, ModelSystem, SampledRuns,
 };
 use fsl_eval::simulation::{
-    Coverage, EnumerationBounds, EnumerationEnd, NotSimulated, StateKey, BOUND_POSITIONS,
+    Coverage, EnumerationBounds, EnumerationEnd, ExpansionLimit, NotSimulated, StateKey,
+    StopReason, BOUND_POSITIONS,
 };
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::{RequestIndex, Setting};
@@ -190,7 +191,12 @@ pub(crate) enum SimulationFault {
 }
 
 /// The `{category, cause}` of a run that ended at `end`.
-fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Option<Value>) {
+fn ending(
+    end: &EnumerationEnd,
+    settings: &SimulationSelection,
+    system: &ModelSystem<'_>,
+    limits: &AnalyzeLimits,
+) -> (Category, Option<Value>) {
     // FSpec FR-181 "Simulation bounds and their published defaults": each
     // bound is reported with its FR-461 setting name.
     let limit = |limit: &str, setting: &str, value: u64| {
@@ -230,10 +236,46 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
             Category::Incomplete,
             Some(json!({"kind": "cancelled", "code": "cancelled"})),
         ),
-        EnumerationEnd::Stopped(cause) => (
-            fsl_foundation::diagnostic::category_of(cause).unwrap_or(Category::InternalFailure),
+        EnumerationEnd::Stopped(_, limit)
+            if expansion_stop_cause(*limit, system, limits).is_some() =>
+        {
+            (
+                Category::Incomplete,
+                expansion_stop_cause(*limit, system, limits),
+            )
+        }
+        EnumerationEnd::Stopped(cause, _) => (
+            stopped_category(cause),
             Some(json!({"code": cause.code(), "kind": cause.cause()})),
         ),
+    }
+}
+
+/// The O-16 category of a run stopped with `cause`: its exit category
+/// (FR-285), so an unsupported code exits 21; a code the catalog does not
+/// define is an internal failure.
+fn stopped_category(cause: &CatalogCode) -> Category {
+    fsl_foundation::diagnostic::exit_category_of(cause).unwrap_or(Category::InternalFailure)
+}
+
+/// The FR-634 cause of an expansion stopped at `limit`: the `limit-reached`
+/// naming the budget it ran out of, its setting and its value. `None` for a
+/// stop that names no budget.
+fn expansion_stop_cause(
+    limit: Option<ExpansionLimit>,
+    system: &ModelSystem<'_>,
+    limits: &AnalyzeLimits,
+) -> Option<Value> {
+    match limit? {
+        ExpansionLimit::MaxCandidates => {
+            Some(json!({"kind": "limit-reached", "limit": "max_candidates",
+            "setting": "expansion.max_candidates", "value": limits.expansion.max_candidates}))
+        }
+        ExpansionLimit::EvaluationMeter(kind) => {
+            Some(json!({"kind": "limit-reached", "limit": kind.as_str(),
+            "setting": format!("accounting.{}", kind.as_str()),
+            "value": crate::plan_search::accounting_limit(system, kind)}))
+        }
     }
 }
 
@@ -298,7 +340,7 @@ pub(crate) fn simulate(
 fn not_simulated(refused: &NotSimulated) -> (Category, Value) {
     match refused.catalog_code() {
         Some(code) => (
-            fsl_foundation::diagnostic::category_of(&code).unwrap_or(Category::Refusal),
+            fsl_foundation::diagnostic::exit_category_of(&code).unwrap_or(Category::Refusal),
             json!({"code": code.code(), "kind": code.cause()}),
         ),
         // FR-101: an unbounded root, or an unbound capacity, requires a bound.
@@ -437,7 +479,7 @@ fn enumerate(
         // A cut list of traces leaves the run incomplete whatever else
         // stopped it.
         Some(cause) => (Category::Incomplete, Some(cause)),
-        None => ending(&run.end, settings),
+        None => ending(&run.end, settings, system, limits),
     };
     if let Some(cause) = cause {
         document.insert("cause".to_owned(), cause);
@@ -595,7 +637,27 @@ fn sample(
         written.push(trace);
     }
     let drawn = u64::try_from(written.len()).unwrap_or(u64::MAX);
+    // FR-634 "Stopped expansion": a written trace that ended at a stopped
+    // expansion before it held `max_steps` steps is a prefix, so the item is
+    // incomplete; one that already holds `max_steps` steps is complete.
+    let max_steps = settings.max_steps();
+    let stopped_expansion = draw
+        .traces
+        .iter()
+        .zip(&draw.stop_limits)
+        .take(written.len())
+        .find_map(|(trace, limit)| {
+            let ended_stopped = trace
+                .provenance
+                .as_ref()
+                .is_some_and(|provenance| matches!(provenance.stopped, StopReason::Stopped(_)));
+            (trace.steps.len() < max_steps && ended_stopped)
+                .then(|| expansion_stop_cause(*limit, system, limits))
+                .flatten()
+        });
     let (category, cause) = if let Some(cause) = cut {
+        (Category::Incomplete, Some(cause))
+    } else if let Some(cause) = stopped_expansion {
         (Category::Incomplete, Some(cause))
     } else if oversized {
         (
@@ -641,7 +703,37 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::json;
 
-    use super::Emission;
+    use super::{not_simulated, stopped_category, Emission};
+    use filament_semantic_value::catalog::{CatalogCode, Category};
+    use fsl_eval::simulation::protocol::{ProtocolRefusal, Unsupported};
+    use fsl_eval::simulation::NotSimulated;
+
+    /// FR-285-AC-1: a run stopped with an unsupported code is category
+    /// `unsupported`, exit 21; an undefined code is an internal failure.
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn a_stopped_run_with_an_unsupported_code_is_exit_21() {
+        let cause = CatalogCode::new("unsupported_construct", "not-yet-implemented");
+        assert_eq!(stopped_category(&cause), Category::Unsupported);
+        assert_eq!(stopped_category(&cause).exit_code(), 21);
+        let undefined = CatalogCode::new("not_a_catalog_code", "x");
+        assert_eq!(stopped_category(&undefined), Category::InternalFailure);
+    }
+
+    /// FR-285-AC-1: a run refused before it starts for an unsupported
+    /// protocol construct (`unsupported_construct`) is category
+    /// `unsupported`, exit 21, not the record map's `Refusal` (20).
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn a_refused_simulation_with_an_unsupported_code_is_exit_21() {
+        let refused = NotSimulated::ProtocolInitial(Box::new(ProtocolRefusal::Unsupported(
+            Unsupported::WeakMemory,
+        )));
+        let (category, cause) = not_simulated(&refused);
+        assert_eq!(category, Category::Unsupported, "{cause}");
+        assert_eq!(category.exit_code(), 21);
+        assert_eq!(cause["code"], "unsupported_construct");
+    }
 
     fn limits(result_units: u64) -> ScalarLimits {
         ScalarLimits {

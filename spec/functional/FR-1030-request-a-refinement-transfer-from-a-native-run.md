@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
 ---
 # FR-1030: Request a refinement transfer from a native run
 
@@ -173,6 +175,10 @@ The run outcome's `refinement_transfer` member:
   still proves, and a terminal-stutter refutation such as `PrevStutter`'s
   still replays unchanged. No empty certificate or engine verdict settles a
   premise `proved`.
+
+- A `native-run/1` request MAY carry `require_certified`, a JSON boolean beside
+  `refinement_transfer`, absent meaning `false`, which settles the premises
+  and the transfer result under [FR-1052](FR-1052-settle-a-proof-that-is-not-certified-inconclusive-when-the-request-requires-certified-proofs.md).
 
 ## Acceptance Criteria
 

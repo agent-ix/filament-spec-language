@@ -14,7 +14,7 @@ use fsl_eval::hyper::{
     HyperProduct, HyperState, HyperTransition, ParameterBinding, Property,
 };
 use fsl_eval::model_subject::AtomStop;
-use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::{ModelEvaluator, ModelSystem};
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{ExpansionLimit, TransitionSystem};
 use fsl_eval::temporal::{
@@ -41,10 +41,13 @@ use crate::model_check::state_graph::{
 
 /// Replay HP-5's lasso witnesses or product trap using the body automaton and
 /// fairness filter that FR-181 assigns to those evidence arms.
+#[implements("FR-940-AC-17")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn replay_evidence(
     system: &ModelSystem<'_>,
-    package: &fsl_package::CheckedPackage,
+    evaluator: &dyn ModelEvaluator,
+    checked_package: Option<&fsl_package::CheckedPackage>,
+    contract_name: Option<&str>,
     clause: &CheckedHyperClause,
     evidence: &GraphEvidence,
     max_states: usize,
@@ -63,7 +66,7 @@ pub(super) fn replay_evidence(
         return Err(fault("an-HP-5-clause-has-one-quantifier"));
     };
     let bindings = hyper_bindings(system, clause, evidence.over())?;
-    let letters = CheckedHyperLetters::new(package, clause, vec![system])
+    let letters = CheckedHyperLetters::for_evaluator(evaluator, clause, vec![system])
         .map_err(|_| fault("the-HP-5-letters-match-the-subject"))?;
     match evidence {
         GraphEvidence::Witness { paths, .. } => {
@@ -146,7 +149,16 @@ pub(super) fn replay_evidence(
         } => {
             let positions = replay_path(system, stem)?;
             let reproduced = replay_undefined(
-                clause, &letters, &bindings, &positions, undefined, accounting, cancel,
+                system,
+                checked_package,
+                contract_name,
+                clause,
+                &letters,
+                &bindings,
+                &positions,
+                undefined,
+                accounting,
+                cancel,
             )?;
             Ok(if reproduced {
                 result(GraphReplaySettlement::Reproduced, Vec::new(), None, None)
@@ -360,7 +372,11 @@ pub(super) fn atom_location(
         .map(|(condition, _)| condition.location())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn replay_undefined(
+    system: &ModelSystem<'_>,
+    package: Option<&fsl_package::CheckedPackage>,
+    contract_name: Option<&str>,
     clause: &CheckedHyperClause,
     letters: &CheckedHyperLetters<'_, '_>,
     bindings: &[ParameterBinding],
@@ -369,16 +385,51 @@ fn replay_undefined(
     accounting: ScalarLimits,
     cancel: &Cancel,
 ) -> Result<bool, ReplayRefusal> {
-    if undefined.predicate != Some(PredicateRole::Target) || undefined.transition.is_some() {
+    let Some((_, state_key)) = positions.last() else {
+        return Err(fault("an-HP-5-undefined-path-has-an-initial-state"));
+    };
+    if *state_key != undefined.state_key {
+        return Ok(false);
+    }
+    // A contract conjunction with no value: no claim predicate. A
+    // precondition names the transition it guards; a postcondition names
+    // none (ADR-018 UE-6).
+    if undefined.predicate.is_none() {
+        let clause_name = contract_name.map(str::to_owned).or_else(|| {
+            let expected_locus = undefined.locus.as_ref()?;
+            package?
+                .graph()
+                .state_clauses()
+                .iter()
+                .find(|candidate| candidate.body().location() == expected_locus)
+                .map(|candidate| candidate.name().to_owned())
+        });
+        let Some(clause_name) = clause_name else {
+            return Ok(false);
+        };
+        for (index, (state, _)) in positions.iter().enumerate() {
+            let expansion = system
+                .successors(state)
+                .map_err(|_| fault("an-HP-5-undefined-guard-expansion"))?;
+            let matched = expansion
+                .findings
+                .iter()
+                .filter_map(|finding| finding.undefined_contract())
+                .any(|contract| {
+                    contract.clause == clause_name
+                        && contract.guard_of.as_ref() == undefined.transition.as_ref()
+                        && contract.cause == undefined.cause
+                });
+            if matched {
+                return Ok(index + 1 == positions.len());
+            }
+        }
         return Ok(false);
     }
     let Some(expected_locus) = undefined.locus.as_ref() else {
         return Ok(false);
     };
-    let Some((_, state_key)) = positions.last() else {
-        return Err(fault("an-HP-5-undefined-path-has-an-initial-state"));
-    };
-    if *state_key != undefined.state_key {
+    if undefined.predicate != Some(PredicateRole::Target) || undefined.transition.is_some() {
         return Ok(false);
     }
     let mut meter = Meter::new(accounting).with_cancel(cancel.clone());

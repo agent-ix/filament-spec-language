@@ -27,7 +27,7 @@ use filament_semantic_value::location::{
 use fsl_forms::{ExprNode, ExpressionForm, ProtocolDeclarationForm, TemporalNodeForm};
 use fsl_foundation::Span;
 
-use super::refusal::{CheckCause, CheckRefusal, ProtocolAnchorCause};
+use super::refusal::{CheckCause, ProtocolAnchorCause, SemanticCheckRefusal};
 use super::temporal_clause::TemporalDeclaration;
 
 /// One checked `requires temporal T;` member (FR-218 "Outputs").
@@ -127,8 +127,8 @@ impl<'u> UnitDeclarations<'u> {
     }
 }
 
-fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ProtocolAnchorCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span.
         location: Location::root(Origin::Expression),
@@ -144,7 +144,7 @@ pub(crate) fn check(
     protocols: &[ProtocolDeclarationForm],
     temporal: &[TemporalDeclaration],
     declarations: &UnitDeclarations<'_>,
-) -> Result<Vec<CheckedRequirement>, Vec<CheckRefusal>> {
+) -> Result<Vec<CheckedRequirement>, Vec<SemanticCheckRefusal>> {
     let Some(protocol) = protocols.get(index) else {
         return Ok(Vec::new());
     };

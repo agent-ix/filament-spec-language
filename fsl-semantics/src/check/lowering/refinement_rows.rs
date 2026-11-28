@@ -16,7 +16,7 @@ use filament_semantic_value::location::{
 use ix_trace_rs::implements;
 
 use super::state::AnchorInput;
-use super::{Binder, Binders, Lowering, fault};
+use super::{fault, Binder, Binders, Lowering};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{BindingValue, BodyTerm, LeafTerm, MemberTerm};
@@ -25,7 +25,7 @@ use crate::check::refinement::{
     KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
     StepClass, StepTarget,
 };
-use crate::check::refusal::{CheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::fairness::FairnessConstraint;
 
@@ -37,7 +37,7 @@ impl Lowering<'_> {
         &mut self,
         refinement: &CheckedRefinement,
         location: &Location,
-    ) -> Result<KeyedRefinementRows, CheckRefusal> {
+    ) -> Result<KeyedRefinementRows, SemanticCheckRefusal> {
         let catalog = refinement.class_catalog_keys();
         let mut rows = KeyedRefinementRows::default();
         for row in refinement.populations() {
@@ -160,7 +160,7 @@ impl Lowering<'_> {
     pub(crate) fn refinement_result_type(
         &mut self,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         self.located(location, |this| {
             this.type_node(&filament_exact::ValueType::Boolean, location)
         })
@@ -171,8 +171,8 @@ impl Lowering<'_> {
     fn located(
         &mut self,
         location: &Location,
-        node: impl FnOnce(&mut Self) -> Result<NodeKey, CheckRefusal>,
-    ) -> Result<NodeKey, CheckRefusal> {
+        node: impl FnOnce(&mut Self) -> Result<NodeKey, SemanticCheckRefusal>,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let key = node(self)?;
         if !self.occurrences.has(key.clone()) {
             self.record(key.clone(), OccurrenceRole::Generated, location.clone());
@@ -190,7 +190,7 @@ impl Lowering<'_> {
         value: &Value,
         declared: &ValueType,
         location: &Location,
-    ) -> Result<LeafTerm, CheckRefusal> {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
         let mut current_value = value;
         let mut current_type = declared;
         let mut option_types = Vec::new();
@@ -234,7 +234,7 @@ impl Lowering<'_> {
 
     /// The lowered term of one row expression, over one `parameter` node per
     /// binder of its context.
-    fn row_term(&mut self, row: &CheckedRow) -> Result<LeafTerm, CheckRefusal> {
+    fn row_term(&mut self, row: &CheckedRow) -> Result<LeafTerm, SemanticCheckRefusal> {
         let location = Location::root(Origin::TypeDeclaration {
             name: row.site.clone(),
         });
@@ -264,7 +264,7 @@ impl Lowering<'_> {
     fn row_arguments(
         &mut self,
         arguments: &[Option<CheckedRow>],
-    ) -> Result<Vec<Option<LeafTerm>>, CheckRefusal> {
+    ) -> Result<Vec<Option<LeafTerm>>, SemanticCheckRefusal> {
         arguments
             .iter()
             .map(|argument| argument.as_ref().map(|row| self.row_term(row)).transpose())
@@ -276,7 +276,7 @@ impl Lowering<'_> {
         &mut self,
         operation: &DeclarationKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let (_, model) = self.model_owner(operation, location)?;
         let (declaring, name) = model
             .operation_anchor_declaration(operation)
@@ -291,7 +291,7 @@ impl Lowering<'_> {
         declaring: filament_exact::EffectiveId,
         name: &str,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let scope = self.scope;
         let operation = scope
             .operations()
@@ -321,7 +321,7 @@ impl Lowering<'_> {
         &mut self,
         constraint: &FairnessConstraint,
         location: &Location,
-    ) -> Result<KeyedFairnessRow, CheckRefusal> {
+    ) -> Result<KeyedFairnessRow, SemanticCheckRefusal> {
         let operation = constraint.operation();
         Ok(KeyedFairnessRow {
             operation: self.anchor_by_name(
@@ -341,7 +341,7 @@ fn catalog_node(
     side: &[KeyedCatalogClass],
     class: &str,
     location: &Location,
-) -> Result<Option<NodeKey>, CheckRefusal> {
+) -> Result<Option<NodeKey>, SemanticCheckRefusal> {
     match side.iter().find(|entry| entry.class() == class) {
         Some(KeyedCatalogClass::Declared { node, .. }) => Ok(Some(node.clone())),
         Some(KeyedCatalogClass::Memory(_)) => Ok(None),
@@ -349,7 +349,7 @@ fn catalog_node(
     }
 }
 
-fn rows_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+fn rows_fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
     fault(
         location,
         KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(

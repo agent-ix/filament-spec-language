@@ -222,6 +222,9 @@ pub enum WalkStep {
         /// Whether `P` holds at the terminal position.
         holds: bool,
     },
+    /// The behaviour reached a time-lock: it counts 0 in numerator and
+    /// denominator, so its long-run fraction is 0 (FSpec FR-420-AC-19).
+    TimeLocked,
 }
 
 /// Why a sample or a walk could not continue (FR-188 `SampleStop`).
@@ -265,11 +268,6 @@ pub enum SampleHalt {
     },
     /// FR-254: the completions of a dense idle tail are not decided.
     IdleTailUndecided(IdleTailUndecided),
-    /// FR-254: a local time-lock was reached before the horizon.
-    TimeLockedSample {
-        /// The state that locally time-locked.
-        state: fsl_eval::simulation::StateKey,
-    },
     /// FR-254's per-sample step budget was reached.
     MaxSampleSteps {
         /// The request's `max_sample_steps` value.
@@ -631,7 +629,7 @@ fn halted(halt: SampleHalt) -> Result<TestEnd, StatisticalRefusal> {
             TestEnd::Stopped(StatisticalStop::AutomatonStates { value })
         }
         SampleHalt::PredicateRefused(outcome) => {
-            return Err(StatisticalRefusal::PredicateRefused(outcome))
+            return Err(StatisticalRefusal::PredicateRefused(outcome));
         }
         SampleHalt::NotStochastic { state, identity } => {
             TestEnd::Unsupported(StatisticalUnsupported::NotStochastic { state, identity })
@@ -642,15 +640,12 @@ fn halted(halt: SampleHalt) -> Result<TestEnd, StatisticalRefusal> {
         SampleHalt::IdleTailUndecided(stop) => {
             TestEnd::Stopped(StatisticalStop::IdleTailUndecided(stop))
         }
-        SampleHalt::TimeLockedSample { state } => {
-            TestEnd::Unsupported(StatisticalUnsupported::TimeLockedSample { state })
-        }
         SampleHalt::MaxSampleSteps { value } => TestEnd::Stopped(StatisticalStop::Limit {
             limit: StatisticalLimit::MaxSampleSteps { value },
             value,
         }),
         SampleHalt::GeneratorMismatch { supplied } => {
-            return Err(StatisticalRefusal::GeneratorMismatch { supplied })
+            return Err(StatisticalRefusal::GeneratorMismatch { supplied });
         }
     })
 }
@@ -968,7 +963,7 @@ impl Plan<'_> {
                 Ok(WalkStep::UndecidedSuccessor) => {
                     return Ok(undecided_successor(run.estimate(claim.timed)));
                 }
-                Ok(WalkStep::Terminal { .. }) => {
+                Ok(WalkStep::Terminal { .. } | WalkStep::TimeLocked) => {
                     return self.terminal_behaviours(
                         index,
                         subject,
@@ -1079,6 +1074,7 @@ impl Plan<'_> {
                     }
                     Ok(WalkStep::UndecidedSuccessor) => return Ok(undecided_successor(None)),
                     Ok(WalkStep::Terminal { holds }) => break int(i64::from(holds)),
+                    Ok(WalkStep::TimeLocked) => break int(0),
                     Ok(WalkStep::Position {
                         holds,
                         weight: Weight(weight),
@@ -1386,13 +1382,13 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
                     stop,
                     partial: Box::new(plan.basis(samples, draws)),
                     provenance: plan.provenance(provenance),
-                })
+                });
             }
             TestEnd::Unsupported(cause) => {
                 return Ok(StatisticalOutcome::Unsupported {
                     cause,
                     provenance: plan.provenance(provenance),
-                })
+                });
             }
         }
     }

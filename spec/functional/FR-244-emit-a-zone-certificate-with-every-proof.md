@@ -75,7 +75,7 @@ pub struct ZoneCertificate {
 
 pub struct StateGraphPart {                     // FSpec FR-418 `state_graph`, FSpec FR-712
     pub form: StateGraphFormKind,               // `always-possible`
-    pub ef_nodes: Vec<NodeIndex>,               // positions in `nodes` of the E(P) zones, ascending
+    pub ef_nodes: Vec<NodeIndex>,               // positions in `nodes` of the nodes whose whole zone lies in E(P), ascending
 }
 
 pub struct RefinementPart {                     // FR-430
@@ -89,8 +89,8 @@ pub struct RefinementPart {                     // FR-430
 
 ## Behavior
 
-- **Reachability part.** For a TT-1, TT-2 or TT-3 item, or a
-  deadlock-freedom item, the certificate SHALL list nodes, each a discrete
+- **Reachability part.** For a TT-1, TT-2 or TT-3 item that declares no
+  fairness, or a deadlock-freedom item, the certificate SHALL list nodes, each a discrete
   state key, a claim-automaton state and a canonical DBM, and for each node
   and each transition identity enabled from it one edge to a named target
   node whose zone covers the successor under the aLU simulation with the
@@ -102,7 +102,8 @@ pub struct RefinementPart {                     // FR-430
   because its violating points are time-locked, the certificate SHALL list
   the violating part `Z ∩ Bad` as its own node marked `locked`, with its
   edges, so the certificate's edges from it cover its forward closure.
-- **Büchi part.** For a TT-4 item and the time-lock-freedom item, the
+- **Büchi part.** For a TT-4 item, a claim that declares a fairness,
+  whatever its form (FR-239), and the time-lock-freedom item, the
   engine SHALL give each node a component index such that every edge goes
   to a node of equal or greater index, and give each component its reason: the
   acceptance set it lacks (the divergence set included), or a weak
@@ -110,6 +111,12 @@ pub struct RefinementPart {                     // FR-430
   taken by no edge inside it. A strong fairness constraint SHALL state its
   reason by a nested numbering of the component with the nodes that enable
   it removed.
+- **Undefined positions.** A node past an undefined reading (FR-239) that
+  refutes nothing, either under a declared fairness or, with none, where no
+  time-divergent behaviour passes the reading, SHALL carry the reserved
+  automaton state `4294967295`, which names no claim automaton state. It is
+  in every automaton acceptance set, so the component reasons show that no
+  admitted behaviour passes through the reading.
 - **Divergence part.** For the time-lock-freedom item, each node SHALL name
   a path in the certificate to a divergent target: a quiescent node, or a
   component that does not fail for want of the divergence set.
@@ -121,8 +128,11 @@ pub struct RefinementPart {                     // FR-430
 - **State-graph form.** The certificate of a `possible`, `always possible`
   or `unique path` item over a timed subject (FR-852, FSpec FR-712) SHALL
   certify the reachable timed graph: its reachability part covers every
-  reachable symbolic state, and, for `always possible`, `state_graph` lists
-  the `EF P` zones. It SHALL carry no `admitted` member. The engine emits it whether or not the reachable graph holds a quiescent node or a
+  reachable symbolic state, and, for `always possible`, `state_graph.ef_nodes`
+  lists the nodes whose whole zone lies in `E(P)`, the valuations with a run
+  to a `P` state; a node only part of whose zone lies in `E(P)` is not listed.
+  The listing is not a proof by itself: FR-245's checker recomputes `E(P)`
+  (FSpec FR-712). It SHALL carry no `admitted` member. The engine emits it whether or not the reachable graph holds a quiescent node or a
   cycle of positive total delay. These forms read reachable states and
   discrete step sequences of the timed state graph, and FSpec FR-712 defines
   that graph by reachability alone: a state reached only through zero-delay

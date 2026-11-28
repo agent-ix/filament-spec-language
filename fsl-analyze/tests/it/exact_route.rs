@@ -9,8 +9,9 @@ mod completion_boundaries;
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
-    analyze, Aggregate, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Engines,
-    ItemForm, ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, TemporalItem,
+    analyze, Aggregate, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, DeadlineSupply,
+    Engines, ItemForm, ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits,
+    TemporalItem,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use fsl_analyze::provider;
@@ -74,9 +75,10 @@ fn direct(world: &World, items: Vec<NegotiatedItem>, cancel: &Cancel) -> Analyze
             binding: world.binding(),
             provision: world.provision.clone(),
             items,
+            certification: Default::default(),
         },
         &Engines::fsl().expect("the engines register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         cancel,
     )
     .expect("the binding admits")
@@ -90,8 +92,9 @@ fn served(world: &World, items: &[NegotiatedItem], cancel: &Cancel) -> Vec<Termi
         &world.provision,
         items,
         &Engines::fsl().expect("the engines register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         cancel,
+        Default::default(),
     )
     .records
 }
@@ -244,8 +247,9 @@ fn mixed_clause_and_exact_members_keep_input_order() {
         &world.provision,
         &items,
         &Engines::fsl().expect("the engines register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
+        Default::default(),
     )
     .records;
     assert_eq!(records, analyzed.records);
@@ -281,8 +285,9 @@ fn missing_snapshot_declines_each_exact_item_without_a_backend() {
             item(&world, 0, one_state()),
         ],
         &Engines::fsl().expect("the engines register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
+        Default::default(),
     )
     .records;
     assert_eq!(records.len(), 2);

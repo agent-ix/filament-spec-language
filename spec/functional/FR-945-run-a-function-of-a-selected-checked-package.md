@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
 ---
 # FR-945: Run a function of a selected checked package from its bytes
 

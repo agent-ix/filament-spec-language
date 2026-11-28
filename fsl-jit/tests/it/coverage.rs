@@ -312,9 +312,15 @@ fn jit_executes_map_filter_count_sum_and_fold() {
     );
     let prepared = prepare(
         &package,
-        &["mapped", "filtered", "counted", "summed", "quotient", "folded"],
+        &[
+            "mapped", "filtered", "counted", "summed", "quotient", "folded",
+        ],
     );
-    assert!(prepared.unsupported().is_empty(), "{:?}", prepared.unsupported());
+    assert!(
+        prepared.unsupported().is_empty(),
+        "{:?}",
+        prepared.unsupported()
+    );
     let sequence_type = filament_exact::CollectionType::new(
         filament_exact::CollectionKind::Sequence,
         ValueType::Int(
@@ -338,7 +344,9 @@ fn jit_executes_map_filter_count_sum_and_fold() {
     };
     for function in ["mapped", "filtered"] {
         assert!(matches!(
-            jitted_call(&prepared, function, std::slice::from_ref(&input)).unwrap().outcome,
+            jitted_call(&prepared, function, std::slice::from_ref(&input))
+                .unwrap()
+                .outcome,
             FamilyOutcome::Evaluated(Outcome::Completed(Value::Collection(_)))
         ));
     }

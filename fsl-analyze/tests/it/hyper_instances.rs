@@ -342,7 +342,7 @@ fn the_event_position_item_has_the_same_instance() {
 /// parameter is not yet implemented, with no verdict and no instance.
 #[trace("TC-3219", "FR-181-AC-10")]
 #[test]
-fn a_package_selection_of_an_object_parameter_hp5_clause_is_not_implemented() {
+fn hp5_object_parameter_package_selection_returns_typed_unsupported() {
     for (name, body) in [("guard", GUARD), ("read", READ)] {
         let run = Pets::LAMP.analyze(
             &format!("hyper-admitted-package-hp5-{name}"),
@@ -350,12 +350,20 @@ fn a_package_selection_of_an_object_parameter_hp5_clause_is_not_implemented() {
             claim(),
             true,
         );
-        let text = run.document().to_string();
-        assert_eq!(run.exit, 21, "{text}");
-        assert!(text.contains("unsupported_construct"), "{text}");
-        assert!(text.contains("not-yet-implemented"), "{text}");
-        assert!(run.item(0)["record"]["result"].is_null(), "{text}");
-        assert!(!text.contains("\"instance\""), "{text}");
+        let document = run.document();
+        let item = run.item(0);
+        assert_eq!(run.exit, 21, "{document}");
+        assert_eq!(item["record"]["result"], "unsupported", "{document}");
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "unsupported_construct",
+            "{document}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], "not-yet-implemented",
+            "{document}"
+        );
+        assert!(item["axes"]["truth"].is_null(), "{document}");
+        assert!(!document.to_string().contains("\"instance\""), "{document}");
     }
 }
 
@@ -709,6 +717,7 @@ fn run_universal(
             limits: ModelCheckLimits::default(),
             meter: UNLIMITED,
             reductions: Default::default(),
+            retained: None,
             max_depth: None,
         },
         &Cancel::new(),
@@ -1143,6 +1152,7 @@ fn a_universal_counterexample_that_does_not_replay_is_not_displaced_by_a_later_i
             limits,
             meter: UNLIMITED,
             reductions: Default::default(),
+            retained: None,
             max_depth: None,
         },
         &Cancel::new(),

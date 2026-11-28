@@ -24,7 +24,7 @@ use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::state::CompositeBounds;
 use ix_trace_rs::implements;
-use serde_json::{Map, Value as Json, json};
+use serde_json::{json, Map, Value as Json};
 
 #[cfg(test)]
 mod accounting_tests;
@@ -34,9 +34,9 @@ mod canonical;
 mod references;
 pub(crate) use crate::NormalizationReferenceBudget;
 pub(crate) use references::{
-    SuppliedReferenceAdmission, catalog_error_cause, catalog_error_code, catalog_refusal,
-    reference_cancel_cause, reference_error_cause, reference_error_code, reference_error_pointer,
-    reference_refusal, take_normalization_refusal, write_run_value,
+    catalog_error_cause, catalog_error_code, catalog_refusal, reference_cancel_cause,
+    reference_error_cause, reference_error_code, reference_error_pointer, reference_refusal,
+    take_normalization_refusal, write_run_value, SuppliedReferenceAdmission,
 };
 
 /// The unit bound an argument's quantity violates (FSpec FR-154 "Unit
@@ -596,6 +596,7 @@ impl<'a> Forms<'a> {
 
     /// FR-650 "Population argument": `{"population": P}` names a population
     /// of the call's snapshot.
+    #[ix_trace_rs::string_edge]
     fn read_population(
         &self,
         object: &Map<String, Json>,
@@ -708,6 +709,7 @@ impl<'a> Forms<'a> {
 
     /// FR-650's typed Map value form, with duplicate keys refused at the
     /// later entry's key member.
+    #[ix_trace_rs::string_edge]
     fn read_map(
         &self,
         object: &Map<String, Json>,
@@ -1363,6 +1365,7 @@ fn model_declaration_name(owner: &NodeKey) -> Option<String> {
     borrowed_model_declaration_name(owner).map(str::to_owned)
 }
 
+#[ix_trace_rs::string_edge]
 fn borrowed_model_declaration_name(owner: &NodeKey) -> Option<&str> {
     use filament_exact::PathSegmentView;
     let view = owner.view();
@@ -1437,6 +1440,7 @@ fn read_bytes(text: &str) -> Option<Vec<u8>> {
 
 /// Rewrite each Decimal object inside `form` with its trailing zeros
 /// stripped and its scale lowered by as many.
+#[ix_trace_rs::string_edge]
 fn normalize_decimals(form: &mut Json) {
     match form {
         Json::Object(object) => {
@@ -1776,6 +1780,7 @@ fn tagged<'a>(object: &'a Map<String, Json>, tag: &str, path: &Path) -> Result<&
 /// A native payload object `{"kind": kind, <members>}`: a `kind` of another
 /// form is `wrong-value-kind`, a missing member `missing-member`, an extra
 /// one `unknown-member`.
+#[ix_trace_rs::string_edge]
 fn native(
     object: &Map<String, Json>,
     kind: &str,

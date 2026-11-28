@@ -873,12 +873,21 @@ enum RawNode {
         kind: CollectionKind,
         items: Vec<usize>,
     },
+    /// `{"tuple": {"type": ..., "components": [...]}}` as read.
+    Tuple {
+        type_identity: Option<String>,
+        components: Option<Vec<usize>>,
+        extra_member: bool,
+        invalid_components: bool,
+        invalid_type: bool,
+    },
     /// `{"record": {"type": .., "fields": {..}}}`: the record's `type`
     /// identity and its fields in document order, each the index of its
     /// value's node.
     Record {
         type_identity: String,
         fields: Vec<(String, usize)>,
+        extra_member: bool,
     },
     /// `{"variant": {"type": .., "case": ..}}` as read: each of the two
     /// members when present, and whether the payload holds any other member
@@ -887,6 +896,10 @@ enum RawNode {
         type_identity: Option<String>,
         case: Option<String>,
         extra_member: bool,
+        components: Option<Vec<usize>>,
+        invalid_components: bool,
+        invalid_type: bool,
+        invalid_case: bool,
     },
 }
 
@@ -919,6 +932,8 @@ pub enum RawForm<'v> {
     /// `{"ordered-set": [..]}`: the kind its tag names and its items in
     /// document order.
     Collection(CollectionKind, RawItems<'v>),
+    /// `{"tuple": {"type": ..., "components": [...]}}` as read.
+    Tuple(RawTuple<'v>),
     /// `{"record": {"type": <declaration identity>, "fields": {..}}}`.
     Record(RawRecord<'v>),
     /// `{"variant": {"type": <declaration identity>, "case": <case name>}}`.
@@ -959,6 +974,52 @@ pub struct RawVariant<'v> {
     type_identity: Option<&'v str>,
     case: Option<&'v str>,
     extra_member: bool,
+    components: Option<RawItems<'v>>,
+    invalid_components: bool,
+    invalid_type: bool,
+    invalid_case: bool,
+}
+
+/// A nominal tuple payload, preserving its envelope and component order.
+#[derive(Clone, Copy, Debug)]
+pub struct RawTuple<'v> {
+    type_identity: Option<&'v str>,
+    components: Option<RawItems<'v>>,
+    extra_member: bool,
+    invalid_components: bool,
+    invalid_type: bool,
+}
+
+impl<'v> RawTuple<'v> {
+    /// The tuple declaration identity, when present as text.
+    #[must_use]
+    pub fn type_identity(self) -> Option<&'v str> {
+        self.type_identity
+    }
+
+    /// The component values in source order, when `components` is an array.
+    #[must_use]
+    pub fn components(self) -> Option<RawItems<'v>> {
+        self.components
+    }
+
+    /// Whether the payload has an unrecognized member.
+    #[must_use]
+    pub fn has_extra_member(self) -> bool {
+        self.extra_member
+    }
+
+    /// Whether `components` is present with a non-array payload.
+    #[must_use]
+    pub fn has_invalid_components(self) -> bool {
+        self.invalid_components
+    }
+
+    /// Whether `type` is present with a non-string payload.
+    #[must_use]
+    pub fn has_invalid_type(self) -> bool {
+        self.invalid_type
+    }
 }
 
 impl<'v> RawVariant<'v> {
@@ -980,6 +1041,36 @@ impl<'v> RawVariant<'v> {
     #[must_use]
     pub fn has_extra_member(self) -> bool {
         self.extra_member
+    }
+
+    /// The `components` payload in source order, when it is an array.
+    #[must_use]
+    pub fn components(self) -> Option<RawItems<'v>> {
+        self.components
+    }
+
+    /// Whether `components` was present with a non-array payload.
+    #[must_use]
+    pub fn has_invalid_components(self) -> bool {
+        self.invalid_components
+    }
+
+    /// Whether `type` or `case` is present with a non-string payload.
+    #[must_use]
+    pub fn has_invalid_identity(self) -> bool {
+        self.invalid_type || self.invalid_case
+    }
+
+    /// Whether `type` is present with a non-string payload.
+    #[must_use]
+    pub fn has_invalid_type(self) -> bool {
+        self.invalid_type
+    }
+
+    /// Whether `case` is present with a non-string payload.
+    #[must_use]
+    pub fn has_invalid_case(self) -> bool {
+        self.invalid_case
     }
 }
 
@@ -1109,6 +1200,7 @@ pub struct RawRecord<'v> {
     arena: &'v SnapshotValue,
     type_identity: &'v str,
     fields: &'v [(String, usize)],
+    extra_member: bool,
 }
 
 impl<'v> RawRecord<'v> {
@@ -1132,6 +1224,12 @@ impl<'v> RawRecord<'v> {
                 },
             )
         })
+    }
+
+    /// Whether the record payload holds a member other than `type` and `fields`.
+    #[must_use]
+    pub fn has_extra_member(self) -> bool {
+        self.extra_member
     }
 }
 
@@ -1270,6 +1368,27 @@ impl SnapshotValue {
         Self { nodes, root: at }
     }
 
+    /// A nominal `tuple` value with components in declaration order.
+    #[must_use]
+    pub fn tuple(type_identity: impl Into<String>, items: Vec<Self>) -> Self {
+        let mut nodes = Vec::new();
+        let mut roots = Vec::with_capacity(items.len());
+        for item in items {
+            let offset = nodes.len();
+            nodes.extend(item.nodes.into_iter().map(|node| node.shifted(offset)));
+            roots.push(item.root + offset);
+        }
+        let at = nodes.len();
+        nodes.push(RawNode::Tuple {
+            type_identity: Some(type_identity.into()),
+            components: Some(roots),
+            extra_member: false,
+            invalid_components: false,
+            invalid_type: false,
+        });
+        Self { nodes, root: at }
+    }
+
     /// `{"record": {"type": type_identity, "fields": {..}}}`, its fields in
     /// the given order.
     #[must_use]
@@ -1285,6 +1404,7 @@ impl SnapshotValue {
         nodes.push(RawNode::Record {
             type_identity: type_identity.into(),
             fields: members,
+            extra_member: false,
         });
         Self { nodes, root: at }
     }
@@ -1296,6 +1416,10 @@ impl SnapshotValue {
             type_identity: Some(type_identity.into()),
             case: Some(case.into()),
             extra_member: false,
+            components: None,
+            invalid_components: false,
+            invalid_type: false,
+            invalid_case: false,
         })
     }
 
@@ -1312,7 +1436,38 @@ impl SnapshotValue {
             type_identity,
             case,
             extra_member,
+            components: None,
+            invalid_components: false,
+            invalid_type: false,
+            invalid_case: false,
         })
+    }
+
+    /// A data-carrying union value, preserving components in source order.
+    #[must_use]
+    pub fn variant_with_components(
+        type_identity: impl Into<String>,
+        case: impl Into<String>,
+        components: Vec<Self>,
+    ) -> Self {
+        let mut nodes = Vec::new();
+        let mut roots = Vec::with_capacity(components.len());
+        for component in components {
+            let offset = nodes.len();
+            nodes.extend(component.nodes.into_iter().map(|node| node.shifted(offset)));
+            roots.push(component.root + offset);
+        }
+        let at = nodes.len();
+        nodes.push(RawNode::Variant {
+            type_identity: Some(type_identity.into()),
+            case: Some(case.into()),
+            extra_member: false,
+            components: Some(roots),
+            invalid_components: false,
+            invalid_type: false,
+            invalid_case: false,
+        });
+        Self { nodes, root: at }
     }
 
     /// The root value's form.
@@ -1337,22 +1492,49 @@ impl SnapshotValue {
             RawNode::Collection { kind, items } => {
                 RawForm::Collection(*kind, RawItems { arena: self, items })
             }
+            RawNode::Tuple {
+                type_identity,
+                components,
+                extra_member,
+                invalid_components,
+                invalid_type,
+            } => RawForm::Tuple(RawTuple {
+                type_identity: type_identity.as_deref(),
+                components: components
+                    .as_deref()
+                    .map(|items| RawItems { arena: self, items }),
+                extra_member: *extra_member,
+                invalid_components: *invalid_components,
+                invalid_type: *invalid_type,
+            }),
             RawNode::Record {
                 type_identity,
                 fields,
+                extra_member,
             } => RawForm::Record(RawRecord {
                 arena: self,
                 type_identity,
                 fields,
+                extra_member: *extra_member,
             }),
             RawNode::Variant {
                 type_identity,
                 case,
                 extra_member,
+                components,
+                invalid_components,
+                invalid_type,
+                invalid_case,
             } => RawForm::Variant(RawVariant {
                 type_identity: type_identity.as_deref(),
                 case: case.as_deref(),
                 extra_member: *extra_member,
+                components: components
+                    .as_deref()
+                    .map(|items| RawItems { arena: self, items }),
+                invalid_components: *invalid_components,
+                invalid_type: *invalid_type,
+                invalid_case: *invalid_case,
             }),
         }
     }
@@ -1638,8 +1820,33 @@ fn structure_identity<'t>(
                             .map(|item| Task::Read(element, item.form())),
                     );
                 }
+                RawForm::Tuple(tuple) => {
+                    let items: Vec<_> = tuple
+                        .components()
+                        .map_or_else(Vec::new, |items| items.iter().collect());
+                    let names = vec![
+                        tuple.type_identity().unwrap_or("").to_owned(),
+                        tuple.has_extra_member().to_string(),
+                        tuple.has_invalid_components().to_string(),
+                        tuple.has_invalid_type().to_string(),
+                    ];
+                    let count = items.len();
+                    work.push(Task::Combine {
+                        tag: b'T',
+                        names,
+                        count,
+                        sorted: false,
+                    });
+                    work.extend(
+                        items
+                            .into_iter()
+                            .rev()
+                            .map(|item| Task::Read(None, item.form())),
+                    );
+                }
                 RawForm::Record(record) => {
                     let names: Vec<String> = std::iter::once(record.type_identity().to_owned())
+                        .chain(std::iter::once(record.has_extra_member().to_string()))
                         .chain(record.fields().map(|(name, _)| name.to_owned()))
                         .collect();
                     let fields: Vec<_> = record.fields().collect();
@@ -1654,17 +1861,29 @@ fn structure_identity<'t>(
                     }));
                 }
                 RawForm::Variant(variant) => {
-                    let mut bytes = vec![b'v', u8::from(variant.has_extra_member())];
-                    for part in [variant.type_identity(), variant.case()] {
-                        match part {
-                            Some(held) => {
-                                bytes.push(1);
-                                text(&mut bytes, held);
-                            }
-                            None => bytes.push(0),
-                        }
-                    }
-                    done.push(intern(interner, bytes));
+                    let items: Vec<_> = variant
+                        .components()
+                        .map_or_else(Vec::new, |items| items.iter().collect());
+                    let names = vec![
+                        variant.type_identity().unwrap_or("").to_owned(),
+                        variant.case().unwrap_or("").to_owned(),
+                        variant.has_extra_member().to_string(),
+                        variant.has_invalid_components().to_string(),
+                        variant.has_invalid_identity().to_string(),
+                    ];
+                    let count = items.len();
+                    work.push(Task::Combine {
+                        tag: b'V',
+                        names,
+                        count,
+                        sorted: false,
+                    });
+                    work.extend(
+                        items
+                            .into_iter()
+                            .rev()
+                            .map(|item| Task::Read(None, item.form())),
+                    );
                 }
             },
         }
@@ -1694,15 +1913,49 @@ impl RawNode {
                 kind,
                 items: items.into_iter().map(|item| item + offset).collect(),
             },
+            Self::Tuple {
+                type_identity,
+                components,
+                extra_member,
+                invalid_components,
+                invalid_type,
+            } => Self::Tuple {
+                type_identity,
+                components: components
+                    .map(|items| items.into_iter().map(|item| item + offset).collect()),
+                extra_member,
+                invalid_components,
+                invalid_type,
+            },
+            Self::Variant {
+                type_identity,
+                case,
+                extra_member,
+                components,
+                invalid_components,
+                invalid_type,
+                invalid_case,
+            } => Self::Variant {
+                type_identity,
+                case,
+                extra_member,
+                components: components
+                    .map(|items| items.into_iter().map(|item| item + offset).collect()),
+                invalid_components,
+                invalid_type,
+                invalid_case,
+            },
             Self::Record {
                 type_identity,
                 fields,
+                extra_member,
             } => Self::Record {
                 type_identity,
                 fields: fields
                     .into_iter()
                     .map(|(name, index)| (name, index + offset))
                     .collect(),
+                extra_member,
             },
             other @ (Self::NonObject
             | Self::ObjectMembers(_)
@@ -1710,8 +1963,7 @@ impl RawNode {
             | Self::Integer(_)
             | Self::Native(_)
             | Self::Absent
-            | Self::Reference(_)
-            | Self::Variant { .. }) => other,
+            | Self::Reference(_)) => other,
         }
     }
 }

@@ -359,6 +359,9 @@ impl FailedStep {
             Self::Fails(RefinementFailure::Undefined { position, .. }) => {
                 json!({"kind": "Undefined", "position": decimal(*position)})
             }
+            Self::Fails(RefinementFailure::UndefinedContract { position, .. }) => {
+                json!({"kind": "UndefinedContract", "position": decimal(*position)})
+            }
             // The liveness half has no certificate, so no step check writes
             // these.
             Self::Fails(

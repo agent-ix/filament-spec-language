@@ -13,13 +13,15 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
-    CheckedBindingNameKind, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm, PathConditionFrame, PathConditionFrameId,
+    CheckedBindingNameKind, CheckedNodeId, CheckedNodePathSegment, CheckedOccurrenceRole,
+    CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm,
+    PathConditionFrame, PathConditionFrameId,
 };
 use filament_exact::NodeKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{Capability, CheckedGraph, RequirementRecord};
+use ix_trace_rs::implements;
 
 use super::{EmitRefusal, Omitted};
 use crate::emit::node_id;
@@ -161,13 +163,83 @@ fn function_measure_root(term: &CheckedTerm) -> Option<&CheckedNodeId> {
     })
 }
 
+/// A shallow identity for the graph-owned representation of a checked id.
+/// `CheckedNodeId` clones retain the same `Arc` operands, so their pointer
+/// identity is a safe fast key when it matches an emitted node. The canonical
+/// structural-ID lookup below remains the fallback for independently built
+/// but value-equal ids.
+#[derive(Hash, PartialEq, Eq)]
+enum IdentitySegment {
+    Name(Box<str>),
+    Node(*const CheckedNodeId),
+    Index(u64),
+    Operand(u64),
+    Dependency { package: Box<str>, node: u64 },
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct IdentityKey {
+    package: Box<str>,
+    path: Vec<IdentitySegment>,
+    ordinal: u64,
+}
+
+fn identity_key(id: &CheckedNodeId) -> IdentityKey {
+    let path = id
+        .path
+        .iter()
+        .map(|segment| match segment {
+            CheckedNodePathSegment::Name(name) => IdentitySegment::Name(name.clone()),
+            CheckedNodePathSegment::Node(node) => {
+                IdentitySegment::Node(std::ptr::from_ref(node.as_ref()))
+            }
+            CheckedNodePathSegment::Index(index) => IdentitySegment::Index(*index),
+            CheckedNodePathSegment::Operand(operand) => IdentitySegment::Operand(*operand),
+            CheckedNodePathSegment::Dependency { package, node } => IdentitySegment::Dependency {
+                package: package.clone(),
+                node: *node,
+            },
+        })
+        .collect();
+    IdentityKey {
+        package: id.package.clone(),
+        path,
+        ordinal: id.ordinal,
+    }
+}
+
+fn identity_index(nodes: &[CheckedSemanticNodeV2]) -> HashMap<IdentityKey, usize> {
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (identity_key(&node.node_id), position))
+        .collect()
+}
+
 /// The walk of one owner's body over the emitted graph.
 struct Walk<'a> {
     nodes: &'a [CheckedSemanticNodeV2],
     index: &'a BTreeMap<&'a CheckedNodeId, usize>,
+    identity_index: &'a HashMap<IdentityKey, usize>,
+    resolved: HashMap<*const CheckedNodeId, usize>,
 }
 
 impl<'a> Walk<'a> {
+    #[implements("FSpec-FR-825-AC-11")]
+    fn position(&mut self, id: &CheckedNodeId) -> Option<usize> {
+        let pointer = std::ptr::from_ref(id);
+        if let Some(&position) = self.resolved.get(&pointer) {
+            return Some(position);
+        }
+        if let Some(&position) = self.identity_index.get(&identity_key(id)) {
+            self.resolved.insert(pointer, position);
+            return Some(position);
+        }
+        let position = *self.index.get(id)?;
+        self.resolved.insert(pointer, position);
+        Some(position)
+    }
+
     /// The `nth` expression occurrence ordinal of the node at `position`.
     fn expression_ordinal(&self, position: usize, nth: usize) -> Option<u64> {
         self.nodes[position]
@@ -180,16 +252,21 @@ impl<'a> Walk<'a> {
 
     /// The guard of `term` as its node position and the expression occurrence
     /// the walk reads next at it.
-    fn guard(&self, term: &CheckedTerm, visits: &HashMap<usize, usize>) -> Option<(usize, u64)> {
-        let position = *self.index.get(reference(term)?)?;
+    fn guard(
+        &mut self,
+        term: &CheckedTerm,
+        visits: &HashMap<usize, usize>,
+    ) -> Option<(usize, u64)> {
+        let position = self.position(reference(term)?)?;
         let ordinal = self.expression_ordinal(position, *visits.get(&position).unwrap_or(&0))?;
         Some((position, ordinal))
     }
 
     /// Walk the body rooted at `root`: the terminal frame of every
     /// application occurrence, keyed by node position and occurrence.
+    #[ix_trace_rs::string_edge]
     fn owner(
-        &self,
+        &mut self,
         root_owner: usize,
         root: &'a CheckedNodeId,
         derive: bool,
@@ -211,15 +288,17 @@ impl<'a> Walk<'a> {
         let mut syntax_visits = HashMap::<(usize, usize), usize>::new();
         // The nodes whose bodies the walk is inside. A reference back to one is
         // a recursive call: the walk does not enter it again, so a recursive
-        // owner is walked once, not without end.
-        let mut active = HashSet::<usize>::new();
+        // owner is walked once, not without end. The owner's own function node
+        // is inside its body and measure from the start, so a self-call does
+        // not enter it (FSpec FR-825).
+        let mut active = HashSet::from([root_owner]);
         while let Some(task) = pending.pop() {
             match task {
                 Task::Leave(position) => {
                     active.remove(&position);
                 }
                 Task::Node(id, terminal, mut syntax) => {
-                    let Some(&position) = self.index.get(id) else {
+                    let Some(position) = self.position(id) else {
                         continue;
                     };
                     if !active.insert(position) {
@@ -335,6 +414,7 @@ impl<'a> Walk<'a> {
 
 /// The function owners with a body in FR-322's package-wide walk order:
 /// declaration source position, then node id.
+#[ix_trace_rs::string_edge]
 pub(super) fn owner_order(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
@@ -399,9 +479,12 @@ pub(super) fn visits(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
-    let walk = Walk {
+    let identities = identity_index(nodes);
+    let mut walk = Walk {
         nodes,
         index: &index,
+        identity_index: &identities,
+        resolved: HashMap::new(),
     };
     let mut table = Table::default();
     let mut counters = HashMap::<usize, usize>::new();
@@ -541,9 +624,12 @@ pub(super) fn derive(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
-    let walk = Walk {
+    let identities = identity_index(nodes);
+    let mut walk = Walk {
         nodes,
         index: &index,
+        identity_index: &identities,
+        resolved: HashMap::new(),
     };
     // The reader walks every function owner, in FR-322's package-wide order
     // (declaration source position, then node id), with each node's
@@ -649,9 +735,12 @@ pub(super) fn rederive(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
-    let walk = Walk {
+    let identities = identity_index(nodes);
+    let mut walk = Walk {
         nodes,
         index: &index,
+        identity_index: &identities,
+        resolved: HashMap::new(),
     };
     let mut wanted = HashMap::<usize, Vec<(usize, usize, u64)>>::new();
     for (at, record) in records.iter().enumerate() {

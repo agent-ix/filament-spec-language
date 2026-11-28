@@ -19,9 +19,9 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_foundation::Code;
 use fsl_semantics::check::{
-    AssemblyRefusal, BindingValue, BodyTerm, CheckCause, CheckRefusal, CheckedGraph,
-    CheckedRefinement, LeafTerm, LiteralValue, MemberTerm, PackageDeclarations, RefinementCause,
-    RefinementV2Emission, RowClass, StepClass, StepTarget,
+    AssemblyRefusal, BindingValue, BodyTerm, CheckCause, CheckedGraph, CheckedRefinement, LeafTerm,
+    LiteralValue, MemberTerm, PackageDeclarations, RefinementCause, RefinementV2Emission, RowClass,
+    SemanticCheckRefusal, StepClass, StepTarget,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -564,7 +564,7 @@ pub(crate) fn assemble(
 /// A refusal with the text of the unit it is located at.
 #[derive(Debug)]
 pub(crate) struct Refused {
-    pub(crate) refusal: CheckRefusal,
+    pub(crate) refusal: SemanticCheckRefusal,
     pub(crate) at: String,
     unit: String,
 }
@@ -1698,6 +1698,36 @@ fn mismatched_composite_reference_shapes_are_refused() {
             },
             "{mismatch}"
         );
+    }
+}
+
+/// FR-135-AC-20 (TC-540 step 14): a record, a tuple and a union pair with
+/// their own kind only; each row naming a field of another composite kind
+/// refuses `ill_typed`/`type-mismatch` at the row's expression.
+#[trace("TC-540", "FR-135-AC-20")]
+#[test]
+fn a_row_never_pairs_composites_of_different_kinds() {
+    let (spec, concrete) = nested_models();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+    for (row, at) in [
+        ("box = self.pair;", "self.pair"),
+        ("box = self.holder;", "self.holder"),
+        ("pair = self.box;", "self.box"),
+        ("pair = self.holder;", "self.holder"),
+        ("holder = self.box;", "self.box"),
+        ("holder = self.pair;", "self.pair"),
+    ] {
+        let found = refused(&models, &nested_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{row}"
+        );
+        assert_eq!(refusal.at, at, "{row}");
     }
 }
 

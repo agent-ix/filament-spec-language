@@ -624,8 +624,10 @@ fn assert_snapshot_refusal(
         panic!("the report must read as a clause-run document");
     };
     assert_eq!(
-        read.fields().and_then(|fields| fields.get("path")),
-        Some(&path.to_owned())
+        read.fields()
+            .and_then(|fields| fields.get("path"))
+            .as_deref(),
+        Some(path)
     );
 }
 
@@ -868,6 +870,135 @@ fn native_result_two_writes_decisive_closed_and_unavailable_reports() {
     }
 }
 
+/// FR-267-AC-1, FSpec FR-352: the production writer's bytes read as the one
+/// declared type and write back as the same canonical bytes, and the typed
+/// members equal the values FR-352 assigns by hand: a closed-scope `true`
+/// claim is stage `evaluate`, category `success`, a completed Boolean outcome
+/// and `closed-scope` settlement.
+#[trace("FR-267-AC-1")]
+#[test]
+fn native_result_two_one_declared_type_round_trips_the_writer_bytes() {
+    let report = run("AllBelow", Snapshot::Low, "child");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    assert_eq!(
+        crate::spine::native_result_reencode_for_tests(&bytes),
+        bytes
+    );
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value["disposition"],
+        serde_json::json!({
+            "stage": "evaluate",
+            "category": "success",
+            "truth": true,
+            "outcome": {"kind": "completed", "value": {"kind": "boolean", "value": true}},
+        })
+    );
+    assert_eq!(value["basis"], "closed-scope");
+    let crate::spine::NativeRunResult::Clause(read) =
+        crate::spine::read_native_run_result(&bytes).unwrap()
+    else {
+        panic!("a clause-run document");
+    };
+    assert_eq!(
+        (read.stage(), read.category(), read.truth(), read.basis()),
+        ("evaluate", "success", Some(true), "closed-scope")
+    );
+}
+
+/// FR-267-AC-8: a member the declared type does not define is refused by the
+/// one strict reader, and so is a changed format label.
+#[trace("FR-267-AC-8")]
+#[test]
+fn native_result_two_declared_type_refuses_an_injected_member_and_label() {
+    let report = run("AllBelow", Snapshot::Low, "child");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["disposition"]["injected"] = serde_json::json!(1);
+    let injected = fsl_foundation::canonical_json::encode(&value).unwrap();
+    assert!(crate::spine::read_native_run_result(&injected).is_err());
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["format"] = serde_json::json!("native-run-result/3");
+    let relabelled = fsl_foundation::canonical_json::encode(&value).unwrap();
+    assert!(matches!(
+        crate::spine::read_native_run_result(&relabelled),
+        Err(crate::spine::NativeRunReadError::UnsupportedFormat(_))
+    ));
+}
+
+/// FR-267-AC-8, FSpec FR-352-AC-8: an absent optional top-level member is
+/// omitted, so each one written as `null` refuses at that member.
+#[trace("FR-267-AC-8")]
+#[test]
+fn native_result_two_refuses_null_for_each_absent_optional_member() {
+    let report = run("AllBelow", Snapshot::Low, "child");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let valid: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    for member in [
+        "support",
+        "late",
+        "admitted_late",
+        "result_identity",
+        "input_identity",
+        "relation",
+        "lineage",
+        "evidence_ledger",
+        "witness",
+        "extraction",
+        "ledger",
+        "limits",
+    ] {
+        assert!(
+            valid.get(member).is_none(),
+            "{member} is absent when unused"
+        );
+        let mut value = valid.clone();
+        value[member] = serde_json::Value::Null;
+        let bytes = fsl_foundation::canonical_json::encode(&value).unwrap();
+        let error = crate::spine::read_native_run_result(&bytes)
+            .err()
+            .unwrap_or_else(|| panic!("`null` for {member} must refuse"));
+        assert!(error.to_string().contains(member), "{member}: {error}");
+    }
+}
+
+/// FR-267-AC-8, FSpec FR-352: an item admission refusal takes its category
+/// from its catalog code, so a caller cannot write a document the strict
+/// reader refuses, and a code the catalog does not define is not written.
+#[trace("FR-267-AC-8")]
+#[test]
+fn item_run_result_category_follows_the_catalog_code() {
+    let usage = fsl_semantics::model::observation::AdmissionUsage::default();
+    for (code, cause, expected) in [
+        ("invalid_runtime_input", "wrong-role-mapping", "refusal"),
+        ("incomplete_population", "incomplete-scope", "incomplete"),
+    ] {
+        let outcome = crate::spine::ItemRunOutcome::Unadmitted {
+            code: code.to_owned(),
+            cause: cause.to_owned(),
+            fields: std::collections::BTreeMap::new(),
+        };
+        let value = crate::spine::item_run_result_value(&outcome, &usage).unwrap();
+        assert_eq!(value["disposition"]["category"], expected, "{code}");
+        let bytes = fsl_foundation::canonical_json::encode(&value).unwrap();
+        let crate::spine::NativeRunResult::Clause(read) =
+            crate::spine::read_native_run_result(&bytes).unwrap()
+        else {
+            panic!("expected a clause record");
+        };
+        assert_eq!((read.stage(), read.category()), ("admit", expected));
+    }
+    let unknown = crate::spine::ItemRunOutcome::Unadmitted {
+        code: "not_a_catalog_code".to_owned(),
+        cause: "x".to_owned(),
+        fields: std::collections::BTreeMap::new(),
+    };
+    assert!(matches!(
+        crate::spine::item_run_result_value(&unknown, &usage),
+        Err(crate::spine::NativeRunResultError::UnknownCatalogCode(code)) if code == "not_a_catalog_code"
+    ));
+}
+
 /// FR-109-AC-1: the Boolean completion must agree with both truth and its
 /// success or violation category.
 #[trace("TC-742", "FR-267-AC-9")]
@@ -1076,6 +1207,38 @@ fn native_result_two_writer_round_trips_extraction_diagnostics_and_clauses() {
     assert_eq!(serde_json::to_value(read.extraction()).unwrap(), expected);
 }
 
+/// FR-267-AC-17: an extraction map with no segments is refused at
+/// `extraction.map.segments`, by the document type and not by a later check.
+#[trace("TC-109", "FR-267-AC-17")]
+#[test]
+fn native_result_two_refuses_an_extraction_map_with_no_segments() {
+    let record: crate::spine::ExtractionRecord = serde_json::from_value(json!({
+        "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+        "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+        "binding": {"clause": "check", "package": "fixture/package"},
+        "outcome": {"availability": {"state": "available", "reason": "partial", "lossy": true}, "clause_text": {"check": "true"}, "diagnostics": []},
+        "map": {"region": {"start": 0, "end": 1}, "segments": [
+            {"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
+    }))
+    .unwrap();
+    let report = run("AllBelow", Snapshot::High, "mid");
+    let bytes =
+        crate::spine::write_clause_run_result_for_with_extraction(&report, None, Some(record))
+            .unwrap();
+    assert!(crate::spine::read_native_run_result(&bytes).is_ok());
+
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    document["extraction"]["map"]["segments"] = json!([]);
+    let edited = serde_json::to_vec(&document).unwrap();
+    let Err(error) = crate::spine::read_native_run_result(&edited) else {
+        panic!("an empty segment array must be refused");
+    };
+    assert!(
+        error.to_string().contains("extraction.map.segments"),
+        "{error}"
+    );
+}
+
 /// FR-267-AC-2: each independent malformed witness, basis and format edit
 /// refuses at the member it changed.
 #[trace("TC-742", "FR-267-AC-2")]
@@ -1255,7 +1418,7 @@ fn native_result_two_retains_refused_outcome_members() {
     assert_eq!(read.outcome_location().unwrap().path, [2, 1]);
     assert!(matches!(
         &read.outcome_location().unwrap().origin,
-        crate::spine::CallOriginRead::Expression
+        crate::spine::CallOrigin::Expression
     ));
     for edit in ["fields", "locus", "location"] {
         let mut mutated = value.clone();
@@ -1396,7 +1559,7 @@ fn native_result_two_retains_compile_limit_fields() {
         panic!("clause")
     };
     assert_eq!(
-        read.fields().unwrap().get("setting").map(String::as_str),
+        read.fields().unwrap().get("setting").as_deref(),
         Some("s3.nodes")
     );
     for member in ["kind", "bound", "actual", "setting"] {

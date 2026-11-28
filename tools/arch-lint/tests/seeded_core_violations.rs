@@ -93,6 +93,11 @@ fn stub_workspace_with(extra_crates: &[&str], extra_edges: &[(&str, &str)]) -> t
         );
         write(&base, &format!("{name}/src/lib.rs"), "pub fn stub() {}\n");
     }
+    write(
+        &root,
+        "fsl-definitional-reference/src/lib.rs",
+        "pub fn reference_fixture() {}\n",
+    );
     let lock = Command::new("cargo")
         .args(["generate-lockfile", "--offline", "--manifest-path"])
         .arg(root.join("Cargo.toml"))

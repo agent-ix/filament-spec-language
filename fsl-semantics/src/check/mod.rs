@@ -92,23 +92,23 @@ pub use abstraction::{
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
 pub use composition::{
-    CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentPackages,
-    ComponentSubject, CompositionClauseFacts, CompositionCycle, CompositionGraphErrorCode,
-    CompositionGraphRefusal, CompositionGuarantee, CompositionItem, CompositionName,
-    CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey, CompositionSpans,
-    CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent, ReadComposition,
-    ReadGuaranteeMember, ReadPremise, ReadSupply, composition_components,
+    composition_components, CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey,
+    ComponentPackages, ComponentSubject, CompositionClauseFacts, CompositionCycle,
+    CompositionGraphErrorCode, CompositionGraphRefusal, CompositionGuarantee, CompositionItem,
+    CompositionName, CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey,
+    CompositionSpans, CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent,
+    ReadComposition, ReadGuaranteeMember, ReadPremise, ReadSupply,
 };
 pub use dispatch_link::PendingLinks;
 pub use extension::{ExtensionCause, NamedDeclaration};
 pub use guarantee::{
-    CheckedImplementationGuarantee, ClauseConstraint, Correspondence, EnvironmentMember,
-    ExtentClass, GuaranteeClause, GuaranteeItemRefusal, GuaranteeName, GuaranteeRefusal,
-    GuaranteeSlot, GuaranteeSpans, ItemKind, MeasureValue, MemberValues, ProgressMeasure,
-    ProgressMember, ReadEnvironment, ReadGuarantee, ReadProgress, RustMember, SlotBacking, SlotKey,
-    SlotRole, SubjectOperation, Supplies, check_member_values, granularity_spelling, kind_spelling,
+    check_member_values, granularity_spelling, kind_spelling, CheckedImplementationGuarantee,
+    ClauseConstraint, Correspondence, EnvironmentMember, ExtentClass, GuaranteeClause,
+    GuaranteeItemRefusal, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, GuaranteeSpans, ItemKind,
+    MeasureValue, MemberValues, ProgressMeasure, ProgressMember, ReadEnvironment, ReadGuarantee,
+    ReadProgress, RustMember, SlotBacking, SlotKey, SlotRole, SubjectOperation, Supplies,
 };
-pub use rust_syntax::{PathDefect, path_defect};
+pub use rust_syntax::{path_defect, PathDefect};
 mod facts;
 mod family;
 // The scalar limits of a caller that bounds nothing itself, for the model
@@ -142,7 +142,7 @@ mod layer;
 pub(crate) mod lowering;
 pub(crate) use assemble::variant_type_declarations;
 pub(crate) use lowering::record_node_key;
-pub use lowering::{ProtocolSite, RelatedSide, protocol_site};
+pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
 mod extension;
 mod hybrid;
 mod hybrid_locus;
@@ -193,8 +193,8 @@ pub mod test_support {
 mod settings;
 mod source_model;
 pub use source_model::{
-    SourceRowObject, SourceRowOperation, SourceRowParameter, object_types_of_source_rows,
-    package_of_source_rows, source_identity, source_type_node_key,
+    object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
+    SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
 mod finite_domain;
 mod plan_value;
@@ -229,7 +229,7 @@ pub use probabilistic::{
     PackageWeight, PackageWorkload, ReadReward,
 };
 pub use state_model::StateModelRefusal;
-pub use sum_case::{ExhaustivenessObligation, SumCaseCause, mint_union_member_key};
+pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
 pub use task_set::{
     Arrival, CheckedScheduleClaim, CheckedTaskSets, Criticality, ModeSwitch, Release,
     ScheduleClaim, SchedulingPolicy, Task, TaskSet, TaskSetDeclaration, TaskSetUnit, Wcet,
@@ -239,20 +239,20 @@ pub mod stratum;
 mod termination;
 pub mod wire_id;
 pub use refinement::{
-    AbstractSide, AbstractStepClass, AbstractStepKind, ChannelStepKind, CheckedRefinement,
-    CheckedRow, FieldRow, HistoryRow, HistoryUpdate, KeyedCatalogClass, KeyedClassCatalog,
-    KeyedMemoryClass, LabelStep, ListDefect, ListDefectKind, MemoryStepKind, ObjectRow,
-    PopulationRow, PopulationUse, PopulationValue, ProtocolStepKind, RefinementCatalogClass,
-    RefinementCatalogNode, RefinementCause, RefinementClassCatalog, RefinementDeclaration,
-    RefinementFairness, RefinementFairnessOrigin, RefinementRefusal, RefinementStepSource,
-    RefinementSupport, RefinementThreadTarget, RefinementV2Emission, RefinementV2EncodingError,
-    RoleStepKind, RowClass, RowObservation, StepClass, StepLabel, StepRow, StepTarget,
-    UnsupportedFeature, observation,
+    observation, AbstractSide, AbstractStepClass, AbstractStepKind, ChannelStepKind,
+    CheckedRefinement, CheckedRow, FieldRow, HistoryRow, HistoryUpdate, KeyedCatalogClass,
+    KeyedClassCatalog, KeyedMemoryClass, LabelStep, ListDefect, ListDefectKind, MemoryStepKind,
+    ObjectRow, PopulationRow, PopulationUse, PopulationValue, ProtocolStepKind,
+    RefinementCatalogClass, RefinementCatalogNode, RefinementCause, RefinementClassCatalog,
+    RefinementDeclaration, RefinementFairness, RefinementFairnessOrigin, RefinementRefusal,
+    RefinementStepSource, RefinementSupport, RefinementThreadTarget, RefinementV2Emission,
+    RefinementV2EncodingError, RoleStepKind, RowClass, RowObservation, StepClass, StepLabel,
+    StepRow, StepTarget, UnsupportedFeature,
 };
 pub use terminal::{
-    CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
-    TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
-    TerminalRefusal, terminal_predicate_site,
+    terminal_predicate_site, CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration,
+    TerminalClauseKind, TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode,
+    TerminalNode, TerminalRefusal,
 };
 mod type_form;
 mod type_invariant;
@@ -264,7 +264,7 @@ use crate::model::domain_package::DomainPackageRef;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use check::FormedUnits;
-use check::{NamedScope, Typer, bind_parameters, reserved_slot_refusal};
+use check::{bind_parameters, reserved_slot_refusal, NamedScope, Typer};
 // `Signature` is public only under `test-support`: the layer-5 evaluator's
 // tests build the resolved `Signature` `declarations_for` takes as
 // `own_signature`; no shipped caller outside `check` names it.
@@ -280,8 +280,8 @@ use filament_exact::{Cancel, ValueType};
 use fsl_forms::{ClauseKind, Expression, FunctionDeclaration};
 use fsl_foundation::diagnostic::{Locus, StageFailure};
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, Maybe, NodeKeyDebug, NodeList, NodeMap, NodeValueMap, Seq, ValueMap,
-    With, scoped, standalone,
+    scoped, standalone, DebugTable, DebugWith, Maybe, NodeKeyDebug, NodeList, NodeMap,
+    NodeValueMap, Seq, ValueMap, With,
 };
 use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
 use std::fmt;
@@ -293,14 +293,14 @@ pub use claims::{
 pub use family::{CheckedDeclaration, ValueDeclarations, ValueFunctionFamily};
 pub use model_gate::{ModelFamily, ModelGateRefusal, OwnerKind};
 pub use profile::{
-    ProfileCause, ProfileRefusal, integer_division_role, resolve_integer_division, resolve_profiles,
+    integer_division_role, resolve_integer_division, resolve_profiles, ProfileCause, ProfileRefusal,
 };
 // Named only by `fixtures::measure_resolved`'s return type.
 #[cfg(any(test, feature = "test-support"))]
 pub use family::DeclarationMetrics;
 pub use lowering::{
-    AdmittedModel, ForeignView, ModelClause, SemanticGraph, SemanticNode, SourceCollection,
-    SourceEnumDeclaration, SourceEnumMember, model_root_key,
+    model_root_key, AdmittedModel, ForeignView, ModelClause, SemanticGraph, SemanticNode,
+    SourceCollection, SourceEnumDeclaration, SourceEnumMember,
 };
 pub use node_key::{
     AbstractionTerm, ExtensionClauseTerm, ExtensionTerm, FrameEntry, ObjectEntry, PopulationEntry,
@@ -491,9 +491,9 @@ pub fn builtin_text_type_key(
 // the layer-5 evaluator's tests reach them without widening the items.
 #[cfg(any(test, feature = "test-support"))]
 pub use family::fixtures::{
-    SCALAR_LIMITS_UNLIMITED, admitted_source, check_context, declaration, declaration_signature,
-    declarations_for, empty_scope, fixture_source, json_depth, limits, measure_resolved,
-    received_kernel_causes, root_location, scope_with,
+    admitted_source, check_context, declaration, declaration_signature, declarations_for,
+    empty_scope, fixture_source, json_depth, limits, measure_resolved, received_kernel_causes,
+    root_location, scope_with, SCALAR_LIMITS_UNLIMITED,
 };
 pub use ir::{
     CheckedBody, CheckedNode, EqualityConversionEdgeIdentity, EqualityDimensionIdentity,
@@ -509,8 +509,8 @@ pub use assemble::model_type_environment;
 pub use assemble::{
     AdmittedImport, AssemblyCause, AssemblyError, AssemblyLimits, AssemblyRefusal, AssemblyRun,
     ClockReadingDeclaration, ClockSite, ClockSlot, ClockTypePosition, ClockUse,
-    DEFAULT_DECIMAL_SCALE, DimensionEquivalence, EquivalenceClasses, EquivalenceFault,
-    EquivalenceRetained, SourceObjectFault, TimedDeclaration, TopologyFault, TopologyRetained,
+    DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
+    SourceObjectFault, TimedDeclaration, TopologyFault, TopologyRetained, DEFAULT_DECIMAL_SCALE,
 };
 pub use capability::{
     Capability, DeclarationFamily, NegotiationCause, NegotiationOutcome, UnknownCapabilityLabel,
@@ -522,8 +522,8 @@ pub use check::{
 #[cfg(any(test, feature = "test-support"))]
 pub use checked_dispatch::checked_dispatch_selected_operation;
 pub use checked_dispatch::{
-    DispatchBridgeRefusal, DispatchRoot, MissingClauseField, OperationClauses,
-    checked_dispatch_operation, object_type_supertypes,
+    checked_dispatch_operation, object_type_supertypes, DispatchBridgeRefusal, DispatchRoot,
+    MissingClauseField, OperationClauses,
 };
 /// A clock role's configuration, as a request's `clocks` member writes it and
 /// [`PackageDeclarations::with_clock_configurations`] takes it (FR-640).
@@ -559,27 +559,28 @@ pub use fsl_forms::{
     ProtocolNodeKind, QuantifierKind, StateClauseKind,
 };
 pub use hybrid::{
-    ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim, CheckedHybridModel,
-    CheckedMode, CheckedTransition, CompareOp, ContinuousVariable, HorizonOutOfRange,
-    HybridActivation, HybridCapture, HybridCause, HybridClaimDeclaration, HybridClock,
-    HybridDeclaration, HybridFairness, HybridFormula, HybridHorizon, HybridInterval,
+    hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
+    CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
+    HorizonOutOfRange, HybridActivation, HybridCapture, HybridCause, HybridClaimDeclaration,
+    HybridClock, HybridDeclaration, HybridFairness, HybridFormula, HybridHorizon, HybridInterval,
     HybridModelIndex, HybridTerm, InitialEntry, LogicOp, MalformedReason, ModeIndex,
-    ResetConstraint, TransitionIndex, VariableClass, VariableIndex, hybrid_horizon,
+    ResetConstraint, TransitionIndex, VariableClass, VariableIndex,
 };
 pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
-    ArgumentRead, AtomSlot, CheckedFiniteHyperClause, CheckedFiniteTraceQuantifier, CheckedHyper,
-    CheckedHyperClause, CheckedModelRelation, CheckedQuantifier, CheckedStepPredicate,
-    CopyGenerator, CopyGroup, HyperCause, HyperDeclaration, HyperDeclarations, HyperForm,
-    HyperIdentity, HyperTraceFamily, HyperUnsupported, MatchPart, ModelAlias, ObjectParameter,
-    OperationContractClaim, PackageHyperForm, PackageHyperParameter, PackageHyperQuantifier,
-    STUTTER_TEXT, StepRead, decodable_argument, operation_text,
+    decodable_argument, operation_text, ArgumentRead, AtomSlot, CheckedFiniteHyperClause,
+    CheckedFiniteTraceQuantifier, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
+    CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup, HyperCause,
+    HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
+    HyperUnsupported, MatchPart, ModelAlias, ObjectParameter, OperationContractClaim,
+    PackageHyperForm, PackageHyperParameter, PackageHyperQuantifier, StepRead, STUTTER_TEXT,
 };
 pub use identity::{
-    CheckedClauseKind, CheckedTypeNode, CompositeForm, CorrespondenceConflict, InvalidSumVariants,
-    ModelCorrespondence, ScalarShape, SumVariant, SumVariants, to_kernel_value_type,
+    to_kernel_value_type, CheckedClauseKind, CheckedTypeNode, CompositeForm,
+    CorrespondenceConflict, InvalidSumVariants, ModelCorrespondence, ScalarShape, SumVariant,
+    SumVariants,
 };
 pub use ir::{
     CollectionLoss, CollectionProperty, DispatchCandidate, DispatchProducerDecision, DispatchTable,
@@ -610,40 +611,40 @@ pub use protocol_slots::{
     CheckedSlots, CheckedTerminalMember,
 };
 pub use refusal::{
-    AliasKind, AmbiguousMember, AmbiguousQualified, ArmFault, ChannelEnd, CheckCause, CheckRefusal,
+    AliasKind, AmbiguousMember, AmbiguousQualified, ArmFault, ChannelEnd, CheckCause,
     CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
     MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText,
     PlanParameterOrigin, PredicateRole, ProtocolAnchorCause, ProtocolCheckRefusal,
     ProtocolConstruct, ProtocolReferenceCause, ProvedInterval, QualifiedCandidate,
-    RefusedProtocolDependency, RelatedEnd, ReservedSlotName, ShadowedDeclaration, SlotKind,
-    SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
-    TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
+    RefusedProtocolDependency, RelatedEnd, ReservedSlotName, SemanticCheckRefusal,
+    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect,
+    TaskTimeMember, TemporalCause, TimeUnitCause, TimedConstruct, TimedOmission,
+    UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
-    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, OverParameter,
-    PackagePredicate, PackageStateGraphForm, PackageStateGraphKind, PackageStatePredicate,
-    StateGraphClaim, StateGraphDeclaration, StateGraphFamily, StateGraphForm, StatePredicate,
-    state_graph_predicate_site,
+    state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
+    CheckedStatePredicate, OverParameter, PackagePredicate, PackageStateGraphForm,
+    PackageStateGraphKind, PackageStatePredicate, StateGraphClaim, StateGraphDeclaration,
+    StateGraphFamily, StateGraphForm, StatePredicate,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use temporal_clause::check_clauses;
 
 pub use fsl_forms::AggregateComparison;
 pub use lowering::{
-    CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion, SelectedModelUnionCase,
-    SelectedModelUnionPayload, SourceClockEntry, SourceClockMembers, clock_field_member_type,
-    collection_kind,
+    clock_field_member_type, collection_kind, source_object_owner_chain, CollectionShape, PlaceRow,
+    PlaceStep, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
+    SourceClockEntry, SourceClockMembers,
 };
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
     CheckedFormula, CheckedInterval, CheckedOperator, CheckedProtocolFairness,
-    CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DEFAULT_CLOCK_ROLE,
-    DurationWindow, FormulaNode, FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim,
-    TemporalDeclaration, TemporalDeclarations, TemporalSelection, TemporalTraceFamily,
-    TimeNominalForm, TimeNominalNode, TimeNominalOrigin, TimeSourceKind, TimedPropertyForm,
-    UnaryTemporal,
+    CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DurationWindow, FormulaNode,
+    FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim, TemporalDeclaration,
+    TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
+    TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
 };
 pub use temporal_clause::{
     PackageClauseForm, PackageClauseRefusal, PackageFormulaNode, PackagePropertyRefusal,
@@ -887,6 +888,7 @@ fn occurrences_by_location(occurrences: &family::OccurrenceMap<Location>) -> Occ
 /// ```
 ///
 /// filament:canonical
+#[derive(Clone)]
 pub struct CheckedGraph {
     /// Process-local identity shared with standalone expressions checked
     /// against this graph. It is never serialized or used as package identity.
@@ -905,7 +907,7 @@ pub struct CheckedGraph {
     /// Every compound unit retained from this check stage for later checked
     /// subexpression evaluation and standalone clause checking.
     evaluation_units: FormedUnits,
-    functions: CheckedFunctions,
+    functions: std::sync::Arc<CheckedFunctions>,
     dispatch_tables: Vec<DispatchTable>,
     /// FR-062-AC-2/FR-065-AC-3: the occurrence-keyed source map (identity,
     /// role, ordinal) -> source [`Location`], for every function
@@ -946,7 +948,7 @@ pub struct CheckedGraph {
     function_check_modes: BTreeMap<usize, CheckMode>,
     /// Producer-retained expression identities, owned by this graph rather
     /// than written into its borrowed checked bodies.
-    checked_node_keys: BTreeMap<usize, lowering::CheckedNodeKeys>,
+    checked_node_keys: std::sync::Arc<BTreeMap<usize, lowering::CheckedNodeKeys>>,
     /// Cross-declaration reference occurrences, captured at their S3
     /// resolution sites and sorted by source position.
     dependency_references: Vec<CheckedDependencyReference>,
@@ -1050,19 +1052,19 @@ pub struct CheckedGraph {
     /// FR-230/FR-251: exact checked time-unit scales used for timed clauses.
     time_units: time_units::TimeUnits,
     /// FR-104: every checked state clause, in declaration order.
-    state_clauses: Vec<CheckedStateClause>,
+    state_clauses: std::sync::Arc<Vec<CheckedStateClause>>,
     /// FR-103/FR-702: checked model operation contracts, retained for the
     /// operation run that evaluates their invocation.
-    operation_clauses: Vec<operation_clause::CheckedOperationClause>,
+    operation_clauses: std::sync::Arc<Vec<operation_clause::CheckedOperationClause>>,
     /// FR-366: every checked type-level invariant, in declaration order of
     /// the selected models and their clauses.
-    type_invariants: Vec<CheckedTypeInvariant>,
+    type_invariants: std::sync::Arc<Vec<CheckedTypeInvariant>>,
     /// FR-124: the intended terminal states of each selected model, by
     /// alias.
-    terminals: Vec<CheckedTerminal>,
+    terminals: std::sync::Arc<Vec<CheckedTerminal>>,
     /// FR-230: the checked timed model of each time source, in time-source
     /// order.
-    timed_models: Vec<TimedModel>,
+    timed_models: std::sync::Arc<Vec<TimedModel>>,
     /// FR-367 "Member entries": the authored members of each source record,
     /// tuple and union that holds a clock directly.
     source_clock_members: BTreeMap<filament_exact::NodeKey, SourceClockMembers>,
@@ -1073,7 +1075,7 @@ pub struct CheckedGraph {
         BTreeMap<(filament_exact::NodeKey, String, String), filament_exact::NodeKey>,
     clock_declaration_table: crate::model::clock_reference::normalization::ClockDeclarationTable,
     /// FR-135 to FR-137: every checked refinement, in declaration order.
-    refinements: Vec<CheckedRefinement>,
+    refinements: std::sync::Arc<Vec<CheckedRefinement>>,
     /// FR-304: the unit's `abstraction` declarations, in declaration order,
     /// checked into [`Self::abstraction`].
     abstractions: Vec<fsl_forms::AbstractionDeclarationForm>,
@@ -1115,7 +1117,7 @@ pub struct CheckedGraph {
     protocol_refusals: Vec<ProtocolCheckRefusal>,
     /// Unit-level state-clause refusals retained by the protocol continuation
     /// path so independent protocols can still be emitted.
-    unit_refusals: Vec<CheckRefusal>,
+    unit_refusals: Vec<SemanticCheckRefusal>,
     /// The source region of the first of `unit_refusals`, once a caller has
     /// resolved it ([`CheckedGraph::with_unit_refusals`]).
     unit_refusal_region: Option<SourceRegion>,
@@ -1134,8 +1136,12 @@ pub struct CheckedGraph {
     finite_hyper_nodes: Vec<hyper_clause::CheckedFiniteHyperClause>,
     /// FR-180: every checked model relation emitted as a step-relation claim.
     step_relations: Vec<hyper_clause::CheckedModelRelation>,
+    /// Each step relation's lowering before its implementation references
+    /// are written, aligned with [`Self::step_relations`], so another
+    /// abstraction relation can be bound.
+    step_relation_lowerings: Vec<lowering::LoweredStepRelation>,
     /// FR-165: every checked state-graph claim, in declaration order.
-    state_graph_claims: Vec<CheckedStateGraphClaim>,
+    state_graph_claims: std::sync::Arc<Vec<CheckedStateGraphClaim>>,
     /// FR-1036: source names and declaration spans for emitted synthesis claims.
     synthesis_claims: Vec<CheckedSynthesisClaim>,
     /// FR-754: checked synthesis expressions retained for the bounded runner.
@@ -1148,7 +1154,7 @@ pub struct CheckedGraph {
     /// each checked hybrid claim, in declaration order.
     hybrid_claim_sites: Vec<ClauseSite>,
     /// FR-185: every checked random parameter, reward and workload.
-    probabilistic: CheckedProbabilisticModel,
+    probabilistic: std::sync::Arc<CheckedProbabilisticModel>,
     /// FSL FR-246: every checked task set and the claims over them.
     task_sets: CheckedTaskSets,
     /// FR-115: every operation a state clause or attempt names, with its
@@ -1297,6 +1303,7 @@ impl DebugWith for CheckedGraph {
             hyper_nodes,
             finite_hyper_nodes,
             step_relations,
+            step_relation_lowerings: _,
             state_graph_claims,
             synthesis_claims,
             syntheses,
@@ -2047,6 +2054,7 @@ fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> 
             })
 }
 
+#[ix_trace_rs::string_edge]
 fn verification_plan_refusal(
     package: &PackageDeclarations,
     plan: &fsl_forms::VerificationPlanForm,
@@ -2162,8 +2170,11 @@ fn operation_frames<'a>(
     frames
 }
 
-fn invalid_dispatch(location: Location, detail: InvalidDispatchDeclaration) -> CheckRefusal {
-    CheckRefusal {
+fn invalid_dispatch(
+    location: Location,
+    detail: InvalidDispatchDeclaration,
+) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location,
         cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(detail))),
     }
@@ -2187,7 +2198,7 @@ fn validate_dispatch_function(
     call_parameters: &[ValueType],
     result: &ValueType,
     role: DispatchFunctionRole,
-) -> Result<(), CheckRefusal> {
+) -> Result<(), SemanticCheckRefusal> {
     let Some(signature) = signatures.get(index) else {
         return Err(invalid_dispatch(
             root(Origin::Expression),
@@ -2242,7 +2253,7 @@ fn resolve_signature(
     scope: &Scope,
     function: &FunctionDeclaration,
     location: &Location,
-) -> Result<check::ResolvedSignature, Vec<CheckRefusal>> {
+) -> Result<check::ResolvedSignature, Vec<SemanticCheckRefusal>> {
     let mut refusals = Vec::new();
     let mut parameters = Vec::with_capacity(function.parameters.len());
     let types = scope.for_declaration(&function.name);
@@ -2305,6 +2316,7 @@ fn temporal_declaration_index(origin: &str) -> Option<usize> {
 }
 
 impl PackageDeclarations {
+    #[ix_trace_rs::string_edge]
     fn synthesis_domain_type(&self, name: &str) -> Option<ValueType> {
         self.aliases
             .iter()
@@ -2341,7 +2353,7 @@ impl PackageDeclarations {
         mode: CheckMode,
         limits: CheckingLimits,
         reward_evaluator: &dyn RewardEvaluator,
-    ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
         self.check_with_cancel(mode, limits, reward_evaluator, &Cancel::new())
     }
 
@@ -2354,7 +2366,7 @@ impl PackageDeclarations {
         mode: CheckMode,
         limits: CheckingLimits,
         reward_evaluator: &dyn RewardEvaluator,
-    ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
         self.check_with_protocol_results_and_cancel(mode, limits, reward_evaluator, &Cancel::new())
     }
 
@@ -2371,7 +2383,7 @@ impl PackageDeclarations {
         limits: CheckingLimits,
         reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
-    ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
         let mut protocol_refusals = Vec::new();
         let outcome = self.check_retaining_protocols(
             mode,
@@ -2382,7 +2394,7 @@ impl PackageDeclarations {
             false,
             &mut protocol_refusals,
         );
-        let flatten = |results: &[ProtocolCheckRefusal]| -> Vec<CheckRefusal> {
+        let flatten = |results: &[ProtocolCheckRefusal]| -> Vec<SemanticCheckRefusal> {
             results
                 .iter()
                 .flat_map(|result| result.refusals.iter().cloned())
@@ -2414,7 +2426,7 @@ impl PackageDeclarations {
         limits: CheckingLimits,
         reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
-    ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
         self.check_retaining_protocols(
             mode,
             limits,
@@ -2436,7 +2448,7 @@ impl PackageDeclarations {
         limits: CheckingLimits,
         reward_evaluator: &dyn RewardEvaluator,
         cancel: &Cancel,
-    ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
         self.check_retaining_protocols(
             mode,
             limits,
@@ -2470,16 +2482,16 @@ impl PackageDeclarations {
         independent_protocols: bool,
         continue_state_clause_refusals: bool,
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
-    ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
         for plan in &self.verification_plans {
             if let Some(cause) = verification_plan_refusal(&self, plan) {
-                return Err(vec![CheckRefusal {
+                return Err(vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(cause),
                 }]);
             }
             if let Some(edges) = verification_plan_cycle(plan) {
-                return Err(vec![CheckRefusal {
+                return Err(vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::DefinitionCycle { edges }),
                 }]);
@@ -2491,7 +2503,7 @@ impl PackageDeclarations {
             };
             if let Some(component) = synthesis::first_unbounded_component(&self.types, &domain_type)
             {
-                return Err(vec![CheckRefusal {
+                return Err(vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::SynthesisUnboundedDomain {
                         component,
@@ -2565,7 +2577,7 @@ impl PackageDeclarations {
                             let identity = timed.map(|model| &model.selection().identity);
                             let key = (identity, if identity.is_some() { "" } else { alias });
                             if let Some(&first) = seen_time_sources.get(&key) {
-                                return Some(CheckRefusal {
+                                return Some(SemanticCheckRefusal {
                                     location: root(Origin::Expression),
                                     cause: Box::new(CheckCause::Temporal(Box::new(
                                         TemporalCause::DuplicateTimeSource {
@@ -2594,7 +2606,7 @@ impl PackageDeclarations {
                                             span: source.model.span,
                                         }
                                     };
-                                    return Some(CheckRefusal {
+                                    return Some(SemanticCheckRefusal {
                                         location: root(Origin::Expression),
                                         cause: Box::new(CheckCause::Temporal(Box::new(cause))),
                                     });
@@ -2602,7 +2614,7 @@ impl PackageDeclarations {
                                 let target = match units.target(&source.unit.name) {
                                     Ok(Some(target)) => target,
                                     Ok(None) => {
-                                        return Some(CheckRefusal {
+                                        return Some(SemanticCheckRefusal {
                                             location: root(Origin::Expression),
                                             cause: Box::new(CheckCause::Temporal(Box::new(
                                                 TemporalCause::MalformedTimeUnit {
@@ -2613,7 +2625,7 @@ impl PackageDeclarations {
                                         });
                                     }
                                     Err(cause) => {
-                                        return Some(CheckRefusal {
+                                        return Some(SemanticCheckRefusal {
                                             location: root(Origin::Expression),
                                             cause: Box::new(CheckCause::Temporal(Box::new(
                                                 TemporalCause::TimeQuantity {
@@ -2642,7 +2654,7 @@ impl PackageDeclarations {
                                                     span: operation.span,
                                                 }
                                             };
-                                            return Some(CheckRefusal {
+                                            return Some(SemanticCheckRefusal {
                                                 location: root(Origin::Expression),
                                                 cause: Box::new(CheckCause::Temporal(Box::new(
                                                     cause,
@@ -2657,7 +2669,7 @@ impl PackageDeclarations {
                                         ) {
                                             Ok(value) => value,
                                             Err(probabilistic::ExactFault::ZeroDenominator) => {
-                                                return Some(CheckRefusal {
+                                                return Some(SemanticCheckRefusal {
                                                     location: root(Origin::Expression),
                                                     cause: Box::new(CheckCause::Temporal(
                                                         Box::new(TemporalCause::ZeroDenominator {
@@ -2669,7 +2681,7 @@ impl PackageDeclarations {
                                             Err(probabilistic::ExactFault::AboveCeiling {
                                                 bits,
                                             }) => {
-                                                return Some(CheckRefusal {
+                                                return Some(SemanticCheckRefusal {
                                                     location: root(Origin::Expression),
                                                     cause: Box::new(CheckCause::ResourceExhausted(
                                                         Box::new(StageLimitCause {
@@ -2706,7 +2718,7 @@ impl PackageDeclarations {
                                                 } else {
                                                     period.unit.span
                                                 };
-                                                return Some(CheckRefusal {
+                                                return Some(SemanticCheckRefusal {
                                                     location: root(Origin::Expression),
                                                     cause: Box::new(CheckCause::Temporal(
                                                         Box::new(TemporalCause::TimeQuantity {
@@ -2720,7 +2732,7 @@ impl PackageDeclarations {
                                         if converted.is_zero()
                                             || converted.numerator().is_negative()
                                         {
-                                            return Some(CheckRefusal {
+                                            return Some(SemanticCheckRefusal {
                                                 location: root(Origin::Expression),
                                                 cause: Box::new(CheckCause::Temporal(Box::new(
                                                     TemporalCause::InvalidTickPeriod {
@@ -2751,7 +2763,7 @@ impl PackageDeclarations {
                                 });
                                 return None;
                             }
-                            return Some(CheckRefusal {
+                            return Some(SemanticCheckRefusal {
                                 location: root(Origin::Expression),
                                 cause: Box::new(CheckCause::Temporal(Box::new(
                                     TemporalCause::MissingTimedModel {
@@ -2772,7 +2784,7 @@ impl PackageDeclarations {
                                 // clock-bearing value read whole, or a
                                 // literal with a clock component outside a
                                 // reset.
-                                ClockSite::Expression(used) => Some(CheckRefusal {
+                                ClockSite::Expression(used) => Some(SemanticCheckRefusal {
                                     location: root(Origin::Expression),
                                     cause: Box::new(CheckCause::Temporal(Box::new(match used {
                                         ClockUse::Literal => TemporalCause::ClockWrite {
@@ -2800,7 +2812,7 @@ impl PackageDeclarations {
                         required,
                         span: form.span(),
                     }));
-                    Some(CheckRefusal {
+                    Some(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(cause),
                     })
@@ -2893,7 +2905,7 @@ impl PackageDeclarations {
                     &self.package_name,
                 );
                 for finding in checked.findings {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(match finding {
                             task_set::Finding::Cause(cause) => {
@@ -2917,7 +2929,7 @@ impl PackageDeclarations {
                 }
                 checked_task_sets = checked.model;
             } else {
-                refusals.extend(self.task_set_forms.iter().map(|form| CheckRefusal {
+                refusals.extend(self.task_set_forms.iter().map(|form| SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::Temporal(Box::new(
                         TemporalCause::TimedFacetRequired {
@@ -2966,7 +2978,7 @@ impl PackageDeclarations {
         for (name, location) in declarations {
             let loci = by_name.get(name).map_or(&[][..], Vec::as_slice);
             if loci.len() > 1 {
-                refusals.push(CheckRefusal {
+                refusals.push(SemanticCheckRefusal {
                     location,
                     cause: Box::new(CheckCause::AmbiguousName {
                         name: name.to_owned(),
@@ -3004,7 +3016,7 @@ impl PackageDeclarations {
                 .iter()
                 .any(|clause| &clause.name == *name)
         }) {
-            return Err(vec![CheckRefusal {
+            return Err(vec![SemanticCheckRefusal {
                 location: root(Origin::Expression),
                 cause: Box::new(CheckCause::MissingName(name.clone())),
             }]);
@@ -3305,6 +3317,7 @@ impl PackageDeclarations {
                 models: &self.models,
                 dispatch_tables: &dispatch_tables,
                 sealing_meter: &mut contract_meter,
+                limits,
             },
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();
@@ -3502,7 +3515,7 @@ impl PackageDeclarations {
             let selection = model.selection();
             if let Some(existing) = admitted_by_identity.get(&selection.identity) {
                 if !existing.same_package(model) {
-                    return Err(vec![CheckRefusal {
+                    return Err(vec![SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::DuplicateModelSelection(selection.identity.clone()),
@@ -3524,7 +3537,7 @@ impl PackageDeclarations {
             match model_root_key(selection) {
                 Ok(key) => model_roots.push(key),
                 Err(fault) => {
-                    return Err(vec![CheckRefusal {
+                    return Err(vec![SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::ModelRootKey(fault.to_string()),
@@ -3859,14 +3872,14 @@ impl PackageDeclarations {
                 }
                 // NFR-011: a reached stage limit stops checking.
                 Err(StageFailure::Limit(limit)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(limit_cause(&limit)),
                     });
                     return Err(refusals);
                 }
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(limit_cause(&limit)),
                     });
@@ -3874,7 +3887,7 @@ impl PackageDeclarations {
                 }
                 Err(StageFailure::Cancelled(_)) => return Err(refusals),
                 Err(StageFailure::Fault(fault)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             fault,
@@ -4013,7 +4026,7 @@ impl PackageDeclarations {
                         typed_clauses.push((index, checked));
                     }
                     Err(StageFailure::Limit(limit)) => {
-                        refusals.push(CheckRefusal {
+                        refusals.push(SemanticCheckRefusal {
                             location,
                             cause: Box::new(limit_cause(&limit)),
                         });
@@ -4022,7 +4035,7 @@ impl PackageDeclarations {
                         }
                     }
                     Err(StageFailure::LimitWithPayload(limit, _)) => {
-                        refusals.push(CheckRefusal {
+                        refusals.push(SemanticCheckRefusal {
                             location,
                             cause: Box::new(limit_cause(&limit)),
                         });
@@ -4034,7 +4047,7 @@ impl PackageDeclarations {
                         stopped_at.get_or_insert(index);
                     }
                     Err(StageFailure::Fault(fault)) => {
-                        refusals.push(CheckRefusal {
+                        refusals.push(SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::StageFault(fault),
@@ -4210,7 +4223,7 @@ impl PackageDeclarations {
                         && model.terminal_object().is_some()
                 })
             {
-                refusals.push(CheckRefusal {
+                refusals.push(SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::TerminalWithoutObjectType {
                         name: terminal.name.clone(),
@@ -4270,7 +4283,7 @@ impl PackageDeclarations {
                     .find(|model| model.alias() == Some(alias.as_str()))
                     .map(|model| model.selection().identity.clone())
                 else {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: Location::root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::MissingAdmittedModel(alias.clone()),
@@ -4369,7 +4382,7 @@ impl PackageDeclarations {
         // The defects of the `refinement_internals` value are reported
         // whatever the support set says and whatever else the stage refuses.
         for (owner, defect) in &internal_lists.defects {
-            refusals.push(CheckRefusal {
+            refusals.push(SemanticCheckRefusal {
                 location: Location::root(Origin::Expression),
                 cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                     refinement: owner.clone().unwrap_or_default(),
@@ -4468,7 +4481,7 @@ impl PackageDeclarations {
                 check_one_refinement!(index, refinement, &[], false);
             }
         }
-        let deferred: Vec<CheckRefusal> = protocol_refinements
+        let deferred: Vec<SemanticCheckRefusal> = protocol_refinements
             .iter()
             .flat_map(|(_, pending)| pending.refusals().iter().cloned())
             .collect();
@@ -4486,7 +4499,7 @@ impl PackageDeclarations {
                     check_one_refinement!(index, refinement, &[], true);
                 }
             }
-            let prechecked_deferred: Vec<CheckRefusal> = protocol_refinements
+            let prechecked_deferred: Vec<SemanticCheckRefusal> = protocol_refinements
                 .iter()
                 .flat_map(|(_, pending)| pending.refusals().iter().cloned())
                 .collect();
@@ -4533,7 +4546,7 @@ impl PackageDeclarations {
                 Ok(()) => {}
                 Err(model_conformance::StageDenial::Pending(failure)) => {
                     return Err(with_deferred(
-                        vec![CheckRefusal {
+                        vec![SemanticCheckRefusal {
                             location: root(Origin::Expression),
                             cause: Box::new(pending_refusal(failure)),
                         }],
@@ -4542,7 +4555,7 @@ impl PackageDeclarations {
                 }
                 Err(model_conformance::StageDenial::MissingModel(identity)) => {
                     return Err(with_deferred(
-                        vec![CheckRefusal {
+                        vec![SemanticCheckRefusal {
                             location: root(Origin::Expression),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::MissingAdmittedModel(identity),
@@ -4553,7 +4566,7 @@ impl PackageDeclarations {
                 }
                 Err(model_conformance::StageDenial::Incomplete(incomplete)) => {
                     return Err(with_deferred(
-                        vec![CheckRefusal {
+                        vec![SemanticCheckRefusal {
                             location: root(Origin::Expression),
                             cause: Box::new(CheckCause::ModelIncomplete(incomplete)),
                         }],
@@ -4564,7 +4577,7 @@ impl PackageDeclarations {
                     return Err(with_deferred(
                         failures
                             .into_iter()
-                            .map(|failure| CheckRefusal {
+                            .map(|failure| SemanticCheckRefusal {
                                 location: root(Origin::Expression),
                                 cause: Box::new(CheckCause::ModelConformance(Box::new(failure))),
                             })
@@ -4580,7 +4593,7 @@ impl PackageDeclarations {
         if let Some(pending) = pending_types.take().map(std::cell::RefCell::into_inner) {
             if let Err(failure) = pending.complete() {
                 return Err(with_deferred(
-                    vec![CheckRefusal {
+                    vec![SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(type_admission(failure)),
                     }],
@@ -4698,7 +4711,7 @@ impl PackageDeclarations {
             if loci.len() > 1 {
                 for &span in loci.iter() {
                     if reported_protocol_names.insert((name, span.start, span.end)) {
-                        refusals.push(CheckRefusal {
+                        refusals.push(SemanticCheckRefusal {
                             location: root(Origin::Expression),
                             cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
                                 ProtocolAnchorCause::Ambiguous {
@@ -4912,7 +4925,7 @@ impl PackageDeclarations {
                 }
                 Err(protocol_refusals) => {
                     protocol_places.push(None);
-                    let mut owned_refusals: Vec<CheckRefusal> = profile_refusals
+                    let mut owned_refusals: Vec<SemanticCheckRefusal> = profile_refusals
                         .into_iter()
                         .map(|(_, refusal)| refusal)
                         .collect();
@@ -5127,7 +5140,7 @@ impl PackageDeclarations {
                 if let Err(fault) =
                     checked.catalog_concrete_protocols(&declarations, &protocol_views)
                 {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             fault,
@@ -5294,7 +5307,7 @@ impl PackageDeclarations {
                     }
                 }
                 Err(StageFailure::Limit(limit)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(limit_cause(&limit)),
                     });
@@ -5303,7 +5316,7 @@ impl PackageDeclarations {
                     }
                 }
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(limit_cause(&limit)),
                     });
@@ -5313,7 +5326,7 @@ impl PackageDeclarations {
                 }
                 Err(StageFailure::Cancelled(_)) => return Err(refusals),
                 Err(StageFailure::Fault(fault)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             fault,
@@ -5404,7 +5417,7 @@ impl PackageDeclarations {
                 &probabilistic_input,
                 &mut checked_task_sets,
             ));
-            refusals.extend(causes.into_iter().map(|cause| CheckRefusal {
+            refusals.extend(causes.into_iter().map(|cause| SemanticCheckRefusal {
                 location: root(Origin::Expression),
                 cause: Box::new(CheckCause::Temporal(Box::new(cause))),
             }));
@@ -5459,7 +5472,7 @@ impl PackageDeclarations {
                 earlier == name && (graph.is_some() || earlier_graph.is_some())
             });
             if let Some((_, earlier_span, _)) = earlier {
-                refusals.push(CheckRefusal {
+                refusals.push(SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::StateGraph(Box::new(
                         StateGraphCause::AmbiguousName {
@@ -5507,7 +5520,7 @@ impl PackageDeclarations {
                     checked_state_graph_claims.push(checked);
                 }
                 Err(StageFailure::Limit(limit)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location,
                         cause: Box::new(limit_cause(&limit)),
                     });
@@ -5516,7 +5529,7 @@ impl PackageDeclarations {
                     }
                 }
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(limit_cause(&limit)),
                     });
@@ -5526,7 +5539,7 @@ impl PackageDeclarations {
                 }
                 Err(StageFailure::Cancelled(_)) => return Err(refusals),
                 Err(StageFailure::Fault(fault)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             fault,
@@ -5649,7 +5662,7 @@ impl PackageDeclarations {
                     }
                 },
                 Err(StageFailure::Limit(limit)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(limit_cause(&limit)),
                     });
@@ -5658,7 +5671,7 @@ impl PackageDeclarations {
                     }
                 }
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(limit_cause(&limit)),
                     });
@@ -5668,7 +5681,7 @@ impl PackageDeclarations {
                 }
                 Err(StageFailure::Cancelled(_)) => return Err(refusals),
                 Err(StageFailure::Fault(fault)) => {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             fault,
@@ -5771,7 +5784,7 @@ impl PackageDeclarations {
         let evaluation_units = match FormedUnits::identify(&units) {
             Ok(formed) => formed,
             Err(identity) => {
-                refusals.push(CheckRefusal {
+                refusals.push(SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::Identity(identity)),
                 });
@@ -5785,7 +5798,7 @@ impl PackageDeclarations {
                 |((_, body, _), location)| match FormedUnits::identify(&body.formed_units) {
                     Ok(formed) => formed,
                     Err(identity) => {
-                        refusals.push(CheckRefusal {
+                        refusals.push(SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::Identity(identity)),
                         });
@@ -5936,7 +5949,7 @@ impl PackageDeclarations {
             .collect();
         let order = lowering::dependency_order(&function_edges, &protocol_edges, &temporal_edges);
         let mut lower_protocol = |lowering: &mut lowering::Lowering<'_>,
-                                  _refusals: &mut Vec<CheckRefusal>,
+                                  _refusals: &mut Vec<SemanticCheckRefusal>,
                                   index: usize,
                                   cyclic: bool| {
             let Some(protocol) = protocol_list.get(index) else {
@@ -5964,7 +5977,7 @@ impl PackageDeclarations {
             }
         };
         let lower_functions = |lowering: &mut lowering::Lowering<'_>,
-                               refusals: &mut Vec<CheckRefusal>,
+                               refusals: &mut Vec<SemanticCheckRefusal>,
                                group: &lowering::FunctionGroup,
                                in_cycle: bool| {
             let inputs: Vec<lowering::FunctionInput<'_>> = group
@@ -6009,7 +6022,7 @@ impl PackageDeclarations {
                 .collect();
         let lower_temporal =
             |lowering: &mut lowering::Lowering<'_>,
-             refusals: &mut Vec<CheckRefusal>,
+             refusals: &mut Vec<SemanticCheckRefusal>,
              dense: usize,
              lowered_temporal: &mut Vec<Option<lowering::LoweredTemporalClause>>| {
                 let Some((index, checked, conditions)) = checked_temporal.get(dense) else {
@@ -6429,7 +6442,7 @@ impl PackageDeclarations {
         // short of its list is a broken invariant, never a silent drop.
         for (clause, align) in checked_hyper.iter().zip(&hyper_align) {
             if align.len() != clause.align_skip().len() && refusals.is_empty() {
-                refusals.push(CheckRefusal {
+                refusals.push(SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                         filament_semantic_value::catalog::InternalFault::new(
@@ -6632,7 +6645,7 @@ impl PackageDeclarations {
                 }
                 let Some(model) = scope.declared_model(&models, relation.name(), alias.as_str())
                 else {
-                    refusals.push(CheckRefusal {
+                    refusals.push(SemanticCheckRefusal {
                         location: hyper_clause::lowering::hyper_location(
                             index,
                             hyper_clause::lowering::Site::Relation(index),
@@ -6648,7 +6661,7 @@ impl PackageDeclarations {
                 };
                 match model_root_key(model.selection()) {
                     Ok(key) => subjects.push((alias.clone(), key)),
-                    Err(_) => refusals.push(CheckRefusal {
+                    Err(_) => refusals.push(SemanticCheckRefusal {
                         location: hyper_clause::lowering::hyper_location(
                             index,
                             hyper_clause::lowering::Site::Relation(index),
@@ -6869,7 +6882,7 @@ impl PackageDeclarations {
                     .and_then(|model| model_root_key(model.selection()).ok());
                 match root {
                     Some(root) => subject_roots.push(root),
-                    None => refusals.push(CheckRefusal {
+                    None => refusals.push(SemanticCheckRefusal {
                         location: hyper_clause::lowering::hyper_location(
                             index,
                             hyper_clause::lowering::Site::Claim,
@@ -7296,7 +7309,7 @@ impl PackageDeclarations {
         // `refusals` is empty here); a slot left empty is an internal fault,
         // never a silent omission.
         let unlowered = || {
-            vec![CheckRefusal {
+            vec![SemanticCheckRefusal {
                 location: root(Origin::Expression),
                 cause: Box::new(CheckCause::InternalFault(Box::new(
                     KeyFault::UnkeyableRequirements,
@@ -7388,7 +7401,7 @@ impl PackageDeclarations {
                     .get(&key)
                     .and_then(|positions| positions.get(*ordinal))
                 else {
-                    return Err(vec![CheckRefusal {
+                    return Err(vec![SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UncheckedProtocolFact,
@@ -7403,7 +7416,7 @@ impl PackageDeclarations {
                     .remove(&(checked.name.clone(), node))
                     .is_none_or(|positions| positions.len() != count)
                 {
-                    return Err(vec![CheckRefusal {
+                    return Err(vec![SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UncheckedProtocolFact,
@@ -7413,7 +7426,7 @@ impl PackageDeclarations {
             }
         }
         if !related_canonical_positions.is_empty() {
-            return Err(vec![CheckRefusal {
+            return Err(vec![SemanticCheckRefusal {
                 location: root(Origin::Expression),
                 cause: Box::new(CheckCause::InternalFault(Box::new(
                     KeyFault::UncheckedProtocolFact,
@@ -7477,7 +7490,7 @@ impl PackageDeclarations {
         // node key after the function declarations have been lowered.
         for checked_index in protocol_places.iter().flatten().copied() {
             let Some(checked) = checked_protocols.get_mut(checked_index) else {
-                return Err(vec![CheckRefusal {
+                return Err(vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         KeyFault::UnkeyableRequirements,
@@ -7487,7 +7500,7 @@ impl PackageDeclarations {
             for pending in std::mem::take(&mut checked.pending_predicate_joins) {
                 let identity = identities.get(pending.function).cloned().flatten();
                 let Some(identity) = identity else {
-                    return Err(vec![CheckRefusal {
+                    return Err(vec![SemanticCheckRefusal {
                         location: root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UnkeyableRequirements,
@@ -7509,7 +7522,7 @@ impl PackageDeclarations {
         // never an omission.
         let mut requirements = claims::key_claims(claims, &occurrences, &semantic_graph, &binders)
             .map_err(|fault| {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(fault))),
                 }]
@@ -7539,7 +7552,7 @@ impl PackageDeclarations {
                 let clause_key = &lowered_clause_keys[index];
                 let location = clause_location(index, &form.name);
                 let unkeyable = || {
-                    vec![CheckRefusal {
+                    vec![SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UnkeyableRequirements,
@@ -7613,7 +7626,7 @@ impl PackageDeclarations {
                     bounds: typed.bounds,
                 })
             })
-            .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
+            .collect::<Result<Vec<_>, Vec<SemanticCheckRefusal>>>()?;
         // FR-220: each attempt inside a `parallel` classified as a load, a
         // store, a read-modify-write or local over the places its enclosing
         // `parallel` controls share, with its ordering admitted and, under a
@@ -7706,7 +7719,7 @@ impl PackageDeclarations {
         // The sites no declared form spans (slots, conjunct slots, skipped
         // operations) are located at their conjunct or clause.
         for (index, clause) in checked_hyper.iter().enumerate() {
-            use hyper_clause::lowering::{Site, hyper_site};
+            use hyper_clause::lowering::{hyper_site, Site};
             for slot in 0..clause.atom_slots().len() {
                 type_spans.insert(hyper_site(index, Site::Slot(slot)), clause.span());
             }
@@ -7737,7 +7750,7 @@ impl PackageDeclarations {
             }
         }
         for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
-            use hyper_clause::lowering::{Site, hyper_site};
+            use hyper_clause::lowering::{hyper_site, Site};
             let index = checked_hyper.len() + finite_index;
             type_spans.insert(hyper_site(index, Site::Claim), clause.span());
             type_spans.insert(hyper_site(index, Site::FiniteDomain), clause.span());
@@ -7785,7 +7798,7 @@ impl PackageDeclarations {
             let claim = occurrences
                 .first_origin(key, family::OccurrenceRole::Claim, |at| *at == location)
                 .ok_or_else(|| {
-                    vec![CheckRefusal {
+                    vec![SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UnkeyableRequirements,
@@ -7811,7 +7824,7 @@ impl PackageDeclarations {
                         *at == location
                     })
                     .ok_or_else(|| {
-                        vec![CheckRefusal {
+                        vec![SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::UnkeyableRequirements,
@@ -7821,7 +7834,7 @@ impl PackageDeclarations {
                 Ok(checked
                     .assembled_at(OccurrenceKey::new(claims::wire(lowered.key.clone()), claim)))
             })
-            .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
+            .collect::<Result<Vec<_>, Vec<SemanticCheckRefusal>>>()?;
         let finite_hyper_nodes = checked_finite_hyper
             .into_iter()
             .zip(&lowered_finite_hyper)
@@ -7836,7 +7849,7 @@ impl PackageDeclarations {
                         *at == location
                     })
                     .ok_or_else(|| {
-                        vec![CheckRefusal {
+                        vec![SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::UnkeyableRequirements,
@@ -7848,7 +7861,7 @@ impl PackageDeclarations {
                     OccurrenceKey::new(claims::wire(lowered.key.clone()), claim),
                 ))
             })
-            .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
+            .collect::<Result<Vec<_>, Vec<SemanticCheckRefusal>>>()?;
         // FR-410 "Outputs": each state-graph claim carries its `claim`
         // occurrence; FR-165 "Requirement record": its
         // `temporal-satisfaction` record, keyed by that occurrence.
@@ -7861,7 +7874,7 @@ impl PackageDeclarations {
             let location =
                 state_graph_claim::state_graph_location(index, state_graph_claim::Site::Claim);
             let unkeyable = || {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         KeyFault::UnkeyableRequirements,
@@ -7920,7 +7933,7 @@ impl PackageDeclarations {
             let origin = occurrences
                 .first_origin(&key, family::OccurrenceRole::Claim, |at| *at == location)
                 .ok_or_else(|| {
-                    vec![CheckRefusal {
+                    vec![SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UnkeyableRequirements,
@@ -7943,7 +7956,7 @@ impl PackageDeclarations {
             .map(|((index, checked, conditions), lowered)| {
                 let location = lowering::temporal_location(index, lowering::TemporalSite::Claim);
                 let unkeyable = || {
-                    vec![CheckRefusal {
+                    vec![SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UnkeyableRequirements,
@@ -8000,7 +8013,7 @@ impl PackageDeclarations {
                             )
                         })
                         .map_err(|fault| {
-                            vec![CheckRefusal {
+                            vec![SemanticCheckRefusal {
                                 location: location.clone(),
                                 cause: Box::new(CheckCause::InternalFault(Box::new(
                                     KeyFault::StageFault(fault),
@@ -8074,7 +8087,7 @@ impl PackageDeclarations {
                         .collect(),
                 })
             })
-            .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
+            .collect::<Result<Vec<_>, Vec<SemanticCheckRefusal>>>()?;
         // FR-447 "The provider request": one `temporal-satisfaction` record
         // per checked hybrid claim, keyed by the claim's `claim` occurrence,
         // carrying the hybrid-dynamics requirement every hybrid claim has
@@ -8083,7 +8096,7 @@ impl PackageDeclarations {
         for (index, lowered) in lowered_hybrid_claims {
             let location = lowering::hybrid_location(lowering::HybridSite::Claim(index));
             let unkeyable = || {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         KeyFault::UnkeyableRequirements,
@@ -8156,7 +8169,7 @@ impl PackageDeclarations {
                 name: refinement_origin(checked.name()),
             });
             let unkeyable = || {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         KeyFault::UnkeyableRequirements,
@@ -8253,7 +8266,7 @@ impl PackageDeclarations {
             for ((bound, lowered_attempt), location) in bindings.iter().zip(lowered).zip(locations)
             {
                 let unkeyable = || {
-                    vec![CheckRefusal {
+                    vec![SemanticCheckRefusal {
                         location: location.clone(),
                         cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::UnkeyableRequirements,
@@ -8380,7 +8393,7 @@ impl PackageDeclarations {
                     std::collections::hash_map::Entry::Occupied(existing)
                         if *existing.get() == record => {}
                     std::collections::hash_map::Entry::Occupied(_) => {
-                        return Err(vec![CheckRefusal {
+                        return Err(vec![SemanticCheckRefusal {
                             location: location.clone(),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::UnkeyableRequirements,
@@ -8422,7 +8435,7 @@ impl PackageDeclarations {
                     .iter()
                     .find(|checked| checked.name() == declaration.form.name.name)
                 else {
-                    return Some(CheckRefusal {
+                    return Some(SemanticCheckRefusal {
                         location: Location::root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             filament_semantic_value::catalog::InternalFault::new(
@@ -8650,7 +8663,7 @@ impl PackageDeclarations {
                 continue;
             };
             let unkeyable = || {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         KeyFault::UnkeyableRequirements,
@@ -8708,7 +8721,7 @@ impl PackageDeclarations {
             package_name,
             scope,
             evaluation_units,
-            functions,
+            functions: std::sync::Arc::new(functions),
             dispatch_tables,
             occurrences,
             occurrences_by_location: OccurrencesByLocation::default(),
@@ -8722,7 +8735,7 @@ impl PackageDeclarations {
                 .collect(),
             function_check_modes,
             semantic_graph,
-            checked_node_keys,
+            checked_node_keys: std::sync::Arc::new(checked_node_keys),
             dependency_references,
             equality_producer_data,
             equality_producer_identities,
@@ -8750,15 +8763,15 @@ impl PackageDeclarations {
             extension_definitions,
             time_sources: self.time_sources,
             time_units: time_units.clone(),
-            state_clauses,
-            operation_clauses,
-            type_invariants,
-            terminals,
-            timed_models,
+            state_clauses: std::sync::Arc::new(state_clauses),
+            operation_clauses: std::sync::Arc::new(operation_clauses),
+            type_invariants: std::sync::Arc::new(type_invariants),
+            terminals: std::sync::Arc::new(terminals),
+            timed_models: std::sync::Arc::new(timed_models),
             source_clock_members,
             source_parameter_nodes,
             clock_declaration_table: Default::default(),
-            refinements,
+            refinements: std::sync::Arc::new(refinements),
             abstractions: self.abstractions,
             guarantee_forms: self.guarantees,
             guarantees: Vec::new(),
@@ -8801,7 +8814,8 @@ impl PackageDeclarations {
             hyper_nodes,
             finite_hyper_nodes,
             step_relations: Vec::new(),
-            state_graph_claims: state_graph_nodes,
+            step_relation_lowerings: Vec::new(),
+            state_graph_claims: std::sync::Arc::new(state_graph_nodes),
             synthesis_claims: checked_syntheses
                 .iter()
                 .zip(&lowered_syntheses)
@@ -8817,7 +8831,7 @@ impl PackageDeclarations {
             hybrid_models: checked_hybrid_models,
             hybrid_claims: checked_hybrid_claim_list,
             hybrid_claim_sites,
-            probabilistic: probabilistic_model,
+            probabilistic: std::sync::Arc::new(probabilistic_model),
             task_sets: checked_task_sets,
             operation_frames,
             model_objects,
@@ -8841,7 +8855,7 @@ impl PackageDeclarations {
             Err(found) => {
                 return Err(found
                     .into_iter()
-                    .map(|(index, refusal)| CheckRefusal {
+                    .map(|(index, refusal)| SemanticCheckRefusal {
                         location: graph.abstraction_location(index),
                         cause: Box::new(CheckCause::Abstraction(Box::new(refusal))),
                     })
@@ -8850,12 +8864,12 @@ impl PackageDeclarations {
         }
         // FSpec FR-490: the unit's `guarantee` declarations check against the
         // relation and the temporal clauses.
-        match graph.check_declared_guarantees() {
-            Ok(guarantees) => graph.guarantees = guarantees,
+        match graph.derive_guarantees() {
+            Ok(()) => {}
             Err(found) => {
                 return Err(found
                     .into_iter()
-                    .map(|(index, refusal)| CheckRefusal {
+                    .map(|(index, refusal)| SemanticCheckRefusal {
                         location: graph.guarantee_location(index),
                         cause: Box::new(CheckCause::Abstraction(Box::new(
                             AbstractionRefusal::Guarantee(Box::new(refusal)),
@@ -8871,7 +8885,7 @@ impl PackageDeclarations {
             Err(found) => {
                 return Err(found
                     .into_iter()
-                    .map(|(index, refusal)| CheckRefusal {
+                    .map(|(index, refusal)| SemanticCheckRefusal {
                         location: graph.composition_location(index),
                         cause: Box::new(CheckCause::Abstraction(Box::new(
                             AbstractionRefusal::Composition(Box::new(refusal)),
@@ -8880,6 +8894,8 @@ impl PackageDeclarations {
                     .collect());
             }
         }
+        graph.step_relation_lowerings = lowered_relations;
+        let lowered_relations = graph.step_relation_lowerings.clone();
         finish_step_relations(&mut graph, checked_relations, lowered_relations)?;
         // FSpec FR-746 admits no empty checked graph. A type alias is a
         // name for another node and does not itself populate the wire graph,
@@ -8891,7 +8907,7 @@ impl PackageDeclarations {
             && graph.type_nodes.is_empty()
             && graph.model_roots.is_empty()
         {
-            return Err(vec![CheckRefusal {
+            return Err(vec![SemanticCheckRefusal {
                 location: root(Origin::Expression),
                 cause: Box::new(CheckCause::EmptyPackage {
                     package_name: graph.package_name.clone(),
@@ -8911,16 +8927,88 @@ impl PackageDeclarations {
     }
 }
 
+impl CheckedGraph {
+    /// Derive each `guarantee` declaration's facts against the relation the
+    /// graph holds.
+    fn derive_guarantees(&mut self) -> Result<(), Vec<(usize, guarantee::GuaranteeRefusal)>> {
+        self.guarantees = self.check_declared_guarantees()?;
+        Ok(())
+    }
+
+    /// This graph with `relation` as its abstraction relation: everything
+    /// checking derives from the relation (each guarantee's item refusal and
+    /// relation node, each step relation's claim node, occurrences and
+    /// requirement records) is derived again, by the functions checking uses.
+    /// `self` is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// An [`AbstractionRefusal`] when a derivation refuses.
+    #[implements("FR-306-AC-5")]
+    pub fn with_abstraction(
+        &self,
+        relation: CheckedAbstractionRelation,
+    ) -> Result<Self, Vec<AbstractionRefusal>> {
+        let mut graph = self.clone();
+        graph.abstraction = Some(relation);
+        graph.derive_guarantees().map_err(|found| {
+            found
+                .into_iter()
+                .map(|(_, refusal)| AbstractionRefusal::Guarantee(Box::new(refusal)))
+                .collect::<Vec<_>>()
+        })?;
+        let relations = graph.retract_step_relations();
+        let lowered_relations = graph.step_relation_lowerings.clone();
+        finish_step_relations(&mut graph, relations, lowered_relations).map_err(|found| {
+            found
+                .into_iter()
+                .map(|refusal| match *refusal.cause {
+                    CheckCause::Abstraction(cause) => *cause,
+                    // Every other refusal of the derivation is an invariant.
+                    _ => AbstractionRefusal::Internal(
+                        filament_semantic_value::catalog::InternalFault::new(
+                            "check.abstraction",
+                            "step-relations-derive-for-a-bound-relation",
+                        ),
+                    ),
+                })
+                .collect::<Vec<_>>()
+        })?;
+        graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
+        Ok(graph)
+    }
+
+    /// Take out what [`finish_step_relations`] added for each step relation,
+    /// and give the relations back to be finished again.
+    fn retract_step_relations(&mut self) -> Vec<hyper_clause::CheckedModelRelation> {
+        let relations = std::mem::take(&mut self.step_relations);
+        let mut claims = std::collections::HashSet::new();
+        for relation in &relations {
+            if let Some(key) = relation.identity() {
+                self.semantic_graph.remove_finalized(&key);
+                self.occurrences
+                    .retract_last(&key, family::OccurrenceRole::Declaration);
+                self.occurrences
+                    .retract_last(&key, family::OccurrenceRole::Claim);
+            }
+            claims.extend(relation.occurrence().cloned());
+        }
+        self.requirements = std::mem::take(&mut self.requirements).without(&claims);
+        relations
+    }
+}
+
 /// QSL-552: finalize FR-180 claims after the checked abstraction relation is
 /// known, because the implementation reference participates in claim
 /// identity and the abstraction node is keyed from the assembled graph.
+#[implements("FR-306-AC-6")]
 fn finish_step_relations(
     graph: &mut CheckedGraph,
     checked: Vec<hyper_clause::CheckedModelRelation>,
     lowered: Vec<lowering::LoweredStepRelation>,
-) -> Result<(), Vec<CheckRefusal>> {
+) -> Result<(), Vec<SemanticCheckRefusal>> {
     if checked.len() != lowered.len() {
-        return Err(vec![CheckRefusal {
+        return Err(vec![SemanticCheckRefusal {
             location: root(Origin::Expression),
             cause: Box::new(CheckCause::InternalFault(Box::new(
                 KeyFault::UnkeyableRequirements,
@@ -8946,7 +9034,7 @@ fn finish_step_relations(
         });
         let abstraction_node = if has_bound_frame {
             let relation = abstraction.ok_or_else(|| {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                         filament_semantic_value::catalog::InternalFault::new(
@@ -8959,16 +9047,11 @@ fn finish_step_relations(
             Some(
                 graph
                     .abstraction_nodes(relation)
-                    .map_err(|_| {
-                        vec![CheckRefusal {
+                    .map_err(|reason| {
+                        vec![SemanticCheckRefusal {
                             location: location.clone(),
-                            cause: Box::new(CheckCause::InternalFault(Box::new(
-                                KeyFault::StageFault(
-                                    filament_semantic_value::catalog::InternalFault::new(
-                                        "S4",
-                                        "step-relation-abstraction-node-keyed",
-                                    ),
-                                ),
+                            cause: Box::new(CheckCause::Abstraction(Box::new(
+                                AbstractionRefusal::of_nodes(reason),
                             ))),
                         }]
                     })?
@@ -8989,7 +9072,7 @@ fn finish_step_relations(
         .map_err(|refusal| vec![refusal])?;
         let key = node.key();
         graph.semantic_graph.insert_finalized(node).map_err(|_| {
-            vec![CheckRefusal {
+            vec![SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::InternalFault(Box::new(
                     KeyFault::UnkeyableRequirements,
@@ -9010,7 +9093,7 @@ fn finish_step_relations(
             .model_claim()
             .requirements(claims::wire(key.clone()), &[], &[], &[])
             .map_err(|_| {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         KeyFault::UnkeyableRequirements,
@@ -9025,7 +9108,7 @@ fn finish_step_relations(
         {
             let roots: Vec<_> = code_roots.iter().cloned().map(claims::wire).collect();
             let code_requirements = code_claim.requirements(&roots).map_err(|_| {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         KeyFault::UnkeyableRequirements,
@@ -9046,7 +9129,7 @@ fn finish_step_relations(
     graph.requirements = std::mem::take(&mut graph.requirements)
         .extended(added)
         .map_err(|_| {
-            vec![CheckRefusal {
+            vec![SemanticCheckRefusal {
                 location: root(Origin::Expression),
                 cause: Box::new(CheckCause::InternalFault(Box::new(
                     KeyFault::UnkeyableRequirements,
@@ -9139,7 +9222,10 @@ fn add_probabilistic_body_model_calls(
     }
 }
 
-fn with_deferred(mut found: Vec<CheckRefusal>, deferred: &[CheckRefusal]) -> Vec<CheckRefusal> {
+fn with_deferred(
+    mut found: Vec<SemanticCheckRefusal>,
+    deferred: &[SemanticCheckRefusal],
+) -> Vec<SemanticCheckRefusal> {
     found.extend_from_slice(deferred);
     found
 }
@@ -9731,7 +9817,7 @@ impl CheckedGraph {
         &self.clock_declaration_table
     }
 
-    fn check_clock_declaration_table(&mut self) -> Result<(), Vec<CheckRefusal>> {
+    fn check_clock_declaration_table(&mut self) -> Result<(), Vec<SemanticCheckRefusal>> {
         use crate::model::clock_reference::normalization::{
             ClockDeclarationResolutionError, ClockDeclarationTable, SourceDeclarations,
         };
@@ -9740,7 +9826,7 @@ impl CheckedGraph {
             return Ok(());
         }
         let internal = |fault| {
-            vec![CheckRefusal {
+            vec![SemanticCheckRefusal {
                 location: root(Origin::Expression),
                 cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                     fault,
@@ -9751,7 +9837,7 @@ impl CheckedGraph {
         let mut entries = Vec::new();
         let mut run_places = Vec::new();
         let mut locations = BTreeMap::new();
-        for model in &self.timed_models {
+        for model in self.timed_models.iter() {
             let Some(index) = self
                 .time_sources
                 .iter()
@@ -9768,7 +9854,7 @@ impl CheckedGraph {
                 name: time_source_origin(index),
             });
             let resolution = |error| {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(match error {
                         ClockDeclarationResolutionError::Ambiguous(ambiguity) => {
@@ -9793,7 +9879,7 @@ impl CheckedGraph {
         }
         self.clock_declaration_table = ClockDeclarationTable::from_entries(entries)
             .map_err(|collision| {
-                vec![CheckRefusal {
+                vec![SemanticCheckRefusal {
                     location: locations
                         .remove(&collision.second)
                         .unwrap_or_else(|| root(Origin::Expression)),
@@ -9957,9 +10043,7 @@ impl CheckedGraph {
 
     /// The source selection location that owns each `model_root`, in the
     /// same order as [`Self::model_roots`].
-    pub fn model_root_locations(
-        &self,
-    ) -> &[filament_semantic_value::location::ExpressionLocation] {
+    pub fn model_root_locations(&self) -> &[filament_semantic_value::location::ExpressionLocation] {
         &self.model_root_locations
     }
 
@@ -10118,7 +10202,7 @@ impl CheckedGraph {
         expected: Option<&ValueType>,
         mode: CheckMode,
         limits: CheckingLimits,
-    ) -> Result<CheckedExpression, CheckRefusal> {
+    ) -> Result<CheckedExpression, SemanticCheckRefusal> {
         self.check_clause_expression(
             parameters,
             expression,
@@ -10142,7 +10226,7 @@ impl CheckedGraph {
         expected: Option<&ValueType>,
         mode: CheckMode,
         limits: CheckingLimits,
-    ) -> Result<CheckedExpression, CheckRefusal> {
+    ) -> Result<CheckedExpression, SemanticCheckRefusal> {
         self.check_clause_expression(
             parameters,
             expression,
@@ -10166,7 +10250,7 @@ impl CheckedGraph {
         clause_kind: ClauseKind,
         mode: CheckMode,
         limits: CheckingLimits,
-    ) -> Result<CheckedExpression, CheckRefusal> {
+    ) -> Result<CheckedExpression, SemanticCheckRefusal> {
         self.check_clause_expression_inner(
             parameters,
             expression,
@@ -10191,7 +10275,7 @@ impl CheckedGraph {
         clause_kind: ClauseKind,
         mode: CheckMode,
         limits: CheckingLimits,
-    ) -> Result<CheckedExpression, CheckRefusal> {
+    ) -> Result<CheckedExpression, SemanticCheckRefusal> {
         let target = ValueType::Quantity(target_unit);
         self.check_clause_expression_inner(
             parameters,
@@ -10211,7 +10295,7 @@ impl CheckedGraph {
         mode: CheckMode,
         limits: CheckingLimits,
         target: ClauseExpressionTarget<'_>,
-    ) -> Result<CheckedExpression, CheckRefusal> {
+    ) -> Result<CheckedExpression, SemanticCheckRefusal> {
         let location = root(Origin::Expression);
         let mut nodes = 0_u64;
         let typer = Typer::new(
@@ -10260,9 +10344,11 @@ impl CheckedGraph {
         .with_check_mode(mode)
         .check(root.root())?;
         let formed_units =
-            FormedUnits::identify(&typer.into_formed_units()).map_err(|identity| CheckRefusal {
-                location: location.clone(),
-                cause: Box::new(CheckCause::Identity(identity)),
+            FormedUnits::identify(&typer.into_formed_units()).map_err(|identity| {
+                SemanticCheckRefusal {
+                    location: location.clone(),
+                    cause: Box::new(CheckCause::Identity(identity)),
+                }
             })?;
         Ok(CheckedExpression {
             graph_identity: self.graph_identity.clone(),
@@ -10484,7 +10570,7 @@ impl CheckedGraph {
     /// Unit-level state-clause refusals preserved by the protocol
     /// continuation check. Ordinary check operations still return these as
     /// primary refusals.
-    pub fn unit_refusals(&self) -> &[CheckRefusal] {
+    pub fn unit_refusals(&self) -> &[SemanticCheckRefusal] {
         &self.unit_refusals
     }
 
@@ -10505,7 +10591,7 @@ impl CheckedGraph {
     #[must_use]
     pub fn with_unit_refusals(
         mut self,
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         region: Option<SourceRegion>,
     ) -> Self {
         if !refusals.is_empty() {
@@ -10634,7 +10720,7 @@ impl CheckedGraph {
             .iter()
             .map(|field| field.name().to_owned())
             .collect();
-        for timed in &self.timed_models {
+        for timed in self.timed_models.iter() {
             for clock in timed.clocks() {
                 if clock.owner() != *owner {
                     continue;
@@ -11050,7 +11136,7 @@ fn register_protocol_sites(
     type_spans: &mut BTreeMap<String, fsl_foundation::Span>,
     site_spans: &mut BTreeMap<String, fsl_forms::ExpressionSpans>,
 ) {
-    use lowering::{ProtocolSite, protocol_site};
+    use lowering::{protocol_site, ProtocolSite};
     let name = protocol.name.name.as_str();
     if let fsl_forms::ActivationForm::Each {
         when: Some(guard), ..
@@ -11834,7 +11920,7 @@ mod tests {
         .expect_err("index 0 names no function");
         assert!(matches!(
             refusals.as_slice(),
-            [CheckRefusal { cause, .. }] if matches!(
+            [SemanticCheckRefusal { cause, .. }] if matches!(
                 cause.as_ref(),
                 CheckCause::InvalidDispatchDeclaration(box_detail) if matches!(
                     **box_detail,

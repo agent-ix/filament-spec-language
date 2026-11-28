@@ -15,7 +15,7 @@ internal concrete steps, refutations that replay, and FSpec FR-177's
 divergence-freedom, refusal-set, terminal-success and environment-assumption
 checks on the same product.
 
-Scope: FR-148-AC-1 to FR-148-AC-14; FR-144-AC-9 to FR-144-AC-10.
+Scope: FR-148-AC-1 to FR-148-AC-15; FR-144-AC-9 to FR-144-AC-10.
 
 ## Test Procedure
 
@@ -110,6 +110,9 @@ model (ADR-020 §8) with `peek` removed; `CasTwice` with `peek` kept.
     lasso that takes `inc` so the guarantee is satisfied. Compare the
     assumption source sets and result with the equivalent refinement without
     the `ensure`; verify the guarantee row is absent from both `I` and `S`.
+15. Give the repeated failed-compensation protocol two concrete initial states
+    and `max_transitions = 1`; require `Stopped(MaxTransitions=1)` while
+    processing their initial internal closures.
 
 Tag the tests `#[trace("TC-553", "FR-148-AC-n")]`.
 
@@ -170,3 +173,5 @@ Tag the tests `#[trace("TC-553", "FR-148-AC-n")]`.
 - Step 14: the selected lasso satisfies the `ensure` guarantee. The `ensure`
   row appears in neither `I` nor `S`, and adding or removing it leaves the
   assumption source sets and relation result unchanged.
+- Step 15: the explicit budget of 1 stops on `MaxTransitions=1` when the
+  second closure successor is attempted; the result is incomplete.

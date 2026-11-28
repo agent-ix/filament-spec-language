@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
@@ -11,50 +11,65 @@ use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{
-    MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
-    measure_probability_certificate_document, measure_probability_objective,
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_certificate_document_with_work_scope, measure_probability_objective,
     measure_probability_product_key, partial_lower_measure_probability_certificate_document,
+    partial_lower_measure_probability_certificate_document_with_work_scope,
     read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
-    write_measure_probability_certificate,
+    vacuous_measure_probability_certificate_document_with_work_scope,
+    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
-pub use instances::{OnEachOutcome, on_each_has_instance, on_each_outcome, replay_on_each_witness};
+pub use instances::{
+    on_each_has_instance, on_each_outcome, on_each_outcome_with_work_scope, replay_on_each_witness,
+    replay_on_each_witness_with_work_scope, OnEachOutcome,
+};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity,
+    check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
 };
 pub use mdp::{
-    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
-    cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
-    read_probability_proof_document, write_probability_proof_document,
-    write_value_bounds_proof_document,
+    cyclic_mdp_probability_certificate_document,
+    cyclic_mdp_probability_certificate_document_with_work_scope,
+    cyclic_mdp_reward_probability_certificate_document,
+    cyclic_mdp_reward_probability_certificate_document_with_work_scope, probability_proof_document,
+    probability_proof_document_with_work_scope, read_probability_proof_document,
+    write_probability_proof_document, write_probability_proof_document_with_work_scope,
+    write_value_bounds_proof_document, write_value_bounds_proof_document_with_work_scope,
+    ProbabilityProofDocument,
 };
 pub(super) mod long_run;
 mod partial;
-pub use partial::partial_lower_probability_proof_document;
-pub(super) mod refutation;
-pub use long_run::{
-    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
-    long_run_probability_certificate_document, read_long_run_probability_certificate,
-    read_weighted_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate,
+pub use partial::{
+    partial_lower_probability_proof_document,
+    partial_lower_probability_proof_document_with_work_scope,
 };
+pub(super) mod refutation;
 #[cfg(feature = "test-support")]
 pub use long_run::{
-    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity,
+    check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
+};
+pub use long_run::{
+    long_run_probability_certificate_document,
+    long_run_probability_certificate_document_with_work_scope,
+    read_long_run_probability_certificate, read_weighted_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document,
+    weighted_long_run_probability_certificate_document_with_work_scope,
+    write_long_run_probability_certificate, write_weighted_long_run_probability_certificate,
+    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
+    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
-pub use timed::digital_key_clocks;
+pub(crate) use crate::timed::clock_constraints;
+pub use timed::{digital_key_clocks, timed_certificate_route};
 pub(super) use timed::{is_timed_witness_claim, replay_timed_witness};
 mod unit;
 mod value_bounds;
@@ -253,6 +268,23 @@ pub struct ProbabilityDocumentLimits {
 const INTERVAL_BITS_PER_PRECISION_BIT: u64 = 16;
 
 impl ProbabilityDocumentLimits {
+    /// Create a checker meter using this document's scalar accounting ceilings.
+    pub(crate) fn accounting_meter(&self, cancel: &Cancel) -> filament_exact::Meter {
+        filament_exact::Meter::new(self.accounting).with_cancel(cancel.clone())
+    }
+
+    fn accounting_meter_in_scope(
+        &self,
+        cancel: &Cancel,
+        work: Option<&filament_exact::WorkScope>,
+    ) -> filament_exact::Meter {
+        work.map_or_else(
+            || filament_exact::Meter::new(self.accounting),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone())
+    }
+
     /// Project the existing exact-probability ceilings into the document checker
     /// while retaining the caller's actual scalar accounting scope.
     pub fn for_exact(limits: &ExactProbLimits, accounting: filament_exact::ScalarLimits) -> Self {
@@ -448,10 +480,10 @@ impl From<ExactProbabilityGraphError> for ProbabilityDocumentError {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireIdentity {
-    node_id: Box<serde_json::value::RawValue>,
-    model: Option<String>,
-    ordinal: u32,
+struct WireIdentity<N = Box<serde_json::value::RawValue>, M = String, O = u32> {
+    node_id: N,
+    model: Option<M>,
+    ordinal: O,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -485,6 +517,7 @@ struct WireTimedObjective {
     form: String,
 }
 
+#[ix_trace_rs::string_edge]
 fn read_timed_objective(
     wire: WireTimedObjective,
 ) -> Result<TimedProbabilityObjective, ProbabilityDocumentError> {
@@ -535,21 +568,138 @@ fn present_unit<'de, D: serde::Deserializer<'de>>(
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireRational {
-    numerator: String,
-    denominator: String,
+struct WireRational<N = String, D = String> {
+    numerator: N,
+    denominator: D,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireValue {
-    state: String,
-    value: WireRational,
+struct WireValue<S = String, V = WireRational> {
+    state: S,
+    value: V,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireRank {
-    state: String,
-    rank: u64,
+struct WireRank<S = String, R = u64> {
+    state: S,
+    rank: R,
+}
+
+/// Writes one wire member value to the canonical writer. A wire struct declared
+/// once is read by deserializing it and written by filling it with borrowed leaves
+/// and calling `emit`, so the writer cannot drift from the reader's member set.
+trait Emit {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error>;
+}
+fn member<S: quire_canonical::Sink + ?Sized, T: Emit + ?Sized>(
+    writer: &mut quire_canonical::Writer<'_, S>,
+    name: &str,
+    value: &T,
+) -> Result<(), quire_canonical::Error> {
+    writer.name(name)?;
+    value.emit(writer)
+}
+impl Emit for str {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.string(self)
+    }
+}
+impl Emit for u64 {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.integer(i128::from(*self))
+    }
+}
+impl Emit for u32 {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.integer(i128::from(*self))
+    }
+}
+impl<T: Emit + ?Sized> Emit for &T {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        (**self).emit(writer)
+    }
+}
+impl<T: Emit> Emit for Option<T> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        match self {
+            Some(value) => value.emit(writer),
+            None => writer.null(),
+        }
+    }
+}
+impl<A: Emit, B: Emit> Emit for (A, B) {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_array()?;
+        self.0.emit(writer)?;
+        self.1.emit(writer)?;
+        writer.end_array()
+    }
+}
+impl<N: Emit, M: Emit, O: Emit> Emit for WireIdentity<N, M, O> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "node_id", &self.node_id)?;
+        member(writer, "model", &self.model)?;
+        member(writer, "ordinal", &self.ordinal)?;
+        writer.end_object()
+    }
+}
+impl<N: Emit, D: Emit> Emit for WireRational<N, D> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "numerator", &self.numerator)?;
+        member(writer, "denominator", &self.denominator)?;
+        writer.end_object()
+    }
+}
+impl<St: Emit, V: Emit> Emit for WireValue<St, V> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "state", &self.state)?;
+        member(writer, "value", &self.value)?;
+        writer.end_object()
+    }
+}
+impl<St: Emit, R: Emit> Emit for WireRank<St, R> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "state", &self.state)?;
+        member(writer, "rank", &self.rank)?;
+        writer.end_object()
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2091,6 +2241,34 @@ pub fn check_probability_certificate_document_as(
         cancel,
         &super::reward::RewardControl::new(cancel),
         &fairness::Control::new(cancel),
+        None,
+    )
+}
+
+/// Check a document while debiting the item's shared work allowance.
+#[implements("FR-203-AC-30")]
+#[allow(clippy::too_many_arguments)]
+pub fn check_probability_certificate_document_as_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    role: CertificateRole,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    check_document_with_control(
+        system,
+        claims,
+        item,
+        bytes,
+        role,
+        limits,
+        cancel,
+        &super::reward::RewardControl::new(cancel),
+        &fairness::Control::new(cancel),
+        Some(work),
     )
 }
 
@@ -2117,6 +2295,7 @@ pub fn check_cyclic_reward_probability_certificate_observing(
         cancel,
         &control,
         &fairness::Control::new(cancel),
+        None,
     )
 }
 
@@ -2143,10 +2322,12 @@ pub fn check_bounded_fair_probability_certificate_observing(
         cancel,
         &super::reward::RewardControl::new(cancel),
         &control,
+        None,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-30")]
 fn check_document_with_control(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2157,6 +2338,7 @@ fn check_document_with_control(
     cancel: &Cancel,
     control: &super::reward::RewardControl<'_>,
     fair_control: &fairness::Control<'_>,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let bound = match value_bounds::unwrap(bytes, limits, cancel) {
         Ok(bound) => bound,
@@ -2181,6 +2363,7 @@ fn check_document_with_control(
         cancel,
         control,
         fair_control,
+        work,
     )?;
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
         if offer.side.is_some() {
@@ -2218,7 +2401,7 @@ impl Offer<'_> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-1042-AC-19", "FR-1042-AC-25", "FR-1042-AC-26")]
+#[implements("FR-203-AC-30", "FR-1042-AC-19", "FR-1042-AC-25", "FR-1042-AC-26")]
 fn check_document_bytes(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2229,6 +2412,7 @@ fn check_document_bytes(
     cancel: &Cancel,
     control: &super::reward::RewardControl<'_>,
     fair_control: &fairness::Control<'_>,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let bound_side = offer.side;
     let dispatch = profile_dispatch(bytes, limits, cancel)?;
@@ -2254,6 +2438,7 @@ fn check_document_bytes(
                     role: offer.role,
                     limits,
                     cancel,
+                    work,
                 },
             );
         }
@@ -2266,18 +2451,19 @@ fn check_document_bytes(
                 offer.relation(),
                 limits,
                 cancel,
+                work,
             );
         }
         ProfileDispatch::OnEach => {
-            return instances::check(system, claims, item, bytes, limits, cancel)
+            return instances::check(system, claims, item, bytes, limits, cancel, work)
                 .or_else(document_admission_error);
         }
         ProfileDispatch::LongRun => {
-            return long_run::check(system, claims, item, bytes, limits, cancel);
+            return long_run::check(system, claims, item, bytes, limits, cancel, work);
         }
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward => {
             return mdp::check_with_reward_control(
-                system, claims, item, bytes, offer, limits, cancel, control,
+                system, claims, item, bytes, offer, limits, cancel, control, work,
             );
         }
         ProfileDispatch::FairMdp => {
@@ -2292,16 +2478,17 @@ fn check_document_bytes(
                         limits,
                         cancel,
                         reward: control,
+                        work,
                     },
                 );
             }
             return mdp::check_with_reward_control(
-                system, claims, item, bytes, offer, limits, cancel, control,
+                system, claims, item, bytes, offer, limits, cancel, control, work,
             );
         }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Intake)?;
     let mut fairness_records = Vec::new();
     let mut storage = 0;
@@ -2448,7 +2635,8 @@ fn check_document_bytes(
         return Ok(malformed_ranking());
     }
     let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
-    let ranked = bound_side != Some(SubsystemBoundKind::Upper) || reward_upper;
+    let reward_lower = reward.is_some() && bound_side == Some(SubsystemBoundKind::Lower);
+    let ranked = !reward_lower && (bound_side != Some(SubsystemBoundKind::Upper) || reward_upper);
     for (key, state) in graph
         .states
         .iter()
@@ -2473,9 +2661,10 @@ fn check_document_bytes(
     }
     // The derived ranks are a whole graph's, and a subset `lower` carries
     // those of its named states. A cyclic reward ranks progress instead, and
-    // so does a partial `lower` over a chain; a partial expected reward
-    // `lower` needs no ranking to be sound (FR-1042 "Conditions"). No height
-    // is derivable past a state the document does not name.
+    // so does a partial `lower` over a chain. Expected-reward `lower`
+    // certificates need no ranking, whether they name the whole graph or a
+    // partial graph (FR-1042 "Conditions"). No height is derivable past a
+    // state the document does not name.
     let progress_ranked = reward.is_some() && document.cyclic_dtmc;
     let partial_unbounded = partial && (reward.is_some() || document.cyclic_dtmc);
     if let Some(expected) =
@@ -2499,7 +2688,9 @@ fn check_document_bytes(
     // remaining horizon instead, and an `upper` document has no ranking.
     let progress_checked = match bound_side {
         None => true,
-        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc || acyclic_eventual,
+        Some(SubsystemBoundKind::Lower) => {
+            (document.cyclic_dtmc && reward.is_none()) || acyclic_eventual
+        }
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
     for (key, state) in graph

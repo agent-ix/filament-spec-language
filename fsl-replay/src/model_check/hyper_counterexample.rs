@@ -108,6 +108,40 @@ pub struct HyperUndefined {
     pub cause: UndefinedCause,
 }
 
+impl From<fsl_eval::hyper::ClosedLocus> for HyperLocus {
+    fn from(locus: fsl_eval::hyper::ClosedLocus) -> Self {
+        match locus {
+            fsl_eval::hyper::ClosedLocus::Atom(atom) => Self::Atom(atom),
+            fsl_eval::hyper::ClosedLocus::Match { conjunct } => Self::Match { conjunct },
+            fsl_eval::hyper::ClosedLocus::ExistentialMatch { conjunct } => {
+                Self::ExistentialMatch { conjunct }
+            }
+            fsl_eval::hyper::ClosedLocus::Contract(clause) => Self::Contract(clause),
+        }
+    }
+}
+
+impl HyperUndefined {
+    /// The evaluation `found` spells over a tuple of closed executions, with
+    /// the state keys and variables of the components it reads, in the one
+    /// shape the producer builds and the replay recomputes.
+    #[must_use]
+    pub fn of_closed(
+        found: fsl_eval::hyper::ClosedUndefined,
+        state_keys: Vec<StateKey>,
+        variables: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            position: found.position,
+            state_keys,
+            variables,
+            locus: found.locus.into(),
+            transition: found.transition,
+            cause: found.cause,
+        }
+    }
+}
+
 /// What a hyper counterexample refutes (FSpec FR-400 `kind`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HyperCounterexampleKind {
@@ -302,7 +336,9 @@ impl HyperCounterexample {
             HyperCounterexampleKind::Projected => trace.marks.len() == trace.steps.len(),
             // A closed counterexample of an `align skip` clause marks every step;
             // the replay checks that against the clause.
-            HyperCounterexampleKind::Closed => {
+            // An undefined evaluation of a closed tuple of an `align skip`
+            // clause marks them alike; the replay checks the lasso kinds.
+            HyperCounterexampleKind::Closed | HyperCounterexampleKind::Undefined(_) => {
                 trace.marks.is_empty() || trace.marks.len() == trace.steps.len()
             }
             _ => trace.marks.is_empty(),

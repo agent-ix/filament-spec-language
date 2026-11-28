@@ -38,6 +38,7 @@
 
 use std::collections::BTreeSet;
 
+use ix_trace_rs::implements;
 use syn::visit::Visit;
 
 /// An [`Occurrence`] with whether a `#[string_edge]`-marked function
@@ -193,6 +194,8 @@ struct Scanner<'c> {
     /// during the walk instead of resolved after the fact from a bare line
     /// number (F8).
     current_impl_self: Option<String>,
+    /// The innermost enclosing trait name, for naming default methods.
+    current_trait: Option<String>,
     /// The enclosing-item name stack: `Type::method` (pushed by
     /// `visit_impl_item_fn`) or a bare function name (pushed by
     /// `visit_item_fn`), innermost last. [`Self::current_item`] reads its
@@ -282,7 +285,42 @@ impl Scanner<'_> {
 }
 
 impl<'ast> Visit<'ast> for Scanner<'_> {
+    #[implements("FR-064-AC-1", "FR-064-AC-8")]
+    fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+        if has_cfg_test(&node.attrs) {
+            return;
+        }
+        let previous = self.current_trait.replace(node.ident.to_string());
+        syn::visit::visit_item_trait(self, node);
+        self.current_trait = previous;
+    }
+
+    #[implements("FR-064-AC-1", "FR-064-AC-8")]
+    fn visit_trait_item_fn(&mut self, node: &'ast syn::TraitItemFn) {
+        let marked = has_string_edge_marker(&node.attrs);
+        if has_cfg_test(&node.attrs) {
+            return;
+        }
+        if marked {
+            self.string_edge_depth += 1;
+        }
+        let name = match &self.current_trait {
+            Some(trait_name) => format!("{trait_name}::{}", node.sig.ident),
+            None => node.sig.ident.to_string(),
+        };
+        self.item_stack.push(name);
+        syn::visit::visit_trait_item_fn(self, node);
+        self.item_stack.pop();
+        if marked {
+            self.string_edge_depth -= 1;
+        }
+    }
+
+    #[implements("FR-064-AC-1")]
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        if has_cfg_test(&node.attrs) {
+            return;
+        }
         let previous = self
             .current_impl_self
             .replace(crate::impl_self_name(&node.self_ty));
@@ -465,6 +503,7 @@ pub(crate) fn scan_parsed(files: &[(String, syn::File)]) -> Vec<Found> {
             string_edge_depth: 0,
             condition_depth: 0,
             current_impl_self: None,
+            current_trait: None,
             item_stack: Vec::new(),
             found: Vec::new(),
         };
@@ -536,6 +575,36 @@ mod tests {
              }\n",
         );
         assert_eq!(occurrences, [occurrence(7, "T::plain", false)]);
+    }
+
+    /// FR-064-AC-1 and AC-8: a default trait method is an enclosing function
+    /// for string-edge markers, just like a free function or inherent method.
+    #[trace("TC-162", "FR-064-AC-1", "FR-064-AC-8")]
+    #[test]
+    fn a_marked_trait_method_silences_its_string_edge() {
+        let occurrences = scan_source(
+            "trait T {\n\
+             #[ix_trace_rs::string_edge]\n\
+             fn edge(kind: &str) -> bool { kind == \"a\" }\n\
+             fn plain(kind: &str) -> bool { kind == \"b\" }\n\
+             }\n",
+        );
+        assert_eq!(occurrences, [occurrence(4, "T::plain", false)]);
+    }
+
+    /// FR-064-AC-1: test-only impls and traits are not production occurrences.
+    #[trace("TC-162", "FR-064-AC-1")]
+    #[test]
+    fn cfg_test_impls_and_traits_are_not_scanned_as_production() {
+        let occurrences = scan_source(
+            "#[cfg(test)]\n\
+             trait T { fn test(kind: &str) -> bool { kind == \"trait\" } }\n\
+             #[cfg(test)]\n\
+             struct S;\n\
+             #[cfg(test)]\n\
+             impl S { fn test(kind: &str) -> bool { kind == \"impl\" } }\n",
+        );
+        assert!(occurrences.is_empty());
     }
 
     /// FR-064-AC-12: the three accepted marker paths each silence their

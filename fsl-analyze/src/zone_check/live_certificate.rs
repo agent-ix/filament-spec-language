@@ -18,9 +18,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use fsl_eval::fairness::{Analysis, Outcome};
+use fsl_eval::simulation::model::states_non_zeno;
 use fsl_replay::{
     AcceptanceSet, CertEdge, CertNode, ComponentReason, Components, DivergenceWitness,
-    DivergentTarget, LuBounds, NonZeno, ProductMark, SilentMove,
+    DivergentTarget, LuBounds, NonZeno, ProductMark, SilentMove, UNDEFINED_POSITION_STATE,
 };
 use num_bigint::BigInt;
 
@@ -38,11 +39,16 @@ impl Run<'_, '_, '_> {
         proofs: Vec<InstanceProof>,
         admission: Option<Product>,
     ) -> Result<Proof, Halt> {
-        let non_zeno = if proofs.iter().any(has_accepting_cycle_without_divergence) {
-            NonZeno::Assumed
-        } else {
-            NonZeno::NotRequired
-        };
+        let claim = self
+            .claim()
+            .ok_or(ZoneCheckRefusal::Fault("liveness-claim"))?;
+        let non_zeno = states_non_zeno(claim.clause).then(|| {
+            if proofs.iter().any(has_accepting_cycle_without_divergence) {
+                NonZeno::Assumed
+            } else {
+                NonZeno::NotRequired
+            }
+        });
         let total: usize = proofs
             .iter()
             .map(|proof| proof.product.vertices.len())
@@ -84,7 +90,10 @@ impl Run<'_, '_, '_> {
                     .map_err(|_| Halt::Refusal(ZoneCheckRefusal::Fault("state-key")))?;
                 nodes.push(CertNode {
                     state_key,
-                    automaton_state: vertex.q.index(),
+                    automaton_state: match vertex.undefined {
+                        Some(_) => UNDEFINED_POSITION_STATE,
+                        None => vertex.q.index(),
+                    },
                     zone: core_zone(&vertex.zone)?,
                     locked: false,
                     product: Some(ProductMark {
@@ -155,7 +164,7 @@ impl Run<'_, '_, '_> {
             edges,
             initials,
             components: Some(components),
-            non_zeno: Some(non_zeno),
+            non_zeno,
             divergence: None,
             admitted,
             state_graph: None,

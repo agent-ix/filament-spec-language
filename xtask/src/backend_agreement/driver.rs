@@ -9,21 +9,21 @@ use std::process::Command;
 
 use filament_exact::{Cancel, Value as RuntimeValue};
 use fsl_analyze::analyze::document::{
-    ItemSelection, ResolvedItem, SubjectSelection, resolve_items,
+    resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engines, SubjectBinding};
 use fsl_foundation::{BackendId, SourceIdentity};
 use fsl_replay::spine::{self, CheckedUnit, DependencyInput, ParseRequest};
 use fsl_replay::value_check::{ValueTarget, Verdict};
 use fsl_route::Registry;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::DocumentProvision;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::super::{self as corpus, ConsumerType, InputKind, Vector};
 use super::{CandidateRecord, Entry, Item, Negotiated, Provider, Recheck, Settlement};
-use crate::Outcome;
 use crate::error::{Error, Result};
+use crate::Outcome;
 
 pub(super) struct Driver {
     executable: PathBuf,
@@ -305,6 +305,14 @@ fn recheck_value(item: &Item<'_>, record: &CandidateRecord) -> Recheck {
             code: "resource_exhausted".to_owned(),
             cause: "replay-accounting-limit".to_owned(),
         },
+        // The reference evaluation ran past `value_check.max_cases`: a typed
+        // exhaustion naming that setting, not an undecided replay.
+        Ok(Verdict::CaseLimit) => Recheck::Refused {
+            code: "resource_exhausted".to_owned(),
+            cause: fsl_replay::ModelCheckLimit::ValueCheckMaxCases
+                .setting()
+                .to_owned(),
+        },
         Ok(_) => refused("replay-undecided"),
         Err(fault) => Recheck::Fault {
             detail: format!("{fault:?}"),
@@ -510,7 +518,7 @@ fn compile(
         registry,
         &[checked.source().reference().clone()],
         &binding,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
     );
     let (claims, unresolved) = retain_resolution(vector, resolved);
     let models = inputs.iter().filter(|(input,_,_)| input.kind == InputKind::Model).map(|(input,path,_)| json!({"format":"semantic-ir/2.0.0","source":{"file":path,"authority":"agent-ix","identity":input.path,"document":input.path,"formal_revision":1}})).collect::<Vec<_>>();
@@ -734,7 +742,7 @@ mod tests {
             driver.registry(),
             &[compiled.checked.source().reference().clone()],
             &binding,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         );
         assert_eq!(resolved.len(), 1, "the native request names one claim");
         let Some(ResolvedItem::Claim(claim)) = resolved.pop() else {
@@ -758,22 +766,18 @@ mod tests {
             let backend = BackendId::new("value-checker");
             let mut refutation = driver.read_response(item, &backend, REFUTED).unwrap();
             assert_eq!(refutation.record.as_ref().unwrap(), &document["items"][0]);
-            assert!(
-                refutation
-                    .record
-                    .as_ref()
-                    .unwrap()
-                    .pointer("/record/category")
-                    .is_none()
-            );
-            assert!(
-                refutation
-                    .record
-                    .as_ref()
-                    .unwrap()
-                    .pointer("/record/request_index")
-                    .is_none()
-            );
+            assert!(refutation
+                .record
+                .as_ref()
+                .unwrap()
+                .pointer("/record/category")
+                .is_none());
+            assert!(refutation
+                .record
+                .as_ref()
+                .unwrap()
+                .pointer("/record/request_index")
+                .is_none());
             refutation.replay = Some(driver.replay(item, &refutation));
             assert_eq!(
                 refutation.replay,

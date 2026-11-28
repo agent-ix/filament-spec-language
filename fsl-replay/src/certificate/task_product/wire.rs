@@ -20,7 +20,7 @@ use super::{
 };
 use crate::certificate::closure::CertificateRejection;
 use crate::certificate::{CertificateLocus, CertificateRule};
-use crate::shared_wire::{TransitionIdentity, WireDefect, WireDefectKind};
+use crate::shared_wire::{RationalObject, TransitionIdentity, WireDefect, WireDefectKind};
 use crate::TaskTransitionAction;
 
 /// The largest index or count the wire carries (RFC 8785 exact integers).
@@ -199,6 +199,7 @@ const MAX_TYPED_DEPTH: usize = 64;
 
 /// Checks `value` against the schema's `TypedValue` definition (FSpec
 /// FR-181): a closed object per `type`.
+#[ix_trace_rs::string_edge]
 fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskProductShapeRefusal> {
     if depth > MAX_TYPED_DEPTH {
         return refuse(pointer, TaskProductShapeReason::NotCanonical);
@@ -381,28 +382,8 @@ pub fn same_source_transition(left: &ModelTransition, right: &ModelTransition) -
 }
 
 pub(crate) fn rational(value: &Value, pointer: &str) -> Result<Rational, TaskProductShapeRefusal> {
-    let map = object(value, pointer, &["numerator", "denominator"], &[])?;
-    let numerator = integer(member(map, "numerator"), &child(pointer, "numerator"))?;
-    let denominator = integer(member(map, "denominator"), &child(pointer, "denominator"))?;
-    let invalid = || TaskProductShapeRefusal {
-        pointer: pointer.to_owned(),
-        reason: TaskProductShapeReason::NotCanonical,
-    };
-    if denominator.is_zero() || denominator.is_negative() {
-        return Err(invalid());
-    }
-    let reduced = Rational::new(numerator.clone(), denominator.clone()).map_err(|_| invalid())?;
-    if reduced.numerator() != &numerator || reduced.denominator() != &denominator {
-        return Err(invalid());
-    }
-    Ok(reduced)
-}
-
-pub(crate) fn rational_wire(value: &Rational) -> Value {
-    json!({
-        "denominator": value.denominator().to_string(),
-        "numerator": value.numerator().to_string(),
-    })
+    object(value, pointer, &RationalObject::MEMBERS, &[])?;
+    RationalObject::read(value).map_err(|defect| shared_defect(pointer, defect))
 }
 
 fn enumerated<T: Copy>(
@@ -828,14 +809,14 @@ impl TaskProductCertificate {
             .map(|row| {
                 json!({
                     "arrival": row.arrival.as_str(),
-                    "interarrival": rational_wire(&row.interarrival),
-                    "max_jitter": rational_wire(&row.max_jitter),
+                    "interarrival": RationalObject::value(&row.interarrival),
+                    "max_jitter": RationalObject::value(&row.max_jitter),
                     "max_jobs": row.max_jobs,
-                    "relative_deadline": rational_wire(&row.relative_deadline),
+                    "relative_deadline": RationalObject::value(&row.relative_deadline),
                     "task": row.task,
                     "taskset": row.task_set,
-                    "work_lower": rational_wire(&row.work_lower),
-                    "work_upper": rational_wire(&row.work_upper),
+                    "work_lower": RationalObject::value(&row.work_lower),
+                    "work_upper": RationalObject::value(&row.work_upper),
                 })
             })
             .collect();

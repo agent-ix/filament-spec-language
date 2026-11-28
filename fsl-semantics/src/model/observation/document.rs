@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{AdmissionRecordExt, admission_record};
+use super::{admission_record, AdmissionRecordExt};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
@@ -14,12 +14,12 @@ use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::implements;
 
 use super::helpers::object_reference;
-use super::tree::{Json, Object, read_raw_value};
+use super::tree::{read_raw_value, Json, Object};
 use super::{
+    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
-    population_universe, refuse,
+    SelectedObject, SnapshotValue,
 };
 use crate::model::object_environment::{
     ObjectEnvironment, ReferenceOriginBuilder, ReferenceOriginLocus, ReferenceOriginPrefix,
@@ -1128,7 +1128,7 @@ fn field_kind_matches(raw: &SnapshotValue, value_type: &filament_exact::ValueTyp
                 filament_exact::ValueType::Collection(_)
             )
             | (
-                RawForm::Record(_) | RawForm::Variant(_),
+                RawForm::Record(_) | RawForm::Tuple(_) | RawForm::Variant(_),
                 filament_exact::ValueType::Composite(_)
             )
             | (RawForm::Variant(_), filament_exact::ValueType::Enum(_))
@@ -1179,7 +1179,7 @@ fn object_field_kind_matches(
                 filament_exact::ValueType::Collection(_)
             )
             | (
-                RawForm::Record(_) | RawForm::Variant(_),
+                RawForm::Record(_) | RawForm::Tuple(_) | RawForm::Variant(_),
                 filament_exact::ValueType::Composite(_)
             )
             | (RawForm::Variant(_), filament_exact::ValueType::Enum(_))
@@ -1674,14 +1674,15 @@ fn admit_leaf(
         // selected route supplies the authenticated declaration table that
         // resolves its population, owner and template.
         (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
-            let admitted = references.resolve_clock(reference).map_err(|record| {
-                match &references.document {
-                    Some(document) => record
-                        .with("document", document.clone())
-                        .with("target", reference.key.clone()),
-                    None => record,
-                }
-            })?;
+            let admitted =
+                references.resolve_clock(reference).map_err(|record| {
+                    match &references.document {
+                        Some(document) => record
+                            .with("document", document.clone())
+                            .with("target", reference.key.clone()),
+                        None => record,
+                    }
+                })?;
             let place = filament_exact::ClockPlaceReference::new(
                 admitted.universe().clone(),
                 admitted.object().as_str(),
@@ -1842,6 +1843,7 @@ fn collection_envelope_refusal(form: RawForm<'_>, kind: CollectionKind) -> Optio
         | RawForm::Present(_)
         | RawForm::Reference(_)
         | RawForm::Record(_)
+        | RawForm::Tuple(_)
         | RawForm::Variant(_) => Some(refuse("missing-member").with("member", tag)),
     }
 }
@@ -2305,6 +2307,16 @@ enum Admit<'w, 'v> {
         own: filament_exact::NodeKey,
         count: usize,
     },
+    /// Build the tuple declaration `own` from its admitted data positions.
+    Tuple {
+        own: filament_exact::NodeKey,
+        count: usize,
+    },
+    /// Build the selected union member from its admitted data payload.
+    Union {
+        member: filament_exact::UnionMember,
+        count: usize,
+    },
     /// Wrap the admitted payload as a present value of the option type
     /// whose payload type is `payload`.
     SomeOf {
@@ -2329,6 +2341,7 @@ enum Admit<'w, 'v> {
 /// order, a sequence's elements by ascending index. A refusal names the
 /// typed path of steps (record field, option value, sequence index) from the
 /// checked field down to the value.
+#[implements("FR-106-AC-84")]
 fn admit_value<'a: 'w, 'w>(
     references: &mut References<'a>,
     form: RawForm<'_>,
@@ -2390,6 +2403,32 @@ fn admit_value<'a: 'w, 'w>(
                     own,
                     slots.into_boxed_slice(),
                 )));
+            }
+            Admit::Tuple { own, count } => {
+                let Some(start) = done.len().checked_sub(count) else {
+                    return Err(refuse_at("wrong-value-kind", &path));
+                };
+                let slots = done.split_off(start);
+                done.push(FieldValue::Present(filament_exact::from_admitted_slots(
+                    own,
+                    slots.into_boxed_slice(),
+                )));
+            }
+            Admit::Union { member, count } => {
+                let Some(start) = done.len().checked_sub(count) else {
+                    return Err(refuse_at("wrong-value-kind", &path));
+                };
+                let values = done
+                    .split_off(start)
+                    .into_iter()
+                    .filter_map(|slot| match slot {
+                        FieldValue::Present(value) => Some(value),
+                        FieldValue::Absent | FieldValue::Null => None,
+                    })
+                    .collect();
+                done.push(FieldValue::Present(
+                    filament_exact::UnionValue::from_admitted(member, values),
+                ));
             }
             Admit::SomeOf { payload } => {
                 let Some(FieldValue::Present(value)) = done.pop() else {
@@ -2533,7 +2572,196 @@ fn admit_value<'a: 'w, 'w>(
                             work.push(Admit::Enter(PathStep::Index(index)));
                         }
                     }
+                    (RawForm::Variant(variant), filament_exact::ValueType::Composite(handle)) => {
+                        let refuse = |cause| refuse_at(cause, &path);
+                        if variant.type_identity().is_none() && !variant.has_invalid_type() {
+                            return Err(admission_record(
+                                Code::InvalidRuntimeInput,
+                                "missing-member",
+                            )
+                            .with("member", "type")
+                            .at(path.clone()));
+                        }
+                        if variant.case().is_none() && !variant.has_invalid_case() {
+                            return Err(admission_record(
+                                Code::InvalidRuntimeInput,
+                                "missing-member",
+                            )
+                            .with("member", "case")
+                            .at(path.clone()));
+                        }
+                        if variant.has_extra_member() {
+                            return Err(refuse("unknown-member"));
+                        }
+                        if variant.has_invalid_identity() {
+                            return Err(refuse("wrong-value-kind"));
+                        }
+                        let (Some(type_identity), Some(case)) =
+                            (variant.type_identity(), variant.case())
+                        else {
+                            return Err(refuse("wrong-value-kind"));
+                        };
+                        let names = references.views.iter().any(|view| {
+                            view.view.domain_package().records.iter().any(|record| {
+                                matches!(
+                                    record,
+                                    crate::model::domain_package::DomainPackageRecord::Enum(_)
+                                ) && record.key().node == type_identity
+                                    && crate::check::record_node_key(record)
+                                        .is_ok_and(|key| key == Some(handle.clone()))
+                            })
+                        });
+                        let Some(CompositeShape::Union(members)) = names
+                            .then(|| types.composite(handle.clone()))
+                            .flatten()
+                            .map(|declared| declared.shape())
+                        else {
+                            return Err(refuse("wrong-value-kind"));
+                        };
+                        let Some(member) =
+                            members.iter().find(|member| member.identifier() == case)
+                        else {
+                            return Err(refuse("invalid-value"));
+                        };
+                        let data_positions: Vec<_> = member
+                            .positions()
+                            .iter()
+                            .filter(|position| value_type_has_data(position, types))
+                            .collect();
+                        let components = variant.components();
+                        if data_positions.is_empty() {
+                            if components.is_some() || variant.has_invalid_components() {
+                                return Err(refuse("unknown-member"));
+                            }
+                        } else if components.is_none() {
+                            if !variant.has_invalid_components() {
+                                return Err(admission_record(
+                                    Code::InvalidRuntimeInput,
+                                    "missing-member",
+                                )
+                                .with("member", "components")
+                                .at(path.clone()));
+                            }
+                        }
+                        if variant.has_invalid_components() {
+                            return Err(refuse("wrong-value-kind"));
+                        }
+                        let items: Vec<_> =
+                            components.map_or_else(Vec::new, |items| items.iter().collect());
+                        if items.len() != data_positions.len() {
+                            return Err(refuse("invalid-value"));
+                        }
+                        let binding = member
+                            .member()
+                            .cloned()
+                            .or_else(|| {
+                                let identity = types
+                                    .union_key(handle.clone())
+                                    .unwrap_or_else(|| handle.clone());
+                                filament_exact::UnionMember::from_admitted(
+                                    identity,
+                                    member.identifier(),
+                                )
+                                .ok()
+                            })
+                            .ok_or_else(|| refuse("wrong-value-kind"))?;
+                        work.push(Admit::Union {
+                            member: binding,
+                            count: items.len(),
+                        });
+                        for (index, (item, value_type)) in
+                            items.into_iter().zip(data_positions).enumerate().rev()
+                        {
+                            work.push(Admit::Leave);
+                            work.push(Admit::Value {
+                                form: item.form(),
+                                value_type,
+                                presence: filament_exact::Presence::Required,
+                                field: false,
+                                canonical,
+                                origin_boundary,
+                            });
+                            work.push(Admit::Enter(PathStep::Index(index)));
+                        }
+                    }
+                    (RawForm::Tuple(tuple), filament_exact::ValueType::Composite(slot)) => {
+                        if tuple.type_identity().is_none() && !tuple.has_invalid_type() {
+                            return Err(admission_record(
+                                Code::InvalidRuntimeInput,
+                                "missing-member",
+                            )
+                            .with("member", "type")
+                            .at(path.clone()));
+                        }
+                        if tuple.type_identity().is_some()
+                            && tuple.components().is_none()
+                            && !tuple.has_invalid_components()
+                        {
+                            return Err(admission_record(
+                                Code::InvalidRuntimeInput,
+                                "missing-member",
+                            )
+                            .with("member", "components")
+                            .at(path.clone()));
+                        }
+                        if tuple.has_extra_member() {
+                            return Err(refuse_at("unknown-member", &path));
+                        }
+                        if tuple.has_invalid_type() {
+                            return Err(refuse_at("wrong-value-kind", &path));
+                        }
+                        let Some(type_identity) = tuple.type_identity() else {
+                            return Err(refuse_at("wrong-value-kind", &path));
+                        };
+                        let Some(own) = references.record_type(type_identity) else {
+                            return Err(refuse_at("wrong-value-kind", &path));
+                        };
+                        if !types.composite_conforms(own.clone(), slot.clone()) {
+                            return Err(refuse_at("wrong-value-kind", &path));
+                        }
+                        let Some(CompositeShape::Tuple(positions)) = types
+                            .composite(own.clone())
+                            .map(|declaration| declaration.shape())
+                        else {
+                            return Err(refuse_at("wrong-value-kind", &path));
+                        };
+                        let Some(components) = tuple.components() else {
+                            return Err(refuse_at("wrong-value-kind", &path));
+                        };
+                        if tuple.has_invalid_components() {
+                            return Err(refuse_at("wrong-value-kind", &path));
+                        }
+                        let data_positions: Vec<_> = positions
+                            .iter()
+                            .filter(|position| value_type_has_data(position, types))
+                            .collect();
+                        let items: Vec<_> = components.iter().collect();
+                        if items.len() != data_positions.len() {
+                            return Err(refuse_at("invalid-value", &path));
+                        }
+                        work.push(Admit::Tuple {
+                            own,
+                            count: items.len(),
+                        });
+                        for (index, (item, value_type)) in
+                            items.into_iter().zip(data_positions).enumerate().rev()
+                        {
+                            work.push(Admit::Leave);
+                            work.push(Admit::Value {
+                                form: item.form(),
+                                value_type,
+                                presence: filament_exact::Presence::Required,
+                                field: false,
+                                canonical,
+                                origin_boundary,
+                            });
+                            work.push(Admit::Enter(PathStep::Index(index)));
+                        }
+                    }
                     (RawForm::Record(record), filament_exact::ValueType::Composite(slot)) => {
+                        if record.has_extra_member() {
+                            return Err(refuse_at("unknown-member", &path));
+                        }
                         let Some(own) = references.record_type(record.type_identity()) else {
                             return Err(refuse_at("wrong-value-kind", &path));
                         };
@@ -3123,13 +3351,17 @@ pub(super) fn record_keys(views: &[ModelView]) -> BTreeMap<String, filament_exac
     let mut keys = BTreeMap::new();
     for view in views {
         for record in &view.view.domain_package().records {
-            let crate::model::domain_package::DomainPackageRecord::RecordValueType(declared) =
-                record
-            else {
-                continue;
+            let identity = match record {
+                crate::model::domain_package::DomainPackageRecord::RecordValueType(declared) => {
+                    declared.key.node.clone()
+                }
+                crate::model::domain_package::DomainPackageRecord::TupleValueType(declared) => {
+                    declared.key.node.clone()
+                }
+                _ => continue,
             };
             if let Ok(Some(key)) = crate::check::record_node_key(record) {
-                keys.entry(declared.key.node.clone()).or_insert(key);
+                keys.entry(identity).or_insert(key);
             }
         }
     }
@@ -3171,6 +3403,11 @@ fn collect_references(raw: &SnapshotValue, into: &mut Vec<(String, String)>) {
             RawForm::Collection(_, items) => {
                 pending.extend(items.iter().rev().map(RawValue::form));
             }
+            RawForm::Tuple(tuple) => {
+                if let Some(items) = tuple.components() {
+                    pending.extend(items.iter().rev().map(RawValue::form));
+                }
+            }
             RawForm::Record(record) => {
                 pending.extend(record.fields().rev().map(|(_, value)| value.form()));
             }
@@ -3179,8 +3416,12 @@ fn collect_references(raw: &SnapshotValue, into: &mut Vec<(String, String)>) {
             | RawForm::Boolean(_)
             | RawForm::Integer(_)
             | RawForm::Native(_)
-            | RawForm::Absent
-            | RawForm::Variant(_) => {}
+            | RawForm::Absent => {}
+            RawForm::Variant(variant) => {
+                if let Some(items) = variant.components() {
+                    pending.extend(items.iter().rev().map(RawValue::form));
+                }
+            }
         }
     }
 }
@@ -3236,6 +3477,61 @@ fn collect_object_references(
                         pending.push((value.form(), field.value_type().clone()));
                     }
                 }
+            }
+            (RawForm::Tuple(tuple), ValueType::Composite(_)) => {
+                let Some(identity) = tuple.type_identity() else {
+                    continue;
+                };
+                let keys = records.get_or_insert_with(|| record_keys(views));
+                let Some(declared) = keys
+                    .get(identity)
+                    .and_then(|key| types.composite(key.clone()))
+                else {
+                    continue;
+                };
+                let CompositeShape::Tuple(positions) = declared.shape() else {
+                    continue;
+                };
+                let Some(items) = tuple.components() else {
+                    continue;
+                };
+                let data_positions: Vec<_> = positions
+                    .iter()
+                    .filter(|ty| value_type_has_data(ty, types))
+                    .collect();
+                pending.extend(
+                    items
+                        .iter()
+                        .zip(data_positions)
+                        .rev()
+                        .map(|(item, ty)| (item.form(), ty.clone())),
+                );
+            }
+            (RawForm::Variant(variant), ValueType::Composite(handle)) => {
+                let (Some(case), Some(items)) = (variant.case(), variant.components()) else {
+                    continue;
+                };
+                let Some(CompositeShape::Union(members)) = types
+                    .composite(handle.clone())
+                    .map(|declared| declared.shape())
+                else {
+                    continue;
+                };
+                let Some(member) = members.iter().find(|member| member.identifier() == case) else {
+                    continue;
+                };
+                let data_positions: Vec<_> = member
+                    .positions()
+                    .iter()
+                    .filter(|ty| value_type_has_data(ty, types))
+                    .collect();
+                pending.extend(
+                    items
+                        .iter()
+                        .zip(data_positions)
+                        .rev()
+                        .map(|(item, ty)| (item.form(), ty.clone())),
+                );
             }
             _ => {}
         }
@@ -3496,6 +3792,24 @@ fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep>
                     .nth(*index)
                     .map_or(RawForm::NonObject, RawValue::form);
             }
+            (RawForm::Tuple(tuple), PathStep::Index(index)) => {
+                spelled.push(PathStep::Field("tuple".to_owned()));
+                spelled.push(PathStep::Field("components".to_owned()));
+                spelled.push(PathStep::Index(*index));
+                form = tuple
+                    .components()
+                    .and_then(|items| items.iter().nth(*index))
+                    .map_or(RawForm::NonObject, RawValue::form);
+            }
+            (RawForm::Variant(variant), PathStep::Index(index)) => {
+                spelled.push(PathStep::Field("variant".to_owned()));
+                spelled.push(PathStep::Field("components".to_owned()));
+                spelled.push(PathStep::Index(*index));
+                form = variant
+                    .components()
+                    .and_then(|items| items.iter().nth(*index))
+                    .map_or(RawForm::NonObject, RawValue::form);
+            }
             (RawForm::Record(record), PathStep::Field(name)) => {
                 spelled.push(PathStep::Field("record".to_owned()));
                 spelled.push(PathStep::Field("fields".to_owned()));
@@ -3520,6 +3834,7 @@ fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep>
 /// the document spells them and ending at the failing member (FR-663). A
 /// missing member is absent from the document, so its pointer stays at the
 /// containing object.
+#[ix_trace_rs::string_edge]
 fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
     let mut steps = document_spelling(form, &record.path);
     let missing = record.catalog.cause() == "missing-member";
@@ -3671,6 +3986,42 @@ fn value_type_contains_clock(value_type: &ValueType, types: &TypeEnvironment) ->
             | ValueType::Reference(_)
             | ValueType::Population(_)
             | ValueType::Composite(_) => {}
+        }
+    }
+    false
+}
+
+/// Whether a value type contributes data to tuple/union `components`.
+/// Clock places and wrappers containing only clock places have no wire value;
+/// a composite with any data position does.
+fn value_type_has_data(value_type: &ValueType, types: &TypeEnvironment) -> bool {
+    let mut pending = vec![value_type];
+    let mut visited = BTreeSet::new();
+    while let Some(value_type) = pending.pop() {
+        match value_type {
+            ValueType::ClockReference => {}
+            ValueType::Reference(target)
+                if crate::model::clock_reference::is_clock_type(target) => {}
+            ValueType::Option(inner) => pending.push(inner),
+            ValueType::Collection(collection) => pending.push(collection.element()),
+            ValueType::Map(map) => {
+                pending.push(map.key());
+                pending.push(map.values());
+            }
+            ValueType::Composite(key) if visited.insert(key.clone()) => {
+                let Some(composite) = types.composite(key.clone()) else {
+                    continue;
+                };
+                match composite.shape() {
+                    CompositeShape::Record(fields) => {
+                        pending.extend(fields.iter().map(FieldDeclaration::value_type));
+                    }
+                    CompositeShape::Tuple(positions) => pending.extend(positions),
+                    // The active case name is data even when it has no payload.
+                    CompositeShape::Union(_) => return true,
+                }
+            }
+            _ => return true,
         }
     }
     false
@@ -5379,8 +5730,16 @@ pub fn unit_id_named(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::domain_package::OperationEffect;
+    use crate::model::domain_package::{
+        DomainPackageRecord, DomainPackageRef, EnumRecord, OperationEffect, TuplePositionRecord,
+        TupleValueTypeRecord, ValueTypeRef, VariantRecord,
+    };
+    use crate::model::observation::{normalize_view, ModelNormalizationLimits};
+    use filament_checked::key::DeclarationKey;
     use filament_exact::ValueType;
+    use filament_semantic_value::declaration::{
+        CompositeDeclaration, CompositeShape, UnionMemberDeclaration,
+    };
     use ix_trace_rs::trace;
 
     mod collection_elements;
@@ -5392,6 +5751,140 @@ mod tests {
         read_raw_value(Json::of(document.root()), &mut || Ok::<(), ()>(()))
             .expect("an uncharged read does not fail")
             .expect("test fixture is a value form")
+    }
+
+    /// A fixture whose model view names a two-position tuple and a sealed
+    /// union with one nullary and one Integer-carrying case.
+    fn composite_fixture(
+        seal_union: bool,
+    ) -> (
+        Vec<ModelView>,
+        TypeEnvironment,
+        filament_exact::ValueType,
+        filament_exact::ValueType,
+    ) {
+        let tuple = DeclarationKey::fixture("Pair");
+        let holder = DeclarationKey::fixture("Holder");
+        let records = vec![
+            DomainPackageRecord::TupleValueType(TupleValueTypeRecord { key: tuple.clone() }),
+            DomainPackageRecord::TuplePosition(TuplePositionRecord {
+                key: DeclarationKey::fixture("Pair/p0"),
+                owner: tuple.clone(),
+                ordinal: 0,
+                value_type: ValueTypeRef::Native(
+                    crate::model::domain_package::NativeValueType::Integer,
+                ),
+            }),
+            DomainPackageRecord::TuplePosition(TuplePositionRecord {
+                key: DeclarationKey::fixture("Pair/p1"),
+                owner: tuple.clone(),
+                ordinal: 1,
+                value_type: ValueTypeRef::Native(
+                    crate::model::domain_package::NativeValueType::Boolean,
+                ),
+            }),
+            DomainPackageRecord::Enum(EnumRecord {
+                key: holder.clone(),
+                name: "Holder".to_owned(),
+                members: vec!["Empty".to_owned(), "Has".to_owned()],
+            }),
+            DomainPackageRecord::Variant(VariantRecord {
+                key: DeclarationKey::fixture("variant/Holder-Empty"),
+                owner: holder.clone(),
+                case: "Empty".to_owned(),
+                payload_type: None,
+                position: 0,
+            }),
+            DomainPackageRecord::Variant(VariantRecord {
+                key: DeclarationKey::fixture("variant/Holder-Has"),
+                owner: holder.clone(),
+                case: "Has".to_owned(),
+                payload_type: Some(ValueTypeRef::Native(
+                    crate::model::domain_package::NativeValueType::Integer,
+                )),
+                position: 1,
+            }),
+        ];
+        let package = crate::model::domain_package::DomainPackage::new(
+            DomainPackageRef {
+                identity: "test/orders".to_owned(),
+            },
+            records.clone(),
+        );
+        let view = ModelView::new(
+            normalize_view(&package, ModelNormalizationLimits::default())
+                .expect("fixture model normalizes"),
+        );
+        let tuple_key = crate::check::record_node_key(&records[0])
+            .expect("tuple key resolves")
+            .expect("tuple has a model node");
+        let holder_key = crate::check::record_node_key(&records[3])
+            .expect("union key resolves")
+            .expect("union has a model node");
+        let settled_holder = filament_exact::NodeKey::new(
+            "fixture",
+            vec![filament_exact::PathSegment::Text(
+                "Holder-settled".to_owned(),
+            )],
+            1,
+        )
+        .expect("settled union key");
+        let bindings = ["Empty", "Has"]
+            .into_iter()
+            .map(|name| {
+                filament_exact::UnionMember::from_admitted(settled_holder.clone(), name)
+                    .expect("member key")
+            })
+            .collect::<Vec<_>>();
+        let mut types = TypeEnvironment::new(
+            [
+                CompositeDeclaration::new(
+                    tuple_key.clone(),
+                    "Pair",
+                    CompositeShape::Tuple(vec![
+                        filament_exact::ValueType::Integer,
+                        filament_exact::ValueType::Boolean,
+                    ]),
+                ),
+                CompositeDeclaration::new(
+                    holder_key.clone(),
+                    "Holder",
+                    CompositeShape::Union(vec![
+                        UnionMemberDeclaration::resolved(
+                            filament_exact::Identifier::new("Empty").expect("identifier"),
+                            Vec::new(),
+                        ),
+                        UnionMemberDeclaration::resolved(
+                            filament_exact::Identifier::new("Has").expect("identifier"),
+                            vec![filament_exact::ValueType::Integer],
+                        ),
+                    ]),
+                ),
+            ],
+            [],
+        )
+        .expect("fixture types admit");
+        if seal_union {
+            types
+                .seal_union_verified(holder_key.clone(), settled_holder, bindings)
+                .expect("fixture union seals");
+        }
+        (
+            vec![view],
+            types,
+            filament_exact::ValueType::Composite(tuple_key),
+            filament_exact::ValueType::Composite(holder_key),
+        )
+    }
+
+    fn admit_composite(
+        text: &str,
+        slot: &filament_exact::ValueType,
+    ) -> Result<Value, AdmissionRecord> {
+        let (views, types, _, _) = composite_fixture(true);
+        let mut references =
+            References::over(&views, &types, &[]).expect("fixture references admit");
+        admit_form(&mut references, snapshot(text).form(), slot, None)
     }
 
     /// `collect_references` finds a reference nested under `present` and
@@ -5756,13 +6249,17 @@ mod tests {
         for malformed in [
             r#"{"record":{"type":"ix://p/T"}}"#,
             r#"{"record":{"fields":{}}}"#,
-            r#"{"record":{"type":"ix://p/T","fields":{},"extra":1}}"#,
             r#"{"record":{"type":7,"fields":{}}}"#,
             r#"{"record":{"type":"ix://p/T","fields":[]}}"#,
             r#"{"record":"ix://p/T"}"#,
         ] {
             assert!(read(malformed).is_none(), "{malformed}");
         }
+        let extra = snapshot(r#"{"record":{"type":"ix://p/T","fields":{},"extra":1}}"#);
+        let RawForm::Record(record) = extra.form() else {
+            panic!("record with extra member")
+        };
+        assert!(record.has_extra_member());
         // FR-106-AC-66 requires retaining an unknown object envelope so a
         // collection slot can name its missing declared tag. A record's
         // field retains that defect for the same typed admission check.
@@ -5830,13 +6327,200 @@ mod tests {
         };
         assert_eq!((variant.type_identity(), variant.case()), (None, None));
         assert!(variant.has_extra_member());
-        for malformed in [
-            r#"{"variant":"Gold"}"#,
-            r#"{"variant":{"type":7,"case":"Gold"}}"#,
-            r#"{"variant":{"type":"ix://p/Tier","case":null}}"#,
-        ] {
+        for malformed in [r#"{"variant":"Gold"}"#] {
             assert!(read(malformed).is_none(), "{malformed}");
         }
+        let wrong_kind = snapshot(r#"{"variant":{"type":7,"case":"Gold"}}"#);
+        let RawForm::Variant(variant) = wrong_kind.form() else {
+            panic!("variant payload")
+        };
+        assert!(variant.has_invalid_identity());
+    }
+
+    /// FR-106-AC-84: tuple and union payload carriers retain their nominal
+    /// identity and ordered components; the obsolete `values` member is not
+    /// treated as a components array.
+    #[trace("FR-106-AC-84")]
+    #[test]
+    fn nominal_tuple_and_payload_union_values_read_components_in_order() {
+        let tuple = snapshot(
+            r#"{"tuple":{"type":"ix://p/Pair","components":[{"integer":"3"},{"boolean":true}]}}"#,
+        );
+        let RawForm::Tuple(tuple_form) = tuple.form() else {
+            panic!("tuple carrier")
+        };
+        assert_eq!(tuple_form.type_identity(), Some("ix://p/Pair"));
+        let values: Vec<_> = tuple_form
+            .components()
+            .expect("tuple components")
+            .iter()
+            .map(RawValue::form)
+            .collect();
+        assert!(matches!(values[0], RawForm::Integer("3")));
+        assert!(matches!(values[1], RawForm::Boolean(true)));
+        assert_eq!(
+            tuple,
+            SnapshotValue::tuple(
+                "ix://p/Pair",
+                vec![SnapshotValue::integer("3"), SnapshotValue::boolean(true)]
+            )
+        );
+
+        let union = snapshot(
+            r#"{"variant":{"type":"ix://p/Holder","case":"Has","components":[{"integer":"3"}]}}"#,
+        );
+        let RawForm::Variant(variant) = union.form() else {
+            panic!("union carrier")
+        };
+        assert_eq!(variant.case(), Some("Has"));
+        assert_eq!(
+            variant.components().expect("union components").iter().len(),
+            1
+        );
+        assert_eq!(
+            union,
+            SnapshotValue::variant_with_components(
+                "ix://p/Holder",
+                "Has",
+                vec![SnapshotValue::integer("3")]
+            )
+        );
+
+        let wrong_kind = snapshot(r#"{"tuple":{"type":"ix://p/Pair","components":{}}}"#);
+        let RawForm::Tuple(tuple) = wrong_kind.form() else {
+            panic!("tuple payload")
+        };
+        assert!(tuple.has_invalid_components());
+        let obsolete = read(r#"{"tuple":{"type":"ix://p/Pair","values":[{"integer":"3"}]}}"#)
+            .expect("tuple envelope remains available for a typed missing-member refusal");
+        let RawForm::Tuple(obsolete) = obsolete.form() else {
+            panic!("tuple envelope")
+        };
+        assert!(obsolete.components().is_none());
+        assert!(obsolete.has_extra_member());
+    }
+
+    /// FR-106-AC-84: typed tuple and union admission checks cardinality,
+    /// nominal identity and envelope defects in the specified order; the
+    /// nullary union case remains a valid value without `components`.
+    #[trace("FR-106-AC-84")]
+    #[test]
+    fn tuple_and_union_admission_preserves_refusal_order_and_nullary_cases() {
+        let (_, _, tuple_type, holder_type) = composite_fixture(true);
+        let refusals = [
+            (
+                r#"{"tuple":{"type":"Pair","components":[{"integer":"1"}]}}"#,
+                &tuple_type,
+                "invalid-value",
+            ),
+            (
+                r#"{"tuple":{"type":"Pair","components":[{"integer":"1"},{"boolean":true},{"integer":"3"}]}}"#,
+                &tuple_type,
+                "invalid-value",
+            ),
+            (
+                r#"{"tuple":{"type":"Holder","components":[{"integer":"1"},{"boolean":true}]}}"#,
+                &tuple_type,
+                "wrong-value-kind",
+            ),
+            (
+                r#"{"tuple":{"type":"Pair","values":[{"integer":"1"},{"boolean":true}]}}"#,
+                &tuple_type,
+                "missing-member",
+            ),
+            (
+                r#"{"tuple":{"type":"Pair","components":{},"x":1}}"#,
+                &tuple_type,
+                "unknown-member",
+            ),
+            (
+                r#"{"tuple":{"type":"Holder","components":{}}}"#,
+                &tuple_type,
+                "wrong-value-kind",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Has"}}"#,
+                &holder_type,
+                "missing-member",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Has","components":{}}}"#,
+                &holder_type,
+                "wrong-value-kind",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Has","components":{},"x":1}}"#,
+                &holder_type,
+                "unknown-member",
+            ),
+            (
+                r#"{"variant":{"type":"Pair","case":"Has","components":{}}}"#,
+                &holder_type,
+                "wrong-value-kind",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Has","components":[]}}"#,
+                &holder_type,
+                "invalid-value",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Has","components":[{"integer":"1"},{"integer":"2"}]}}"#,
+                &holder_type,
+                "invalid-value",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Missing","components":[]}}"#,
+                &holder_type,
+                "invalid-value",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Has","components":[{"integer":"1"}],"x":1}}"#,
+                &holder_type,
+                "unknown-member",
+            ),
+            (
+                r#"{"variant":{"type":"Pair","case":"Has","components":[{"integer":"1"}]}}"#,
+                &holder_type,
+                "wrong-value-kind",
+            ),
+            (
+                r#"{"variant":{"type":"Holder","case":"Empty","components":{}}}"#,
+                &holder_type,
+                "unknown-member",
+            ),
+        ];
+        for (raw, value_type, cause) in refusals {
+            let record = admit_composite(raw, value_type)
+                .expect_err("the malformed composite value refuses");
+            assert_eq!(record.catalog.cause(), cause, "{raw}");
+        }
+
+        let (views, types, _, unsealed_holder_type) = composite_fixture(false);
+        let filament_exact::ValueType::Composite(holder_handle) = &unsealed_holder_type else {
+            panic!("Holder is a composite type")
+        };
+        let Some(CompositeShape::Union(members)) = types
+            .composite(holder_handle.clone())
+            .map(|declared| declared.shape())
+        else {
+            panic!("Holder is a union")
+        };
+        assert!(members
+            .iter()
+            .find(|member| member.identifier() == "Empty")
+            .expect("Empty is declared")
+            .member()
+            .is_none());
+        let mut references =
+            References::over(&views, &types, &[]).expect("fixture references admit");
+        let empty = admit_form(
+            &mut references,
+            snapshot(r#"{"variant":{"type":"Holder","case":"Empty"}}"#).form(),
+            &unsealed_holder_type,
+            None,
+        )
+        .expect("the declared nullary union member admits without components");
+        assert!(matches!(empty, Value::Union(_)));
     }
 
     /// A reference inside a record is found by the closure walk.

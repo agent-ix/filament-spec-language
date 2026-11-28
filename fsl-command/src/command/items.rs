@@ -8,7 +8,7 @@ use super::{
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
-const FORMAT: &str = "native-run-items/1";
+const FORMAT: &str = fsl_foundation::wire_format::WireFormat::RunItems.as_str();
 
 enum ItemExecution {
     Run(Box<Result<RunResult>>),
@@ -21,9 +21,11 @@ enum ItemExecution {
 }
 
 struct CallOutput {
+    item_limits: Box<fsl_analyze::analyze::AnalyzeLimits>,
     source: fsl_foundation::source::Source,
     function: String,
     requirements: Option<super::requirements::Requirements>,
+    certification: fsl_replay::CertificationPolicy,
     packages: fsl_semantics::model::intake::PackageInput,
 }
 
@@ -39,6 +41,7 @@ struct PreparedValueInvariants {
     request: fsl_replay::spine::ValueInvariantsBatchRequest,
 }
 
+#[ix_trace_rs::string_edge]
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
@@ -59,6 +62,9 @@ pub(super) fn run_bytes(
             "items is mutually exclusive with call and clause",
         ));
     }
+    // FR-255 Behavior 16: each selection also refuses what its own route
+    // does not apply.
+    super::overrides::admit(super::overrides::RunRoute::Items, overrides)?;
     let Some(items) = items.as_object() else {
         return Err(refused("items", "expected an object"));
     };
@@ -402,8 +408,15 @@ pub(super) fn run_bytes(
                     if let (Some(parameter), Some(object)) =
                         (population_parameters.get(&index), object.as_ref())
                     {
-                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { arguments, .. } = &mut request.selection else {
-                            return Err(refused("function", "an expanded function has canonical arguments"));
+                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction {
+                            arguments,
+                            ..
+                        } = &mut request.selection
+                        else {
+                            return Err(refused(
+                                "function",
+                                "an expanded function has canonical arguments",
+                            ));
                         };
                         bind_population_wire_argument(arguments, parameter, object)?;
                     }
@@ -418,18 +431,21 @@ pub(super) fn run_bytes(
                 }
                 Ok(super::PreparedRun::Function(prepared_function)) => {
                     let requirements = prepared_function.requirements().cloned();
+                    let certification = prepared_function.certification();
                     let mut input = prepared_function.into_input();
                     if let (Some(parameter), Some(object)) =
                         (population_parameters.get(&index), object.as_ref())
                     {
                         bind_population_argument(&mut input.call, parameter, object)?;
                     }
-                    let candidate = compilation_from_function(&input);
+                    let candidate = compilation_from_function(&input, overrides.spine_limits());
                     set_compilation(&mut compilation, candidate)?;
                     let call_output = Some(CallOutput {
+                        item_limits: Box::new(super::overrides::item_limits(overrides)),
                         source: input.source.clone(),
                         function: input.call.function.clone(),
                         requirements: requirements.clone(),
+                        certification,
                         packages: input.packages.clone(),
                     });
                     ItemExecution::Batch {
@@ -531,7 +547,8 @@ pub(super) fn run_bytes(
                 fsl_replay::spine::ProgramBatchRefusal::Compile(report) => match report.disposition
                 {
                     fsl_replay::spine::ClauseDisposition::Compile(refusal)
-                        if refusal.stage() == fsl_replay::spine::SpineStage::Source =>
+                        if refusal.stage() == fsl_replay::spine::SpineStage::Source
+                            || refusal.code() == fsl_foundation::Code::StageLimitExceeded =>
                     {
                         if let Some((source, path)) = batch_source {
                             RunCause::Spine(Box::new(super::SpineFailure {
@@ -578,7 +595,9 @@ pub(super) fn run_bytes(
                                     &requirements,
                                     &selection,
                                     &call_output.packages,
+                                    *call_output.item_limits,
                                     settle,
+                                    call_output.certification,
                                 )?)
                             }
                             (None, None) => None,
@@ -621,7 +640,7 @@ pub(super) fn run_bytes(
     let mut exit_code = 0;
     for (index, object, execution) in prepared {
         let (value, item_exit) = match execution {
-            ItemExecution::PopulationNotHeld(population) => (population_refusal(&population), 20),
+            ItemExecution::PopulationNotHeld(population) => (population_refusal(&population)?, 20),
             ItemExecution::ValueInvariants(result) => match result {
                 Ok((results, item_exit)) => {
                     exit_code = more_severe(exit_code, item_exit);
@@ -716,6 +735,7 @@ pub(super) fn run_bytes(
 
 /// Prepare FR-652's actual no-clause item without applying function-selection
 /// roles to its snapshot. FR-106 owns current/pre/post admission for this item.
+#[ix_trace_rs::string_edge]
 fn prepare_value_invariants(
     directory: &Path,
     bytes: &[u8],
@@ -723,6 +743,7 @@ fn prepare_value_invariants(
     overrides: &RequestOverrides<'_>,
     input: ValueInvariantInput<'_>,
 ) -> Result<PreparedValueInvariants> {
+    super::overrides::admit(super::overrides::RunRoute::ValueInvariants, overrides)?;
     let request: super::wire::Request = super::request_with_overrides(bytes, overrides)?;
     if request.package.is_some()
         || request.refinement_transfer.is_some()
@@ -777,7 +798,7 @@ fn prepare_value_invariants(
         &request,
         &observation_files,
         observation_limits.as_ref(),
-        overrides.observation.copied(),
+        overrides.observation_limits(),
     )?;
     let (snapshot, invocation) = {
         let reference = |member: &str| {
@@ -821,7 +842,7 @@ fn prepare_value_invariants(
             package_name: super::package_name(source.source().identity()),
             packages: inputs.packages,
             dependencies: inputs.dependencies,
-            limits: overrides.limits.copied().unwrap_or_default(),
+            limits: overrides.spine_limits(),
             clocks: request.clocks,
         },
         request: fsl_replay::spine::ValueInvariantsBatchRequest {
@@ -830,10 +851,7 @@ fn prepare_value_invariants(
             snapshot,
             invocation,
             observation_limits: inputs.observation_limits,
-            accounting: overrides
-                .accounting
-                .copied()
-                .unwrap_or_else(|| super::call_accounting(&accounting)),
+            accounting: overrides.accounting_over(super::call_accounting(&accounting)),
         },
     })
 }
@@ -863,6 +881,7 @@ fn compilation_from_clause(
 
 fn compilation_from_function(
     input: &super::FunctionRunInput,
+    limits: fsl_replay::spine::SpineLimits,
 ) -> fsl_replay::spine::ProgramCompilationRequest {
     fsl_replay::spine::ProgramCompilationRequest {
         source: input.source.identity().clone(),
@@ -871,7 +890,7 @@ fn compilation_from_function(
         package_name: input.package_name.clone(),
         packages: input.packages.clone(),
         dependencies: input.dependencies.clone(),
-        limits: fsl_replay::spine::SpineLimits::default(),
+        limits,
         clocks: input.call.clocks.clone(),
     }
 }
@@ -907,17 +926,16 @@ fn value_invariant_items(
                 .results
                 .iter()
                 .map(|result| {
-                    let holds = result.holds();
-                    json!({
+                    Ok(json!({
                         "invariant": {"package": result.clause.package, "node": result.clause.node},
                         "path": fsl_replay::runtime_value_path_json(&result.path),
-                        "result": invariant_result(
-                            if holds { "success" } else { "violation" },
-                            "evaluate", Some(holds), None, &outcome.admission_usage,
-                        ),
-                    })
+                        "result": item_document(
+                            &fsl_replay::spine::ItemRunOutcome::Settled(result.holds()),
+                            &outcome.admission_usage,
+                        )?,
+                    }))
                 })
-                .collect();
+                .collect::<Result<Vec<_>>>()?;
             let exit = match outcome.evaluation.outcome {
                 fsl_eval::value::ValueInvariantOutcome::True => 0,
                 fsl_eval::value::ValueInvariantOutcome::False => 10,
@@ -926,31 +944,20 @@ fn value_invariant_items(
             Ok((values, exit))
         }
         Err(fsl_replay::spine::ValueInvariantsBatchFailure::Admission(failure)) => {
-            let (category, exit, code, cause, fields) = match failure {
-                AdmissionFailure::Refused(record) => (
-                    "refusal",
-                    20,
-                    record.catalog.code().to_owned(),
-                    record.catalog.cause().to_owned(),
-                    serde_json::to_value(record.fields).unwrap_or(Value::Null),
-                ),
-                AdmissionFailure::Incomplete(record) => (
-                    "incomplete",
-                    22,
-                    record.catalog.code().to_owned(),
-                    record.catalog.cause().to_owned(),
-                    serde_json::to_value(record.fields).unwrap_or(Value::Null),
-                ),
+            let (exit, record) = match failure {
+                AdmissionFailure::Refused(record) => (20, record),
+                AdmissionFailure::Incomplete(record) => (22, record),
                 AdmissionFailure::Fault(_) => return Err(RunCause::ItemsFault),
             };
-            Ok((
-                vec![json!({"result": invariant_result(
-                    category, "admit", None,
-                    Some(json!({"code": code, "cause": cause, "fields": fields})),
-                    &fsl_semantics::model::observation::AdmissionUsage::default(),
-                )})],
-                exit,
-            ))
+            let result = item_document(
+                &fsl_replay::spine::ItemRunOutcome::Unadmitted {
+                    code: record.catalog.code().to_owned(),
+                    cause: record.catalog.cause().to_owned(),
+                    fields: record.fields,
+                },
+                &fsl_semantics::model::observation::AdmissionUsage::default(),
+            )?;
+            Ok((vec![json!({"result": result})], exit))
         }
         Err(fsl_replay::spine::ValueInvariantsBatchFailure::Evaluation(
             filament_eval::CallFailure::Fault(_),
@@ -961,6 +968,7 @@ fn value_invariant_items(
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn contains_each(value: &Value) -> bool {
     match value {
         Value::Object(object) => object
@@ -971,6 +979,7 @@ fn contains_each(value: &Value) -> bool {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn each_count(value: &Value) -> usize {
     match value {
         Value::Object(object) => object
@@ -990,6 +999,7 @@ fn find_selector(value: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+#[ix_trace_rs::string_edge]
 fn find_selector_for<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     match kind {
         "clause" => find_selector(value),
@@ -1017,6 +1027,7 @@ fn find_selector_for<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn selector_observation<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     match kind {
         "clause" => value.get("observation").and_then(Value::as_str),
@@ -1065,6 +1076,7 @@ fn selector_observation<'a>(kind: &str, value: &'a Value) -> Option<&'a str> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn set_selector_reference(kind: &str, value: &mut Value, reference: Value) -> Result<()> {
     if kind == "clause" {
         return set_clause_self(value, reference);
@@ -1170,32 +1182,24 @@ fn refused(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
-fn population_refusal(population: &str) -> Value {
-    json!({
-        "format": "native-run-result/2",
-        "disposition": {
-            "category": "refusal",
-            "refusal": {
-                "code": "invalid_runtime_input",
-                "cause": "wrong-role-mapping",
-                "fields": {"population": population},
-            },
-            "stage": "admit",
-            "truth": null,
+/// FR-652, FSpec FR-352: a population the request does not hold is an admit
+/// refusal clause-run document, written through the declared type.
+fn population_refusal(population: &str) -> Result<Value> {
+    item_document(
+        &fsl_replay::spine::ItemRunOutcome::Unadmitted {
+            code: "invalid_runtime_input".to_owned(),
+            cause: "wrong-role-mapping".to_owned(),
+            fields: std::collections::BTreeMap::from([("population", population.to_owned())]),
         },
-        "basis": "unavailable",
-        "axes": {
-            "activation": "unavailable",
-            "execution": null,
-            "settlement": "unavailable",
-            "truth": null,
-        },
-        "usage": {
-            "admission": {"document_bytes": 0, "objects": 0, "values": 0},
-            "evaluation_admissions": 0,
-            "evaluation_consumed": [],
-        },
-    })
+        &fsl_semantics::model::observation::AdmissionUsage::default(),
+    )
+}
+
+fn item_document(
+    outcome: &fsl_replay::spine::ItemRunOutcome,
+    usage: &fsl_semantics::model::observation::AdmissionUsage,
+) -> Result<Value> {
+    fsl_replay::spine::item_run_result_value(outcome, usage).map_err(|_| RunCause::ItemsFault)
 }
 
 fn more_severe(left: u8, right: u8) -> u8 {
@@ -1232,7 +1236,8 @@ fn whole_request_failure(cause: &RunCause) -> bool {
 }
 
 fn is_compile_refusal(value: &Value) -> bool {
-    value.get("format").and_then(Value::as_str) == Some("native-run-result/2")
+    value.get("format").and_then(Value::as_str)
+        == Some(fsl_foundation::wire_format::WireFormat::RunResult.as_str())
         && value
             .get("disposition")
             .and_then(|disposition| disposition.get("stage"))
@@ -1261,51 +1266,155 @@ fn category_for_exit(exit_code: u8) -> &'static str {
     }
 }
 
-fn invariant_result(
-    category: &str,
-    stage: &str,
-    truth: Option<bool>,
-    refusal: Option<Value>,
-    usage: &fsl_semantics::model::observation::AdmissionUsage,
-) -> Value {
-    let mut disposition = json!({"category": category, "stage": stage, "truth": truth});
-    if stage == "evaluate" {
-        if let Some(value) = truth {
-            disposition["outcome"] = json!({
-                "kind": "completed",
-                "value": {"kind": "boolean", "value": value},
-            });
-        }
-    }
-    if let Some(refusal) = refusal {
-        disposition["refusal"] = refusal;
-    }
-    let settled = truth.is_some();
-    json!({
-        "format": "native-run-result/2",
-        "disposition": disposition,
-        "usage": {
-            "admission": {
-                "document_bytes": usage.document_bytes,
-                "objects": usage.objects,
-                "values": usage.values,
-            },
-            "evaluation_admissions": 0,
-            "evaluation_consumed": [],
-        },
-        "basis": if settled { "closed-scope" } else { "unavailable" },
-        "axes": {
-            "activation": if settled { "active" } else { "unavailable" },
-            "execution": if stage == "evaluate" { Some("completed") } else { None::<&str> },
-            "settlement": if settled { Some("closed-scope") } else { Some("unavailable") },
-            "truth": truth.map(|truth| if truth { "true" } else { "false" }),
-        },
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
+
+    const LABEL: &str = fsl_foundation::wire_format::WireFormat::RunResult.as_str();
+
+    fn read_clause(value: &serde_json::Value) -> fsl_replay::spine::ClauseRunRecord {
+        let bytes = fsl_foundation::canonical_json::encode(value).expect("canonical bytes");
+        match fsl_replay::spine::read_native_run_result(&bytes) {
+            Ok(fsl_replay::spine::NativeRunResult::Clause(record)) => *record,
+            Ok(_) => panic!("the item document must read as a clause run"),
+            Err(error) => panic!("the strict reader refused the item document: {error}"),
+        }
+    }
+
+    fn admission_record(
+        code: &'static str,
+        cause: &'static str,
+    ) -> Box<filament_semantic_value::admission::AdmissionRecord> {
+        Box::new(filament_semantic_value::admission::AdmissionRecord {
+            catalog: filament_semantic_value::catalog::CatalogCode::new(code, cause),
+            fields: std::collections::BTreeMap::from([("population", "Order".to_owned())]),
+            path: Vec::new(),
+            kernel: None,
+        })
+    }
+
+    /// FR-267-AC-8, FSpec FR-352: an item document through the production
+    /// admit path is the admit-stage refusal FR-352 assigns, written with
+    /// every axis member present (`null` where none applies) and no
+    /// disposition `truth`, and the strict reader reads it as a clause run.
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn the_production_admit_refusal_item_is_the_fr_352_refusal_form() {
+        use fsl_semantics::model::observation::AdmissionFailure;
+        let failure =
+            fsl_replay::spine::ValueInvariantsBatchFailure::Admission(AdmissionFailure::Refused(
+                admission_record("invalid_runtime_input", "wrong-role-mapping"),
+            ));
+        let (items, exit) = value_invariant_items(Err(failure)).expect("an admit refusal item");
+        assert_eq!(exit, 20);
+        let expected = json!({
+            "format": LABEL,
+            "disposition": {
+                "category": "refusal",
+                "stage": "admit",
+                "refusal": {
+                    "code": "invalid_runtime_input",
+                    "cause": "wrong-role-mapping",
+                    "fields": {"population": "Order"},
+                },
+            },
+            "basis": "unavailable",
+            "axes": {
+                "activation": "unavailable",
+                "execution": null,
+                "settlement": "unavailable",
+                "truth": null,
+            },
+            "usage": {
+                "admission": {"document_bytes": 0, "objects": 0, "values": 0},
+                "evaluation_admissions": 0,
+                "evaluation_consumed": [],
+            },
+        });
+        assert_eq!(items, vec![json!({"result": expected.clone()})]);
+        let read = read_clause(&expected);
+        assert_eq!(
+            (read.stage(), read.category(), read.truth(), read.basis()),
+            ("admit", "refusal", None, "unavailable")
+        );
+        assert_eq!(population_refusal("Order").expect("document"), expected);
+    }
+
+    /// FR-267-AC-8, FSpec FR-352: an incomplete admission is an `incomplete`
+    /// admit-stage record at exit 22 and reads as a clause run.
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn the_production_incomplete_admit_item_reads_as_an_incomplete_clause_run() {
+        use fsl_semantics::model::observation::AdmissionFailure;
+        let failure = fsl_replay::spine::ValueInvariantsBatchFailure::Admission(
+            AdmissionFailure::Incomplete(admission_record(
+                "incomplete_population",
+                "incomplete-scope",
+            )),
+        );
+        let (items, exit) = value_invariant_items(Err(failure)).expect("an incomplete item");
+        assert_eq!(exit, 22);
+        let document = items[0]["result"].clone();
+        assert_eq!(document["disposition"]["category"], "incomplete");
+        assert_eq!(
+            document["disposition"]["refusal"]["code"],
+            "incomplete_population"
+        );
+        assert!(document["disposition"].get("truth").is_none());
+        let read = read_clause(&document);
+        assert_eq!(
+            (read.stage(), read.category(), read.truth()),
+            ("admit", "incomplete", None)
+        );
+    }
+
+    /// FR-267-AC-8, FSpec FR-352: a violated invariant is stage `evaluate`,
+    /// category `violation`, `truth: false` with a completed Boolean outcome,
+    /// `closed-scope` settlement and the admission usage it consumed.
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn a_violated_item_is_the_fr_352_violation_form_and_reads_back() {
+        let usage = fsl_semantics::model::observation::AdmissionUsage {
+            document_bytes: 7,
+            objects: 2,
+            values: 3,
+        };
+        let document = item_document(&fsl_replay::spine::ItemRunOutcome::Settled(false), &usage)
+            .expect("document");
+        assert_eq!(
+            document,
+            json!({
+                "format": LABEL,
+                "disposition": {
+                    "category": "violation",
+                    "stage": "evaluate",
+                    "truth": false,
+                    "outcome": {
+                        "kind": "completed",
+                        "value": {"kind": "boolean", "value": false},
+                    },
+                },
+                "basis": "closed-scope",
+                "axes": {
+                    "activation": "active",
+                    "execution": "completed",
+                    "settlement": "closed-scope",
+                    "truth": "false",
+                },
+                "usage": {
+                    "admission": {"document_bytes": 7, "objects": 2, "values": 3},
+                    "evaluation_admissions": 0,
+                    "evaluation_consumed": [],
+                },
+            })
+        );
+        let read = read_clause(&document);
+        assert_eq!(
+            (read.stage(), read.category(), read.truth(), read.basis()),
+            ("evaluate", "violation", Some(false), "closed-scope")
+        );
+    }
 
     #[test]
     fn internal_item_failure_is_request_fatal() {

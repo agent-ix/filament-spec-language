@@ -13,11 +13,11 @@ use filament_exact::Rational;
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelInstance;
+use fsl_eval::simulation::model::ModelFinding;
+use fsl_eval::simulation::protocol::{BlockedThread, ThreadPath, WaitCause};
 use fsl_eval::simulation::Location;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::SubjectTransition;
-use fsl_eval::simulation::model::ModelFinding;
-use fsl_eval::simulation::protocol::{BlockedThread, ThreadPath, WaitCause};
 use fsl_eval::temporal::TemporalPosition;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::bound::TemporalInterval;
@@ -133,6 +133,30 @@ pub struct UndefinedEvaluation {
     pub site: UndefinedSite,
     /// The undefined value's cause.
     pub cause: UndefinedCause,
+}
+
+impl UndefinedEvaluation {
+    /// The evaluation of a contract conjunction with no value at the state
+    /// `state_key` of `position` (ADR-018 UE-6): its locus is the clause and,
+    /// for a precondition, the transition it guards. Every engine builds it
+    /// here.
+    #[must_use]
+    pub fn of_contract(
+        position: u64,
+        state_key: StateKey,
+        contract: fsl_eval::simulation::model::UndefinedContract,
+    ) -> Self {
+        Self {
+            site: UndefinedSite {
+                position,
+                state_key,
+                locus: UndefinedLocus::Contract(contract.clause),
+                transition: contract.guard_of,
+                time: None,
+            },
+            cause: contract.cause,
+        }
+    }
 }
 
 /// ADR-025 DR-5: the data race a race-freedom counterexample reports.

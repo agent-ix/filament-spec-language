@@ -140,7 +140,7 @@ fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
     }
 }
 
-fn causes(refusals: &[fsl_semantics::check::CheckRefusal]) -> Vec<&'static str> {
+fn causes(refusals: &[fsl_semantics::check::SemanticCheckRefusal]) -> Vec<&'static str> {
     refusals
         .iter()
         .filter_map(|refusal| refusal.cause.catalog_code())

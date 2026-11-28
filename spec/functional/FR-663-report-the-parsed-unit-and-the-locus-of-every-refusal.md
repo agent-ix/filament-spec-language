@@ -108,7 +108,9 @@ This imported-source projection applies to both compilation and compilation
 reached through native `run`. For the S3 unbounded-extent planning refusal at
 an operation parameter ([FR-806](ix://agent-ix/filament-specification/FR-806)),
 the adapter SHALL use that parameter's retained origin rather than the PLAN
-declaration's or program's source region. Imported-source locations retain the
+declaration's or program's source region. The refusal carries `unsupported_projection`, so it exits with that
+code's category exit, 21 (FR-285, one category per code; FSpec FR-806-AC-1),
+not a route-specific exit. Imported-source locations retain the
 imported form even when their native producer and its native source-label
 pair are known; neither that pair nor the program's pair is projected for
 the imported origin. Ordinary native byte spans retain actual native

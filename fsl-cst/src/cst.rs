@@ -3,6 +3,7 @@
 //! tree and incremental whitespace-only editing. The definition/model
 //! selection values the parser recovers are `fsl_foundation::selection`'s.
 use fsl_foundation::{Source, Span};
+use ix_trace_rs::implements;
 
 /// Public lossless leaf classification; token spellings remain exact bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -411,10 +412,10 @@ pub enum CstElement {
 /// Exact lossless source leaf.
 #[derive(Clone, Debug)]
 pub struct CstToken {
+    source: Source,
     class: TokenClass,
     kind: TokenKind,
     span: Span,
-    spelling: Box<[u8]>,
 }
 
 impl CstToken {
@@ -431,8 +432,9 @@ impl CstToken {
         self.span
     }
     /// Exact original bytes.
+    #[implements("FR-339-AC-2")]
     pub fn spelling(&self) -> &[u8] {
-        &self.spelling
+        &self.source.text().as_bytes()[self.span.start..self.span.end]
     }
 }
 
@@ -565,10 +567,11 @@ impl LosslessCst {
         &self.recoveries
     }
     /// Reproduce every original source byte in order.
+    #[implements("FR-339-AC-2")]
     pub fn render(&self) -> Vec<u8> {
         self.tokens
             .iter()
-            .flat_map(|token| token.spelling.iter().copied())
+            .flat_map(|token| token.spelling().iter().copied())
             .collect()
     }
     /// Render one node through its ordered token/node children.
@@ -617,7 +620,7 @@ impl LosslessCst {
                         .get(token)
                         .filter(|token| token.class == TokenClass::Token)
                     {
-                        spellings.push(token.spelling.clone());
+                        spellings.push(token.spelling().into());
                     }
                 }
                 CstElement::Node(child) => {
@@ -790,15 +793,17 @@ impl LosslessCst {
         let mut tokens = Vec::with_capacity(self.tokens.len());
         for (index, existing) in self.tokens.iter().enumerate() {
             let mut token = existing.clone();
+            token.source = source.clone();
             if index == target {
-                let offset = at.checked_sub(token.span.start)?;
-                let mut spelling = token.spelling.to_vec();
-                spelling.splice(offset..offset, inserted.bytes());
-                if !crate::token::is_lexer_whitespace(std::str::from_utf8(&spelling).ok()?) {
+                if at < token.span.start || at > token.span.end {
                     return None;
                 }
-                token.spelling = spelling.into_boxed_slice();
                 token.span.end = token.span.end.checked_add(added)?;
+                if !crate::token::is_lexer_whitespace(
+                    &source.text()[token.span.start..token.span.end],
+                ) {
+                    return None;
+                }
             } else if index > target {
                 token.span.start = token.span.start.checked_add(added)?;
                 token.span.end = token.span.end.checked_add(added)?;
@@ -842,12 +847,12 @@ pub(crate) struct RawNode {
     pub children: Vec<CstElement>,
 }
 
-pub(crate) fn token(class: TokenClass, kind: TokenKind, span: Span, spelling: &[u8]) -> CstToken {
+pub(crate) fn token(source: &Source, class: TokenClass, kind: TokenKind, span: Span) -> CstToken {
     CstToken {
+        source: source.clone(),
         class,
         kind,
         span,
-        spelling: spelling.into(),
     }
 }
 
@@ -919,7 +924,7 @@ impl LosslessCst {
             "a fixture declaration needs at least one token"
         );
         let mut text = String::new();
-        let mut tokens = Vec::with_capacity(header.len() + declaration.len());
+        let mut spans = Vec::with_capacity(header.len() + declaration.len());
         let mut declaration_span = Span { start: 0, end: 0 };
         for (index, spelling) in header.iter().chain(declaration).enumerate() {
             if index > 0 {
@@ -928,12 +933,7 @@ impl LosslessCst {
             let start = text.len();
             text.push_str(spelling);
             let end = text.len();
-            tokens.push(token(
-                TokenClass::Token,
-                TokenKind::Grammar,
-                Span { start, end },
-                spelling.as_bytes(),
-            ));
+            spans.push(Span { start, end });
             if index == header.len() {
                 declaration_span.start = start;
             }
@@ -949,6 +949,10 @@ impl LosslessCst {
             fsl_foundation::source::MAX_SOURCE_BYTES,
         )
         .expect("fixture text is within the byte limit");
+        let tokens = spans
+            .into_iter()
+            .map(|span| token(&source, TokenClass::Token, TokenKind::Grammar, span))
+            .collect();
         let root = RawNode {
             production: Production::CompleteUnit,
             span: Span {

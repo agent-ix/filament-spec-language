@@ -276,6 +276,7 @@ impl Invariant {
             },
             stutter_closure: false,
             certificate: self.request(world, UNLIMITED),
+            engines: Default::default(),
             replay: Box::new(replay),
         }
     }

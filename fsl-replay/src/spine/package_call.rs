@@ -26,8 +26,8 @@ use fsl_semantics::model::state::CompositeBounds;
 use ix_trace_rs::implements;
 
 use super::call::{
-    Call, CallOutcome, CallValue, RunRefusal, SuppliedForms, admit_wire_arguments, bind_arguments,
-    convert_call_failure, convert_outcome_resolving, is_identifier,
+    admit_wire_arguments, bind_arguments, convert_call_failure, convert_outcome_resolving,
+    is_identifier, Call, CallOutcome, CallValue, RunRefusal, SuppliedForms,
 };
 use super::run_value::{Forms, WriteStop};
 

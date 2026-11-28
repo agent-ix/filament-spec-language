@@ -55,11 +55,12 @@ use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::certificate::{CertificateLocus, CertificateRule};
+use crate::model_check::settle::ResultLabel;
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
     Certification, DeclineCode, IncompleteCause, InconclusiveCause, InstanceBound, ProofBasis,
-    ReportedInconclusiveCause, StaleIdentity, SymmetryBrokenCause, TerminalRecord, TerminalValue,
-    UnavailabilityCause, WeakAccessFailure,
+    ReportedInconclusiveCause, SettlementBasis, StaleIdentity, SymmetryBrokenCause, TerminalRecord,
+    TerminalValue, UnavailabilityCause, WeakAccessFailure, PROOF_NOT_CERTIFIED_KIND,
 };
 use crate::result::{DisagreementCause, ReplayResult};
 use crate::shared_wire::{StateLocus, TransitionIdentity};
@@ -95,7 +96,7 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 }
 
 /// The document's `format` member.
-pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
+pub const OUTCOME_FORMAT: &str = fsl_foundation::wire_format::WireFormat::Outcome.as_str();
 /// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
 pub const OUTCOME_SCHEMA_1: &str = include_str!("../schemas/filament-outcome-1.schema.json");
 
@@ -474,6 +475,12 @@ pub struct ItemCause {
     /// A `provider-answer-unconfirmed` cause's `premises` index.
     #[serde(skip_serializing_if = "Option::is_none")]
     premise: Option<u64>,
+    /// A `proof-not-certified` cause's proof basis.
+    #[serde(rename = "basis", skip_serializing_if = "Option::is_none")]
+    proof_basis: Option<Box<ProofBasis>>,
+    /// A `proof-not-certified` cause's certification.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certification: Option<Certification>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rule: Option<CertificateRule>,
     #[serde(rename = "at", skip_serializing_if = "Option::is_none")]
@@ -766,6 +773,8 @@ impl ItemCause {
             hypothesis: None,
             result: None,
             premise: None,
+            proof_basis: None,
+            certification: None,
             certificate_at: None,
             limit: None,
             defect: None,
@@ -853,6 +862,13 @@ impl ItemCause {
                 premise,
             }) => {
                 item.premise = Some(*premise);
+            }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::ProofNotCertified {
+                basis,
+                certification,
+            }) => {
+                item.proof_basis = basis.clone();
+                item.certification = Some(*certification);
             }
             ReportedInconclusiveCause::Cause(
                 InconclusiveCause::BoundReached { depth }
@@ -1128,6 +1144,34 @@ pub struct ProtocolConformanceOutput {
     pub prefixes: Option<Vec<ConformancePrefixOutput>>,
 }
 
+impl ProtocolConformanceOutput {
+    /// For a request that requires certified proofs, and an item whose record
+    /// is not a certified proof, every label that would read `proved` reads
+    /// `inconclusive`. Obligation verdicts and the closure record are
+    /// the evidence the engine computed and stay.
+    #[implements("FR-1052-AC-9")]
+    pub fn withhold_proofs(&mut self) {
+        let proved = |label: &str| label == ResultLabel::Proved.as_str();
+        let inconclusive = || ResultLabel::Inconclusive.as_str().to_owned();
+        if proved(&self.global.label) {
+            self.global.label = inconclusive();
+            self.global.basis = SettlementBasis::Unsettled.as_str().to_owned();
+            self.global.complete = false;
+            self.global.cause = Some(PROOF_NOT_CERTIFIED_KIND.to_owned());
+        }
+        for prefix in self.prefixes.iter_mut().flatten() {
+            if proved(&prefix.label) {
+                prefix.label = inconclusive();
+            }
+        }
+        for projection in self.projections.iter_mut().flatten() {
+            if proved(&projection.label) {
+                projection.label = inconclusive();
+            }
+        }
+    }
+}
+
 /// The assessment of the first `observations` observations of a recording.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ConformancePrefixOutput {
@@ -1362,9 +1406,6 @@ impl OutcomeItem {
                     UnavailabilityCause::NotStochasticIdleTail { state } => {
                         item.state = Some(state.into());
                         item.idle_tail = Some(true);
-                    }
-                    UnavailabilityCause::TimeLockedSample { state } => {
-                        item.state = Some(state.into());
                     }
                 }
                 Some(item)
@@ -1736,10 +1777,7 @@ impl OutcomeItem {
 }
 
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
-    serde_json::json!({
-        "numerator": value.numerator().to_string(),
-        "denominator": value.denominator().to_string(),
-    })
+    crate::shared_wire::RationalObject::value(value)
 }
 
 fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json::Value {
@@ -3683,6 +3721,7 @@ fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeL
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn package_artifact_pointer(pointer: &str) -> String {
     match pointer.strip_prefix("/package") {
         Some("") => String::new(),

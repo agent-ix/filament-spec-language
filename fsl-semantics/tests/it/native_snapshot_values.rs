@@ -2138,6 +2138,42 @@ fn the_document_edge_refuses_a_title_before_any_value_is_read() {
     );
 }
 
+/// FR-255-AC-31: an 11-byte snapshot read with `observation.input_bytes` 10
+/// refuses with bound 10, count 11 and that setting; 10 bytes pass the check.
+#[trace("FR-255-AC-31")]
+#[test]
+fn an_eleven_byte_snapshot_refuses_at_an_input_byte_bound_of_ten() {
+    let replay = text_replay();
+    let (base, _) = snapshot(&replay, "current", "current", &replay.base);
+    let admit_bytes = |bytes: &[u8]| {
+        let provision = BTreeMap::from([(base.clone(), bytes.to_vec())]);
+        admit_current_snapshot(
+            replay.graph.model_selections(),
+            replay.graph.scope().types(),
+            &replay.packages,
+            ModelNormalizationLimits::default(),
+            &provision,
+            &base,
+            ObservationLimits::default().with_document_bytes(10),
+        )
+        .map(|_| ())
+    };
+    let Err(AdmissionFailure::Refused(record)) = admit_bytes(b"{\"a\":12345}") else {
+        panic!("eleven bytes refuse at a bound of ten");
+    };
+    assert_eq!(record.catalog.code(), Code::StageLimitExceeded.as_str());
+    assert_eq!(record.catalog.cause(), "input-bytes-exceeded");
+    let field = |name: &str| record.fields.get(name).map(String::as_str);
+    assert_eq!(field("bound"), Some("10"));
+    assert_eq!(field("actual"), Some("11"));
+    assert_eq!(field("setting"), Some("observation.input_bytes"));
+    // Ten bytes pass the byte check and fail later, on their content.
+    let Err(AdmissionFailure::Refused(later)) = admit_bytes(b"{\"a\":1234}") else {
+        panic!("a ten-byte document is not a snapshot");
+    };
+    assert_ne!(later.catalog.cause(), "input-bytes-exceeded");
+}
+
 /// TC-1044 step 4 (FR-106-AC-40): the frame check decides each declared type
 /// by its own equality, over an invocation granting nothing. A change
 /// refuses `frame_violation`/`unauthorized-change` naming the object and the

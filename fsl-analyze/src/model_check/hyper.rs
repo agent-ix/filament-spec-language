@@ -131,7 +131,8 @@ use fsl_eval::temporal::{
     evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace, LetterStop, TemporalOutcome,
     TemporalPosition, TupleLetters,
 };
-use fsl_foundation::IdentityLimits;
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::{IdentityLimits, Setting};
 use fsl_replay::{
     AppliedReduction, BoundCovers, HyperCounterexample, HyperCounterexampleKind, HyperLocus,
     HyperOutcome, HyperReductionCause, HyperStep, HyperTrace, HyperUndefined, IncompleteCause,
@@ -141,12 +142,18 @@ use fsl_replay::{
 use fsl_semantics::check::{CheckedHyperClause, CopyGroup, FormulaNodeId, HyperForm};
 use ix_trace_rs::implements;
 
-use super::check::{atom_refusal, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
+use super::check::{
+    atom_refusal, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS,
+    EN1_STATE_OVERHEAD_BYTES,
+};
 use super::fair_walk::{tree_path, FairModel};
 use super::graph::{
-    retain, retain_reduced, GraphExploration, ProductStateId, RetainedEdge, RetainedGraph,
+    retain, retain_reduced_admitting, GraphExploration, ProductStateId, RetainConfig, RetainedEdge,
+    RetainedGraph,
 };
 use super::reduce;
+use crate::analyze::EngineBounds;
+use filament_semantic_value::catalog::CatalogCode;
 use fsl_route::reductions::Reductions;
 use lift::{through, Lifted};
 
@@ -164,6 +171,10 @@ pub use single::{check_single_existential, SingleExistentialRequest, SingleExist
 pub(super) fn atom_halt(stop: fsl_eval::model_subject::AtomStop) -> ModelCheckRefusal {
     atom_refusal(stop).unwrap_or_else(|_| fault("an-exhausted-atom-meter-is-a-meter-halt"))
 }
+
+/// The cause a refused `analysis.retained_bytes` charge gives the exploration
+/// engine; the run's [`Ending`] names the limit.
+const RETAINED_STOP: CatalogCode = CatalogCode::new("resource_exhausted", "limit-reached");
 
 type HyperGraph = RetainedGraph<HyperState, HyperTransition, HyperFinding>;
 
@@ -194,6 +205,9 @@ pub struct HyperCheckRequest<'a> {
     /// The reductions the request selects. Copy-swap is not among them: the
     /// compiler applies it when the clause has the symmetry (FR-174).
     pub reductions: Reductions,
+    /// The item's `analysis.retained_bytes` allowance (FR-255 "Retained
+    /// bytes"); `None` runs on the published default.
+    pub retained: Option<&'a Budget>,
 }
 
 /// Why [`check_hyper`] explored nothing, or built no counterexample
@@ -233,11 +247,6 @@ pub enum HyperRefusal {
         "an undefined evaluation on the universal side of an HP-3 clause names no existential path"
     )]
     NoPartnerPath,
-    /// An atom of an event-position clause's body has no value on a tuple of
-    /// closed executions (ADR-023 HV-8): the counterexample shape that names it
-    /// is not built.
-    #[error("an undefined evaluation on a tuple of closed finite executions is not decided")]
-    ClosedUndefined,
     /// The selected state constraint has no value at a component state; FR-174
     /// states no verdict for it.
     #[error("the state constraint has no value at a component state: {cause:?}")]
@@ -352,6 +361,11 @@ pub fn check_hyper(
         witness: matches!(clause.form(), Some(HyperForm::ForallExistsSafety)),
         projected,
         cancel,
+        retained: request
+            .retained
+            .cloned()
+            .unwrap_or_else(|| EngineBounds::default().item_budget(request.meter, cancel)),
+        retain_stop: std::cell::RefCell::new(None),
     };
     run.decide(&instances)
 }
@@ -718,6 +732,13 @@ enum Found {
         guard_of: Option<ModelTransition>,
         cause: fsl_eval::temporal::UndefinedCause,
     },
+    /// HP-3: a contract conjunction of an existential member's component is
+    /// undefined at the member's state (ADR-018 UE-6).
+    MemberContract {
+        component: usize,
+        contract: fsl_eval::simulation::model::UndefinedContract,
+        partner: Rc<Partner>,
+    },
     /// HP-6: `μ_U` has no value on the visible move that reached the state.
     MatchAt {
         conjunct: usize,
@@ -793,12 +814,63 @@ enum FirstHit {
     Unstated,
 }
 
+/// Finalize the refused first-phase candidate without making an undefined
+/// counterexample.
+#[implements("FR-177-AC-7")]
+fn finalize_refused_candidate(depth: usize, candidate: Candidate) -> Option<(usize, FirstHit)> {
+    match candidate {
+        Candidate::Refused(cause) => Some((depth, FirstHit::Undecided(cause))),
+        Candidate::Found(..) | Candidate::Rejected(_) => None,
+    }
+}
+
 /// Keep, of the refused findings of one state, the one at the earliest joint
 /// position; the first in the list on a tie.
 fn sooner(refused: &mut Option<(usize, UndecidedCause)>, depth: usize, cause: UndecidedCause) {
     if refused.is_none_or(|(known, _)| depth < known) {
         *refused = Some((depth, cause));
     }
+}
+
+/// Aggregate an HP-3 member's contract findings for the first phase. An
+/// undefined conjunction is a counterexample candidate; a refused-only
+/// conjunction makes the member's successors unknown and settles undecided.
+#[implements("FR-177-AC-7")]
+fn member_contract_candidates(
+    id: ProductStateId,
+    depth: usize,
+    findings: &[HyperFinding],
+) -> Vec<(usize, u8, Candidate)> {
+    let mut candidates = Vec::new();
+    let mut refused = None;
+    for finding in findings {
+        match finding {
+            HyperFinding::MemberUndefined {
+                component,
+                contract,
+                partner,
+            } => candidates.push((
+                depth,
+                0,
+                Candidate::Found(
+                    id,
+                    Found::MemberContract {
+                        component: *component,
+                        contract: contract.clone(),
+                        partner: partner.clone(),
+                    },
+                ),
+            )),
+            HyperFinding::MemberContract => {
+                sooner(&mut refused, depth, UndecidedCause::UndecidedSuccessor)
+            }
+            _ => {}
+        }
+    }
+    if let Some((depth, cause)) = refused {
+        candidates.push((depth, 1, Candidate::Refused(cause)));
+    }
+    candidates
 }
 
 /// The second phase's result for one instance.
@@ -858,6 +930,10 @@ struct Run<'r, 'a> {
     /// Whether the clause is HP-6.
     projected: bool,
     cancel: &'r Cancel,
+    /// The item's `analysis.retained_bytes` allowance, one for every instance.
+    retained: Budget,
+    /// Why a charge to `retained` stopped the run, for [`Self::explore`].
+    retain_stop: std::cell::RefCell<Option<Ending>>,
 }
 
 impl<'a> Run<'_, 'a> {
@@ -1423,9 +1499,20 @@ impl<'a> Run<'_, 'a> {
                 system,
                 stop: Cell::new(None),
             };
-            let exploration = retain(&watched, limits, IdentityLimits::default(), None, || {
-                self.cancel.poll() && self.cancel.cause().is_some()
-            })
+            // Each subject state is charged to the item's retained-bytes
+            // allowance before the graph stores it (FR-255-AC-43).
+            let exploration = retain_reduced_admitting(
+                &watched,
+                &SymmetryGroup::default(),
+                None,
+                RetainConfig {
+                    limits,
+                    identity: IdentityLimits::default(),
+                    max_depth: None,
+                },
+                || self.cancel.poll() && self.cancel.cause().is_some(),
+                |_: &_, key_len: usize| self.admit(key_len),
+            )
             .map_err(|error| error.model_refusal(IdentityLimits::default()))?;
             match exploration.outcome {
                 Outcome::Exhaustive(_) => {}
@@ -1441,9 +1528,10 @@ impl<'a> Run<'_, 'a> {
                 }
                 Outcome::Cancelled { .. } => return self.cancelled(totals).map(Some),
                 Outcome::Stopped { .. } => {
-                    let ending = match watched.stop.take() {
-                        Some(stop) => self.expansion_ending(None, stop)?,
-                        None => {
+                    let ending = match (self.retain_stop.borrow_mut().take(), watched.stop.take()) {
+                        (Some(ending), _) => ending,
+                        (None, Some(stop)) => self.expansion_ending(None, stop)?,
+                        (None, None) => {
                             return Err(fault("a-stopped-expansion-recorded-its-stop"));
                         }
                     };
@@ -1645,14 +1733,18 @@ impl<'a> Run<'_, 'a> {
             Finding = HyperFinding,
         >,
     {
-        let retained = retain_reduced(
+        let identity = IdentityLimits::default();
+        let retained = retain_reduced_admitting(
             product,
             group,
             None,
-            totals.remaining(self.request.limits.limits),
-            IdentityLimits::default(),
-            cap,
+            RetainConfig {
+                limits: totals.remaining(self.request.limits.limits),
+                identity,
+                max_depth: cap,
+            },
             || self.cancel.poll() && self.cancel.cause().is_some(),
+            |_: &HyperState, key_len: usize| self.admit(key_len),
         );
         match retained {
             Ok(graph) => Ok(graph),
@@ -1661,6 +1753,38 @@ impl<'a> Run<'_, 'a> {
                 _ => Err(error.model_refusal(IdentityLimits::default())),
             },
         }
+    }
+
+    /// Charge a product state to the item's `analysis.retained_bytes` before
+    /// the graph stores it: the fixed entry overhead and its key, as the graph
+    /// and the index each hold it (FR-255 "Retained bytes").
+    #[implements("FR-255-AC-43")]
+    fn admit(&self, key_len: usize) -> Result<(), CatalogCode> {
+        let bytes = widen(key_len)
+            .saturating_mul(2)
+            .saturating_add(EN1_STATE_OVERHEAD_BYTES);
+        let ending = match self.retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+            Ok(()) => return Ok(()),
+            Err(BudgetStop::Limit(limit)) => Ending::Stopped(
+                IncompleteCause::ResourceExhausted,
+                Some(ReachedLimit {
+                    limit: ModelCheckLimit::AnalysisRetainedBytes,
+                    value: limit.configured_bound(),
+                }),
+                None,
+            ),
+            Err(BudgetStop::Cancelled(source)) => {
+                Ending::Stopped(IncompleteCause::Cancelled { source }, None, None)
+            }
+            Err(BudgetStop::Accounting(_)) => {
+                Ending::Stopped(IncompleteCause::ResourceExhausted, None, None)
+            }
+        };
+        let mut slot = self.retain_stop.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(ending);
+        }
+        Err(RETAINED_STOP)
     }
 
     /// The stabiliser of the keys `instance` binds in the selected key
@@ -1771,9 +1895,12 @@ impl<'a> Run<'_, 'a> {
                 Some(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None, None),
                 None => return Err(fault("a-cancelled-run-has-a-cause")),
             },
-            Outcome::Stopped { .. } => match product.take_halt() {
-                Some(halt) => self.halt_ending(halt)?,
-                None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
+            Outcome::Stopped { .. } => match self.retain_stop.borrow_mut().take() {
+                Some(ending) => ending,
+                None => match product.take_halt() {
+                    Some(halt) => self.halt_ending(halt)?,
+                    None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
+                },
             },
             // The horizon is the ranking cap's or the request's: the instance
             // is explored as far as it can still win or be asked for.
@@ -1813,6 +1940,7 @@ impl<'a> Run<'_, 'a> {
     /// whose letter is undefined, or whose expansion found an undefined
     /// `μ_U` or contract, ends the run; failing that, a refused one leaves it
     /// undecided. The finding comes with the depth it was at.
+    #[implements("FR-177-AC-7")]
     fn first_phase(
         &self,
         run: &Explored<'_, '_>,
@@ -1934,12 +2062,18 @@ impl<'a> Run<'_, 'a> {
                             UndecidedCause::MatchUndetermined,
                         );
                     }
-                    HyperFinding::MemberContract => {
-                        sooner(
-                            &mut refused,
+                    HyperFinding::MemberUndefined { .. } | HyperFinding::MemberContract => {
+                        for (depth, rank, candidate) in member_contract_candidates(
+                            id,
                             state.depth,
-                            UndecidedCause::UndecidedSuccessor,
-                        );
+                            std::slice::from_ref(finding),
+                        ) {
+                            if rank == 0 {
+                                offer(depth, rank, candidate);
+                            } else if let Candidate::Refused(cause) = candidate {
+                                sooner(&mut refused, depth, cause);
+                            }
+                        }
                     }
                     HyperFinding::Enabled { .. } => {}
                 }
@@ -1950,8 +2084,8 @@ impl<'a> Run<'_, 'a> {
         }
         Ok(match best {
             None => None,
-            Some((depth, _, Candidate::Refused(cause))) => {
-                Some((depth, FirstHit::Undecided(cause)))
+            Some((depth, _, candidate @ Candidate::Refused(_))) => {
+                finalize_refused_candidate(depth, candidate)
             }
             Some((depth, _, Candidate::Rejected(id))) => {
                 let hit = match self.confirmed_rejection(run, id, totals)? {
@@ -2260,6 +2394,34 @@ impl<'a> Run<'_, 'a> {
                 cause,
                 None,
             ),
+            Found::MemberContract {
+                component,
+                contract,
+                partner: member,
+            } => {
+                let slot = component
+                    .checked_sub(universals)
+                    .ok_or_else(|| fault("a-member-contract-is-of-an-existential-component"))?;
+                let state_key = member
+                    .state_keys()
+                    .get(slot)
+                    .cloned()
+                    .ok_or_else(|| fault("a-member-names-its-component-state"))?;
+                let named = variables
+                    .get(component)
+                    .cloned()
+                    .ok_or_else(|| fault("a-contract-finding-names-a-variable"))?;
+                partner = Some(member);
+                (
+                    stem,
+                    vec![state_key],
+                    vec![named],
+                    HyperLocus::Contract(contract.clause),
+                    contract.guard_of,
+                    contract.cause,
+                    None,
+                )
+            }
             Found::Contract {
                 component,
                 clause,
@@ -2626,6 +2788,9 @@ impl<'a> Run<'_, 'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// A trace's step of `component` in the joint step `transition`, with the
 /// state key of its post-state; `None` when the component does not move in it.
