@@ -624,7 +624,8 @@ pub struct ModelTrace {
 }
 
 /// Which edge of a finite integer domain a generated partition represents.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ModelBoundaryKind {
     /// The empty text value when the declared minimum length is zero.
     TextEmpty,

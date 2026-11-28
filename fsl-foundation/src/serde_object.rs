@@ -56,3 +56,50 @@ pub fn deserialize_empty_object<'de, D: Deserializer<'de>>(
     let _: Empty = from_object(deserializer)?;
     Ok(())
 }
+
+/// A member present with a value; `null` is read as that member's own type.
+/// Used with `#[serde(default)]` for a member that may be omitted.
+///
+/// # Errors
+///
+/// The member's own decoding error.
+pub fn present<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(decoder).map(Some)
+}
+
+/// A member that must be present but may be `null`: with no `#[serde(default)]`
+/// a missing member is refused, which serde's own `Option` handling would
+/// accept (FND-019).
+///
+/// # Errors
+///
+/// The member's own decoding error.
+pub fn required_nullable<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(decoder)
+}
+
+/// A member that is omitted when absent and never `null`.
+///
+/// # Errors
+///
+/// A `null` member, or the member's own decoding error.
+pub fn omitted_not_null<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    match Option::<T>::deserialize(decoder)? {
+        Some(value) => Ok(Some(value)),
+        None => Err(de::Error::custom(
+            "an absent optional member is omitted, never `null`",
+        )),
+    }
+}

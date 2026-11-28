@@ -121,9 +121,18 @@ impl NativeResult {
         Self(document)
     }
 
-    /// The FR-931 lowering document, its `tl_lowering` record.
-    pub(super) fn lowering_document(document: Value) -> Self {
-        Self(document)
+    /// The FR-931 `native-tl-lowering-result/1` document.
+    pub(super) fn lowering_document(
+        document: &super::wire::TlLoweringDocument,
+    ) -> Result<Self, serde_json::Error> {
+        serde_json::to_value(document).map(Self)
+    }
+
+    /// The FR-1030 `native-refinement-transfer-result/1` document.
+    pub(super) fn transfer_document(
+        document: &super::wire::RefinementTransferDocument,
+    ) -> Result<Self, serde_json::Error> {
+        serde_json::to_value(document).map(Self)
     }
 
     /// FR-1037's bounded synthesis outcome.
@@ -131,12 +140,12 @@ impl NativeResult {
         Self(document)
     }
 
-    /// The FR-190 result record of a direct model-based test request.
-    pub(super) fn model_based_test_document(record: Value) -> Self {
-        Self(serde_json::json!({
-            "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
-            "model_based_test": record,
-        }))
+    /// The FR-752 `native-model-based-test-result/1` document of a direct
+    /// model-based test request.
+    pub(super) fn model_based_test_document(
+        document: &super::wire::ModelBasedTestDocument,
+    ) -> Result<Self, serde_json::Error> {
+        serde_json::to_value(document).map(Self)
     }
 
     /// The FR-862 replay result: FR-323's `results` disposition.
@@ -1159,27 +1168,6 @@ fn clock_selection_refusal(
 mod tests {
     use super::*;
 
-    /// FR-267-AC-8, FSpec FR-352-AC-8: the model-based-test document carries
-    /// the run-result label with no clause-run or command-error members, so
-    /// the strict reader refuses it at its unknown `model_based_test` member
-    /// (the defect that it is no FR-352 form is tracked separately).
-    #[trace("FR-267-AC-8")]
-    #[test]
-    fn the_model_based_test_document_is_refused_by_the_run_result_reader() {
-        let result = NativeResult::model_based_test_document(serde_json::json!({}));
-        let bytes = result.to_bytes().expect("canonical bytes");
-        let Err(fsl_replay::spine::NativeRunReadError::MalformedMember { source, .. }) =
-            fsl_replay::spine::read_native_run_result(&bytes)
-        else {
-            panic!("expected a refusal at the unknown member");
-        };
-        assert!(
-            source
-                .to_string()
-                .starts_with("unknown field `model_based_test`"),
-            "{source}"
-        );
-    }
     use crate::formal_source::FormalSource;
     use filament_contract_model as ir;
     use filament_semantic_value::catalog::Category;

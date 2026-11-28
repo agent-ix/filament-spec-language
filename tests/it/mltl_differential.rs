@@ -9,6 +9,11 @@ use crate::command_harness::run_file;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+/// The record of a lowering as its wire value.
+fn json_of(record: &fsl_command::command::TlLoweringRecord) -> Value {
+    serde_json::to_value(record).expect("a lowering record writes")
+}
+
 const PAST: &[&str] = &[
     "once[0,2] holds(c.level = 1)",
     "historically[1,2] holds(c.level = 0)",
@@ -209,15 +214,15 @@ fn a_mis_mapped_atom_is_a_correspondence_loss() {
         &fsl_command::command::AtomMapping::default(),
     )
     .expect("the clause lowers");
-    assert_eq!(faithful.exit_code, 0, "{}", faithful.record);
-    assert_eq!(faithful.record["cross_evaluation"]["agree"], true);
+    assert_eq!(faithful.exit_code, 0, "{}", json_of(&faithful.record));
+    assert_eq!(json_of(&faithful.record)["cross_evaluation"]["agree"], true);
 
     let mut mapping = fsl_command::command::AtomMapping::default();
     mapping.negated.insert("p0".to_owned());
     let mismapped = fsl_command::command::tl_record(valuation, unit, None, &mapping)
         .expect("the clause lowers");
-    assert_eq!(mismapped.exit_code, 30, "{}", mismapped.record);
-    let cross = &mismapped.record["cross_evaluation"];
+    assert_eq!(mismapped.exit_code, 30, "{}", json_of(&mismapped.record));
+    let cross = &json_of(&mismapped.record)["cross_evaluation"];
     assert_eq!(cross["agree"], false);
     assert_eq!(
         cross["faults"],
@@ -298,6 +303,7 @@ fn lowering_preserves_the_classification() {
 /// faithful lowering carries the native classification.
 #[test]
 #[trace("TC-2979", "FR-931-AC-8")]
+#[trace("TC-2601", "FR-931-AC-20")]
 fn a_wrong_lowered_profile_is_a_classification_loss() {
     let directory = tempfile::tempdir().unwrap();
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
@@ -335,8 +341,8 @@ fn a_wrong_lowered_profile_is_a_classification_loss() {
         &fsl_command::command::AtomMapping::default(),
     )
     .expect("the clause lowers");
-    assert_eq!(faithful.exit_code, 0, "{}", faithful.record);
-    assert_eq!(faithful.record["classification"], native);
+    assert_eq!(faithful.exit_code, 0, "{}", json_of(&faithful.record));
+    assert_eq!(json_of(&faithful.record)["classification"], native);
 
     let mapping = fsl_command::command::AtomMapping {
         lowered_correspondence: Some("mltl.origin-complete-history/v1".to_owned()),
@@ -344,19 +350,31 @@ fn a_wrong_lowered_profile_is_a_classification_loss() {
     };
     let lost = fsl_command::command::tl_record(valuation, unit, None, &mapping)
         .expect("the clause lowers");
-    assert_eq!(lost.exit_code, 30, "{}", lost.record);
+    assert_eq!(lost.exit_code, 30, "{}", json_of(&lost.record));
     assert_eq!(
-        lost.record["classification"],
+        json_of(&lost.record)["classification"],
         Value::Null,
         "{}",
-        lost.record
+        json_of(&lost.record)
     );
     assert_eq!(
-        lost.record["classification_fault"],
+        json_of(&lost.record)["classification_fault"],
         json!({"kind": "classification-loss", "clause": "C", "native": native,
             "lowered": {"correspondence": "mltl.origin-complete-history/v1",
                 "fragment": "bounded-future"}})
     );
+    // FR-931-AC-20: the classification-loss record is written as the document
+    // and strictly read back as the same record.
+    let document = fsl_command::command::TlLoweringDocument {
+        format: fsl_replay::spine::Label::new(),
+        tl_lowering: lost.record,
+    };
+    let value = serde_json::to_value(&document).expect("the document writes");
+    let read = crate::support::route_result::read_back::<fsl_command::command::TlLoweringDocument>(
+        &value,
+        fsl_command::command::read_tl_lowering_result,
+    );
+    assert_eq!(read, document);
 }
 
 const INFINITE_PROFILE: &str = "filament.temporal.infinite-trace/v1";
@@ -683,16 +701,19 @@ fn a_mis_mapped_atom_over_a_lasso_is_a_correspondence_loss() {
         &fsl_command::command::AtomMapping::default(),
     )
     .expect("the clause lowers");
-    assert_eq!(faithful.exit_code, 0, "{}", faithful.record);
-    assert_eq!(faithful.record["correspondence"], "mltl.infinite-trace/v1");
-    assert_eq!(faithful.record["cross_evaluation"]["agree"], true);
+    assert_eq!(faithful.exit_code, 0, "{}", json_of(&faithful.record));
+    assert_eq!(
+        json_of(&faithful.record)["correspondence"],
+        "mltl.infinite-trace/v1"
+    );
+    assert_eq!(json_of(&faithful.record)["cross_evaluation"]["agree"], true);
 
     let mut mapping = fsl_command::command::AtomMapping::default();
     mapping.negated.insert("p0".to_owned());
     let mismapped = fsl_command::command::tl_record(valuation, &unit, None, &mapping)
         .expect("the clause lowers");
-    assert_eq!(mismapped.exit_code, 30, "{}", mismapped.record);
-    let cross = &mismapped.record["cross_evaluation"];
+    assert_eq!(mismapped.exit_code, 30, "{}", json_of(&mismapped.record));
+    let cross = &json_of(&mismapped.record)["cross_evaluation"];
     assert_eq!(cross["agree"], false);
     // Natively `not p` fails at 1 (p holds at 0); with `p0` negated the TL
     // side reads p false at 0 and holds there. Position 0 reads the

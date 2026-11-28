@@ -10,6 +10,7 @@ pub(crate) mod plan_model;
 pub(crate) mod probabilistic_model;
 #[path = "refinement_cas.rs"]
 pub mod refinement_cas;
+pub mod route_result;
 pub mod spine_model;
 pub mod workspace;
 

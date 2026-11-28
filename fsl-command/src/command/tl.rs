@@ -13,6 +13,12 @@ use fsl_semantics::check::{
     BinaryTemporal, CheckedInterval, FormulaNode, FormulaNodeId, TemporalProfile, UnaryTemporal,
 };
 use serde_json::{json, Map, Value};
+
+use super::wire::tl_lowering_result::{
+    Classification, ClassificationFault, ClassificationLossKind, CorrespondenceLossKind,
+    CrossEvaluation, CrossEvaluationFault, Dimension, Fragment, NativeVerdict, SupportedLowering,
+    TlLoweringDocument, TlLoweringRecord, UnsupportedLowering,
+};
 use tl_syntax::{
     Formula, InfiniteClock, InfiniteFormulaDocument, InfiniteNode, InfiniteNodeKind, Interval,
     LassoTraceDocument, Node, NodeId, NodeKind, PartialValuation, PartialValue, PropositionId,
@@ -298,7 +304,7 @@ pub struct AtomMapping {
 #[derive(Clone, Debug)]
 pub struct TlRecord {
     /// The `tl_lowering` record of the run result document.
-    pub record: Value,
+    pub record: TlLoweringRecord,
     /// 0 for a supported lowering with no fault, 21 for an unsupported one,
     /// 30 for a correspondence loss.
     pub exit_code: u8,
@@ -426,16 +432,19 @@ impl From<String> for Failure {
 }
 
 /// The FR-931-AC-8 fragment of a formula by the direction of its operators.
-fn fragment_of(past: bool) -> &'static str {
+fn fragment_of(past: bool) -> Fragment {
     if past {
-        "bounded-past"
+        Fragment::BoundedPast
     } else {
-        "bounded-future"
+        Fragment::BoundedFuture
     }
 }
 
-fn classification(correspondence: &str, fragment: &str) -> Value {
-    json!({"correspondence": correspondence, "fragment": fragment})
+fn classification(correspondence: &str, fragment: Fragment) -> Classification {
+    Classification {
+        correspondence: correspondence.to_owned(),
+        fragment,
+    }
 }
 
 fn direction(target: TlTarget) -> bool {
@@ -445,11 +454,11 @@ fn direction(target: TlTarget) -> bool {
     )
 }
 
-fn dimension(unmatched: TlUnmatched) -> &'static str {
+fn dimension(unmatched: TlUnmatched) -> Dimension {
     match unmatched {
-        TlUnmatched::FiniteWindow | TlUnmatched::TimedProfile => "profile",
-        TlUnmatched::InfiniteTrace => "infinite-trace",
-        TlUnmatched::MixedDirection => "direction",
+        TlUnmatched::FiniteWindow | TlUnmatched::TimedProfile => Dimension::Profile,
+        TlUnmatched::InfiniteTrace => Dimension::InfiniteTrace,
+        TlUnmatched::MixedDirection => Dimension::Direction,
     }
 }
 
@@ -517,40 +526,39 @@ fn lowering_record(
     };
     let support =
         fsl_replay::spine::tl_support_of(subject.profile, future, past, unclosed, surrounding);
-    let mut record = Map::new();
-    record.insert("clause".to_owned(), json!(subject.name));
+    let clause = subject.name.to_owned();
     let classified = match support {
         TlSupport::Unsupported { dimensions } => {
-            record.insert("disposition".to_owned(), json!("unsupported"));
-            if let Some(target) = named {
-                record.insert("correspondence".to_owned(), json!(target.identity()));
-            }
-            let dimensions: Vec<&str> = dimensions.into_iter().map(dimension).collect();
-            record.insert("dimensions".to_owned(), json!(dimensions));
             return Ok(TlRecord {
-                record: Value::Object(record),
+                record: TlLoweringRecord::Unsupported(UnsupportedLowering {
+                    clause,
+                    correspondence: named.map(|target| target.identity().to_owned()),
+                    classified: None,
+                    dimensions: dimensions.into_iter().map(dimension).collect(),
+                }),
                 exit_code: 21,
             });
         }
         TlSupport::Supported { target, .. } => target,
     };
     if let Some(target) = named.filter(|target| *target != classified) {
-        record.insert("disposition".to_owned(), json!("unsupported"));
-        record.insert("correspondence".to_owned(), json!(target.identity()));
-        record.insert("classified".to_owned(), json!(classified.identity()));
         // A correspondence that reads the other kind of trace differs by
         // the profile; otherwise by the operator direction or the closure.
         let dimension =
             if (target == TlTarget::InfiniteTrace) != (classified == TlTarget::InfiniteTrace) {
-                "profile"
+                Dimension::Profile
             } else if direction(target) == direction(classified) {
-                "closure"
+                Dimension::Closure
             } else {
-                "direction"
+                Dimension::Direction
             };
-        record.insert("dimensions".to_owned(), json!([dimension]));
         return Ok(TlRecord {
-            record: Value::Object(record),
+            record: TlLoweringRecord::Unsupported(UnsupportedLowering {
+                clause,
+                correspondence: Some(target.identity().to_owned()),
+                classified: Some(classified.identity().to_owned()),
+                dimensions: vec![dimension],
+            }),
             exit_code: 21,
         });
     }
@@ -577,20 +585,13 @@ fn lowering_record(
     }
     let root = lowered.lower(nodes, subject.root, &labels)?;
     let tl = lowered.document(classified, root)?;
-    record.insert("disposition".to_owned(), json!("supported"));
-    record.insert("correspondence".to_owned(), json!(classified.identity()));
-    record.insert("formula".to_owned(), json!(display(&lowered.nodes, root)));
-    record.insert(
-        "atoms".to_owned(),
-        Value::Object(
-            lowered
-                .atoms
-                .iter()
-                .enumerate()
-                .map(|(index, (_, text))| (format!("p{index}"), json!(text)))
-                .collect(),
-        ),
-    );
+    let formula = display(&lowered.nodes, root);
+    let atoms = lowered
+        .atoms
+        .iter()
+        .enumerate()
+        .map(|(index, (_, text))| (format!("p{index}"), text.clone()))
+        .collect();
     let mut exit_code = 0;
     // FR-931-AC-8: the native side is the FR-527 target plus its fragment;
     // the TL side is read from the lowered formula alone, by its profile and
@@ -602,30 +603,44 @@ fn lowering_record(
         .as_deref()
         .unwrap_or(lowered_profile);
     let lowered_class = classification(lowered_profile, fragment_of(lowered_past));
-    if lowered_class == native {
-        record.insert("classification".to_owned(), native);
+    let (classification, classification_fault) = if lowered_class == native {
+        (Some(native), None)
     } else {
-        record.insert(
-            "classification_fault".to_owned(),
-            json!({"kind": "classification-loss", "clause": subject.name,
-                "native": native, "lowered": lowered_class}),
-        );
         exit_code = 30;
-    }
-    let traces = subject.native.traces();
-    if let Some((traces, complete)) = traces {
-        let cross = cross_evaluate(subject.name, &tl, &lowered, &traces, mapping, classified)?;
-        if cross["agree"] != json!(true) {
-            exit_code = 30;
-        } else if !complete && exit_code == 0 {
-            // FR-931: a work-budget stop during enumeration reports the
-            // counts reached and exits incomplete.
-            exit_code = 22;
+        (
+            None,
+            Some(ClassificationFault {
+                kind: ClassificationLossKind::ClassificationLoss,
+                clause: clause.clone(),
+                native,
+                lowered: lowered_class,
+            }),
+        )
+    };
+    let cross_evaluation = match subject.native.traces() {
+        Some((traces, complete)) => {
+            let cross = cross_evaluate(subject.name, &tl, &lowered, &traces, mapping, classified)?;
+            if !cross.agree {
+                exit_code = 30;
+            } else if !complete && exit_code == 0 {
+                // FR-931: a work-budget stop during enumeration reports the
+                // counts reached and exits incomplete.
+                exit_code = 22;
+            }
+            Some(cross)
         }
-        record.insert("cross_evaluation".to_owned(), cross);
-    }
+        None => None,
+    };
     Ok(TlRecord {
-        record: Value::Object(record),
+        record: TlLoweringRecord::Supported(Box::new(SupportedLowering {
+            clause,
+            correspondence: classified.identity().to_owned(),
+            formula,
+            atoms,
+            classification,
+            classification_fault,
+            cross_evaluation,
+        })),
         exit_code,
     })
 }
@@ -1002,11 +1017,11 @@ fn display_interval(interval: Interval) -> String {
 
 /// The native verdict a cross-evaluation compares: `true`, `false`, or the
 /// outcome's own name when it is neither.
-fn native_verdict(outcome: &fsl_replay::spine::TemporalOutcome) -> Value {
+fn native_verdict(outcome: &fsl_replay::spine::TemporalOutcome) -> NativeVerdict {
     match outcome {
-        fsl_replay::spine::TemporalOutcome::Holds => json!(true),
-        fsl_replay::spine::TemporalOutcome::Violated { .. } => json!(false),
-        other => json!(format!("{other:?}")),
+        fsl_replay::spine::TemporalOutcome::Holds => NativeVerdict::Holds(true),
+        fsl_replay::spine::TemporalOutcome::Violated { .. } => NativeVerdict::Holds(false),
+        other => NativeVerdict::Other(format!("{other:?}")),
     }
 }
 
@@ -1019,7 +1034,7 @@ fn cross_evaluate(
     traces: &[&fsl_replay::spine::ObservedValuation],
     mapping: &AtomMapping,
     target: TlTarget,
-) -> std::result::Result<Value, String> {
+) -> std::result::Result<CrossEvaluation, String> {
     let mut faults = Vec::new();
     let mut compared = 0_usize;
     for (index, positions) in traces.iter().enumerate() {
@@ -1054,25 +1069,25 @@ fn cross_evaluate(
             let at = position.index();
             let tl = reading.verdict(at)?;
             let native = native_verdict(outcome);
-            if native != json!(tl) {
-                faults.push(json!({
-                    "kind": "correspondence-loss",
-                    "clause": clause,
-                    "trace": index,
-                    "position": at,
-                    "native": native,
-                    "tl": tl,
-                }));
+            if native != NativeVerdict::Holds(tl) {
+                faults.push(CrossEvaluationFault {
+                    kind: CorrespondenceLossKind::CorrespondenceLoss,
+                    clause: clause.to_owned(),
+                    trace: index,
+                    position: at,
+                    native,
+                    tl,
+                });
             }
         }
         compared = compared.saturating_add(positions.activations.len());
     }
-    Ok(json!({
-        "traces": traces.len(),
-        "positions": compared,
-        "agree": faults.is_empty(),
-        "faults": faults,
-    }))
+    Ok(CrossEvaluation {
+        traces: traces.len(),
+        positions: compared,
+        agree: faults.is_empty(),
+        faults,
+    })
 }
 
 /// The identity of the proposition map a lasso trace document is over.
@@ -1290,8 +1305,11 @@ fn tl_verdict(
 }
 
 /// The run result document of a lowering.
-pub(super) fn document(record: Value) -> Value {
-    json!({"format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(), "tl_lowering": record})
+pub(super) fn document(record: TlLoweringRecord) -> TlLoweringDocument {
+    TlLoweringDocument {
+        format: fsl_replay::spine::Label::new(),
+        tl_lowering: record,
+    }
 }
 
 /// The record of the request path's lowering: each atom mapped to its own

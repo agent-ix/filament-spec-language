@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-027: one catalog for native source, input, package and command formats.
+//! ADR-037: one catalog for native source, input, package and command formats.
 
 use serde::{Serialize, Serializer};
 
@@ -40,6 +40,14 @@ formats! {
     ReplayRequest => "native-replay/1",
     /// Native clause-run result or command-error envelope.
     RunResult => "native-run-result/2",
+    /// FR-752: the direct model-based test result document.
+    ModelBasedTestResult => "native-model-based-test-result/1",
+    /// FR-931: the temporal-lowering result document.
+    TlLoweringResult => "native-tl-lowering-result/1",
+    /// FR-1030: the refinement-transfer result document.
+    RefinementTransferResult => "native-refinement-transfer-result/1",
+    /// FSpec FR-492: the planner result an item settles to.
+    PlannerResult => "filament.planner-result/v1",
     /// Source-aware rule-model authoring profile.
     RuleModel => "native-rule-model/1",
     /// Rule-model authoring profile with exact IR rational scalar roles.
@@ -89,6 +97,34 @@ formats! {
     HandoffIdentities => "filament.checked-handoff.identities/7",
 }
 
+/// A label that is not the one a document admits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnsupportedLabel {
+    /// The only format the document admits.
+    pub expected: WireFormat,
+}
+
+impl core::fmt::Display for UnsupportedLabel {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "the format `{}`", self.expected.as_str())
+    }
+}
+
+impl WireFormat {
+    /// The one label rule: `found` is exactly this format's label.
+    ///
+    /// # Errors
+    ///
+    /// [`UnsupportedLabel`] naming this format when `found` is any other text.
+    pub fn admit(self, found: &str) -> Result<(), UnsupportedLabel> {
+        if found == self.as_str() {
+            Ok(())
+        } else {
+            Err(UnsupportedLabel { expected: self })
+        }
+    }
+}
+
 impl core::fmt::Display for WireFormat {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str(self.as_str())
@@ -121,5 +157,18 @@ mod tests {
             assert_eq!(WireFormat::from_label(label), Some(*format));
         }
         assert_eq!(WireFormat::from_label("native-run/9"), None);
+        for label in [
+            "native-model-based-test-result/1",
+            "native-tl-lowering-result/1",
+            "native-refinement-transfer-result/1",
+            "filament.planner-result/v1",
+        ] {
+            let format = WireFormat::from_label(label).expect("catalogued");
+            assert_eq!(format.admit(label), Ok(()));
+            assert_eq!(
+                WireFormat::RunResult.admit(label).unwrap_err().expected,
+                WireFormat::RunResult
+            );
+        }
     }
 }

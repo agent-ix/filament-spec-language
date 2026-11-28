@@ -2362,6 +2362,99 @@ fn a_step_for_step_refinement_transfers_previous_and_interval_clauses_proved() {
     }
 }
 
+/// FR-1030-AC-12: the transfer routes of AC-1 and AC-2 write the
+/// `native-refinement-transfer-result/1` document, and the strict reader
+/// returns the record each wrote, the command error of a refused request,
+/// and refuses a transfer `result` that is not a `filament.planner-result/v1`.
+#[test]
+#[trace("TC-2920", "FR-1030-AC-12")]
+fn a_refinement_transfer_result_is_written_and_strictly_read() {
+    use crate::support::route_result::{assert_route_refusals, canonical, read_back};
+    use fsl_command::command::{
+        read_refinement_transfer_result, RefinementTransferDocument, RouteResult,
+    };
+    use fsl_replay::planner::{StepArm, StepForStep, StepRow};
+    use fsl_replay::spine::{NativeRunLimits, NativeRunReadError};
+
+    // AC-1: step-for-step, exit 0.
+    let (exit, value) = transfer_run_over(
+        &[(
+            "refinement_transfer",
+            transfer_member(
+                "ThirdRefinesSpec",
+                ("Spec", "Third"),
+                &["PrevSafe", "SoonTwo"],
+            ),
+        )],
+        true,
+        true,
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["format"], "native-refinement-transfer-result/1");
+    let document = read_back::<RefinementTransferDocument>(&value, read_refinement_transfer_result);
+    let record = &document.refinement_transfer;
+    assert_eq!(record.refinement.name, "ThirdRefinesSpec");
+    assert_eq!(record.refinement.step_for_step, StepForStep::Holds);
+    let clauses: Vec<&str> = record.transfers.iter().map(|t| t.clause.as_str()).collect();
+    assert_eq!(clauses, ["PrevSafe", "SoonTwo"]);
+    assert_route_refusals::<RefinementTransferDocument>(
+        &value,
+        "native-refinement-transfer-result/1",
+        "refinement_transfer",
+        read_refinement_transfer_result,
+    );
+
+    // A `result` that is not a `filament.planner-result/v1` is refused at it.
+    let mut other = value.clone();
+    other["refinement_transfer"]["transfers"][0]["result"]["format"] =
+        json!("filament.planner-result/v2");
+    let Err(NativeRunReadError::MalformedMember { member, .. }) =
+        read_refinement_transfer_result(&canonical(&other), NativeRunLimits::UNBOUNDED)
+    else {
+        panic!("a v2 planner result is refused");
+    };
+    assert_eq!(member, "refinement_transfer.transfers[0].result");
+
+    // AC-2: not step-for-step, exit 22.
+    let (exit, value) = transfer_run_over(
+        &[(
+            "refinement_transfer",
+            transfer_member(
+                "CasRefinesCounter",
+                ("Spec", "Impl"),
+                &["PrevSafe", "SoonTwo"],
+            ),
+        )],
+        true,
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let document = read_back::<RefinementTransferDocument>(&value, read_refinement_transfer_result);
+    assert_eq!(
+        document.refinement_transfer.refinement.step_for_step,
+        StepForStep::Row(StepRow {
+            operation: Some("Impl::Counter::beginA".to_owned()),
+            arm: StepArm::Stutter,
+        })
+    );
+
+    // A request that refuses at stage `select` is the command-error arm.
+    let (_, refusal) = transfer_run_over(
+        &[(
+            "refinement_transfer",
+            transfer_member("NoSuchRefinement", ("Spec", "Third"), &["PrevSafe"]),
+        )],
+        true,
+        true,
+    );
+    let Ok(RouteResult::CommandError(error)) =
+        read_refinement_transfer_result(&canonical(&refusal), NativeRunLimits::UNBOUNDED)
+    else {
+        panic!("expected the command-error form of {refusal}");
+    };
+    assert_eq!(error.stage(), "select");
+}
+
 /// FR-1030-AC-2, AC-5, FR-1020-AC-2: a step-for-step refinement decides its
 /// transfers by the clause's premises, which the core certifies for the TP-3
 /// past and interval clauses and the invariant alike, so each transfers

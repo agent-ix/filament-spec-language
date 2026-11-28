@@ -14,6 +14,7 @@ use fsl_foundation::Setting;
 use fsl_semantics::check::{CallableFunction, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::implements;
+use serde::{Deserialize, Serialize};
 
 use crate::simulation::order::Expanded;
 use crate::simulation::{
@@ -51,7 +52,8 @@ pub struct ModelBasedTestCounts {
 }
 
 /// Why a generated case did not reach a decided claim check.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ModelBasedTestDiscardReason {
     /// A partition value was refused by native domain admission.
     DomainRefusal,
@@ -65,11 +67,14 @@ pub enum ModelBasedTestDiscardReason {
 }
 
 /// Count and first occurrence of one model-based discard reason.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelBasedTestDiscardCount {
     /// Number of discarded cases with this reason.
     pub count: u64,
-    /// First zero-based generated case with this reason.
+    /// First zero-based generated case with this reason; written as `null`
+    /// when none.
+    #[serde(deserialize_with = "fsl_foundation::serde_object::required_nullable")]
     pub first_case: Option<u64>,
 }
 
@@ -95,7 +100,8 @@ impl Default for ModelBasedTestChecks {
 }
 
 /// Summary of the root partitions exercised by the suite.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelBasedPartitionCoverage {
     /// Complete when every partition was covered or refused.
     pub status: ModelOperationCoverageSummaryStatus,
@@ -229,7 +235,8 @@ impl PartialEq for ModelBasedCounterexample {
 impl Eq for ModelBasedCounterexample {}
 
 /// The evidence produced by a model-based test run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ModelBasedTestEvidence {
     /// No generated case failed; this settles no verdict.
     Tested,
@@ -300,14 +307,13 @@ pub enum ModelBasedTestDefect {
 }
 
 /// The operation-coverage summary in an FR-190 run record.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelBasedCoverage {
     /// Complete when every operation was covered, partial otherwise.
     pub status: ModelOperationCoverageSummaryStatus,
     /// Counts of uncovered operations by reason.
     pub uncovered: BTreeMap<ModelOperationCoverageReasonKind, usize>,
-    /// Counts of operations whose reachability remained undetermined.
-    pub limits: ModelOperationCoverageLimits,
 }
 
 /// The FR-190 result record for a run over a checked clause.
@@ -1312,9 +1318,6 @@ fn limit_record(
                 ModelOperationCoverageReasonKind::Undetermined,
                 entries.len(),
             )])
-        },
-        limits: ModelOperationCoverageLimits {
-            undetermined: entries.len(),
         },
     });
     ModelBasedTestResult {
@@ -2451,7 +2454,6 @@ where
         coverage: Some(ModelBasedCoverage {
             status: operation_coverage.status,
             uncovered: operation_coverage.uncovered,
-            limits: operation_coverage.limits,
         }),
         evidence,
         result: evidence,
@@ -3259,7 +3261,6 @@ fn tool_failure_record(
         coverage: Some(ModelBasedCoverage {
             status: operation_coverage.status,
             uncovered: operation_coverage.uncovered,
-            limits: operation_coverage.limits,
         }),
         result: evidence,
         cause: Some(ModelBasedTestCause::ToolFailure { defect }),

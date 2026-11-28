@@ -1106,9 +1106,10 @@ fn execute_inner(
             let mut result = match lowered {
                 super::tl::PackageLowered::Record(record) => RunResult {
                     exit_code: record.exit_code,
-                    value: super::NativeResult::lowering_document(super::tl::document(
+                    value: super::NativeResult::lowering_document(&super::tl::document(
                         record.record,
-                    )),
+                    ))
+                    .map_err(super::RunCause::Output)?,
                     outcome: None,
                     requirements: None,
                     sources: crate::Sources::default(),

@@ -930,7 +930,10 @@ impl PlannerResult {
     /// [`KeyWireError`] when a member cannot be written.
     pub fn to_wire(&self) -> Result<Value, KeyWireError> {
         let mut result = Map::new();
-        result.insert("format".to_owned(), json!("filament.planner-result/v1"));
+        result.insert(
+            "format".to_owned(),
+            json!(fsl_foundation::wire_format::WireFormat::PlannerResult.as_str()),
+        );
         result.insert(
             "item".to_owned(),
             json!({"role": self.item.0.as_str(), "node": node_value(&self.item.1)?}),

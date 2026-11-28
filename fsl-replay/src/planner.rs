@@ -36,6 +36,7 @@ mod key_build;
 mod mismatch;
 mod request;
 mod settle;
+mod step_for_step;
 mod transfer;
 
 #[cfg(test)]
@@ -88,4 +89,7 @@ pub use settle::{
     settle, Budget, Conclusion, ConclusionExtent, PlannerCause, PlannerResult, PlannerValue,
     SettleRefusal, SlotOutcome, SlotValue,
 };
-pub use transfer::{settle_transfer, TransferFacts, TransferPremiseValue, TransferSettlement};
+pub use step_for_step::{StepArm, StepForStep, StepRow};
+pub use transfer::{
+    settle_transfer, SettledTransfer, TransferFacts, TransferPremiseValue, TransferSettlement,
+};

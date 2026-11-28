@@ -8,6 +8,18 @@ use fsl_foundation::AccountingSetting;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
+pub mod model_based_test_result;
+pub mod refinement_transfer_result;
+pub mod tl_lowering_result;
+
+pub use model_based_test_result::{
+    read_model_based_test_result, ModelBasedTestDocument, ModelBasedTestResultRecord,
+};
+pub use refinement_transfer_result::{
+    read_refinement_transfer_result, RefinementTransferDocument, RefinementTransferRecord,
+};
+pub use tl_lowering_result::{read_tl_lowering_result, TlLoweringDocument, TlLoweringRecord};
+
 /// The selected request shape owns its admitted envelope format.
 pub(super) trait RequestKind: serde::de::DeserializeOwned {
     const FORMAT: fsl_foundation::wire_format::WireFormat;

@@ -5,9 +5,11 @@
 use filament_exact::NodeKey;
 use filament_semantic_value::fairness::FairnessConstraint;
 use fsl_foundation::node_wire::node_key_to_json;
+use fsl_foundation::wire_format::WireFormat;
 use serde_json::{json, Value};
 
 use super::settle::under_policy;
+use super::step_for_step::StepForStep;
 use super::{
     settle::{fairness_value, fold_certifications, label_str},
     Budget, PlannerCause, PlannerValue,
@@ -39,7 +41,7 @@ pub struct TransferFacts {
     /// Slot 1's expected FR-331 identity.
     pub abstract_claim_identity: Value,
     /// The complete fact explaining the step-for-step decision.
-    pub step_for_step: Value,
+    pub step_for_step: StepForStep,
     /// The first position-counting operator, when the clause has one.
     pub fragment_operator: Option<String>,
     /// Whether the refinement's abstract fairness implies the clause fairness.
@@ -82,7 +84,7 @@ pub struct TransferSettlement {
     /// The concrete subject in FR-331 wire form.
     pub(crate) subject: Value,
     /// The complete fact explaining the step-for-step decision.
-    pub(crate) step_for_step: Value,
+    pub(crate) step_for_step: StepForStep,
     /// The first position-counting operator, when the clause has one.
     pub(crate) fragment_operator: Option<String>,
     /// Whether the refinement's abstract fairness implies the clause fairness.
@@ -121,20 +123,25 @@ impl TransferSettlement {
     }
 }
 
+/// A settled transfer: its FR-360 label and its `filament.planner-result/v1`
+/// document.
+#[derive(Clone, Debug)]
+pub struct SettledTransfer {
+    /// The settled label, the one input of a transfer's exit code.
+    pub value: PlannerValue,
+    /// The FSpec FR-492 `filament.planner-result/v1` document.
+    pub wire: Value,
+}
+
 /// Settle an admitted transfer item using the FR-820 decision order,
 /// admitting as `proved` what `policy` admits.
 pub fn settle_transfer(
     request: &TransferSettlement,
     budget: Budget,
     policy: CertificationPolicy,
-) -> Result<Value, super::KeyWireError> {
+) -> Result<SettledTransfer, super::KeyWireError> {
     let transfer = transfer_record(request)?;
-    let step_for_step_holds = request
-        .step_for_step
-        .get("holds")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let fragment = if step_for_step_holds {
+    let fragment = if request.step_for_step.holds() {
         None
     } else {
         request.fragment_operator.clone()
@@ -213,7 +220,7 @@ pub fn settle_transfer(
 
     let (value, cause, certification) = under_policy(policy, value, cause, certification);
     let mut result = json!({
-        "format": "filament.planner-result/v1",
+        "format": WireFormat::PlannerResult.as_str(),
         "item": {"role": "transfer", "node": node_key_to_json(&request.refinement)?},
         "value": value.as_str(),
         "basis": value.basis().as_str(),
@@ -236,7 +243,10 @@ pub fn settle_transfer(
     if let Some(certification) = certification {
         result["certification"] = json!(certification.as_str());
     }
-    Ok(result)
+    Ok(SettledTransfer {
+        value,
+        wire: result,
+    })
 }
 
 fn transfer_record(request: &TransferSettlement) -> Result<Value, super::KeyWireError> {
@@ -259,7 +269,8 @@ fn transfer_record(request: &TransferSettlement) -> Result<Value, super::KeyWire
         "premises": request.premises.iter().enumerate().map(|(slot, (identity, _))| {
             json!({"slot": slot, "identity": identity})
         }).collect::<Vec<_>>(),
-        "step_for_step": request.step_for_step,
+        "step_for_step": serde_json::to_value(&request.step_for_step)
+            .map_err(|_| super::KeyWireError)?,
         "fragment": fragment,
         "fairness": fairness,
         "premise_form": if request.liveness {

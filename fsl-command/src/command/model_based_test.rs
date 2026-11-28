@@ -139,66 +139,43 @@ fn model_test_error(error: fsl_eval::simulation::model::ModelBasedTestRefusal) -
     }
 }
 
-fn evidence_name(evidence: fsl_eval::simulation::model::ModelBasedTestEvidence) -> &'static str {
-    use fsl_eval::simulation::model::ModelBasedTestEvidence;
-    match evidence {
-        ModelBasedTestEvidence::Tested => "tested",
-        ModelBasedTestEvidence::Refuted => "refuted",
-        ModelBasedTestEvidence::Inconclusive => "inconclusive",
-        ModelBasedTestEvidence::Incomplete => "incomplete",
-        ModelBasedTestEvidence::Failed => "failed",
-        ModelBasedTestEvidence::Unsupported => "unsupported",
-    }
-}
-
-fn boundary_name(kind: fsl_eval::simulation::model::ModelBoundaryKind) -> &'static str {
-    use fsl_eval::simulation::model::ModelBoundaryKind as Kind;
-    match kind {
-        Kind::TextEmpty => "text-empty",
-        Kind::TextLowerEndpoint => "text-lower-endpoint",
-        Kind::TextSingleton => "text-singleton",
-        Kind::TextUpperEndpoint => "text-upper-endpoint",
-        Kind::TextNormalization => "text-normalization",
-        Kind::SizeLeast => "size-least",
-        Kind::SizeUnit => "size-unit",
-        Kind::SizeExtremeLow => "size-extreme-low",
-        Kind::SizeExtremeHigh => "size-extreme-high",
-        Kind::LowerRefusal => "lower-refusal",
-        Kind::LowerEndpoint => "lower-endpoint",
-        Kind::UpperEndpoint => "upper-endpoint",
-        Kind::UpperRefusal => "upper-refusal",
-    }
-}
-
-fn partition_json(partition: &fsl_eval::simulation::model::ModelBoundaryPartition) -> Value {
+fn partition_record(
+    partition: &fsl_eval::simulation::model::ModelBoundaryPartition,
+) -> wire::model_based_test_result::Partition {
     use fsl_eval::simulation::model::ModelPartitionStatus;
-    let status = partition.status.as_ref().map(|status| match status {
-        ModelPartitionStatus::Covered { first_case } => {
-            serde_json::json!({"status": "covered", "first_case": first_case})
-        }
-        ModelPartitionStatus::Refused { first_case } => {
-            serde_json::json!({"status": "refused", "first_case": first_case})
-        }
-        ModelPartitionStatus::Uncovered { bounds, .. } => {
-            serde_json::json!({"status": "uncovered", "bounds": bounds})
-        }
-    });
-    serde_json::json!({
-        "node": partition.node.to_string(),
-        "path": partition.path,
-        "kind": boundary_name(partition.kind),
-        "value": {"type": "integer", "value": partition.value.to_string()},
-        "text_value": partition.text_value,
-        "status": status,
-    })
+    use wire::model_based_test_result::{IntegerTag, IntegerValue, Partition, PartitionStatus};
+    Partition {
+        node: partition.node.to_string(),
+        path: partition.path.clone(),
+        kind: partition.kind,
+        value: IntegerValue {
+            kind: IntegerTag::Integer,
+            value: partition.value.to_string(),
+        },
+        text_value: partition.text_value.clone(),
+        status: partition.status.as_ref().map(|status| match status {
+            ModelPartitionStatus::Covered { first_case } => PartitionStatus::Covered {
+                first_case: *first_case,
+            },
+            ModelPartitionStatus::Refused { first_case } => PartitionStatus::Refused {
+                first_case: *first_case,
+            },
+            ModelPartitionStatus::Uncovered { bounds, .. } => PartitionStatus::Uncovered {
+                bounds: bounds.clone(),
+            },
+        }),
+    }
 }
 
-fn counterexample_json(result: &fsl_eval::simulation::model::ModelBasedTestResult) -> Value {
+fn counterexample_record(
+    result: &fsl_eval::simulation::model::ModelBasedTestResult,
+) -> Option<wire::model_based_test_result::Counterexample> {
     use fsl_eval::simulation::model::ModelBasedCounterexample;
-    let Some(counterexample) = &result.counterexample else {
-        return Value::Null;
+    use wire::model_based_test_result::{
+        AssignedValue, AssignmentCounterexample, AssignmentDisposition, Counterexample, IntegerTag,
+        IntegerValue, Invocation, Minimality, Replay, TraceCounterexample, TraceDisposition,
     };
-    match counterexample {
+    Some(match result.counterexample.as_ref()? {
         ModelBasedCounterexample::Trace(trace) => {
             let disposition = trace
                 .trace
@@ -208,169 +185,144 @@ fn counterexample_json(result: &fsl_eval::simulation::model::ModelBasedTestResul
                 .find_map(|finding| match finding {
                     fsl_eval::simulation::model::ModelFinding::InvariantViolated {
                         clause, ..
-                    } if clause == &result.clause => Some("invariant-violated"),
+                    } if clause == &result.clause => Some(TraceDisposition::InvariantViolated),
                     _ => None,
                 })
-                .unwrap_or("model-check-failed");
-            serde_json::json!({
-                "minimality": "1-minimal",
-                "replay": "reproduced",
-                "disposition": disposition,
-                "initial": trace.trace.initial.hex(),
-                "invocations": trace.trace.steps.iter().map(|step| serde_json::json!({
-                    "operation": step.transition.operation(),
-                    "receiver": step.transition.receiver(),
-                    "arguments": step.transition.arguments(),
-                })).collect::<Vec<_>>(),
+                .unwrap_or(TraceDisposition::ModelCheckFailed);
+            Counterexample::Trace(TraceCounterexample {
+                minimality: Minimality::OneMinimal,
+                replay: Replay::Reproduced,
+                disposition,
+                initial: trace.trace.initial.hex(),
+                invocations: trace
+                    .trace
+                    .steps
+                    .iter()
+                    .map(|step| Invocation {
+                        operation: step.transition.operation().to_owned(),
+                        receiver: step.transition.receiver().map(str::to_owned),
+                        arguments: step.transition.arguments().to_vec(),
+                    })
+                    .collect(),
             })
         }
-        ModelBasedCounterexample::ValueAssignment(values) => serde_json::json!({
-            "minimality": "1-minimal",
-            "replay": "reproduced",
-            "disposition": "predicate-false",
-            "assignment": values.iter().map(|value| match value {
-                filament_exact::Value::Integer(value) => serde_json::json!({
-                    "type": "integer",
-                    "value": value.to_string(),
-                }),
-                other => serde_json::json!({"debug": format!("{other:?}")}),
-            }).collect::<Vec<_>>(),
-        }),
-    }
+        ModelBasedCounterexample::ValueAssignment(values) => {
+            Counterexample::Assignment(AssignmentCounterexample {
+                minimality: Minimality::OneMinimal,
+                replay: Replay::Reproduced,
+                disposition: AssignmentDisposition::PredicateFalse,
+                assignment: values
+                    .iter()
+                    .map(|value| match value {
+                        filament_exact::Value::Integer(value) => {
+                            AssignedValue::Integer(IntegerValue {
+                                kind: IntegerTag::Integer,
+                                value: value.to_string(),
+                            })
+                        }
+                        other => AssignedValue::Debug {
+                            debug: format!("{other:?}"),
+                        },
+                    })
+                    .collect(),
+            })
+        }
+    })
 }
 
-pub(super) fn result_json(
-    result: &fsl_eval::simulation::model::ModelBasedTestResult,
-    domain: &str,
-) -> Value {
-    use fsl_eval::simulation::model::{
-        ModelBasedTestCause, ModelBasedTestDiscardReason, ModelOperationCoverageReasonKind,
-        ModelOperationCoverageSummaryStatus,
+fn cause_record(
+    cause: &fsl_eval::simulation::model::ModelBasedTestCause,
+) -> wire::model_based_test_result::Cause {
+    use fsl_eval::simulation::model::{ModelBasedTestCause, ModelBasedTestDefect};
+    use wire::model_based_test_result::{
+        Cause, CauseName, Defect, LimitCause, LimitReachedKind, ToolFailureCause, ToolFailureKind,
     };
-    let evidence = evidence_name(result.evidence);
-    let discarded_by = result
-        .discarded_by
-        .iter()
-        .map(|(reason, count)| {
-            let name = match reason {
-                ModelBasedTestDiscardReason::DomainRefusal => "domain-refusal",
-                ModelBasedTestDiscardReason::PreconditionFalse => "precondition-false",
-                ModelBasedTestDiscardReason::InvariantFalse => "invariant-false",
-                ModelBasedTestDiscardReason::NoCheckPoint => "no-check-point",
-            };
-            (
-                name.to_owned(),
-                serde_json::json!({
-                    "count": count.count,
-                    "first_case": count.first_case,
-                }),
-            )
-        })
-        .collect::<serde_json::Map<String, Value>>();
-    let cause = result.cause.as_ref().map(|cause| match cause {
-        ModelBasedTestCause::NoEvaluatedCase => serde_json::json!("no-evaluated-case"),
+    match cause {
+        ModelBasedTestCause::NoEvaluatedCase => Cause::Name(CauseName::NoEvaluatedCase),
         ModelBasedTestCause::LimitReached {
             limit,
             value,
             setting,
-        } => serde_json::json!({
-            "kind": "limit-reached",
-            "limit": limit.limit_name(),
-            "value": value,
-            "setting": setting,
+        } => Cause::Limit(LimitCause {
+            kind: LimitReachedKind::LimitReached,
+            limit: limit.limit_name().to_owned(),
+            value: *value,
+            setting: setting.clone(),
         }),
-        ModelBasedTestCause::TraceStepLimit { value } => serde_json::json!({
-            "kind": "limit-reached",
-            "limit": "max_steps",
-            "value": value,
-            "setting": "simulation.max_steps",
+        ModelBasedTestCause::TraceStepLimit { value } => Cause::Limit(LimitCause {
+            kind: LimitReachedKind::LimitReached,
+            limit: "max_steps".to_owned(),
+            value: *value,
+            setting: "simulation.max_steps".to_owned(),
         }),
-        ModelBasedTestCause::ToolFailure { defect } => serde_json::json!({
-            "kind": "tool-failure",
-            "defect": match defect {
-                fsl_eval::simulation::model::ModelBasedTestDefect::OracleDisagreement => {
-                    "oracle-disagreement"
-                }
-                fsl_eval::simulation::model::ModelBasedTestDefect::InvalidShrink => {
-                    "invalid-shrink"
-                }
+        ModelBasedTestCause::ToolFailure { defect } => Cause::ToolFailure(ToolFailureCause {
+            kind: ToolFailureKind::ToolFailure,
+            defect: match defect {
+                ModelBasedTestDefect::OracleDisagreement => Defect::OracleDisagreement,
+                ModelBasedTestDefect::InvalidShrink => Defect::InvalidShrink,
             },
         }),
         ModelBasedTestCause::NoContractLevelReading => {
-            serde_json::json!("no-contract-level-reading")
+            Cause::Name(CauseName::NoContractLevelReading)
         }
-    });
-    let operations = result
-        .operations
-        .as_ref()
-        .map(|operations| serde_json::to_value(operations).expect("coverage entries serialize"));
-    let coverage = result.coverage.as_ref().map(|coverage| {
-        let status = match coverage.status {
-            ModelOperationCoverageSummaryStatus::Complete => "complete",
-            ModelOperationCoverageSummaryStatus::Partial => "partial",
-        };
-        let uncovered = coverage
-            .uncovered
-            .iter()
-            .map(|(reason, count)| {
-                let name = match reason {
-                    ModelOperationCoverageReasonKind::Unreachable => "unreachable",
-                    ModelOperationCoverageReasonKind::UnreachableWithinBound => {
-                        "unreachable-within-bound"
-                    }
-                    ModelOperationCoverageReasonKind::NotGenerated => "not-generated",
-                    ModelOperationCoverageReasonKind::Undetermined => "undetermined",
-                };
-                (name.to_owned(), serde_json::json!(count))
-            })
-            .collect::<serde_json::Map<String, Value>>();
-        serde_json::json!({"status": status, "uncovered": uncovered})
-    });
-    serde_json::json!({
-        "clause": result.clause,
-        "domain": domain,
-        "status": evidence,
-        "evidence": evidence,
-        "verdict": if evidence == "refuted" { serde_json::json!("refuted") } else { Value::Null },
-        "cause": cause,
-        "cases": {
-            "generated": result.counts.generated,
-            "passed": result.counts.passing,
-            "failed": result.counts.failing,
-            "discarded": result.counts.discarded,
-            "discarded_by": discarded_by,
+    }
+}
+
+/// The FR-752 result record of `result`, over the package `domain`.
+pub(super) fn result_record(
+    result: &fsl_eval::simulation::model::ModelBasedTestResult,
+    domain: &str,
+) -> wire::ModelBasedTestResultRecord {
+    use fsl_eval::simulation::model::ModelBasedTestEvidence;
+    use wire::model_based_test_result::{
+        Cases, Checks, Provenance, RunLimits, SizeBounded, ValueBoundCuts, Verdict,
+    };
+    wire::ModelBasedTestResultRecord {
+        clause: result.clause.clone(),
+        domain: domain.to_owned(),
+        status: result.evidence,
+        evidence: result.evidence,
+        verdict: (result.evidence == ModelBasedTestEvidence::Refuted).then_some(Verdict::Refuted),
+        cause: result.cause.as_ref().map(cause_record),
+        cases: Cases {
+            generated: result.counts.generated,
+            passed: result.counts.passing,
+            failed: result.counts.failing,
+            discarded: result.counts.discarded,
+            discarded_by: result.discarded_by.clone(),
         },
-        "checks": {
-            "evaluated": result.checks.evaluated,
-            "skipped": result.checks.skipped.len(),
+        checks: Checks {
+            evaluated: result.checks.evaluated,
+            skipped: result.checks.skipped.len(),
         },
-        "limits": {
-            "max_cases": result.max_cases,
-            "max_trace_length": result.max_trace_length,
-            "max_value_bits": result.max_value_bits,
+        limits: RunLimits {
+            max_cases: result.max_cases,
+            max_trace_length: result.max_trace_length,
+            max_value_bits: result.max_value_bits,
         },
-        "provenance": {
-            "seed": result.seed,
-            "max_value_bits": result.provenance.max_value_bits,
-            "size_bounded": result.provenance.size_bounded.iter().map(|root| serde_json::json!({
-                "node": root.node.to_string(),
-                "path": root.path,
-                "values": root.values,
-            })).collect::<Vec<_>>(),
-            "value_bound_cuts": {"count": result.provenance.value_bound_cuts.count},
-        },
-        "partitions": result.partitions.iter().map(partition_json).collect::<Vec<_>>(),
-        "partition_coverage": {
-            "status": match result.partition_coverage.status {
-                ModelOperationCoverageSummaryStatus::Complete => "complete",
-                ModelOperationCoverageSummaryStatus::Partial => "partial",
+        provenance: Provenance {
+            seed: result.seed,
+            max_value_bits: result.provenance.max_value_bits,
+            size_bounded: result
+                .provenance
+                .size_bounded
+                .iter()
+                .map(|root| SizeBounded {
+                    node: root.node.to_string(),
+                    path: root.path.clone(),
+                    values: root.values.clone(),
+                })
+                .collect(),
+            value_bound_cuts: ValueBoundCuts {
+                count: result.provenance.value_bound_cuts.count,
             },
-            "uncovered": result.partition_coverage.uncovered,
         },
-        "operations": operations,
-        "coverage": coverage,
-        "counterexample": counterexample_json(result),
-    })
+        partitions: result.partitions.iter().map(partition_record).collect(),
+        partition_coverage: result.partition_coverage.clone(),
+        operations: result.operations.clone(),
+        coverage: result.coverage.clone(),
+        counterexample: counterexample_record(result),
+    }
 }
 
 /// The run-level inputs shared with every other `run` route.
@@ -638,7 +590,7 @@ pub(super) fn prepare(
     )
     .map_err(model_test_error)?;
     let exit_code = record.exit_code();
-    let record = result_json(&record, &package_name(source.source().identity()));
+    let record = result_record(&record, &package_name(source.source().identity()));
     let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::ModelBasedTest(PreparedModelBasedTestRun {
         record,

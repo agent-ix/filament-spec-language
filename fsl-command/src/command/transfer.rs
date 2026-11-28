@@ -13,8 +13,8 @@ use fsl_analyze::analyze::document::{
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, SourceProvision};
 use fsl_foundation::Code;
 use fsl_replay::planner::{
-    read_premise_item, read_result_entry, strength_implies, EntryOrigin, ItemKey, TransferFacts,
-    TransferPremiseValue, TransferSettlement,
+    read_premise_item, read_result_entry, strength_implies, EntryOrigin, ItemKey, PlannerValue,
+    StepArm, StepForStep, StepRow, TransferFacts, TransferPremiseValue, TransferSettlement,
 };
 use fsl_replay::spine::CheckedUnit;
 use fsl_replay::{CallerLimits, Certification, CertificationPolicy, ItemLabel};
@@ -320,6 +320,7 @@ impl Transfer<'_> {
                 .unwrap_or(fsl_replay::planner::DEFAULT_MAX_WORK),
         };
         let mut transfers = Vec::new();
+        let mut values = Vec::new();
         for ((node, premise), supplied) in selected
             .clauses
             .iter()
@@ -364,25 +365,28 @@ impl Transfer<'_> {
             let result =
                 fsl_replay::planner::settle_transfer(&settlement, budget, self.certification)
                     .map_err(|_| RunCause::AnalyzeFault)?;
-            transfers.push(json!({"clause": node.clause().name(), "result": result}));
+            values.push(result.value);
+            transfers.push(wire::refinement_transfer_result::Transfer {
+                clause: node.clause().name().to_owned(),
+                result: wire::refinement_transfer_result::PlannerResultValue::new(&result.wire)
+                    .map_err(|_| RunCause::AnalyzeFault)?,
+            });
         }
-        let exit_code = if transfers
-            .iter()
-            .all(|transfer| transfer["result"]["value"] == "proved")
-        {
-            0
-        } else {
-            22
+        let exit_code = transfer_exit_code(values.into_iter());
+        let document = wire::RefinementTransferDocument {
+            format: fsl_replay::spine::Label::new(),
+            refinement_transfer: wire::RefinementTransferRecord {
+                refinement: wire::refinement_transfer_result::RefinementFact {
+                    name: refinement.name().to_owned(),
+                    node: refinement_node.clone(),
+                    step_for_step,
+                },
+                transfers,
+            },
         };
-        let refinement_value = json!({
-            "name": refinement.name(),
-            "node": fsl_foundation::node_wire::node_key_to_json(&refinement_node)
-                .map_err(|_| RunCause::AnalyzeFault)?,
-            "step_for_step": step_for_step,
-        });
         Ok(RunResult {
             exit_code,
-            value: NativeResult::analyze_document(transfer_document(refinement_value, transfers)),
+            value: NativeResult::transfer_document(&document).map_err(RunCause::Output)?,
             outcome: None,
             requirements: None,
             sources: super::super::Sources::default(),
@@ -806,7 +810,7 @@ fn require_selected_model(
     Ok(())
 }
 
-fn step_for_step_fact(refinement: &CheckedRefinement, dense: bool) -> Value {
+fn step_for_step_fact(refinement: &CheckedRefinement, dense: bool) -> StepForStep {
     step_for_step_value(refinement.is_step_for_step(dense), dense, || {
         let row = refinement.steps().iter().find(|row| {
             !matches!(&row.class, StepClass::Operation(_))
@@ -821,28 +825,44 @@ fn step_for_step_fact(refinement: &CheckedRefinement, dense: bool) -> Value {
             )
         });
         let arm = match &row.target {
-            StepTarget::Stutter => "stutter",
-            StepTarget::Any => "any",
-            StepTarget::Node { .. } => "node",
-            StepTarget::Abstract { .. } => "abstract",
+            StepTarget::Stutter => StepArm::Stutter,
+            StepTarget::Any => StepArm::Any,
+            StepTarget::Node { .. } => StepArm::Node,
+            StepTarget::Abstract { .. } => StepArm::Abstract,
         };
-        Some(json!({"operation": operation, "arm": arm}))
+        Some(StepRow { operation, arm })
     })
 }
 
 /// FSpec FR-820's `step_for_step` fact: `holds`, and when it does not, the
 /// dense `time` reason before any row is read, else the first offending
 /// `row`.
-fn step_for_step_value(holds: bool, dense: bool, row: impl FnOnce() -> Option<Value>) -> Value {
+fn step_for_step_value(
+    holds: bool,
+    dense: bool,
+    row: impl FnOnce() -> Option<StepRow>,
+) -> StepForStep {
     if holds {
-        return json!({"holds": true});
+        return StepForStep::Holds;
     }
     if dense {
-        return json!({"holds": false, "time": "dense"});
+        return StepForStep::Dense;
     }
     match row() {
-        Some(row) => json!({"holds": false, "row": row}),
-        None => json!({"holds": false}),
+        Some(row) => StepForStep::Row(row),
+        None => StepForStep::Unexplained,
+    }
+}
+
+/// FR-1030-AC-1: the exit code of a transfer run is 0 when every clause's
+/// transfer settled `proved`, and 22 otherwise.
+#[implements("FR-1030-AC-1")]
+fn transfer_exit_code(values: impl Iterator<Item = PlannerValue>) -> u8 {
+    let mut values = values;
+    if values.all(|value| value == PlannerValue::Proved) {
+        0
+    } else {
+        22
     }
 }
 
@@ -1037,72 +1057,55 @@ fn type_mismatch(member: &str, kind: &str, profile: Option<&str>) -> RunCause {
     }
 }
 
-/// The `refinement_transfer` run result document (FR-1030).
-fn transfer_document(refinement: Value, transfers: Vec<Value>) -> Value {
-    json!({
-        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
-        "refinement_transfer": {
-            "refinement": refinement,
-            "transfers": transfers,
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use fsl_replay::planner::{PlannerValue, StepArm, StepForStep, StepRow};
     use ix_trace_rs::trace;
-    use serde_json::json;
 
-    /// FR-267-AC-8, FSpec FR-352-AC-8: the transfer document carries the
-    /// run-result label with no clause-run or command-error members, so the
-    /// strict reader refuses it at its unknown `refinement_transfer` member
-    /// (the defect that it is no FR-352 form is tracked separately).
-    #[trace("FR-267-AC-8")]
-    #[test]
-    fn the_transfer_document_is_refused_by_the_run_result_reader() {
-        let value = super::transfer_document(json!({}), Vec::new());
-        let bytes = fsl_foundation::canonical_json::encode(&value).expect("canonical bytes");
-        let Err(fsl_replay::spine::NativeRunReadError::MalformedMember { source, .. }) =
-            fsl_replay::spine::read_native_run_result(&bytes)
-        else {
-            panic!("expected a refusal at the unknown member");
-        };
-        assert!(
-            source
-                .to_string()
-                .starts_with("unknown field `refinement_transfer`"),
-            "{source}"
-        );
-    }
-
-    use super::step_for_step_value;
+    use super::{step_for_step_value, transfer_exit_code};
 
     /// FSpec FR-820-AC-2: a dense concrete subject is not step-for-step
     /// before any row is read, so the command writes the `time` reason and
     /// never consults the step rows.
-    #[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
+    #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
     #[test]
     fn a_dense_subject_writes_the_time_reason_before_any_row() {
         let fact = step_for_step_value(false, true, || panic!("no row is read"));
-        assert_eq!(fact, json!({"holds": false, "time": "dense"}));
+        assert_eq!(fact, StepForStep::Dense);
     }
 
     /// FSpec FR-820-AC-2: a decided fact names the row only when it fails.
-    #[ix_trace_rs::trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
+    #[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
     #[test]
     fn a_step_for_step_fact_names_the_offending_row_only_when_it_fails() {
-        let row = json!({"operation": "Third::Counter::inc", "arm": "any"});
+        let row = StepRow {
+            operation: Some("Third::Counter::inc".to_owned()),
+            arm: StepArm::Any,
+        };
         assert_eq!(
             step_for_step_value(true, false, || panic!("no row is read")),
-            json!({"holds": true})
+            StepForStep::Holds
         );
         assert_eq!(
             step_for_step_value(false, false, || Some(row.clone())),
-            json!({"holds": false, "row": row})
+            StepForStep::Row(row)
         );
         assert_eq!(
             step_for_step_value(false, false, || None),
-            json!({"holds": false})
+            StepForStep::Unexplained
         );
+    }
+
+    /// FR-1030-AC-1: the run exits 0 only when every transfer is proved; an
+    /// inconclusive or incomplete transfer exits 22.
+    #[trace("TC-2920", "FR-1030-AC-1")]
+    #[test]
+    fn the_transfer_exit_code_is_zero_only_when_every_transfer_is_proved() {
+        let proved = [PlannerValue::Proved, PlannerValue::Proved];
+        assert_eq!(transfer_exit_code(proved.into_iter()), 0);
+        let inconclusive = [PlannerValue::Proved, PlannerValue::Inconclusive];
+        assert_eq!(transfer_exit_code(inconclusive.into_iter()), 22);
+        let incomplete = [PlannerValue::Incomplete, PlannerValue::Proved];
+        assert_eq!(transfer_exit_code(incomplete.into_iter()), 22);
     }
 }

@@ -296,17 +296,18 @@ mod protocol_structure;
 pub(crate) use native_result::reencode_clause_document as native_result_reencode_for_tests;
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
-    item_run_result_value, read_native_run_result, read_native_run_result_bounded,
-    read_outcome_diagnostics, temporal_disposition_json, write_clause_run_result,
-    write_clause_run_result_for, CallLocation, CallLocusRecord, CallOrigin, ClauseRunRecord,
-    ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
-    FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
-    IndeterminateReasonRead, ItemRunOutcome, Located, ModelBindingRead, ModelStepRead,
-    ModelTransitionRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult,
-    NativeRunResultError, OutcomeDiagnosticRead, ProgressValueRead, ProtocolAnalysisKind,
-    ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
-    ProtocolRecordError, ProtocolSettlementEntry, RefusalLocus, RunPosition, RunSpan, SourceRef,
-    TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
+    item_run_result_value, read_labelled, read_native_run_result, read_native_run_result_bounded,
+    read_outcome_diagnostics, read_route_result, temporal_disposition_json,
+    write_clause_run_result, write_clause_run_result_for, CallLocation, CallLocusRecord,
+    CallOrigin, ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead,
+    DimensionRead, EffectiveIdRead, FairnessGranularityRead, FairnessKindRead,
+    FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead, ItemRunOutcome,
+    Located, ModelBindingRead, ModelStepRead, ModelTransitionRead, NativeRunLimits,
+    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError,
+    OutcomeDiagnosticRead, ProgressValueRead, ProtocolAnalysisKind, ProtocolAnalysisRecord,
+    ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError,
+    ProtocolSettlementEntry, RefusalLocus, RunPosition, RunSpan, SourceRef, TemporalRecord,
+    UndefinedLocusRead, UnsupportedDiagnostic,
 };
 pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
 pub use native_result::{
@@ -315,6 +316,7 @@ pub use native_result::{
     ExtractionRegion, ExtractionSegment, ExtractionSegments, ExtractionSpan, FieldValue,
     FieldsView, OperationClause,
 };
+pub use native_result::{FormatMarker, Label, Labelled, RouteResult};
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,

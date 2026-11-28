@@ -35,6 +35,8 @@ pub use wire::{
     FieldsView, Located, OperationClause, RefusalLocus, RunPosition, RunSpan, SourceRef,
 };
 
+mod label;
+pub use label::{read_labelled, read_route_result, FormatMarker, Label, Labelled, RouteResult};
 mod protocol;
 pub use protocol::{
     ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
@@ -1925,23 +1927,12 @@ pub fn read_native_run_result_bounded(
     limits: NativeRunLimits,
 ) -> Result<NativeRunResult, NativeRunReadError> {
     let mut budget = WorkingBudget::new(limits.max_working_bytes);
-    let tree =
-        match quire_canonical::read_with_reservation(bytes, limits.max_input_bytes, &mut budget) {
-            Err(quire_canonical::ReadError::ReservationDenied { .. }) => {
-                return Err(budget.denied());
-            }
-            other => other?,
-        };
+    let tree = label::open_tree(bytes, limits, &mut budget)?;
     let root = tree.root();
-    let format = root
-        .get("format")
-        .and_then(|node| match node.node() {
-            Node::String(value) => Some(value),
-            _ => None,
-        })
-        .unwrap_or("<missing>");
-    if format != WireFormat::RunResult.as_str() {
-        return Err(NativeRunReadError::UnsupportedFormat(format.to_owned()));
+    let found = label::root_label(&tree);
+    let format = found.as_str();
+    if WireFormat::RunResult.admit(format).is_err() {
+        return Err(NativeRunReadError::UnsupportedFormat(found));
     }
     // FSpec FR-352: the two record forms are told apart by which of
     // `analysis` and `disposition` is present, never by other content.
@@ -2956,7 +2947,7 @@ pub fn item_run_result_value(
         }
     };
     let document = ClauseRunDocument {
-        format: RunResultFormat,
+        format: RunResultFormat::new(),
         disposition,
         usage: Usage {
             admission: AdmissionUsage {
@@ -3091,7 +3082,7 @@ fn write_document(
     };
     let correction = correction.as_ref();
     let document = ClauseRunDocument {
-        format: RunResultFormat,
+        format: RunResultFormat::new(),
         disposition: Disposition::of(
             &report.disposition,
             report.counterexample.as_ref(),

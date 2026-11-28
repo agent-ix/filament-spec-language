@@ -12,6 +12,11 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
 
+/// The record of a lowering as its wire value.
+fn json_of(record: &fsl_command::command::TlLoweringRecord) -> Value {
+    serde_json::to_value(record).expect("a lowering record writes")
+}
+
 // The domain document supplies the operation frame; the authored spine
 // postcondition constrains that frame's possible post-states.
 // The postcondition needs both object navigation and Integer conversion;
@@ -202,11 +207,9 @@ fn false_initial_state_remains_one_minimal_across_seeds() {
     }
 }
 
-/// A direct request for a clause that every case passes yields `tested`
-/// evidence, never `proved`, within `max_cases`.
-#[test]
-#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-7")]
-fn a_passing_run_records_tested_and_never_proved() {
+/// A direct request for a clause every case passes, over a model bounded so
+/// that fifty cases cover it: the exit code and the result document.
+fn passing_model_based_run() -> (u8, Value) {
     let unit = format!(
         "{MODEL_HEADER}invariant Always using v on Config::ConfigVersion at current {{ true }}\n"
     );
@@ -226,7 +229,7 @@ fn a_passing_run_records_tested_and_never_proved() {
         .expect("VersionNumber has a maximum");
     max["operands"]["value"] = json!("2");
     let domain_package = serde_json::to_string(&domain_package).expect("the model serializes");
-    let (code, value) = run_with(
+    run_with(
         &unit,
         true,
         (
@@ -236,7 +239,91 @@ fn a_passing_run_records_tested_and_never_proved() {
         "initial": "spine-snapshot.json"}),
         ),
         Some(domain_package.as_bytes()),
+    )
+}
+
+/// FR-752-AC-21: a direct model-based test run writes the
+/// `native-model-based-test-result/1` document, and the strict reader returns
+/// the record it wrote, its command error for a refused request, and refuses
+/// every document that is neither, naming the member at fault.
+#[test]
+#[trace("TC-2102", "FR-752-AC-21")]
+fn a_model_based_test_result_is_written_and_strictly_read() {
+    use crate::support::route_result::{
+        assert_route_refusals, canonical, read_back, refusal_without,
+    };
+    use fsl_command::command::{read_model_based_test_result, ModelBasedTestDocument, RouteResult};
+    use fsl_replay::spine::{NativeRunLimits, NativeRunReadError};
+
+    let (code, value) = passing_model_based_run();
+    assert_eq!(code, 0, "{value}");
+    let document = read_back::<ModelBasedTestDocument>(&value, read_model_based_test_result);
+    let record = &document.model_based_test;
+    assert_eq!(value["format"], "native-model-based-test-result/1");
+    assert_eq!(record.clause, "Always");
+    for settled in [record.status, record.evidence] {
+        assert_eq!(serde_json::to_value(settled).unwrap(), json!("tested"));
+    }
+    assert!(record.verdict.is_none() && record.cause.is_none());
+    assert!(record.counterexample.is_none());
+    assert!((1..=50).contains(&record.cases.generated), "{value}");
+    assert_eq!(record.limits.max_cases, 50);
+
+    assert_route_refusals::<ModelBasedTestDocument>(
+        &value,
+        "native-model-based-test-result/1",
+        "model_based_test",
+        read_model_based_test_result,
     );
+    // Every always-written member is required, a nullable one included.
+    for name in ["cases", "verdict", "counterexample", "domain"] {
+        let NativeRunReadError::MalformedMember { member, source } =
+            refusal_without::<ModelBasedTestDocument>(
+                &value,
+                &["model_based_test"],
+                name,
+                read_model_based_test_result,
+            )
+        else {
+            panic!("{name} removed is refused at the record");
+        };
+        assert_eq!(member, "model_based_test", "{name}");
+        assert!(
+            source
+                .to_string()
+                .contains(&format!("missing field `{name}`")),
+            "{name}: {source}"
+        );
+    }
+
+    // A refused request is the `native-run-result/2` command error.
+    let unit = format!(
+        "{MODEL_HEADER}invariant Always using v on Config::ConfigVersion at current {{ true }}\n"
+    );
+    let (code, refusal) = run(
+        &unit,
+        true,
+        (
+            "model_based_test",
+            json!({"clause": "Always", "seed": 7, "max_cases": 0, "max_trace_length": 4,
+                "initial": "spine-snapshot.json"}),
+        ),
+    );
+    assert_eq!(code, 20, "{refusal}");
+    let Ok(RouteResult::CommandError(error)) =
+        read_model_based_test_result(&canonical(&refusal), NativeRunLimits::UNBOUNDED)
+    else {
+        panic!("expected the command-error form of {refusal}");
+    };
+    assert_eq!(error.code(), "invalid_runtime_input");
+}
+
+/// A direct request for a clause that every case passes yields `tested`
+/// evidence, never `proved`, within `max_cases`.
+#[test]
+#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-7")]
+fn a_passing_run_records_tested_and_never_proved() {
+    let (code, value) = passing_model_based_run();
     assert_eq!(code, 0, "{value}");
     let result = &value["model_based_test"];
     assert_eq!(result["evidence"], "tested", "{value}");
@@ -1407,6 +1494,126 @@ fn a_tl_lowering_request_selects_its_correspondence() {
     );
 }
 
+/// FR-931-AC-20: each lowering of the temporal-lowering route is written as
+/// the `native-tl-lowering-result/1` document and strictly read back as the
+/// record it was, its command error is the other arm, and a `null` optional
+/// member or a missing required one is refused naming the member.
+#[test]
+#[trace("TC-2601", "FR-931-AC-20")]
+fn a_tl_lowering_result_is_written_and_strictly_read() {
+    use crate::support::route_result::{assert_route_refusals, canonical, read_back};
+    use fsl_command::command::tl_lowering_result::{Classification, Dimension, Fragment};
+    use fsl_command::command::{
+        read_tl_lowering_result, RouteResult, TlLoweringDocument, TlLoweringRecord,
+    };
+    use fsl_replay::spine::{NativeRunLimits, NativeRunReadError};
+
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let lower = |member: Value| run(&unit, true, ("tl_lowering", member));
+
+    // FR-931-AC-1: the default lowering.
+    let (code, value) = lower(json!({"clause": "Low"}));
+    assert_eq!(code, 0, "{value}");
+    let document = read_back::<TlLoweringDocument>(&value, read_tl_lowering_result);
+    let TlLoweringRecord::Supported(record) = &document.tl_lowering else {
+        panic!("a supported lowering: {value}");
+    };
+    assert_eq!(record.clause, "Low");
+    assert_eq!(record.correspondence, "mltl.closed-trace/v1");
+    assert_eq!(record.formula, "G[0,3] p0");
+    assert_eq!(
+        record.atoms.get("p0").map(String::as_str),
+        Some("holds(c.versionNumber <= 2)")
+    );
+    assert_eq!(
+        record.classification,
+        Some(Classification {
+            correspondence: "mltl.closed-trace/v1".to_owned(),
+            fragment: Fragment::BoundedFuture,
+        })
+    );
+    assert!(record.classification_fault.is_none() && record.cross_evaluation.is_none());
+    assert_route_refusals::<TlLoweringDocument>(
+        &value,
+        "native-tl-lowering-result/1",
+        "tl_lowering",
+        read_tl_lowering_result,
+    );
+
+    // `null` in place of an omitted optional member, and a supported record
+    // with no `formula`, are refused at the member.
+    let mut null_formula = value.clone();
+    null_formula["tl_lowering"]["formula"] = Value::Null;
+    let Err(NativeRunReadError::MalformedMember { member, .. }) =
+        read_tl_lowering_result(&canonical(&null_formula), NativeRunLimits::UNBOUNDED)
+    else {
+        panic!("a null formula is refused");
+    };
+    assert_eq!(member, "tl_lowering.formula");
+    let mut null_cross = value.clone();
+    null_cross["tl_lowering"]["cross_evaluation"] = Value::Null;
+    assert!(matches!(
+        read_tl_lowering_result(&canonical(&null_cross), NativeRunLimits::UNBOUNDED),
+        Err(NativeRunReadError::MalformedMember { member, .. }) if member == "tl_lowering.cross_evaluation"
+    ));
+    let mut no_formula = value.clone();
+    no_formula["tl_lowering"]
+        .as_object_mut()
+        .expect("a record")
+        .remove("formula");
+    assert!(matches!(
+        read_tl_lowering_result(&canonical(&no_formula), NativeRunLimits::UNBOUNDED),
+        Err(NativeRunReadError::MalformedMember { member, .. }) if member == "tl_lowering"
+    ));
+
+    // FR-931-AC-2: the unsupported lowering.
+    let (code, past) =
+        lower(json!({"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}));
+    assert_eq!(code, 21, "{past}");
+    let document = read_back::<TlLoweringDocument>(&past, read_tl_lowering_result);
+    let TlLoweringRecord::Unsupported(record) = &document.tl_lowering else {
+        panic!("an unsupported lowering: {past}");
+    };
+    assert_eq!(record.clause, "Low");
+    assert_eq!(
+        record.correspondence.as_deref(),
+        Some("mltl.origin-complete-history/v1")
+    );
+    assert_eq!(record.classified.as_deref(), Some("mltl.closed-trace/v1"));
+    assert_eq!(record.dimensions, vec![Dimension::Direction]);
+
+    // FR-931-AC-3: a refused request is the command-error arm.
+    let (code, refusal) = lower(json!({"clause": "Low", "correspondence": "mltl.closed-trace/v2"}));
+    assert_eq!(code, 20, "{refusal}");
+    let Ok(RouteResult::CommandError(error)) =
+        read_tl_lowering_result(&canonical(&refusal), NativeRunLimits::UNBOUNDED)
+    else {
+        panic!("expected the command-error form of {refusal}");
+    };
+    assert_eq!(error.code(), "unknown_profile");
+}
+
+/// FR-931-AC-20 over FR-931-AC-4's cross-evaluation record.
+#[test]
+#[trace("TC-2601", "FR-931-AC-20")]
+fn a_cross_evaluation_result_is_written_and_strictly_read() {
+    use crate::support::route_result::read_back;
+    use fsl_command::command::{read_tl_lowering_result, TlLoweringDocument, TlLoweringRecord};
+
+    let (code, value) = cross_from(&bump_low(), &["a", "b"], true, 2);
+    assert_eq!(code, 0, "{value}");
+    let document = read_back::<TlLoweringDocument>(&value, read_tl_lowering_result);
+    let TlLoweringRecord::Supported(record) = &document.tl_lowering else {
+        panic!("a supported lowering: {value}");
+    };
+    let cross = record
+        .cross_evaluation
+        .as_ref()
+        .expect("a cross-evaluation");
+    assert!(cross.traces >= 2 && cross.positions >= cross.traces);
+    assert!(cross.agree && cross.faults.is_empty());
+}
+
 /// `Low` with the source union `Shape` declared by the unit, the leaf `leaf`
 /// as its body under `always [0, 3]`.
 fn shape_low(leaf: &str) -> String {
@@ -2568,26 +2775,36 @@ fn a_work_budget_stop_during_enumeration_exits_incomplete() {
         .expect("the clause lowers")
     };
     let full = run(u64::MAX);
-    assert_eq!(full.exit_code, 0, "{}", full.record);
-    let complete = full.record["cross_evaluation"]["traces"].clone();
+    assert_eq!(full.exit_code, 0, "{}", json_of(&full.record));
+    let complete = json_of(&full.record)["cross_evaluation"]["traces"].clone();
     // Every bound from 1 up: the low ones stop at the subject's own clause
     // evaluation, then at the trace reads, then inside the evaluator at an
     // `on each` activation, each an incomplete run.
     for work_units in 1..=200 {
         let record = run(work_units);
-        let cross = &record.record["cross_evaluation"];
-        assert_ne!(record.exit_code, 30, "{work_units}: {}", record.record);
+        let cross = &json_of(&record.record)["cross_evaluation"];
+        assert_ne!(
+            record.exit_code,
+            30,
+            "{work_units}: {}",
+            json_of(&record.record)
+        );
         assert_eq!(
             cross["faults"],
             json!([]),
             "{work_units}: {}",
-            record.record
+            json_of(&record.record)
         );
-        assert_eq!(record.exit_code, 22, "{work_units}: {}", record.record);
+        assert_eq!(
+            record.exit_code,
+            22,
+            "{work_units}: {}",
+            json_of(&record.record)
+        );
         assert!(
             cross["traces"].as_u64() < complete.as_u64(),
             "{}",
-            record.record
+            json_of(&record.record)
         );
     }
 }

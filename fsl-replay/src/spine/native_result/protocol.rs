@@ -440,7 +440,7 @@ impl ProtocolAnalysisRecord {
     /// record built by [`Self::new`] or read by the strict reader does.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ProtocolRecordError> {
         let document = DocumentWire {
-            format: RunResultFormat,
+            format: RunResultFormat::new(),
             analysis: AnalysisWire {
                 kind: self.kind(),
                 key: RawValue::from_string(self.key.to_json()?)?,

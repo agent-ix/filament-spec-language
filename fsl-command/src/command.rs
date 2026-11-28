@@ -35,6 +35,7 @@ pub use analyze::{
     prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use fsl_replay::spine::RouteResult;
 pub use limits::{
     CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch, PreparationBound,
     PreparationRefusal, SettingUnavailable,
@@ -47,6 +48,12 @@ pub use output::NativeResult;
 pub use replay::replay_with_limits;
 pub use request_shape::{request_example, RequestExampleError};
 pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use wire::{
+    model_based_test_result, read_model_based_test_result, read_refinement_transfer_result,
+    read_tl_lowering_result, refinement_transfer_result, tl_lowering_result,
+    ModelBasedTestDocument, ModelBasedTestResultRecord, RefinementTransferDocument,
+    RefinementTransferRecord, TlLoweringDocument, TlLoweringRecord,
+};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -711,7 +718,7 @@ pub enum PreparedRun {
 
 /// The direct model-based test record and sources admitted to produce it.
 pub struct PreparedModelBasedTestRun {
-    record: serde_json::Value,
+    record: wire::ModelBasedTestResultRecord,
     exit_code: u8,
     sources: crate::Sources,
 }
@@ -5327,7 +5334,8 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     let record = tl::lower(valuation, &source, &lowering)?;
     Ok(RunResult {
         exit_code: record.exit_code,
-        value: NativeResult::lowering_document(tl::document(record.record)),
+        value: NativeResult::lowering_document(&tl::document(record.record))
+            .map_err(RunCause::Output)?,
         outcome: None,
         requirements: None,
         sources,
@@ -5344,7 +5352,11 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::ModelBasedTest(prepared) => {
             return Ok(RunResult {
                 exit_code: prepared.exit_code,
-                value: NativeResult::model_based_test_document(prepared.record),
+                value: NativeResult::model_based_test_document(&wire::ModelBasedTestDocument {
+                    format: fsl_replay::spine::Label::new(),
+                    model_based_test: prepared.record,
+                })
+                .map_err(RunCause::Output)?,
                 outcome: None,
                 requirements: None,
                 sources: prepared.sources,

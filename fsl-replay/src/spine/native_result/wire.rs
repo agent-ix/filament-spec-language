@@ -41,14 +41,7 @@ pub use extraction::{
 pub(super) use locus::source_identity_uri;
 pub use locus::{DocumentObject, Located, RefusalLocus, SourceRef};
 
-/// A member present with a value; `null` is read as that member's own type.
-pub(super) fn present<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(decoder).map(Some)
-}
+pub(super) use fsl_foundation::serde_object::present;
 
 /// A member present as a JSON value other than `null`: an absent optional
 /// member is omitted, never written as `null` (FSpec FR-352-AC-8).
@@ -76,28 +69,7 @@ where
 
 /// The one `format` member of the wire: it writes the catalog's label for
 /// [`WireFormat::RunResult`] and reads nothing else.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct RunResultFormat;
-
-impl Serialize for RunResultFormat {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        WireFormat::RunResult.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for RunResultFormat {
-    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-        let label = String::deserialize(decoder)?;
-        if label == WireFormat::RunResult.as_str() {
-            Ok(Self)
-        } else {
-            Err(serde::de::Error::custom(format!(
-                "the format `{}`",
-                WireFormat::RunResult.as_str()
-            )))
-        }
-    }
-}
+pub(super) type RunResultFormat = super::label::Label<super::label::RunResultMarker>;
 
 /// The disposition stage label.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
