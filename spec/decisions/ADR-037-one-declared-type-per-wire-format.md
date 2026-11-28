@@ -110,6 +110,10 @@ as the bare name. FR-120 owns this operation-identity rule.
 | `filament.checked-package/v2` node forms and protocol-location ordinals | FSpec FR-322 and FR-375; in particular FR-322-AC-291 and FR-375-AC-36 | `filament-contract-model::checked_package::v2` (implementation home) |
 | Certificate-member vocabulary | FSpec FR-331; Contract IR FR-070 | `filament-contract-model` |
 | `native-run-result/2` | FSpec FR-352 `Members`, `Outcome axes`, `Temporal disposition` and `Protocol-analysis result` sections, plus AC-1–26; FSpec FR-351 owns witness members; FSL FR-267 implements the FSL boundary | FSL `fsl-replay` wire module |
+| `native-model-based-test-result/1` | FSL FR-752 (record shape owner FSpec FR-190; its differences are QSL-3637) | `fsl_command::command::ModelBasedTestDocument` |
+| `native-tl-lowering-result/1` | FSL FR-931 | `fsl_command::command::TlLoweringDocument` |
+| `native-refinement-transfer-result/1` | FSL FR-1030; `step_for_step` is FSpec FR-820 | `fsl_command::command::RefinementTransferDocument`; `fsl_replay::planner::StepForStep` |
+| `filament.planner-result/v1` | FSpec FR-492 | Carried as the owner's value, with no FSL declared type yet; the label is `WireFormat::PlannerResult` |
 | `native-replay/1` request | FSpec FR-336; FSL FR-862 | FSL `fsl-command` replay-request module |
 | `filament-outcome/1` | FSpec FR-300 format identity, FR-520 analyze document, FR-301 CLI contract and FR-331 terminal records; FSL FR-286 publishes the schema | FSL `fsl-replay::outcome` |
 

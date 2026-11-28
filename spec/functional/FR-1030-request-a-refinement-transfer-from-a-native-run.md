@@ -93,7 +93,14 @@ of `call`, `clause` (FR-312), `items` (FR-651), `synthesis` (FR-1010),
 
 ## Outputs
 
-The run outcome's `refinement_transfer` member:
+The `native-refinement-transfer-result/1` document (ADR-037): `format` and the
+one member `refinement_transfer`, declared once as
+`fsl_command::command::RefinementTransferDocument`. A refused request writes
+the `native-run-result/2` command error (FR-267) instead. The strict reader
+`fsl_command::command::read_refinement_transfer_result` returns either form,
+the record or the command error.
+
+The `refinement_transfer` member:
 
 ```json
 "refinement_transfer": {
@@ -106,13 +113,16 @@ The run outcome's `refinement_transfer` member:
 ```
 
 - `refinement.step_for_step` — FSpec FR-820's `step_for_step` fact,
-  decided once from the refinement node's step rows (FR-1020).
+  decided once from the refinement node's step rows (FR-1020), declared once
+  as `fsl_replay::planner::StepForStep`; each transfer's `result` carries it
+  again in its `transfer` record.
 - `transfers` — one entry per clause, in `clauses` order; `result` is the
   item's FSpec FR-820 planner result, with its `transfer` record, every
   value in FR-650's run value form.
 - The exit code is FR-285's: `0` when every transfer is `proved`, `22` when
   any is `inconclusive` or `incomplete`. A transfer is never `refuted`, so
-  this member never exits `10`.
+  this member never exits `10`. One function decides it from the settled
+  values, never from the written document.
 
 ## Behavior
 
@@ -195,6 +205,7 @@ The run outcome's `refinement_transfer` member:
 | FR-1030-AC-9 | `PrevJumpEach`, the template of `PrevSafeEach` with the body `holds(c.value = 2) implies once[1,1] holds(c.value = 0)`, is violated at position 2, whose previous position holds 1, so slot 1 settles `refuted` through its replay, and `PrevStutterEach`, with the body `holds(c.value = 2) implies once[1,1] holds(c.value = 1)`, is violated at the repeated terminal state as AC-5 reads it, and `OlderDebtEach`, with the body `holds(c.value <= 1) implies eventually[0,1] holds(c.value = 2)`, is violated by the position-0 activation, whose earlier deadline passes at position 1 although the position-1 activation is satisfied at position 2. Through `ThirdRefinesSpec` each transfer settles `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`; exit `22`; none is `proved`. | Test (TC-2920) |
 | FR-1030-AC-10 | The broken mapping: `PrevSafeEach` through `ThirdRefinesSpec` with `abstract.initial` naming a snapshot whose `value` is 1 settles the refinement premise `refuted` with `InitialNotAbstract` (FR-144-AC-5), not `transfer-not-preserving`, which is the outcome of a refinement that is not step-for-step (AC-2), so the transfer settles `inconclusive`, `premise-unproved` naming slot 0 with `result` `refuted`, `step_for_step.holds` `true`; exit `22`. | Test (TC-2920) |
 | FR-1030-AC-11 | The checked package S4 emits for the unit carries `PrevSafeEach`'s `temporal_clause` node with its `on each` activation (FR-337). Its abstract claim item, settled from that package and not from source, has the value, `Certified` certification and accepted `ClosureCertificate` that AC-8 reads from source, and `settle_transfer` (FR-820) over `TransferSettlement::from_settled_facts`, given that package-read claim, the source-checked refinement facts bound to the same emission and an in-process `Certified` refinement premise (FR-529), writes the same `proved` transfer, its provenance mixed (a refinement premise settled from package bytes is QSL-2767); a clause root the recompiled package does not hold settles `failed` (FR-126). FR-1031's exclusivity of `package` and `refinement_transfer` is unchanged. | Test (TC-2920) |
+| FR-1030-AC-12 | AC-1's request (two transfers, `step_for_step` `{"holds": true}`, exit `0`) and AC-2's request (`step_for_step` `{"holds": false, "row": {"operation": "Impl::Counter::beginA", "arm": "stutter"}}`, exit `22`), each written as a result and strictly read by `read_refinement_transfer_result`, return the record form with label `native-refinement-transfer-result/1`, a value equal to the one written and the same canonical bytes when written again. The reader returns the command-error form for a request that refuses at stage `select`, refuses a `native-run-result/2` clause-run document, and `read_native_run_result` refuses the label as an unsupported format naming `native-refinement-transfer-result/1`. It refuses an unknown member and a transfer whose `result` has a `format` other than `filament.planner-result/v1` (`filament.planner-result/v2`), naming `refinement_transfer.transfers[0].result`. | Test (TC-2920) |
 
 ## Rationale
 

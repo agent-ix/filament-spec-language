@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-AC-1 to AC-11.
+Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-AC-1 to AC-12.
 
 ## Test Procedure
 
@@ -25,6 +25,8 @@ Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-
 9. Run `PrevJumpEach`, `PrevStutterEach` and `OlderDebtEach` through `ThirdRefinesSpec` with no `premises`.
 10. Run `PrevSafeEach` through `ThirdRefinesSpec` with `abstract.initial` naming a snapshot of `value` 1.
 11. Settle `PrevSafeEach`'s abstract claim from the checked package S4 emits for the unit, and settle its transfer through `settle_transfer` over `TransferSettlement::from_settled_facts` with the package-read claim, the source-checked refinement facts of the same emission and an in-process `Certified` refinement premise (mixed provenance); then offer a package that does not hold the clause root.
+
+12. Write and strictly read the documents of steps 1 and 2 with `read_refinement_transfer_result`; read a request that refuses at stage `select`, a `native-run-result/2` clause-run document, and a document whose transfer `result` has the `format` `filament.planner-result/v2`.
 
 ## Expected Results
 
@@ -41,3 +43,4 @@ Verify the `refinement_transfer` request member and its outcome. Scope: FR-1030-
 - Step 11: the claim and the transfer equal Step 8's, with the certificate accepted by recompiling the package; the package without the clause root settles `failed` (FR-126).
 
 Steps 6 and 7 verify the transfer only. The replay refusal matrix, fairness, true and undefined parity and the mixed-loop limit are FR-128-AC-10 to AC-14 over the `lasso_replay` `Counter` fixtures (TC-523), against FSpec FR-364-AC-25 to AC-29 (FSpec-TC-295); the schema vectors of FSpec FR-364-AC-26 are not evidence of replay.
+- Step 12: the record forms equal the ones written, with `native-refinement-transfer-result/1`, the exit codes `0` and `22`, and equal canonical bytes on rewrite; the command-error form for the refusal; the clause-run document refused; the `v2` result refused naming `refinement_transfer.transfers[0].result`.

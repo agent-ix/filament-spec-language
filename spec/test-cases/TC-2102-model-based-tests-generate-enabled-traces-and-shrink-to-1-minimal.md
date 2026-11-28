@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify generation, the native oracle and the shrinking guarantee. Scope: FR-752-AC-1 to FR-752-AC-3, FR-752-AC-5, FR-752-AC-7 to FR-752-AC-9. Tests live in `fsl-eval/tests/it/model_based_tests.rs`.
+Verify generation, the native oracle and the shrinking guarantee. Scope: FR-752-AC-1 to FR-752-AC-3, FR-752-AC-5, FR-752-AC-7 to FR-752-AC-9, and FR-752-AC-21 (its tests live in `fsl-command/tests/it/model_based_result.rs`). The other tests live in `fsl-eval/tests/it/model_based_tests.rs`.
 
 ## Test Procedure
 
@@ -22,6 +22,8 @@ Verify generation, the native oracle and the shrinking guarantee. Scope: FR-752-
 6. Repeat step 5's `Inc` run with a test-double argument admission that accepts `by` 7, then twice with equal inputs.
 7. Run the value clause `Label` (`t: Text[0, 4; nfc]`, body `size(t) <= 4`) with seed 7 and `max_cases` 30, then over `Text[0, 4; unicode-scalars]`, then over `Text[0, 13; unicode-scalars]`; call the generator's `unrank` on FSpec FR-190-AC-18's domains and indices; run `Square` and the `Text[0, 2; unicode-scalars]` clause with seed 7 and read the first seeded value of each (FR-752-AC-9).
 
+8. Run FR-752-AC-3's direct request and FR-752-AC-11's `max_cases` 0 refusal through `fsl_command::command::run`, read each with `read_model_based_test_result`, write the read record again, remove `cases` and `verdict` from a copy, add a member `x` to another, and read the same bytes with `read_native_run_result`; read a `native-run-result/2` clause-run document and an input over each bound.
+
 ## Expected Results
 
 - Step 1: only enabled invocations; boundary cases first; retained counterexample four `inc` from 0, replay-reproduced.
@@ -31,3 +33,4 @@ Verify generation, the native oracle and the shrinking guarantee. Scope: FR-752-
 - Step 5: for `Inc`, cases 0 to 7 the partitions of `value` then `by`; four `domain-refusal` discards with `refused` partitions; the `by` 6 case `precondition-false` with its partition `uncovered`, `bounds` `[]`; `cases.generated` 100 = `passed + failed + discarded`; `tested`. For the precondition clause, no `precondition-false` discard. For `jam`, all 100 cases discarded (`domain-refusal` 4, `precondition-false` 1 at case 6, `invariant-false` 0, `no-check-point` 95), `cases.passed` 0 and `inconclusive` `no-evaluated-case`; in the plan, `k` `blocked` by `j`, exit 22.
 - Step 6: `failed` with `tool-failure` `oracle-disagreement`, exit 30, no `tested` record; then byte-equal `cases`, `checks`, `partitions` and `partition_coverage`.
 - Step 7: the partition cases in FR-752-AC-9's order, the `upper-refusal` case discarded `domain-refusal`, every seeded value an `nfc` member of length at most 4, `tested`; eight distinct witness cases under `unicode-scalars`; 30 drawn cases for `Text[0, 13]` and never `unsupported`; FSpec FR-190-AC-18's values. `x` = 53 and `t` = U+D51A9 U+87AC9.
+- Step 8: the record form with `native-model-based-test-result/1`, `tested`, `verdict` `null` and equal canonical bytes on rewrite; the command-error form for the refusal; each removed or added member refused naming `model_based_test` and the member; `UnsupportedFormat` from `read_native_run_result`; the clause-run document and each bound refused.

@@ -13,7 +13,7 @@ relationships:
 Verify the `tl_lowering` member's default and named correspondences, and the
 unsupported record when the clause does not have the named reading. Scope:
 FR-931-AC-1, FR-931-AC-2, FR-931-AC-11, FR-931-AC-12, FR-931-AC-16,
-FR-931-AC-17, FR-931-AC-18, FR-931-AC-19.
+FR-931-AC-17, FR-931-AC-18, FR-931-AC-19, FR-931-AC-20.
 
 ## Test Procedure
 
@@ -28,6 +28,8 @@ FR-931-AC-17, FR-931-AC-18, FR-931-AC-19.
 9. From step 7's package, read the `type_argument` members of the `count<Small>` and `count<Int[0, 4]>` applications; run the `Small = Tiny` chain variant on both routes; strip the `alias` member from a copy of the package and run step 7 over it.
 10. Over the `Low` unit's checked package (`{file, equality}`, source removed), run every request of FR-931-AC-18 without `cross_evaluate`, the `Low2` request, `Missing`, `Inv` and the hyper clause `Equal`; run FR-931-AC-9's lasso request over `{file, equality}` and over the handoff `{directory}`; run the same requests over the source.
 11. Add to `Low` a `holds` leaf containing `let c = c.versionNumber in c = 2`, where `c` is also its `over` parameter. Request TL lowering from source and from the checked package with source removed; reparse the printed atom and inspect the resolved read binding sites.
+
+12. Write and strictly read the records of FR-931-AC-1, AC-2, AC-8, AC-4 and the package route of AC-18 with `read_tl_lowering_result`; read AC-3's refusal, a `native-run-result/2` clause-run document, a record with `"formula": null` and a supported record with no `formula`.
 
 Test: `tests/it/request_surface_s1_16.rs` `a_tl_lowering_request_selects_its_correspondence`.
 
@@ -44,3 +46,4 @@ Test: `tests/it/request_surface_s1_16.rs` `a_tl_lowering_request_selects_its_cor
 - Step 9: `count<Small>` carries `alias` `{"package": "I", "node": "ix://I/Small"}`, `count<Int[0, 4]>` none; the chain prints `count<ix://I/Small>` on both routes; the stripped copy prints `count<Int[0, 4]>` with the same `disposition`, `formula` and `classification`.
 - Step 10: every package record byte-equal to the source record with the same exit code; `Low2` gives `Low`'s record with `clause` `Low2`; `Missing`, `Inv` and `Equal` refuse `missing_declaration`/`missing-name` naming `tl_lowering.clause`, exit 20; the lasso request over `{file, equality}` refuses `invalid-request` with `requires` `directory`, exit 20, and over `{directory}` returns the source record with `cross_evaluation`.
 - Step 11: both routes return supported, byte-equal records and atom text `holds(let c = c.versionNumber in c = 2)`. Reparsing resolves the initializer's `c` to the temporal `over` parameter and the body `c` to the `let` binder, preserving both binding sites.
+- Step 12: each record form equals the one written, with `native-tl-lowering-result/1` and equal canonical bytes on rewrite; the command-error form for the refusal; the clause-run document refused; the `null` formula refused naming `tl_lowering.formula`; the supported record with no `formula` refused.

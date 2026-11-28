@@ -34,9 +34,18 @@ run's limits and cancellation. A `verify` plan step with method
 
 ## Outputs
 
-FSpec FR-190's result record: its settlement, `cases`, `checks`, `partitions`,
-`partition_coverage`, operation coverage, provenance and at most one
-retained counterexample.
+A direct `model_based_test` run writes the `native-model-based-test-result/1`
+document (ADR-037): `format` and the one member `model_based_test`, the result
+record, declared once as `fsl_command::command::ModelBasedTestDocument`. A
+refused request writes the `native-run-result/2` command error (FR-267)
+instead. The strict reader `fsl_command::command::read_model_based_test_result`
+returns either form, the record or the command error.
+
+The record's shape owner is FSpec FR-190: its settlement, `cases`, `checks`,
+`partitions`, `partition_coverage`, operation coverage, provenance and at most
+one retained counterexample. The record does not yet match FSpec FR-190
+member for member; QSL-3637 lists the differences and fixes them. A
+`model_based_test` plan step's `result` is the same record.
 
 ## Entry
 
@@ -306,6 +315,7 @@ pub fn run_model_based_test(
 | FR-752-AC-18 | Over a counter with `value` in `Int[0, 5]` incremented one step at a time, the temporal clause `always[0,5] holds(c.value <= 5)` under the false-extension profile, run with `expansion.max_candidates` below what an expansion of its initial state needs, settles `incomplete` with cause `limit-reached{limit: max_candidates, value, setting: expansion.max_candidates}` and no counterexample; the same holds for `eventually[0,5] holds(c.value >= 4)`. | Test |
 | FR-752-AC-19 | Over the same counter, `eventually[0,5] holds(c.value >= 4)` with requested `max_trace_length` 8 and `simulation.max_steps` 2 settles `incomplete` with cause `limit-reached{limit: max_steps, value: 2, setting: simulation.max_steps}` and no counterexample; with `simulation.max_steps` 8 it settles as with no step setting. | Test |
 | FR-752-AC-20 | A precondition clause over two initial states, one whose case expansion exceeds `expansion.max_candidates` and one within it whose precondition evaluates undefined, settles `refuted`; with the undefined state absent the run settles `incomplete` naming `expansion.max_candidates`. | Test |
+| FR-752-AC-21 | AC-3's direct run, written as a result and strictly read by `read_model_based_test_result` under `max_input_bytes` and `max_working_bytes` bounds, returns the record form with label `native-model-based-test-result/1`, `status` and `evidence` `tested`, `verdict` `null`, `counterexample` `null` and `cases.generated` at most 50, and writing the read value again gives the same canonical bytes. The reader returns the command-error form for AC-11's `max_cases` 0 refusal (`native-run-result/2`), refuses a `native-run-result/2` clause-run document, and refuses the label for `read_native_run_result` as an unsupported format naming `native-model-based-test-result/1`. It refuses an unknown member `x`, a removed always-written member (`cases`) and a removed nullable member (`verdict`), each naming `model_based_test` and that member, and an input over `max_input_bytes` or a working size over `max_working_bytes`. | Test (TC-2102) |
 
 ## Dependencies
 
