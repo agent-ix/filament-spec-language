@@ -537,7 +537,7 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
 /// in independently checked expected-elapsed documents.
 #[trace("TC-633", "FR-198-AC-6")]
 #[test]
-#[ignore = "QSL-3495: a fairness set reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: a fairness set reads clock regions; incomplete until the region process is built"]
 fn fair_expected_elapsed_certifies_both_extrema() {
     let claims = concat!(
         "probabilistic MeanLow using inf on M over (c: M::Msg) under every scheduler fair strong Msg::send on origin { expected elapsed until holds(c.late) >= 1 ms }\n",
@@ -896,7 +896,7 @@ fn a_forged_decided_target_is_neither_counted_nor_reported() {
 /// reach the bound, whatever claim it is replayed against.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_witness_of_the_non_failing_choice_is_not_refuted() {
     let claim = |name: &str, comparison: &str| {
         format!(
@@ -957,7 +957,7 @@ fn distribution_free_values_are_rejected() {
 /// scheduler's choice, so the maximum is 1 and a bound of `<= 0.6` is refuted.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn every_scheduler_tie_is_the_schedulers_choice() {
     // `send` is drawn at 2 ms; `tick` is free but can only fire at x = 2 ms.
     let claim = |name: &str, scheduler: &str| {
@@ -988,7 +988,7 @@ fn every_scheduler_tie_is_the_schedulers_choice() {
 /// weights and gives `21/40`.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_workload_resolves_a_timed_tie_by_its_weights() {
     let claim = |name: &str, scheduler: &str| {
         format!(
@@ -1049,7 +1049,7 @@ fn weighted_tie(bound: &str) -> World {
 /// checker's own exact mass of the forbidden outcome.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_workload_refutes_a_timed_deadline_with_its_exact_mass() {
     let world = weighted_tie("<= 0.5");
     let record = settle(&world, "Weighted");
@@ -1066,7 +1066,7 @@ fn a_workload_refutes_a_timed_deadline_with_its_exact_mass() {
 /// FR-923-AC-3: a workload value altered in the certificate is rejected.
 #[trace("TC-2492", "FR-923-AC-3")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_tampered_workload_certificate_is_rejected() {
     let world = weighted_tie("<= 0.6");
     let record = settle_tampered(&world, "Weighted", |certificate| {
@@ -1169,7 +1169,7 @@ fn free_tick_world(delays: &str, claims: &[(&str, &str)]) -> World {
 /// `7876923/10240000`.
 #[trace("TC-2489", "FR-920-AC-4")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_workload_with_a_delay_choice_is_decided_on_its_extremum() {
     let world = free_tick_world(
         "{ 1 ms: 1, 2 ms: 1 }",
@@ -1215,7 +1215,7 @@ fn between_world() -> World {
 /// maximum 1 fails with 1.
 #[trace("TC-2489", "FR-920-AC-4")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_bound_between_the_extrema_is_refuted_with_the_recomputed_mass() {
     let world = between_world();
     let below = settle(&world, "AtLeastBetween");
@@ -1233,7 +1233,7 @@ fn a_bound_between_the_extrema_is_refuted_with_the_recomputed_mass() {
 /// cannot refute the bound the maximum fails.
 #[trace("TC-2489", "FR-920-AC-4")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_witness_of_the_other_extremum_settles_parity() {
     let world = between_world();
     let low = settle(&world, "AtLeastBetween")
@@ -1863,7 +1863,7 @@ fn reset_loop_is_nonprogressive_without_a_deadline_clock() {
 /// rather than check one without `tick`.
 #[trace("TC-2492")]
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn the_checker_refuses_a_workload_that_weighs_an_enabled_operation_at_zero() {
     let world = |scheduler: &str| {
         retx_with(
@@ -2274,7 +2274,7 @@ fn a_certificate_of_other_tie_weights_is_refused() {
 /// 1/2, `(1,2)` 0 and 0, `(2,1)` 1 and 3/5, `(2,2)` 3/4 and 0, so the maximum
 /// is `5/8` and the minimum `11/40`.
 #[test]
-#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: mixed delays reads clock regions; incomplete until the region process is built"]
 fn two_given_racers_and_a_free_one_decide_on_their_extrema() {
     let claims = format!(
         "{}{}",

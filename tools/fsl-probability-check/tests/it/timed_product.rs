@@ -133,7 +133,7 @@ fn elapsed_quantile_certificate_passes_the_separate_checker() {
 /// `fsl-probability-check` processes, one process for each emitted document.
 #[trace("TC-633", "FR-198-AC-6")]
 #[test]
-#[ignore = "QSL-3495: a fairness set reads clock regions; incomplete until the region process is built"]
+#[ignore = "QSL-3496: a fairness set reads clock regions; incomplete until the region process is built"]
 fn fair_expected_elapsed_documents_pass_the_separate_checker() {
     for (form, optimization) in [
         (
