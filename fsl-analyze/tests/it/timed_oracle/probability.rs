@@ -294,6 +294,15 @@ fn assert_routes(row: &Row) {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// Claims of forms that wait on the region process (ADR-038 RL-3): EN-5 may
+/// stop `incomplete`, and a verdict it gives must be the hand one.
+fn waiting_on_regions(claims: Vec<Claim>) -> Vec<Claim> {
+    claims
+        .into_iter()
+        .map(|claim| claim.exact_expects(Expect::HandOrIncomplete))
+        .collect()
+}
+
 fn zero() -> Rational {
     whole(0)
 }
@@ -386,7 +395,7 @@ fn empty_window(drawn: bool) -> Row {
         },
         world: models::one_step(drawn, &text),
         space,
-        claims,
+        claims: waiting_on_regions(claims),
     }
 }
 
@@ -402,7 +411,6 @@ fn row_3324_empty_windows_guard_routes() {
 }
 
 #[test]
-#[ignore = "QSL-3324: en-5 refutes a nested empty window whose probability is 0"]
 fn row_3324_nested_empty_window_guard_routes() {
     assert_routes(&empty_window(false).only(&["N"]));
 }
@@ -450,7 +458,7 @@ fn workload_windows(drawn: bool) -> Row {
         },
         world: models::workload_pair(drawn, &text),
         space,
-        claims: vec![
+        claims: waiting_on_regions(vec![
             claim(
                 "Always",
                 Payoff::Holds("FAlways"),
@@ -472,7 +480,7 @@ fn workload_windows(drawn: bool) -> Row {
                 zero(),
                 one(),
             ),
-        ],
+        ]),
     }
 }
 
@@ -483,13 +491,11 @@ fn row_3324_workload_windows_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3324: en-5 proves three false window claims under a workload"]
 fn row_3324_workload_windows_routes() {
     assert_routes(&workload_windows(false));
 }
 
 #[test]
-#[ignore = "QSL-3324: en-5 proves three false window claims under a workload with a drawn delay"]
 fn row_3324_workload_windows_drawn_routes() {
     assert_routes(&workload_windows(true));
 }
@@ -503,7 +509,7 @@ fn gap() -> Row {
         name: "3324-gap",
         world: models::two_step(&(extrema_claims(form) + &formula("F", form))),
         space: Space::new(3, Lock::Frozen),
-        claims: extrema_rows(&Payoff::Holds("F")),
+        claims: waiting_on_regions(extrema_rows(&Payoff::Holds("F"))),
     }
 }
 
@@ -518,7 +524,6 @@ fn row_3324_gap_minimum_routes() {
 }
 
 #[test]
-#[ignore = "QSL-3324: en-5 proves maximum 0 where it is 1"]
 fn row_3324_gap_maximum_routes() {
     assert_routes(&gap().only(&["Max", "Half"]));
 }
@@ -532,13 +537,13 @@ fn nested_inside_a_delay() -> Row {
         name: "3324-nested-in-delay",
         world: models::send_at(2, &text),
         space: Space::new(3, Lock::Frozen),
-        claims: vec![claim(
+        claims: waiting_on_regions(vec![claim(
             "Nested",
             Payoff::Holds("F"),
             AtMost(half()),
             zero(),
             zero(),
-        )],
+        )]),
     }
 }
 
@@ -548,7 +553,6 @@ fn row_3324_nested_inside_a_delay_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3324: en-5 refutes a claim whose probability is 0 with bound <= 0.5"]
 fn row_3324_nested_inside_a_delay_routes() {
     assert_routes(&nested_inside_a_delay());
 }
@@ -585,7 +589,6 @@ fn row_3324_retx_offsets_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3318: en-5 settles a nested window unsupported TimedFormShape"]
 fn row_3324_retx_offsets_routes() {
     assert_routes(&retx_offsets());
 }
@@ -608,27 +611,32 @@ fn two_clocks(bounded: bool) -> Row {
     }
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_hand() {
     assert_hand(&two_clocks(false));
     assert_hand(&two_clocks(true));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_minimum_routes() {
     assert_routes(&two_clocks(false).only(&["Min"]));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_maximum_routes() {
     assert_routes(&two_clocks(false).only(&["Max", "Half"]));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_bounded_minimum_routes() {
     assert_routes(&two_clocks(true).only(&["Min"]));
 }
 
+#[trace("FR-922-AC-4")]
 #[test]
 fn row_3444_two_clock_regions_bounded_maximum_routes() {
     assert_routes(&two_clocks(true).only(&["Max", "Half"]));
@@ -657,7 +665,10 @@ fn skew_elapsed() -> Row {
             AtLeast(ratio(2, 5)),
             zero(),
             half(),
-        )],
+        )
+        // A free subject read from a later position waits on the region
+        // process (FSpec FR-421 "Closed and strict conditions").
+        .exact_expects(Expect::HandOrIncomplete)],
     }
 }
 
@@ -668,7 +679,6 @@ fn row_3445_elapsed_quantile_hand() {
 
 #[trace("FSpec-FR-407-AC-26")]
 #[test]
-#[ignore = "QSL-3445: en-5 proves a false elapsed quantile on integer times"]
 fn row_3445_elapsed_quantile_routes() {
     assert_routes(&skew_elapsed());
 }
@@ -707,7 +717,6 @@ fn row_window_starting_after_position_zero_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3318: en-5 settles a later-start nested window unsupported TimedFormShape"]
 fn row_window_starting_after_position_zero_routes() {
     assert_routes(&skew_nested());
 }
@@ -751,7 +760,6 @@ fn row_activation_after_position_zero_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3531: en-5 settles an on-each window unsupported"]
 fn row_activation_after_position_zero_routes() {
     assert_routes(&skew_each());
 }
@@ -811,7 +819,6 @@ fn row_3447_mean_fraction_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3531: en-5 settles an unweighted window fraction unsupported"]
 fn row_3447_mean_fraction_routes() {
     assert_routes(&mean_fraction().exact_route());
 }
@@ -1024,7 +1031,6 @@ fn row_3463_elapsed_past_the_horizon_of_position_zero_hand() {
 }
 
 #[test]
-#[ignore = "QSL-3531: en-5 settles an elapsed event unsupported"]
 fn row_3463_at_least_four_after_three_routes() {
     assert_routes(&four_after_three().exact_route());
 }
@@ -1048,7 +1054,6 @@ fn row_3463_quantile_sampled() {
 }
 
 #[test]
-#[ignore = "QSL-3531: en-5 settles an elapsed event unsupported"]
 fn row_3463_at_most_after_five_routes() {
     assert_routes(&four_after_five().exact_route());
 }
@@ -1077,10 +1082,10 @@ fn horizon_without_a_position() -> Row {
         name: "3448-empty-horizon",
         world: models::send_by_five(&text),
         space,
-        claims: vec![
+        claims: waiting_on_regions(vec![
             row("Low", "LowS", AtLeast(half())),
             row("High", "HighS", AtMost(half())),
-        ],
+        ]),
     }
 }
 
@@ -1135,6 +1140,7 @@ fn time_lock(invariant: &str) -> Row {
     }
 }
 
+#[trace("FR-924-AC-5")]
 #[test]
 fn row_3468_time_lock_hand() {
     for invariant in ["self.x <= 1 ms", "self.x < 1 ms"] {
@@ -1158,14 +1164,45 @@ fn row_3468_time_lock_hand() {
     }
 }
 
-#[test]
-#[ignore = "QSL-3468: en-5 refutes always at a time lock, whose value is 1"]
-fn row_3468_time_lock_closed_routes() {
-    assert_routes(&time_lock("self.x <= 1 ms"));
+/// The closed time-lock row keeping only the claim `name`.
+fn time_lock_claim(name: &str) -> Row {
+    let mut row = time_lock("self.x <= 1 ms");
+    row.claims.retain(|claim| claim.exact == Some(name));
+    row
 }
 
+/// `Early` reads positions the lock reaches: its `always` holds, value 1.
+#[trace("FSpec-FR-421-AC-8", "FR-924-AC-5")]
 #[test]
-#[ignore = "QSL-3468: en-5 refutes always at a time lock, whose value is 1"]
+fn row_3468_time_lock_closed_early_routes() {
+    assert_routes(&time_lock_claim("Early"));
+}
+
+/// `Later` waits on the region process (QSL-3495, ADR-038 step 6): the
+/// admission table sends a time-locked free subject to the region route.
+#[trace("FSpec-FR-421-AC-8")]
+#[test]
+#[ignore = "QSL-3495: region MDP decides time-locked free subject; settles incomplete:UnresolvedDynamics until step 6"]
+fn row_3468_time_lock_closed_later_routes() {
+    assert_routes(&time_lock_claim("Later"));
+}
+
+/// Until step 6, `Later` settles the typed `incomplete`, never a verdict: a
+/// wrong answer fails here.
+#[trace("FSpec-FR-421-AC-8")]
+#[test]
+fn row_3468_time_lock_closed_later_settles_incomplete() {
+    let mut row = time_lock_claim("Later");
+    row.claims = row
+        .claims
+        .into_iter()
+        .map(|claim| claim.exact_expects(Expect::Declines("incomplete:UnresolvedDynamics")))
+        .collect();
+    assert_routes(&row);
+}
+
+#[trace("FSpec-FR-421-AC-8")]
+#[test]
 fn row_3468_time_lock_strict_routes() {
     assert_routes(&time_lock("self.x < 1 ms"));
 }
@@ -1206,7 +1243,6 @@ fn row_split_reachable_lock_hand() {
 
 #[trace("FSpec-FR-421-AC-8")]
 #[test]
-#[ignore = "QSL-3494: en-5 proves minimum 1/2 on integer times where the dense minimum is 0"]
 fn row_split_reachable_lock_routes() {
     assert_routes(&split());
 }
@@ -1247,7 +1283,6 @@ fn row_burst_stutter_fraction_hand() {
 
 #[trace("FSpec-FR-421-AC-9")]
 #[test]
-#[ignore = "QSL-3531: en-5 settles the Burst fraction unsupported"]
 fn row_burst_stutter_fraction_routes() {
     assert_routes(&burst().exact_route());
 }

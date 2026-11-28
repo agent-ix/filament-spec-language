@@ -2748,6 +2748,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// `#[string_edge]`: operation names are the admitted wire's fixed
     /// discriminator vocabulary, not source text selected at runtime.
     #[ix_trace_rs::string_edge]
+    #[implements("FR-390-AC-17")]
     fn project_application(
         &mut self,
         id: &CheckedNodeId,

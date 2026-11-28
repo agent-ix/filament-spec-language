@@ -169,6 +169,11 @@ impl Eq for NotMarkov {}
 pub struct UndecidedSuccessor {
     /// The state's canonical key.
     pub state: StateKey,
+    /// The first contract conjunction the expansion evaluated undefined,
+    /// not refused (ADR-018 UE-6): the route refutes with it rather than
+    /// reading the state as undecided. `None` when only a refused
+    /// conjunction left the successors unknown.
+    pub undefined: Option<super::UndefinedContract>,
 }
 
 /// Why [`ModelSystem::weighted_steps`] gives a state no step probabilities
@@ -853,16 +858,24 @@ impl ModelSystem<'_> {
                 filament_exact::LimitKind::WorkUnits,
             )));
         }
-        if expansion
+        let undefined = expansion
             .findings
             .iter()
-            .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+            .find_map(ModelFinding::undefined_contract);
+        if undefined.is_some()
+            || expansion
+                .findings
+                .iter()
+                .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
         {
             let key = match key_policy {
                 Some(policy) => policy.key(self, state.state())?,
                 None => self.canonical_state_key(state).map_err(|_| stop(BROKEN))?,
             };
-            return Ok(Err(UndecidedSuccessor { state: key }));
+            return Ok(Err(UndecidedSuccessor {
+                state: key,
+                undefined,
+            }));
         }
         let mut successors: Vec<Option<(ModelTransition, ModelSimState)>> =
             expansion.successors.into_iter().map(Some).collect();

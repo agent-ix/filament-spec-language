@@ -166,7 +166,7 @@ pub(crate) const SUBJECT: &str = "c";
 pub(crate) type Outcome = ZoneCheckOutcome<&'static str>;
 
 /// The `claim` occurrence of `world`'s first clause.
-fn claim_occurrence(world: &World) -> OccurrenceKey {
+pub(crate) fn claim_occurrence(world: &World) -> OccurrenceKey {
     fsl_replay::node_occurrence(&world.package.graph().temporal_clauses()[0])
 }
 
@@ -313,6 +313,7 @@ pub(crate) fn operations(counterexample: &TemporalCounterexample) -> Vec<String>
                 "grow",
                 "arm",
                 "disarm",
+                "block",
             ]
             .into_iter()
             .find(|name| operation.contains(&format!("Call/{name}\"")))
@@ -998,6 +999,16 @@ pub(crate) fn check(
     certificate: &Certificate,
     limits: CertificateCheckLimits,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<ItemObligation<&'static str>>> {
+    check_over(world, world.request(), certificate, limits)
+}
+
+/// [`check`] of `world`'s item over the subject `simulation` admits.
+pub(crate) fn check_over(
+    world: &World,
+    simulation: fsl_eval::simulation::model::ModelSimulationRequest<'_>,
+    certificate: &Certificate,
+    limits: CertificateCheckLimits,
+) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<ItemObligation<&'static str>>> {
     let system = world.system();
     let node = &world.package.graph().temporal_clauses()[0];
     let letters = system.clause_letters(node).expect("letters");
@@ -1011,7 +1022,7 @@ pub(crate) fn check(
     };
     check_zone_certificate(
         ZoneCertificateRequest {
-            simulation: world.request(),
+            simulation,
             model: "M",
             max_clocks: fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
             item,
@@ -1026,7 +1037,7 @@ pub(crate) fn check(
 
 /// FR-244 "Reachability part", checked by the core (FR-245): every edge's
 /// successor is covered by its target, and the certificate is accepted.
-fn assert_edges_cover(world: &World, certificate: &Certificate) {
+pub(crate) fn assert_edges_cover(world: &World, certificate: &Certificate) {
     assert_eq!(
         check(world, certificate, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Accepted)

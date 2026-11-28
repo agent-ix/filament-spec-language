@@ -76,7 +76,13 @@ pub enum Judgement {
     Rejected(Rejection),
     /// No check was false and these conjuncts did not decide, in name order
     /// (ADR-020 RE-4 `UndecidedSuccessor`).
-    Undecided(Vec<(String, ClauseOutcome)>),
+    Undecided {
+        /// Whether the conjuncts are the application's preconditions (its
+        /// guard) and not its postconditions.
+        guard: bool,
+        /// The conjuncts, by clause name.
+        conjuncts: Vec<(String, ClauseOutcome)>,
+    },
 }
 
 /// One abstract transition identity and its judgement.
@@ -405,7 +411,12 @@ impl Run<'_, '_, '_> {
             Conjunction::False(clause) => {
                 return Ok(Judgement::Rejected(Rejection::Precondition { clause }));
             }
-            Conjunction::Undecided(undecided) => return Ok(Judgement::Undecided(undecided)),
+            Conjunction::Undecided(conjuncts) => {
+                return Ok(Judgement::Undecided {
+                    guard: true,
+                    conjuncts,
+                });
+            }
         }
         let delta = match self.decide(request.post)? {
             Ok(delta) => delta,
@@ -438,7 +449,10 @@ impl Run<'_, '_, '_> {
             }
         }
         Ok(match undecided {
-            Some(undecided) => Judgement::Undecided(undecided),
+            Some(conjuncts) => Judgement::Undecided {
+                guard: false,
+                conjuncts,
+            },
             None => Judgement::Rejected(Rejection::Postcondition),
         })
     }

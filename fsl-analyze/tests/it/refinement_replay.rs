@@ -3,7 +3,7 @@
 //! replays by re-executing its prefix and rerunning the step check, and the
 //! safety half settles as a terminal record from the outcome and the replay.
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, FieldValue, UnionMember, UnionValue, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
@@ -35,7 +35,8 @@ use crate::refinement_fixture::{
     Variant, World, CAS, UNLIMITED,
 };
 use crate::ring_world::{
-    ring_is_queue, RingWorld, Variant as RingVariant, UNLIMITED as RING_UNLIMITED, ZERO,
+    key as ring_key, ring_is_queue, RingWorld, Variant as RingVariant, QUEUE as RING_QUEUE, RING,
+    UNLIMITED as RING_UNLIMITED, ZERO,
 };
 
 /// What a replay or a settlement needs of a world.
@@ -781,6 +782,157 @@ fn composite_nested_reference_refinements_receive_checked_certificates() {
     }
 }
 
+/// Run and settle a stuttering Ring-to-Queue refinement whose selected
+/// composite field is copied from the corresponding concrete object.
+fn assert_mapped_composite_refinement(
+    variant: RingVariant,
+    field: &str,
+    verify: impl FnOnce(&ModelSystem<'_>, &ModelSystem<'_>),
+) {
+    let refinement = ring_is_queue(&format!("items = sequence[]; {field} = self.{field};"))
+        .replace("Q::Queue::enq(self.ring, x)", "stutter")
+        .replace("Q::Queue::deq(self.ring)", "stutter");
+    let world = RingWorld::with(variant, &refinement);
+    let subject = ring(&world);
+    let checked = outcome(&subject);
+    let settled = settle_item(&subject, &checked);
+    assert_eq!(settled.record.value, proved(Certification::Certified));
+    assert_eq!(settled.record.label, ResultLabel::Proved);
+
+    let systems = open_systems(
+        subject.refinement,
+        &subject.concrete,
+        subject.package,
+        subject.abstract_initials.clone(),
+    )
+    .expect("the model systems open");
+    verify(&systems.concrete, &systems.abstract_system);
+}
+
+/// FR-630-AC-8: a nominal tuple containing a reference and Boolean is read,
+/// mapped to Queue, and certified with both literal values intact.
+#[trace("FR-630-AC-8")]
+#[test]
+fn tuple_reference_refinement_settles_with_its_mapped_components() {
+    assert_mapped_composite_refinement(
+        RingVariant {
+            tuple_reference: true,
+            composite_two_targets: true,
+            ..RingVariant::default()
+        },
+        "pair",
+        |concrete, abstract_| {
+            let composite_key = |system: &ModelSystem<'_>, package: &str, object: &str| {
+                let fields = system.fields_of(&ring_key(package, object)).unwrap();
+                let field = fields.iter().find(|field| field.name == "pair").unwrap();
+                let ValueType::Composite(key) = &field.value_type else {
+                    panic!("Pair is composite")
+                };
+                key.clone()
+            };
+            let concrete_target = concrete
+                .object_reference(&ring_key(RING, "Ring"), "b")
+                .unwrap();
+            let abstract_target = abstract_
+                .object_reference(&ring_key(RING_QUEUE, "Queue"), "b")
+                .unwrap();
+            let concrete_pair = filament_exact::from_admitted_slots(
+                composite_key(concrete, RING, "Ring"),
+                vec![
+                    FieldValue::Present(Value::Reference(concrete_target)),
+                    FieldValue::Present(Value::Boolean(true)),
+                ]
+                .into_boxed_slice(),
+            );
+            let abstract_pair = filament_exact::from_admitted_slots(
+                composite_key(abstract_, RING_QUEUE, "Queue"),
+                vec![
+                    FieldValue::Present(Value::Reference(abstract_target)),
+                    FieldValue::Present(Value::Boolean(true)),
+                ]
+                .into_boxed_slice(),
+            );
+            for (system, package, population, field_key, expected) in [
+                (concrete, RING, "rings", "Ring/pair", concrete_pair),
+                (abstract_, RING_QUEUE, "queues", "Queue/pair", abstract_pair),
+            ] {
+                let state = system.initial_states()[0].state();
+                assert!(matches!(
+                    filament_exact::planned_equality(
+                        &state.populations[&ring_key(package, population)]["a"].fields
+                            [&ring_key(package, field_key)],
+                        &expected,
+                        &mut filament_exact::Meter::new(RING_UNLIMITED),
+                    ),
+                    filament_exact::Outcome::Completed(true)
+                ));
+            }
+        },
+    );
+}
+
+/// FR-630-AC-9: a payload union keeps its active `Has` tag and mapped
+/// reference when the analyzer certifies the refinement.
+#[trace("FR-630-AC-9")]
+#[test]
+fn payload_union_refinement_settles_with_its_mapped_member() {
+    assert_mapped_composite_refinement(
+        RingVariant {
+            union_reference: true,
+            composite_two_targets: true,
+            ..RingVariant::default()
+        },
+        "holder",
+        |concrete, abstract_| {
+            let composite_key = |system: &ModelSystem<'_>, package: &str, object: &str| {
+                let fields = system.fields_of(&ring_key(package, object)).unwrap();
+                let field = fields.iter().find(|field| field.name == "holder").unwrap();
+                let ValueType::Composite(key) = &field.value_type else {
+                    panic!("Holder is composite")
+                };
+                key.clone()
+            };
+            let concrete_target = concrete
+                .object_reference(&ring_key(RING, "Ring"), "b")
+                .unwrap();
+            let abstract_target = abstract_
+                .object_reference(&ring_key(RING_QUEUE, "Queue"), "b")
+                .unwrap();
+            let concrete_holder = UnionValue::from_admitted(
+                UnionMember::from_admitted(composite_key(concrete, RING, "Ring"), "Has")
+                    .expect("the Has case is declared"),
+                vec![Value::Reference(concrete_target)],
+            );
+            let abstract_holder = UnionValue::from_admitted(
+                UnionMember::from_admitted(composite_key(abstract_, RING_QUEUE, "Queue"), "Has")
+                    .expect("the Has case is declared"),
+                vec![Value::Reference(abstract_target)],
+            );
+            for (system, package, population, field_key, expected) in [
+                (concrete, RING, "rings", "Ring/holder", concrete_holder),
+                (
+                    abstract_,
+                    RING_QUEUE,
+                    "queues",
+                    "Queue/holder",
+                    abstract_holder,
+                ),
+            ] {
+                let state = system.initial_states()[0].state();
+                assert!(matches!(
+                    filament_exact::planned_equality(
+                        &state.populations[&ring_key(package, population)]["a"].fields
+                            [&ring_key(package, field_key)],
+                        &expected,
+                        &mut filament_exact::Meter::new(RING_UNLIMITED),
+                    ),
+                    filament_exact::Outcome::Completed(true)
+                ));
+            }
+        },
+    );
+}
+
 /// FR-899-AC-1/AC-5 (TC-2536/TC-550): a hidden-field peek loop refutes with
 /// `HiddenUnfair`, and FR-145 reproduces it from the counterexample.
 #[trace("TC-2536", "FR-899-AC-1", "FR-899-AC-5")]
@@ -1328,4 +1480,106 @@ fn a_second_phase_fault_settles_the_item_failed_with_no_half_value() {
     assert_eq!(settled.safety, None);
     assert_eq!(settled.liveness, None);
     assert_eq!(settled.fault, Some(fault));
+}
+
+const UE6_FUNCTION: &str = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+
+/// The counter pair under `contracts`, checked in `Kernel` mode.
+fn ue6_world(contracts: &str) -> World {
+    World::with_mode(
+        Variant::CAS,
+        &format!("{UE6_FUNCTION}{contracts}{}", cas_refines_counter()),
+        CheckMode::Kernel,
+    )
+}
+
+/// ADR-018 UE-6, ADR-020 RE-5: an undefined contract conjunction of either
+/// model refutes the refinement, the replay reproduces the failure
+/// `UndefinedContract` with the clause (the concrete model's state conjunction
+/// and the abstract model's guard are the two replay arms), and the item
+/// settles `refuted`.
+#[trace("FR-142-AC-9")]
+#[test]
+fn an_undefined_contract_replays_and_settles_refuted() {
+    for (contracts, clause) in [
+        (
+            "pre PeekPre using v on Impl::Counter::peek { q(2 - self.value) >= 0 }\n\
+             post PeekPost using v on Impl::Counter::peek { self.value = pre(self.value) }\n",
+            "PeekPre",
+        ),
+        (
+            "pre AbsGuard using v on Spec::Counter::inc { q(1 - self.value) >= 0 }\n\
+             post AbsPost using v on Spec::Counter::inc { true }\n",
+            "AbsGuard",
+        ),
+    ] {
+        let world = ue6_world(contracts);
+        let subject = cas(&world);
+        let outcome = check(&subject);
+        let payload = counterexample(outcome.clone());
+        let Some(RefinementFailure::UndefinedContract {
+            clause: named,
+            position,
+        }) = payload.refinement.clone()
+        else {
+            panic!("{clause}: an undefined contract: {:?}", payload.refinement);
+        };
+        assert_eq!(named, clause);
+        let settlement = replay(&subject, &payload).expect("replays");
+        assert!(
+            matches!(
+                &settlement,
+                RefinementTraceSettlement::Reproduced {
+                    failure: RefinementFailure::UndefinedContract { position: at, clause: also },
+                    ..
+                } if *at == position && also == clause
+            ),
+            "{clause}: {settlement:?}"
+        );
+        let record = settle(&subject, &outcome);
+        assert_eq!(record.value, TerminalValue::Refuted, "{clause}");
+        assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+    }
+}
+
+/// ADR-018 UE-6, ADR-020 RE-5: a step row `any` expands the abstract
+/// candidates itself (`decide_step`), and an abstract guard with no value at
+/// a candidate refutes there. The failure replays and the item settles
+/// `refuted`.
+#[trace("FR-142-AC-9")]
+#[test]
+fn an_undefined_abstract_guard_under_an_any_row_replays_and_settles_refuted() {
+    let contracts = "pre AbsGuard using v on Spec::Counter::inc { q(1 - self.value) >= 0 }\n\
+                     post AbsPost using v on Spec::Counter::inc { true }\n";
+    let refinement = mutated(
+        &cas_refines_counter(),
+        "step Impl::Counter::commitA -> Spec::Counter::inc(self);",
+        "step Impl::Counter::commitA -> any;",
+    );
+    let world = World::with_mode(
+        Variant::CAS,
+        &format!("{UE6_FUNCTION}{contracts}{refinement}"),
+        CheckMode::Kernel,
+    );
+    let subject = cas(&world);
+    let outcome = check(&subject);
+    let payload = counterexample(outcome.clone());
+    let Some(RefinementFailure::UndefinedContract { clause, position }) =
+        payload.refinement.clone()
+    else {
+        panic!("an undefined contract: {:?}", payload.refinement);
+    };
+    assert_eq!(clause, "AbsGuard");
+    let settlement = replay(&subject, &payload).expect("replays");
+    assert!(
+        matches!(
+            &settlement,
+            RefinementTraceSettlement::Reproduced {
+                failure: RefinementFailure::UndefinedContract { position: at, .. },
+                ..
+            } if *at == position
+        ),
+        "{settlement:?}"
+    );
+    assert_eq!(settle(&subject, &outcome).value, TerminalValue::Refuted);
 }

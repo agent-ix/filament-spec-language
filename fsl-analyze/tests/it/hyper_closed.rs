@@ -462,3 +462,63 @@ fn a_universe_of_no_selected_model_is_refused_and_one_of_another_model_is_skippe
         assert!(text.contains("wrong-role-mapping"), "{alias:?}: {text}");
     }
 }
+
+/// An `align skip` clause reads its `match` and atoms over the projection
+/// (FR-178) and its contract conjunctions on the unprojected states, each at
+/// the visible position it follows (FR-183 "Undefined evaluation"). A guard
+/// with no value at a reached state refutes with the contract clause as the
+/// locus at position 1, where `step(1)` from `(0, 0)` reaches it, and the
+/// counterexample replays and settles `refuted`.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn an_undefined_guard_of_an_align_skip_clause_refutes_and_replays() {
+    let world = World::busy_with_kernel_function(
+        Vault::BusyUndefined,
+        &crate::hyper_projected_support::IDLE,
+        &aligned("always [0, 2] holds(v.l @ a = v.l @ b)"),
+        "function quotient using v(x: Integer): Integer pure { 1 div x }\n",
+    );
+    let outcome = world
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("the run is not refused");
+    let counterexample = refuted(outcome.clone());
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!("expected undefined, got {:?}", counterexample.kind);
+    };
+    assert_eq!(
+        undefined.locus,
+        fsl_replay::HyperLocus::Contract("Guard".to_owned())
+    );
+    assert_eq!(undefined.position, 1);
+    assert_eq!(settled(&world, &outcome).0, ResultLabel::Refuted);
+}
+
+/// FR-183 "Undefined evaluation" and "Projected (HP-6)": an `align skip`
+/// clause whose body atom has no value on the projected tuple (the two vaults
+/// are equal at position 0, so the divisor is zero) refutes with the atom as
+/// the locus at position 0, and the
+/// counterexample replays over the projection and settles `refuted`.
+#[trace("TC-2243", "FR-173-AC-7")]
+#[test]
+fn an_undefined_atom_of_an_align_skip_clause_refutes_over_the_projection() {
+    let world = World::busy_with_kernel_function(
+        Vault::Busy,
+        &crate::hyper_projected_support::IDLE,
+        &aligned("always [0, 2] holds(quotient(v.l @ a - v.l @ b) >= 0)"),
+        "function quotient using v(x: Integer): Integer pure { 1 div x }\n",
+    );
+    let outcome = world
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("the run is not refused");
+    let counterexample = refuted(outcome.clone());
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!("expected undefined, got {:?}", counterexample.kind);
+    };
+    assert!(
+        matches!(undefined.locus, fsl_replay::HyperLocus::Atom(_)),
+        "{:?}",
+        undefined.locus
+    );
+    assert_eq!(undefined.position, 0);
+    assert_eq!(settled(&world, &outcome).0, ResultLabel::Refuted);
+}

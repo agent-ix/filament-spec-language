@@ -305,6 +305,14 @@ fn recheck_value(item: &Item<'_>, record: &CandidateRecord) -> Recheck {
             code: "resource_exhausted".to_owned(),
             cause: "replay-accounting-limit".to_owned(),
         },
+        // The reference evaluation ran past `value_check.max_cases`: a typed
+        // exhaustion naming that setting, not an undecided replay.
+        Ok(Verdict::CaseLimit) => Recheck::Refused {
+            code: "resource_exhausted".to_owned(),
+            cause: fsl_replay::ModelCheckLimit::ValueCheckMaxCases
+                .setting()
+                .to_owned(),
+        },
         Ok(_) => refused("replay-undecided"),
         Err(fault) => Recheck::Fault {
             detail: format!("{fault:?}"),

@@ -415,6 +415,25 @@ fn operand_slot_rows_preserve_the_retained_document_graph() {
     assert!(matches!(read_back(&emission), Read::Verified { .. }));
 }
 
+#[trace("TC-3242", "FR-869-AC-9", "FSpec-FR-322-AC-280")]
+#[test]
+fn one_pass_operand_rewrite_preserves_package_bytes() {
+    let values = (0..1_000)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let (_, package) = package_from_text(&format!(
+        "function allValues using v(): Sequence<Integer>[0, 1000] pure {{ sequence[{values}] }}\n"
+    ));
+
+    let one_pass = emit_checked(&package).expect("the package emits with one-pass rewrites");
+    let repeated = with_repeated_operand_rewrite(|| {
+        emit_checked(&package).expect("the package emits with repeated rewrites")
+    });
+
+    assert_eq!(one_pass.package().bytes(), repeated.package().bytes());
+}
+
 #[trace("FSpec-TC-233", "FSpec-FR-322-AC-280")]
 #[test]
 fn operand_slot_numbering_visits_only_identity_paths_in_canonical_order() {

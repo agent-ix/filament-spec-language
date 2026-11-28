@@ -7,9 +7,12 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use filament_exact::Meter;
-use fsl_eval::hyper::{judge_closed_tuple, ClosedExecution, ClosedInputs, ClosedStep};
+use fsl_eval::hyper::{
+    judge_closed_tuple, ClosedExecution, ClosedInputs, ClosedStep, ClosedVerdict,
+};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{HyperCounterexample, HyperCounterexampleKind, HyperOutcome, ModelCheckLimit};
+use ix_trace_rs::implements;
 
 use super::super::{fault, widen, Run, Totals};
 use super::reduction::{charge, Admission, ClosedOrderMember, Order, Scope, Stop};
@@ -46,6 +49,7 @@ struct Prefix<'p> {
 }
 
 impl Run<'_, '_> {
+    #[implements("FR-173-AC-7")]
     pub(super) fn enumerate_closed_joint(
         &self,
         inputs: &ClosedInputs<'_>,
@@ -195,9 +199,14 @@ impl Run<'_, '_> {
                             .iter()
                             .any(|finding| finding.undefined_contract().is_some())
                         {
-                            return Err(Stop::Refused(Box::new(
-                                super::HyperRefusal::ClosedUndefined.into(),
-                            )));
+                            // The tuple is the joint prefix that reaches the
+                            // state, shorter components included: the instance
+                            // is refuted there, never read as a disabled step
+                            // (ADR-018 UE-6, ADR-023 HV-8).
+                            let tuple = node.paths.iter().collect::<Vec<_>>();
+                            let outcome =
+                                self.read_prefix_undefined(inputs.instance, &tuple, totals)?;
+                            return Err(Stop::Outcome(Box::new(outcome)));
                         }
                         if expanded
                             .findings
@@ -312,6 +321,9 @@ impl Run<'_, '_> {
         match self.tuple_reading(judge_closed_tuple(inputs, &tuple), matched, totals)? {
             Reading::Continue => Ok(()),
             Reading::Ended(outcome) => Err(Stop::Outcome(Box::new(outcome))),
+            Reading::Undefined { found, .. } => Err(Stop::Outcome(Box::new(
+                self.undefined_outcome(inputs.instance, &tuple, *found, totals)?,
+            ))),
             Reading::Refuted(position) => Err(Stop::Outcome(Box::new(HyperOutcome::Violated {
                 counterexample: Box::new(HyperCounterexample {
                     kind: HyperCounterexampleKind::Closed,
@@ -352,9 +364,12 @@ impl Run<'_, '_> {
                 Ok(false)
             }
             ConstraintReading::Ended(outcome) => Err(Stop::Outcome(Box::new(outcome))),
+            ConstraintReading::Stopped(ClosedVerdict::Undefined(found)) => Err(Stop::Outcome(
+                Box::new(self.undefined_outcome(inputs.instance, &paths, *found, totals)?),
+            )),
             ConstraintReading::Stopped(verdict) => match self.stopped_reading(verdict, totals)? {
                 Reading::Ended(outcome) => Err(Stop::Outcome(Box::new(outcome))),
-                Reading::Continue | Reading::Refuted(_) => {
+                Reading::Continue | Reading::Refuted(_) | Reading::Undefined { .. } => {
                     Err(fault("a-stopped-prefix-admission-ends-the-item").into())
                 }
             },

@@ -428,7 +428,6 @@ fn row_3483_stalled_subject_routes() {
 /// (FR-125-AC-13); `always holds(false)` is then neither proved nor refuted.
 #[trace("FR-125-AC-13")]
 #[test]
-#[ignore = "QSL-3484: en-6 and en-1 prove a claim over no instance"]
 fn row_3484_no_instance_routes() {
     let world = stall(&formula("Never", "always holds(false)"));
     let own = world.snapshots.values().next().expect("one snapshot");
@@ -538,7 +537,6 @@ impl ModelLetters for UndefinedAt<'_> {
 /// The undefined letter is at the time-locked `block` state, which no
 /// admitted behaviour passes, so the violation through `go` stands.
 #[test]
-#[ignore = "QSL-3485: en-1 drops the search after an undefined reading at a time lock"]
 fn row_3485_undefined_at_a_time_lock_routes() {
     let world = locking_branch();
     let system = world.system();

@@ -31,6 +31,7 @@ fn sample_halt(
     max_sample_steps: u64,
 ) -> Result<Option<TimedSample>, SampleHalt> {
     Err(match stop {
+        TimedSampleStop::Race(TimedRaceStop::NoGridDelay) => return Ok(None),
         TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
             SampleHalt::NotStochastic { state, identity }
         }
@@ -42,7 +43,8 @@ fn sample_halt(
         },
         TimedSampleStop::Step(stop) => match Ended::from(*stop) {
             Ended::Halt(halt) => halt,
-            Ended::Undecided => return Ok(None),
+            // Timed windows keep an undefined guard undecided (QSL-3546).
+            Ended::Undecided | Ended::Contract(_) => return Ok(None),
         },
         // Only an unbounded walk refuses a time-lock.
         TimedSampleStop::TimeLockedSample { .. } | TimedSampleStop::Race(_) => broken(),

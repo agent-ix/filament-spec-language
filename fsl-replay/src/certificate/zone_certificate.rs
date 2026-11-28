@@ -53,10 +53,10 @@
 //! itself, never by the search's evidence. The `admitted` path is
 //! recomputed in exact zones from the initial state. Its cycle target lets
 //! time advance when, under a tick source, it takes a tick, and under a
-//! dense source, some clock it resets to `r` is guarded on it by `x >= c`
-//! (or `x > c`) with `c > r` before its next reset, so each repetition
-//! takes at least `c - r`; and it repeats forever: the greatest set of the
-//! exact valuations at its start each of which takes the cycle back into
+//! dense source, a clock is either guarded above its previous reset value or
+//! reset after a positive delay fits under its source state's invariant; and
+//! it repeats forever: the greatest set of the exact valuations at its start
+//! each of which takes the cycle back into
 //! the set is not empty. A strongly connected set of nodes lets no time
 //! diverge when every member is urgent, or some clock that no edge inside
 //! it resets is bounded above by every member state's own time invariants.
@@ -105,8 +105,8 @@ use fsl_eval::automaton::{
 use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
-    TerminalClass, TimedSubjectRefusal, TimedSystem,
+    claim_start, GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
+    TerminalClass, TimedSubjectRefusal, TimedSystem, TimedVacuity,
 };
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::diagnostic::Code;
@@ -272,6 +272,12 @@ pub struct RefinementIdentity {
     /// side, the request's `abstract_package` on the recompiled side.
     pub abstract_package: EmittedPackage,
 }
+
+/// The `automaton_state` of a liveness-product node past an undefined
+/// reading (FR-245): no claim automaton state, since the claim is read no
+/// further. The node is in every automaton acceptance set, so the component
+/// reasons show that no fair behaviour passes through the reading.
+pub const UNDEFINED_POSITION_STATE: usize = u32::MAX as usize;
 
 /// What a node of FR-240's liveness product carries beyond a search
 /// node: the instance whose claim automaton it reads, and how it was
@@ -773,6 +779,9 @@ pub enum ZoneCertificateRefusal<O> {
     TaskProductPlan(Box<fsl_eval::simulation::model::TaskProductPlanRefusal>),
     /// The item is not one this checker reads yet (see the module).
     UnsupportedItem,
+    /// The clause item has no initial state or no instance (FR-125
+    /// "Instancing"), so no certificate proves it.
+    Vacuous(TimedVacuity),
     /// The clause's instances are not finite.
     Unbounded,
     /// A reading the check needs has no value: a guard, invariant, urgency,
@@ -795,6 +804,7 @@ impl<O> ZoneCertificateRefusal<O> {
             Self::TaskProductPlan(_)
             | Self::Admission(_)
             | Self::TimedSubject(_)
+            | Self::Vacuous(_)
             | Self::Unbounded
             | Self::Undecided => Code::InvalidRuntimeInput,
         }
@@ -1040,6 +1050,7 @@ pub fn check_state_graph_certificate<O: Clone + Eq>(
     Ok((verdict, decision))
 }
 
+#[implements("FR-125-AC-7")]
 fn check_zone_certificate_with_time_source<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -1235,14 +1246,21 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
             ) {
                 return Err(ZoneCertificateRefusal::UnsupportedItem);
             }
-            let instances = concrete
-                .instances(&clause.over().1)
-                .map_err(|_| ZoneCertificateRefusal::Unbounded)?;
-            let atom = fsl_eval::automaton::invariant_atom(clause);
+            let over = concrete.claim_instances(&clause.over().1);
+            let instances = claim_start(timed.initial().len(), over)
+                .map_err(|_| ZoneCertificateRefusal::Unbounded)?
+                .map_err(ZoneCertificateRefusal::Vacuous)?
+                .as_slice()
+                .to_vec();
+            // A clause declaring a fairness is read on the liveness
+            // product, which alone reads one (FR-240).
+            let fair = !clause.fairness().is_empty();
+            let atom = fsl_eval::automaton::invariant_atom(clause).filter(|_| !fair);
             // A TT-2 window nesting no interval operator under another has
             // FR-242's horizon automaton; any other clause is read on the
             // liveness product.
             let flat = if atom.is_none()
+                && !fair
                 && matches!(
                     clause.timed_form(),
                     Some(TimedPropertyForm::BoundedWindow { .. })
@@ -1301,8 +1319,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
                     start,
                     letters,
                     instances.clone(),
-                    clause.capture_site(),
-                    clause.fairness().to_vec(),
+                    clause,
                     operations,
                 ));
                 None
@@ -2195,8 +2212,10 @@ impl<O> Checker<'_, '_, O> {
         };
         let abstract_start = self.timed.places().len() + 1;
         let base = self.dim().saturating_sub(auxiliary.places().len());
+        let observer = usize::from(zone.dim() == self.dim() + 1);
         let blocks = zone
             .dim()
+            .saturating_sub(observer)
             .saturating_sub(base)
             .checked_div(auxiliary.places().len())
             .unwrap_or(0);
@@ -2274,6 +2293,10 @@ impl<O> Checker<'_, '_, O> {
         }
         if self.window.is_none() && self.live.is_none() {
             return listed == 0 && q == 0;
+        }
+        // Past an undefined reading both name the one such position.
+        if (listed == UNDEFINED_POSITION_STATE) != (q == UNDEFINED_POSITION_STATE) {
+            return false;
         }
         match (self.bound.get(&listed), self.binds.get(&q)) {
             (Some(&known), _) => known == q,
@@ -3383,10 +3406,7 @@ impl<O> Checker<'_, '_, O> {
                     CertificateLocus::ModelState(state_key.clone()),
                 )
             };
-            let Some(starts) = self.live_initial(&state)? else {
-                return missing();
-            };
-            for (_, q, mark, zone) in starts {
+            for (_, q, mark, zone) in self.live_initial(&state)? {
                 let cell = self.cell_zone_of(&state, &zone)?;
                 let mut covered = None;
                 for &node in &certificate.initials {
@@ -3582,7 +3602,7 @@ impl<O> Checker<'_, '_, O> {
         let period = self.timed.tick_period().cloned();
         let mut positions = 0_usize;
         if !tail || decided {
-            let checker_steps = self.timed.guarded_steps(state).or_else(undecided)?;
+            let checker_steps = self.steps_at(state)?;
             for step in checker_steps {
                 let target = self.invariants(step.post())?;
                 let state_key = self.state_key(step.post())?;
@@ -3823,7 +3843,32 @@ impl<O> Checker<'_, '_, O> {
             .ok_or(fault(CheckerFault::UnreachedNode))
     }
 
+    /// Whether the item refutes a state with an undefined step guard as a
+    /// bad node (ADR-018 UE-6): a claim or deadlock-freedom item. Every
+    /// other item refuses `Undecided` at such a state.
+    pub(super) fn refutes_undefined_guards(&self) -> bool {
+        !(self.time_lock
+            || self.release_ops.is_some()
+            || self.live.is_some()
+            || self.refined.is_some()
+            || self.state_graph.is_some())
+    }
+
+    /// The guarded steps of `state`. An undefined step guard is read as a
+    /// disabled step where the item judges the state bad
+    /// ([`Self::refutes_undefined_guards`]), and refuses `Undecided`
+    /// otherwise.
+    #[implements("FR-245-AC-13")]
+    pub(super) fn steps_at(&self, state: &ModelSimState) -> Step<Vec<GuardedStep>, O> {
+        let expanded = self.timed.guarded_expansion(state).or_else(undecided)?;
+        if expanded.undefined.is_some() && !self.refutes_undefined_guards() {
+            return undecided(());
+        }
+        Ok(expanded.steps)
+    }
+
     /// Whether `node` violates the item at some valuation of its zone.
+    #[implements("FR-245-AC-13")]
     fn bad(&self, node: usize) -> Step<bool, O> {
         let state = self.state(node)?;
         if self.time_lock
@@ -3836,6 +3881,17 @@ impl<O> Checker<'_, '_, O> {
             // Time-lock freedom is read from the divergence part, and a
             // liveness product's bad cycles from its components.
             return Ok(false);
+        }
+        // ADR-018 UE-6: a step guard with no value at the node's state is
+        // a violation, whatever the claim reads there.
+        if self
+            .timed
+            .guarded_expansion(state)
+            .or_else(undecided)?
+            .undefined
+            .is_some()
+        {
+            return Ok(true);
         }
         let Some(claim) = &self.claim else {
             return self.deadlocked(node);
@@ -3877,7 +3933,7 @@ impl<O> Checker<'_, '_, O> {
             return Ok(false);
         }
         let mut enabling = Vec::new();
-        for step in self.timed.guarded_steps(state).or_else(undecided)? {
+        for step in self.steps_at(state)? {
             let target = self.invariants(step.post())?;
             // Pull post-state invariants through the simultaneous carries
             // and resets to the pre-state valuations that enable this step.
@@ -4174,7 +4230,7 @@ impl<O> Checker<'_, '_, O> {
             if edge.from != at || self.covers[index].is_none() {
                 return fails(at);
             }
-            zone = self.post(index, &zone)?;
+            zone = self.post(index, &zone, true)?;
             at = edge.to;
             if zone.is_empty() {
                 return fails(at);
@@ -4228,9 +4284,9 @@ impl<O> Checker<'_, '_, O> {
         Ok(None)
     }
 
-    /// The exact successor of `zone`, at a valid edge's source, along the
-    /// edge.
-    fn post(&self, index: usize, zone: &Zone) -> Step<Zone, O> {
+    /// Apply a valid edge to `zone`, optionally including delay at its
+    /// target.
+    fn post(&self, index: usize, zone: &Zone, settle_after: bool) -> Step<Zone, O> {
         let edge = &self.certificate.edges[index];
         let source = self.state(edge.from)?;
         let successor = self.covered(index)?;
@@ -4265,7 +4321,9 @@ impl<O> Checker<'_, '_, O> {
             if let Some(read) = &successor.read {
                 self.read_at(&mut next, read)?;
             }
-            self.settle_within(post, &mut next, Some(cell))?;
+            if settle_after {
+                self.settle_within(post, &mut next, Some(cell))?;
+            }
             return Ok(next);
         }
         if let (None, Some(SilentMove::Dies { .. }), Some(cut)) =
@@ -4297,7 +4355,9 @@ impl<O> Checker<'_, '_, O> {
         if successor.frees {
             next.free(self.horizon_clock())?;
         }
-        self.settle(post, &mut next)?;
+        if settle_after {
+            self.settle(post, &mut next)?;
+        }
         Ok(next)
     }
 
@@ -4407,16 +4467,51 @@ impl<O> Checker<'_, '_, O> {
             if next.includes(&held)? {
                 let mut met = next;
                 intersect(&mut met, zone)?;
-                return Ok(!met.is_empty());
+                if met.is_empty() {
+                    return Ok(false);
+                }
+                return if self.timed.tick_period().is_some() {
+                    Ok(true)
+                } else {
+                    self.positive_total_delay(cycle, &met)
+                };
             }
             held = next;
         }
     }
 
+    /// Whether one feasible, repeatable cycle iteration has positive total
+    /// elapsed time. A fresh observer clock starts at zero, advances with
+    /// every delay in the cycle, and is constrained positive at the end;
+    /// the model clocks must also return to the repeating set.
+    fn positive_total_delay(&self, cycle: &[usize], repeating: &Zone) -> Step<bool, O> {
+        let mut reached = extend_with_zero_observer(repeating)?;
+        let observer = repeating.dim();
+        for &index in cycle {
+            let source = self.state(self.certificate.edges[index].from)?;
+            if self.elapses(source)? && !reached.is_empty() {
+                self.up_zone(&mut reached)?;
+                self.constrain(&mut reached, &self.invariants(source)?)?;
+            }
+            reached = self.post(index, &reached, false)?;
+            if reached.is_empty() {
+                return Ok(false);
+            }
+        }
+        reached.constrain(0, observer, &Integer::zero(), true)?;
+        // repeats has already established that the cycle returns to its
+        // greatest repeatable zone. The forward pass checks the same guards,
+        // resets and invariants while adding the positive-delay witness.
+        // Requiring the final clock valuation to equal the source would
+        // wrongly reject cycles whose unreset clocks drift each turn.
+        Ok(!reached.is_empty())
+    }
+
     /// Whether `cycle` is a cycle of valid edges from and back to `at`
     /// each repetition of which lets time advance: it ticks, under a tick
-    /// source; under a dense source, some clock guarded on it by a lower
-    /// bound above the value its last reset before the guard set it.
+    /// source; under a dense source, some clock is guarded above its last
+    /// reset, or reset after a positive delay that fits its source invariant.
+    #[implements("FR-245-AC-2")]
     fn advancing_cycle(&self, at: usize, cycle: &[usize]) -> Step<bool, O> {
         let mut node = at;
         for &index in cycle {
@@ -4451,6 +4546,25 @@ impl<O> Checker<'_, '_, O> {
         }
         let length = steps.len();
         for (position, (step, part)) in steps.iter().enumerate() {
+            // An enabled reset can support a time-divergent cycle even when
+            // its guard has no lower bound: a positive delay may fit under
+            // the source state's invariant before the reset on every turn.
+            // `repeats` independently checks that the complete cycle remains
+            // feasible, so this only establishes that one turn can advance.
+            let edge = &self.certificate.edges[cycle[position]];
+            let source = self.state(edge.from)?;
+            let invariants = self.invariants(source)?;
+            if let Some(step) = step {
+                for (place, reset) in step.resets() {
+                    if invariants.iter().any(|invariant| {
+                        invariant.place() == *place
+                            && matches!(invariant.op(), ClockOp::Less | ClockOp::LessOrEqual)
+                            && invariant.bound() > reset
+                    }) {
+                        return Ok(true);
+                    }
+                }
+            }
             let Some(constraints) = step
                 .zip(*part)
                 .and_then(|(step, part)| step.parts().get(part))
@@ -4487,14 +4601,32 @@ impl<O> Checker<'_, '_, O> {
 
 /// `zone` intersected with `other`, cell by cell.
 fn intersect(zone: &mut Zone, other: &Zone) -> Result<(), ZoneError> {
-    for i in 0..zone.dim() {
-        for j in 0..zone.dim() {
+    for i in 0..zone.dim().min(other.dim()) {
+        for j in 0..zone.dim().min(other.dim()) {
             if let Some((value, strict)) = other.bound(i, j)? {
                 zone.constrain(i, j, &value, strict)?;
             }
         }
     }
     Ok(())
+}
+
+/// `zone` with one new clock fixed at zero, used to measure elapsed time
+/// without changing any of the certificate's clock updates.
+fn extend_with_zero_observer(zone: &Zone) -> Result<Zone, ZoneError> {
+    let observer = zone.dim();
+    let mut extended = Zone::universe(observer + 1);
+    for i in 0..observer {
+        for j in 0..observer {
+            if let Some((bound, strict)) = zone.bound(i, j)? {
+                extended.constrain(i, j, &bound, strict)?;
+            }
+        }
+    }
+    let zero = Integer::zero();
+    extended.constrain(observer, 0, &zero, false)?;
+    extended.constrain(0, observer, &zero, false)?;
+    Ok(extended)
 }
 
 /// `value` in units of `1 / scale`; `None` when the scale does not make it

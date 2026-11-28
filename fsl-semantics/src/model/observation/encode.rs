@@ -282,9 +282,30 @@ impl SnapshotValue {
                     object.insert(collection_tag(*kind).to_owned(), Json::Array(items));
                     Json::Object(object)
                 }
+                RawNode::Tuple {
+                    type_identity,
+                    components,
+                    ..
+                } => {
+                    let mut payload = Map::new();
+                    if let Some(type_identity) = type_identity {
+                        payload.insert("type".to_owned(), json!(type_identity));
+                    }
+                    if let Some(components) = components {
+                        payload.insert(
+                            "components".to_owned(),
+                            json!(components
+                                .iter()
+                                .map(|index| take(&mut built, *index))
+                                .collect::<Vec<_>>()),
+                        );
+                    }
+                    json!({"tuple": payload})
+                }
                 RawNode::Record {
                     type_identity,
                     fields,
+                    ..
                 } => {
                     let mut members = Map::new();
                     for (name, index) in fields {
@@ -295,6 +316,7 @@ impl SnapshotValue {
                 RawNode::Variant {
                     type_identity,
                     case,
+                    components,
                     ..
                 } => {
                     let mut payload = Map::new();
@@ -303,6 +325,15 @@ impl SnapshotValue {
                     }
                     if let Some(case) = case {
                         payload.insert("case".to_owned(), json!(case));
+                    }
+                    if let Some(components) = components {
+                        payload.insert(
+                            "components".to_owned(),
+                            json!(components
+                                .iter()
+                                .map(|index| take(&mut built, *index))
+                                .collect::<Vec<_>>()),
+                        );
                     }
                     json!({"variant": payload})
                 }

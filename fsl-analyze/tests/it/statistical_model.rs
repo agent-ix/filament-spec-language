@@ -25,7 +25,7 @@ use fsl_replay::statistical::{
     replay_sampled_witness, Confidence, Decision, MeasureValue, SampledParity,
     SampledWitnessReplay, StatisticalLimit, StatisticalLimits, StatisticalMethod,
     StatisticalOutcome, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
-    StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
+    StatisticalVerdict, WitnessReplay, WitnessValue,
 };
 use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
 use fsl_replay::SymmetryRefusal;
@@ -1224,7 +1224,7 @@ fn completed(outcome: Result<StatisticalOutcome, StatisticalRefusal>) -> Statist
     }
 }
 
-fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
+pub(crate) fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
     completed(run(
         world,
         claim,
@@ -2282,12 +2282,13 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
 
 /// Checks FR-189-AC-5 (TC-624 step 5), the undecided-successor clause: over
 /// a cell whose `inc` postcondition divides by zero at a candidate
-/// post-state, the contract conjunction is undecided at the first state, so
-/// the test is Undecided, `UndecidedSuccessor`, with no interval and no
-/// counted sample, and the claim is Undecided.
-#[trace("TC-624", "FR-189-AC-5")]
+/// post-state, the contract conjunction has no value at the first state
+/// (ADR-018 UE-6), so the test is Rejected with the undefined contract, with
+/// no interval, and the claim is Rejected; only a refused conjunction stays
+/// Undecided, `UndecidedSuccessor`.
+#[trace("TC-624", "FR-189-AC-5", "FR-189-AC-21")]
 #[test]
-fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
+fn an_undefined_contract_conjunction_rejects_its_test() {
     let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \
          with alpha 0.01, beta 0.01, indifference 0.1 \
          { probability >= 0.5 [ always[0,3] holds(c.v >= 0) ] }";
@@ -2296,14 +2297,18 @@ fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let verdict = decided(&world, "Safe", StatisticalMethod::Okamoto);
-    let undecided = Decision::Undecided(UndecidedCause::UndecidedSuccessor);
-    assert_eq!(verdict.decision, undecided);
+    assert_eq!(verdict.decision, Decision::Rejected);
     let [test] = &verdict.tests[..] else {
         panic!("one test: {:?}", verdict.tests);
     };
-    assert_eq!(test.decision, undecided);
-    assert_eq!((test.samples, test.interval.clone()), (0, None));
-    assert!(verdict.witnesses.is_empty());
+    assert_eq!(test.decision, Decision::Rejected);
+    assert_eq!(test.interval, None);
+    let undefined = test.undefined.as_ref().expect("the undefined contract");
+    assert!(
+        matches!(undefined.evaluation.site.locus, UndefinedLocus::Contract(_)),
+        "{:?}",
+        undefined.evaluation.site.locus
+    );
 }
 
 /// Checks FR-189-AC-7 (TC-624 step 7): over `Wide`, whose `spin` draws from
@@ -3316,9 +3321,12 @@ fn a_timed_formula_reads_no_position_inside_a_delay_on_either_route() {
         expected.push((name, Some(ratio(i64::from(holds), 1)), holds));
     }
     assert_eq!(sampled, expected, "sampled route");
+    // Each window starts above 0 ms, so ADR-038 reads the claim over clock
+    // regions: until that process is built the exact route stops
+    // `incomplete` (QSL-3495). The hand values above stand.
     let exact_expected: Vec<_> = expected
         .iter()
-        .map(|(name, _, holds)| (*name, if *holds { "proved" } else { "refuted" }.to_owned()))
+        .map(|(name, _, _)| (*name, "incomplete".to_owned()))
         .collect();
     assert_eq!(exact, exact_expected, "exact route");
 }
@@ -3748,8 +3756,9 @@ fn a_past_operator_on_a_dense_idle_tail_stops_incomplete() {
 /// A window aggregate atom is not admitted in a probabilistic event, so it
 /// never reaches the idle-tail reading.
 ///
-/// The refusal today is an `InternalFault` where a user diagnostic is due
-/// (QSL-3524); that fix tightens these assertions to the diagnostic.
+/// A temporal aggregate over a model subject is rejected as an unsupported
+/// construct before lowering can report a missing typed aggregate (QSL-3524).
+#[trace("FR-194-AC-4", "FR-194-AC-7")]
 #[test]
 fn a_window_aggregate_event_does_not_check() {
     let checked = std::panic::catch_unwind(|| {
@@ -3762,8 +3771,8 @@ fn a_window_aggregate_event_does_not_check() {
     });
     let refusal = checked.err().expect("the unit does not check");
     let refusal = refusal.downcast_ref::<String>().expect("a message");
-    assert!(refusal.contains("SemanticCheckRefusal"), "{refusal}");
-    assert!(refusal.contains("aggregate-term-typed"), "{refusal}");
+    assert!(refusal.contains("AggregateModelSubject"), "{refusal}");
+    assert!(!refusal.contains("aggregate-term-typed"), "{refusal}");
 }
 
 /// FSpec FR-420 idle-tail semantics decide every completion here: after send

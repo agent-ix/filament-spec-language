@@ -149,7 +149,7 @@ fn coll_cart_shared_application_emits_with_nine_function_owners_and_source_rows(
     );
 }
 
-#[trace("QSL-3206", "FSpec-FR-322")]
+#[trace("QSL-3206", "FSpec-FR-322", "FSpec-FR-825-AC-11")]
 #[test]
 fn recursive_drop_first_measure_and_body_emit_with_owner_grouped_ordinals() {
     let identity = fsl_foundation::SourceIdentity::new("qsl-3206-test", "recursive-drop-first");
