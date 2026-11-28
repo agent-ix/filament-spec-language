@@ -86,7 +86,7 @@ fn admitted(root: &PlanRoot) -> Box<CheckedPackageV2> {
 
 /// The final plan retains each body location under its rekeyed entry function,
 /// while a declared helper keeps its original origin and checker coordinates.
-#[trace("FR-251-AC-9", "FSpec-FR-322-AC-309")]
+#[trace("FR-251-AC-9", "FSpec-FR-322-AC-309", "FSpec-FR-322-AC-541")]
 #[test]
 fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     use filament_contract_model::{CheckedBodyLocationOrigin, CheckedTermDataV2};
@@ -155,32 +155,78 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     let final_data = package
         .checked_term_data()
         .expect("body locations retained");
-    // The writer renames record fields (`origin_tick` as `origin`), so an
-    // application node holds its base position under its final id; rows name
-    // the final id.
-    let renamed = |id: &filament_contract_model::CheckedNodeId| {
+    // FR-487 (via FR-251): the plan-root package spells two generated record
+    // fields `origin` and `value` where the source spells `origin_tick` and
+    // `amount`, so an application's id names the final spelling.
+    let renamed = |id: &CheckedNodeId| {
         let mut id = id.clone();
         for segment in &mut id.path {
             if let filament_contract_model::CheckedNodePathSegment::Name(name) = segment {
-                if let Some((_, wire)) = fsl_analyze::monitor_entries::WIRE_FIELD_NAMES
-                    .iter()
-                    .find(|(source, _)| *source == name.as_ref())
-                {
-                    *name = (*wire).into();
+                match name.as_ref() {
+                    "origin_tick" => *name = "origin".into(),
+                    "amount" => *name = "value".into(),
+                    _ => {}
                 }
             }
         }
         id
     };
+    // FR-322 "Pairing rows with visits": a function's k-th visit at an
+    // application pairs with its row of rank k, so base and final rows pair by
+    // (function name, final application, rank) and the final row's occurrence
+    // is the rewalk's number for the base row's occurrence: it names the same
+    // source region (FR-322-AC-541).
+    let base_regions: std::collections::BTreeMap<_, _> = serde_json::from_value::<
+        Vec<filament_contract_model::CheckedSourceMapEntry>,
+    >(base_json["source_map"].clone())
+    .unwrap()
+    .into_iter()
+    .map(|entry| {
+        (
+            (entry.node_id.clone(), entry.role.clone(), entry.ordinal),
+            format!("{:?}", entry.regions),
+        )
+    })
+    .collect();
+    let final_regions: std::collections::BTreeMap<_, _> = package
+        .source_map()
+        .iter()
+        .map(|entry| {
+            (
+                (entry.node_id.clone(), entry.role.clone(), entry.ordinal),
+                format!("{:?}", entry.regions),
+            )
+        })
+        .collect();
+    let name_of = |row: &filament_contract_model::CheckedBodySemanticLocation| {
+        let CheckedBodyLocationOrigin::FunctionBody { name, .. } = &row.location.origin;
+        name.to_string()
+    };
+    assert_eq!(
+        final_data.body_locations.len(),
+        base_data.body_locations.len(),
+        "no row is dropped or added"
+    );
+    let mut final_groups = std::collections::BTreeMap::<_, Vec<usize>>::new();
+    for (index, row) in final_data.body_locations.iter().enumerate() {
+        final_groups
+            .entry((name_of(row), row.application.clone()))
+            .or_default()
+            .push(index);
+    }
+    let mut base_ranks = std::collections::BTreeMap::<_, usize>::new();
     let mut seen_entries = [false; 4];
     let mut seen_helper = false;
     let mut stale_origin = None;
-    for (row_index, (before, after)) in base_data
-        .body_locations
-        .iter()
-        .zip(&final_data.body_locations)
-        .enumerate()
-    {
+    for before in &base_data.body_locations {
+        let key = (name_of(before), renamed(&before.application));
+        let rank = base_ranks.entry(key.clone()).or_default();
+        let row_index = *final_groups
+            .get(&key)
+            .and_then(|rows| rows.get(*rank))
+            .expect("every base row has its final row of the same rank");
+        *rank += 1;
+        let after = &final_data.body_locations[row_index];
         let mut expected = before.location.clone();
         let CheckedBodyLocationOrigin::FunctionBody {
             function,
@@ -201,12 +247,18 @@ fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
             after.location, expected,
             "only entry origin identities change"
         );
-        assert_eq!(after.occurrence, before.occurrence);
-        assert_eq!(after.term_ordinal, before.term_ordinal);
         assert_eq!(
-            after.application,
-            renamed(&before.application),
-            "an application keeps its node but for the writer's field renames"
+            final_regions.get(&(
+                after.application.clone(),
+                after.occurrence.role.clone(),
+                after.occurrence.ordinal
+            )),
+            base_regions.get(&(
+                before.application.clone(),
+                before.occurrence.role.clone(),
+                before.occurrence.ordinal
+            )),
+            "the row follows its occurrence's region"
         );
     }
     assert_eq!(
