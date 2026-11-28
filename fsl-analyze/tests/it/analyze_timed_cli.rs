@@ -23,7 +23,9 @@ use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::analyze_cli_support::{
+    analyze, label, package_selection, request_over, Workspace,
+};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit, rpc_unit_with};
 use crate::zone_replay::{replay, reproduced};
 use crate::zone_search::{assert_edges_cover, claim, operations, proved, violated};
@@ -337,6 +339,52 @@ fn a_state_graph_claim_over_a_timed_subject_proves_on_zones() {
         "{item}"
     );
     assert_eq!(run.exit, 0);
+}
+
+/// FR-940-AC-39: selecting the same timed package by its handoff directory
+/// settles the state-graph claim the source route settles, with the same
+/// certified result.
+#[trace("FR-940-AC-39")]
+#[test]
+fn a_timed_state_graph_claim_is_decided_from_a_package_selection() {
+    let ws = Workspace::new("timed-package-state-graph");
+    let items = json!([{"claim": "Reaches"}]);
+    let source_path = request_over(
+        &ws,
+        &rpc_unit(4, "possible Reaches using v over (c: M::Call) { c.phase = 1 }\n"),
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": items.clone()}),
+    );
+    let source = analyze(&source_path);
+    let source_document: Value = source.document();
+    assert_eq!(label(&source.item(0)), "proved", "{source_document}");
+
+    let source_request: Value = serde_json::from_slice(
+        &std::fs::read(&source_path).expect("source request"),
+    )
+    .expect("source request JSON");
+    let (members, _) = package_selection(&ws, &source_request["request"]);
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let package = analyze(&package_path);
+    let package_document: Value = package.document();
+    assert_eq!(package.exit, source.exit, "{package_document}");
+    assert_eq!(label(&package.item(0)), "proved", "{package_document}");
+    assert_eq!(
+        package.item(0)["record"],
+        source.item(0)["record"],
+        "{package_document}"
+    );
+    assert_eq!(
+        package.item(0)["certificate"],
+        source.item(0)["certificate"],
+        "{package_document}"
+    );
 }
 
 /// An item carrying a member no route reads (`witness_samples` on a clause)
