@@ -502,7 +502,9 @@ mod tests {
     use ix_trace_rs::trace;
 
     fn parse(text: &str) -> ParsedSource {
+        let context = crate::ParserContext::new();
         crate::parse(
+            &context,
             SourceIdentity {
                 authority: "test".into(),
                 identity: "test:format".into(),
