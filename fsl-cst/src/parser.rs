@@ -2230,6 +2230,7 @@ fn interval_bounds(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic
 /// FR-611: the message for `previous`, `next` or `weak until` written where
 /// a temporal formula admits an operator, naming the derived form that
 /// expresses it (FSpec FR-092 "Derived forms"); `None` for any other failure.
+#[implements("FR-611-AC-1", "NFR-141-AC-8")]
 #[ix_trace_rs::string_edge]
 fn derived_form(tokens: &[Significant], failure: &Failure<'_>) -> Option<&'static str> {
     const FORMULA_STARTS: [&str; 16] = [
