@@ -4511,7 +4511,7 @@ impl<O> Checker<'_, '_, O> {
     /// each repetition of which lets time advance: it ticks, under a tick
     /// source; under a dense source, some clock is guarded above its last
     /// reset, or reset after a positive delay that fits its source invariant.
-    #[implements("FR-245-AC-5")]
+    #[implements("FR-245-AC-2")]
     fn advancing_cycle(&self, at: usize, cycle: &[usize]) -> Step<bool, O> {
         let mut node = at;
         for &index in cycle {

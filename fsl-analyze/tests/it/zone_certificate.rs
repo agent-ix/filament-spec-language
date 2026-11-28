@@ -1113,7 +1113,7 @@ fn the_certificate_members_are_the_reconciled_schema_set() {
 /// reset, the never-reset `y` guard makes every repeat of `ping` zero-time.
 /// The `go`/`tock` cycle is genuinely divergent; naming `ping` as the
 /// admission witness is rejected `witness-fails`.
-#[trace("TC-371")]
+#[trace("TC-371", "FR-245-AC-2")]
 #[test]
 fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
     let world = quiet(

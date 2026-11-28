@@ -1975,7 +1975,6 @@ fn a_clock_owner_with_no_universe_requires_a_bound() {
     );
 }
 
-#[trace("FR-245-AC-2")]
 #[test]
 fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
     let items = stalling_items("timed-zone-resetting-deadline", true);
@@ -1983,6 +1982,7 @@ fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
     assert_eq!(label(&items[1]), "proved", "{}", items[1]);
 }
 
+#[trace("FR-240-AC-4")]
 #[test]
 fn digital_invariant_stall_does_not_create_a_divergent_tail() {
     use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
