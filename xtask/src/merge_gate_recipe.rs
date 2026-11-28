@@ -4383,7 +4383,7 @@ mod tests {
     }
 
     #[test]
-    fn default_run_prints_recipe_without_invoking_cargo() {
+    fn default_run_prints_recipe_with_only_git_and_metadata_calls() {
         let runner = FakeRunner::new();
         let result = run_with_runner(
             workspace_root(),
@@ -4866,6 +4866,51 @@ mod tests {
             "{output}"
         );
         for line in output.lines().filter(|line| line.contains("-p fsl-source")) {
+            assert!(line.contains("--features quire-extraction"), "{line}");
+        }
+    }
+
+    #[test]
+    fn required_features_apply_to_every_line_of_the_package() {
+        let selector = |target: TestTarget, filter: &str| TestSelector {
+            package: "fsl-source".to_owned(),
+            target,
+            filter: Some(filter.to_owned()),
+            exact: false,
+            skip: Vec::new(),
+            timed: false,
+            threads: None,
+            no_match_is_note: false,
+            features: Vec::new(),
+        };
+        let recipe = Recipe {
+            selectors: BTreeSet::from([
+                selector(TestTarget::Library, "quire::"),
+                selector(TestTarget::Integration("it".to_owned()), "quire_source"),
+            ]),
+            notes: BTreeSet::new(),
+        };
+        let fake = FakeRunner::new();
+        let runner = MetadataRunner { inner: &fake };
+        let output = run_with_verified_main(
+            workspace_root(),
+            &[OsString::from("fixture.rs")],
+            &runner,
+            recipe,
+            MainCheck {
+                head: "h".to_owned(),
+                main: "m".to_owned(),
+                merge_base: "b".to_owned(),
+                overlaps: BTreeSet::new(),
+            },
+        )
+        .expect("recipe");
+        let lines = output
+            .lines()
+            .filter(|line| line.starts_with("cargo test") && line.contains("-p fsl-source"))
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 4, "{output}");
+        for line in lines {
             assert!(line.contains("--features quire-extraction"), "{line}");
         }
     }
