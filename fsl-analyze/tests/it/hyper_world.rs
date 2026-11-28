@@ -610,7 +610,7 @@ impl World {
         function: &str,
     ) -> Self {
         let snapshots: Vec<_> = starts.iter().map(|start| vec![(KEY, *start)]).collect();
-        Self::assemble_with_mode(
+        let mut world = Self::assemble_with_mode(
             vault,
             false,
             snapshots.clone(),
@@ -620,7 +620,9 @@ impl World {
             declaration,
             function,
             CheckMode::Kernel,
-        )
+        );
+        world.other_universe = Some(vec![KEY.to_owned()]);
+        world
     }
 
     /// [`Self::with_second_model`] from one initial state that holds the

@@ -636,7 +636,8 @@ fn an_existential_members_undefined_guard_refutes_naming_the_member() {
 }
 
 /// FR-183 reads, at one joint position, the body's atoms before the contract
-/// conjunctions (ADR-018 UE-4). The body's atom reads both components, so it
+/// conjunctions (ADR-018 UE-4). The body is an `or` of one atom per component,
+/// and a component past its last position reads false (FR-043), so the atom
 /// has no value at position 1 on every tuple that reaches `l = 1`, the state
 /// whose guard has no value too: the atom is the locus, at position 1,
 /// whichever component took the step.
@@ -649,7 +650,7 @@ fn a_closed_atom_at_a_position_is_read_before_that_positions_contract() {
         &universal(
             "ep",
             "",
-            "eventually [0, 3] holds(quotient(1 - v.l @ a) < 0 and quotient(1 - v.l @ b) < 0)",
+            "eventually [0, 3] holds(quotient(1 - v.l @ a) < 0 or quotient(1 - v.l @ b) < 0)",
         ),
     );
     assert!(
