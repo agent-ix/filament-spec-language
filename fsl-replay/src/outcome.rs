@@ -2363,6 +2363,7 @@ pub struct DocumentObjectLocus {
     pub key: String,
 }
 
+#[implements("FR-663-AC-3", "FR-663-AC-5")]
 pub(crate) fn snapshot_admission_locus(
     record: &fsl_semantics::model::observation::AdmissionRecord,
     document: &fsl_semantics::model::observation::DocumentRef,
@@ -2410,8 +2411,29 @@ pub(crate) fn snapshot_admission_locus(
         path: path.map(str::to_owned),
         pointer,
         object,
-        member: record.fields.get("member").cloned(),
+        member: failing_member(record).cloned(),
     })
+}
+
+/// The document member that failed (FR-663). A refusal whose `path` is a
+/// document pointer names it in `field`: the field, parameter or `result`
+/// whose value was refused. A `member` the refusal names is nearer the
+/// defect, a member inside that value, and is the one reported, except for
+/// `ill_typed`, whose `member` names the model declaration that has no
+/// checked type (FR-056-AC-43).
+#[implements("FR-663-AC-5")]
+fn failing_member(record: &fsl_semantics::model::observation::AdmissionRecord) -> Option<&String> {
+    let member = record.fields.get("member");
+    let field = record
+        .fields
+        .get("path")
+        .filter(|path| path.starts_with('/'))
+        .and_then(|_| record.fields.get("field"));
+    if record.catalog.code() == Code::IllTyped.as_str() {
+        field.or(member)
+    } else {
+        member.or(field)
+    }
 }
 
 fn pointer_member(pointer: &str) -> Option<String> {
@@ -3809,6 +3831,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::UnusedObjectEnvironment
         | ReplayRefusal::UnusedProfileSelections { .. }
         | ReplayRefusal::ForeignReference { .. }
+        | ReplayRefusal::UnitBound { .. }
         | ReplayRefusal::ObjectEnvironment(_)
         | ReplayRefusal::UnknownParameter(_)
         | ReplayRefusal::DuplicateArgument(_)

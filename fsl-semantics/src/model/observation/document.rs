@@ -3011,7 +3011,10 @@ pub(super) fn untyped_member_record(
 
 /// FR-056-AC-43 over an invocation's parameters: a parameter of `operation`
 /// declared with no checked type refuses `ill_typed`/`operator-ineligible`
-/// when supplied (its value unread) and `missing-member` when omitted.
+/// when supplied (its value unread) and `missing-member` when a `required`
+/// one is omitted. An omitted `optional` one is absent, as FR-106 check 10
+/// admits it, and nothing is bound for it.
+#[implements("FR-056-AC-43")]
 pub(super) fn check_untyped_parameters(
     views: &[ModelView],
     context_name: &str,
@@ -3041,6 +3044,9 @@ pub(super) fn check_untyped_parameters(
                 continue;
             }
             if raw_field(parameters, name).is_none() {
+                if parameter.presence == filament_exact::Presence::Optional {
+                    continue;
+                }
                 return Err(refuse(
                     admission_record(Code::InvalidRuntimeInput, "missing-member")
                         .with("member", name.to_owned())
@@ -3051,7 +3057,11 @@ pub(super) fn check_untyped_parameters(
             if let Some(record) =
                 untyped_member_record(package, &owner, operation, UntypedSlot::Parameter(name))
             {
-                return Err(refuse(record.with("field", name.to_owned())));
+                return Err(refuse(
+                    record
+                        .with("field", name.to_owned())
+                        .with("path", parameter_path(name)),
+                ));
             }
         }
     }
@@ -3061,6 +3071,7 @@ pub(super) fn check_untyped_parameters(
 /// FR-056-AC-43 over an invocation's result: a non-null `result` of an
 /// operation whose result has no checked type refuses `ill_typed`/
 /// `operator-ineligible`, its value unread.
+#[implements("FR-056-AC-43")]
 pub(super) fn check_untyped_result(
     views: &[ModelView],
     context_name: &str,
@@ -3079,7 +3090,7 @@ pub(super) fn check_untyped_result(
         operation,
         UntypedSlot::Result,
     ) {
-        Some(record) => Err(refuse(record.with("field", "result"))),
+        Some(record) => Err(refuse_result(record, "")),
         None => Ok(()),
     }
 }
@@ -4064,6 +4075,7 @@ fn population_qualified_identity_refusal(
     )
 }
 
+#[implements("FR-663-AC-5")]
 pub(super) fn admit_population_values<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -4194,6 +4206,7 @@ pub(super) fn admit_population_values<'t>(
                 return Err(refuse(
                     admission_record(Code::InvalidRuntimeInput, "conflicting-identity")
                         .with("object", object.key.clone())
+                        .with("population", entry.population.clone())
                         .with("field", "key")
                         .with(
                             "path",
@@ -4281,6 +4294,7 @@ pub(super) fn admit_population_values<'t>(
                         return Err(refuse(
                             record
                                 .with("object", object.key.clone())
+                                .with("population", entry.population.clone())
                                 .with("field", name.clone())
                                 .with(
                                     "path",
@@ -4332,6 +4346,7 @@ pub(super) fn admit_population_values<'t>(
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                             .with("object", object.key.clone())
+                            .with("population", entry.population.clone())
                             .with("field", name.to_owned())
                             .with(
                                 "path",
@@ -4385,6 +4400,7 @@ pub(super) fn admit_population_values<'t>(
                         return Err(refuse(
                             record
                                 .with("object", object.key.clone())
+                                .with("population", entry.population.clone())
                                 .with("field", name.to_owned())
                                 .with(
                                     "path",
@@ -4505,7 +4521,9 @@ fn is_state_machine(view: &ModelView, key: &DeclarationKey) -> bool {
 /// document order. Every entry is validated, whichever machine it is of;
 /// those whose machine is `read_machine` or specializes it are the read
 /// contexts the clause evaluates over, and are returned.
+#[implements("FR-106-AC-87")]
 #[implements("FR-106-AC-44")]
+#[implements("FR-663-AC-6")]
 fn admit_contexts<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -4540,6 +4558,12 @@ fn admit_contexts<'t>(
             ));
         }
         RawContexts::Entries(entries) => entries,
+    };
+    // A unit bound on a context field is checked as on an object field; a post
+    // value under `PostStateRange::Witness` is the successor's.
+    let bounds = match range {
+        PostStateRange::Refuse => crate::model::state::member_bounds(views),
+        PostStateRange::Witness => Vec::new(),
     };
     let mut machines: Vec<&str> = Vec::new();
     let mut read = Vec::new();
@@ -4593,8 +4617,9 @@ fn admit_contexts<'t>(
                 return Err(named(
                     admission_record(Code::InvalidRuntimeInput, "missing-member")
                         .with("machine", machine.to_owned())
+                        .with("member", name.to_owned())
                         .with("field", name.to_owned())
-                        .with("path", context_field_path(entry, None)),
+                        .with("path", context_field_path(entry, name)),
                     entry,
                 ));
             }
@@ -4607,8 +4632,9 @@ fn admit_contexts<'t>(
                 return Err(named(
                     admission_record(Code::InvalidRuntimeInput, "unknown-member")
                         .with("machine", machine.to_owned())
+                        .with("member", name.clone())
                         .with("field", name.clone())
-                        .with("path", context_field_path(entry, Some(name))),
+                        .with("path", context_field_path(entry, name)),
                     entry,
                 ));
             }
@@ -4628,7 +4654,7 @@ fn admit_contexts<'t>(
                     admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                         .with("machine", machine.to_owned())
                         .with("field", name.to_owned())
-                        .with("path", context_field_path(entry, Some(name))),
+                        .with("path", context_field_path(entry, name)),
                     entry,
                 ));
             }
@@ -4641,7 +4667,7 @@ fn admit_contexts<'t>(
                 .map_err(|record| {
                     let path = format!(
                         "{}{}",
-                        context_field_path(entry, Some(&*name)),
+                        context_field_path(entry, name),
                         pointer_of(&refusal_steps(raw.form(), &record))
                     );
                     named(
@@ -4652,6 +4678,18 @@ fn admit_contexts<'t>(
                         entry,
                     )
                 })?;
+            if let (false, FieldValue::Present(value)) = (bounds.is_empty(), &value) {
+                let key = super::initial::field_key(views, attribute)?;
+                if let Some(record) = unit_bound_refusal(&bounds, &key, value, types) {
+                    return Err(named(
+                        record
+                            .with("machine", machine.to_owned())
+                            .with("field", name.to_owned())
+                            .with("path", context_field_path(entry, name)),
+                        entry,
+                    ));
+                }
+            }
             let origins = references.take_origins();
             if !origins.is_empty() {
                 field_origins.push((attribute.identity(), origins));
@@ -4697,13 +4735,10 @@ fn admit_contexts<'t>(
     Ok(read)
 }
 
-/// The RFC 6901 pointer to a context entry's `fields` object, or to its field
-/// `field` (FR-663): the document spelling of the refusal's locus.
-fn context_field_path(entry: usize, field: Option<&str>) -> String {
-    match field {
-        Some(field) => format!("/contexts/{entry}/fields/{}", json_pointer_segment(field)),
-        None => format!("/contexts/{entry}/fields"),
-    }
+/// The RFC 6901 pointer to a context entry's field `field`, present or
+/// absent (FR-663): the document spelling of the refusal's locus.
+fn context_field_path(entry: usize, field: &str) -> String {
+    format!("/contexts/{entry}/fields/{}", json_pointer_segment(field))
 }
 
 /// The RFC 6901 pointer to an invocation's parameter `name`, present or
@@ -4713,8 +4748,21 @@ fn context_field_path(entry: usize, field: Option<&str>) -> String {
 #[implements("FR-106-AC-15")]
 #[implements("FR-106-AC-21")]
 #[implements("FR-106-AC-71")]
-fn parameter_path(name: &str) -> String {
+pub(super) fn parameter_path(name: &str) -> String {
     format!("/parameters/{}", json_pointer_segment(name))
+}
+
+/// The RFC 6901 pointer to an invocation's `result`.
+pub(super) const RESULT_PATH: &str = "/result";
+
+/// `record` as a refusal located at the invocation's `result`, or at
+/// `below` it, a pointer within the result's value (FR-663).
+fn refuse_result(record: AdmissionRecord, below: &str) -> AdmissionFailure {
+    refuse(
+        record
+            .with("field", "result")
+            .with("path", format!("{RESULT_PATH}{below}")),
+    )
 }
 
 /// The read context of `snapshot` for a clause of the state machine `machine`
@@ -5533,7 +5581,13 @@ pub(super) fn admit_parameters(
         })?;
         references
             .check_typed_closure(raw, value_type)
-            .map_err(refuse)?;
+            .map_err(|record| {
+                refuse(
+                    record
+                        .with("field", name.clone())
+                        .with("path", parameter_path(name)),
+                )
+            })?;
         let origins = references
             .take_origins()
             .with_locus(ReferenceOriginLocus::Parameter(name.clone()));
@@ -5568,28 +5622,30 @@ pub(super) fn admit_result(
     operation: &OperationDeclaration,
     result: &ResultValue,
 ) -> Result<Option<Value>, AdmissionFailure> {
+    let member_refusal = |cause: &'static str| {
+        refuse_result(
+            admission_record(Code::InvalidRuntimeInput, cause).with("member", "result"),
+            "",
+        )
+    };
     match (operation.result(), result) {
         (None, ResultValue::Null) => Ok(None),
-        (None, ResultValue::Value(_)) => Err(refuse(admission_record(
-            Code::InvalidRuntimeInput,
-            "unknown-member",
-        ))),
-        (Some(_), ResultValue::Null) => Err(refuse(admission_record(
-            Code::InvalidRuntimeInput,
-            "missing-member",
-        ))),
+        (None, ResultValue::Value(_)) => Err(member_refusal("unknown-member")),
+        (Some(_), ResultValue::Null) => Err(member_refusal("missing-member")),
         (Some(value_type), ResultValue::Value(raw)) => {
             if !field_kind_matches(raw, value_type) {
-                return Err(refuse(admission_record(
-                    Code::InvalidRuntimeInput,
-                    "wrong-value-kind",
-                )));
+                return Err(refuse_result(
+                    admission_record(Code::InvalidRuntimeInput, "wrong-value-kind"),
+                    "",
+                ));
             }
-            let value = admit_form(references, raw.form(), value_type, None)
-                .map_err(|record| refuse(record.with("field", "result")))?;
+            let value = admit_form(references, raw.form(), value_type, None).map_err(|record| {
+                let below = pointer_of(&refusal_steps(raw.form(), &record));
+                refuse_result(record, &below)
+            })?;
             references
                 .check_typed_closure(raw, value_type)
-                .map_err(refuse)?;
+                .map_err(|record| refuse_result(record, ""))?;
             references.result_origins = references
                 .take_origins()
                 .with_locus(ReferenceOriginLocus::Result);

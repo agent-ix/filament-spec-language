@@ -36,6 +36,7 @@ use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, InternalFault}
 use fsl_forms::StateClauseKind;
 use fsl_foundation::diagnostic::{BudgetDenial, Code, LimitExceeded, ALLOCATION_FAILED};
 use fsl_foundation::Setting;
+use ix_trace_rs::implements;
 
 use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::{DomainPackage, DomainPackageRef, OperationEffect};
@@ -2190,6 +2191,21 @@ pub(crate) fn model_views<'a>(
     model_views_retaining(model_selections, packages, limits, SnapshotProvenance::Omit)
 }
 
+/// The unit bounds on the slots of the composites the selected models
+/// declare (FSpec FR-154 "Unit bounds"), for a caller that holds the domain
+/// packages and has admitted no observation over them.
+#[implements("FR-650-AC-25")]
+pub fn composite_bounds<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    packages: &PackageInput,
+    limits: ModelNormalizationLimits,
+) -> Result<crate::model::state::CompositeBounds, AdmissionFailure> {
+    let views = model_views(model_selections, packages, limits)?;
+    Ok(crate::model::state::CompositeBounds::of(
+        views.iter().map(|view| &view.view),
+    ))
+}
+
 #[derive(Clone, Copy)]
 enum SnapshotProvenance {
     Omit,
@@ -3701,6 +3717,7 @@ fn wrong_self_kind() -> AdmissionFailure {
 /// operation `source` names, on `context_view`'s type `context_name`.
 /// `self` is required in the post snapshot only when `post_self` (a
 /// postcondition, SR-750 FND-006).
+#[implements("FR-106-AC-85", "FR-106-AC-86")]
 #[allow(clippy::too_many_arguments)]
 fn admit_invocation_documents(
     views: &[ModelView],
@@ -3779,7 +3796,7 @@ fn admit_invocation_documents(
 
     // Check 5: operation, then the invocation each snapshot names.
     let state_machine = is_state_machine_context(context_view, context_name);
-    let operation = check_operation(
+    let (invoked_on, operation) = check_operation(
         &invocation.call,
         &Receiver {
             views,
@@ -3956,7 +3973,7 @@ fn admit_invocation_documents(
     check_argument_bounds(
         views,
         types,
-        clause_context,
+        invoked_on,
         &operation,
         &parameters,
         result.as_ref(),
@@ -3985,11 +4002,14 @@ fn admit_invocation_documents(
 /// FSpec FR-154 "Unit bounds": an argument or result an invocation supplies
 /// that violates a bound on its parameter or on the operation's result
 /// refuses `invalid_runtime_input`/`invalid-value`, naming the parameter
-/// (or the result), the constraint, its keyword and bound.
+/// (or the result), the constraint, its keyword and bound. `receiver` is the
+/// type the operation is invoked on: it and its supertypes declare the
+/// parameters and result whose bounds apply.
+#[implements("FR-106-AC-85", "FR-106-AC-86")]
 fn check_argument_bounds(
     views: &[ModelView],
     types: &TypeEnvironment,
-    context: EffectiveId,
+    receiver: EffectiveId,
     operation: &OperationDeclaration,
     parameters: &[(String, Value)],
     result: Option<&Value>,
@@ -4011,7 +4031,7 @@ fn check_argument_bounds(
                         .view
                         .type_identities()
                         .get(&member.owner)
-                        .is_some_and(|owner| types.conforms(context.clone(), owner.clone()));
+                        .is_some_and(|owner| types.conforms(receiver.clone(), owner.clone()));
             if !declared {
                 continue;
             }
@@ -4027,13 +4047,23 @@ fn check_argument_bounds(
                 if let Some(record) =
                     document::unit_bound_refusal(&bounds, &parameter.key, value, types)
                 {
-                    return Err(refuse(record.with("parameter", name.clone())));
+                    return Err(refuse(
+                        record
+                            .with("parameter", name.clone())
+                            .with("field", name.clone())
+                            .with("path", document::parameter_path(name)),
+                    ));
                 }
             }
             if let Some(record) = result
                 .and_then(|value| document::unit_bound_refusal(&bounds, &member.key, value, types))
             {
-                return Err(refuse(record.with("result", operation.name().to_owned())));
+                return Err(refuse(
+                    record
+                        .with("result", operation.name().to_owned())
+                        .with("field", "result")
+                        .with("path", document::RESULT_PATH),
+                ));
             }
         }
     }
@@ -4066,12 +4096,14 @@ struct PreCallContext<'a> {
 /// machine's clause the `context` must be the clause's machine or a
 /// specialization of it, and the `operation` the clause's, or for an
 /// invariant any effective operation of the machine the `context` names.
-/// Returns the operation the invocation names.
+/// Returns the operation the invocation names, with the type it is invoked on:
+/// the clause's context, or the machine the `context` of a state machine's
+/// invocation names.
 fn check_operation(
     call: &document::InvocationCall,
     receiver: &Receiver<'_>,
     source: OperationSource<'_>,
-) -> Result<OperationDeclaration, AdmissionFailure> {
+) -> Result<(EffectiveId, OperationDeclaration), AdmissionFailure> {
     let wrong_invocation = || refuse(admission_record(Code::WrongSnapshot, "wrong-invocation"));
     if !receiver.state_machine {
         if call.context != receiver.context_name {
@@ -4081,12 +4113,14 @@ fn check_operation(
             OperationSource::Clause(operation)
                 if call.operation == operation.declaration.name() =>
             {
-                Ok(operation.declaration.clone())
+                Ok((receiver.context.clone(), operation.declaration.clone()))
             }
             OperationSource::Clause(_) => Err(wrong_invocation()),
             OperationSource::Any(table) => {
                 match table.resolve(receiver.types, receiver.context.clone(), &call.operation) {
-                    OperationLookup::Declared { operation, .. } => Ok(operation.clone()),
+                    OperationLookup::Declared { operation, .. } => {
+                        Ok((receiver.context.clone(), operation.clone()))
+                    }
                     OperationLookup::Missing | OperationLookup::Ambiguous(_) => {
                         Err(wrong_invocation())
                     }
@@ -4104,12 +4138,12 @@ fn check_operation(
         .ok_or_else(wrong_invocation)?;
     match source {
         OperationSource::Clause(operation) if call.operation == operation.declaration.name() => {
-            Ok(operation.declaration.clone())
+            Ok((invoked, operation.declaration.clone()))
         }
         OperationSource::Clause(_) => Err(wrong_invocation()),
         OperationSource::Any(table) => {
-            match table.resolve(receiver.types, invoked, &call.operation) {
-                OperationLookup::Declared { operation, .. } => Ok(operation.clone()),
+            match table.resolve(receiver.types, invoked.clone(), &call.operation) {
+                OperationLookup::Declared { operation, .. } => Ok((invoked, operation.clone())),
                 OperationLookup::Missing | OperationLookup::Ambiguous(_) => Err(wrong_invocation()),
             }
         }
@@ -4185,6 +4219,7 @@ fn admit_pre_call_invocation(
 /// invocation its own model (check 4) and operation (check 5). Check 11
 /// compares a pre and a post snapshot; a pre-call observation has no post
 /// side, so it does not run.
+#[implements("FR-106-AC-85")]
 fn admit_pre_call(
     context: &PreCallContext<'_>,
     input: PreCallInput<'_>,
@@ -4211,7 +4246,7 @@ fn admit_pre_call(
     check_model(views, context.context_view, &snapshot.model)?;
 
     // Check 5: operation.
-    let operation = match (call, context.operation) {
+    let (invoked_on, operation) = match (call, context.operation) {
         (Some(call), source) => check_operation(
             call,
             &Receiver {
@@ -4223,7 +4258,10 @@ fn admit_pre_call(
             },
             source,
         )?,
-        (None, OperationSource::Clause(operation)) => operation.declaration.clone(),
+        (None, OperationSource::Clause(operation)) => (
+            context.clause_context.clone(),
+            operation.declaration.clone(),
+        ),
         (None, OperationSource::Any(_)) => return Err(fault("context-selection-names-no-call")),
     };
     if let Some(invocation) = input.invocation {
@@ -4314,6 +4352,14 @@ fn admit_pre_call(
             input.parameters,
         )?;
         let parameters = document::admit_parameters(&mut references, &operation, input.parameters)?;
+        check_argument_bounds(
+            context.views,
+            context.types,
+            invoked_on,
+            &operation,
+            &parameters,
+            None,
+        )?;
         (
             parameters,
             AdmittedValueOrigins {
