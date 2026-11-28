@@ -3127,6 +3127,7 @@ fn collect_test_names(items: &[syn::Item], modules: &mut Vec<String>, names: &mu
 }
 
 #[implements("NFR-142-AC-9")]
+#[ix_trace_rs::string_edge]
 fn build_test_binaries(
     workspace_root: &Path,
     selectors: &[TestSelector],

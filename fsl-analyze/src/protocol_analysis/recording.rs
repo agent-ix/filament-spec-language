@@ -4242,6 +4242,7 @@ fn subtree_nodes(protocol: &CheckedProtocol, node: ProtocolNodeId, out: &mut BTr
 
 /// Whether this repeat's own main-sequence steps exceed its maximum, grouped
 /// by each enclosing repeat iteration that the recording determines.
+#[ix_trace_rs::string_edge]
 #[implements("FR-895-AC-45")]
 fn repeat_control_verdict(
     protocol: &CheckedProtocol,
