@@ -9,7 +9,6 @@
 //! entry point.
 
 use filament_exact::{LimitKind as Counter, ScalarLimits};
-use std::collections::BTreeSet;
 use fsl_eval::execution::PrepareLimits;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::Limits as ExploreLimits;
@@ -20,6 +19,7 @@ use fsl_foundation::{
 use fsl_semantics::library::bundle::PackageLimits as LibraryLimits;
 use fsl_semantics::model::observation::ObservationLimits;
 use fsl_semantics::model::population::PopulationAdmissionLimits;
+use std::collections::BTreeSet;
 
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::CertificateCheckLimits;
@@ -863,8 +863,9 @@ mod tests {
                 ..SmtEncodingLimits::default()
             }
         );
-        let replay_entries: StageLimits =
-            [(Setting::SmtEncodingMaxConstants, 8)].into_iter().collect();
+        let replay_entries: StageLimits = [(Setting::SmtEncodingMaxConstants, 8)]
+            .into_iter()
+            .collect();
         let replay_limits = CallerLimits::for_request(
             &replay_entries,
             AccountingLimits::default().0,

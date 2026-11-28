@@ -10,7 +10,7 @@
 //! two spellings, and the base's checker compares every member with its own
 //! derivation.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::*;
 
@@ -223,10 +223,7 @@ pub(super) fn unwrap(
                         // The fair-MDP checker validates the rank against its
                         // independently reconstructed zero component for
                         // either interval endpoint.
-                    } else if root.contains_key("ranking")
-                        && !cyclic_mdp_reward
-                        && !cyclic_reward
-                    {
+                    } else if root.contains_key("ranking") && !cyclic_mdp_reward && !cyclic_reward {
                         return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     } else if !root.contains_key("ranking") {
                         root.insert("ranking".into(), json!([]));
@@ -312,10 +309,7 @@ pub(super) fn wrap(
                 root.remove("ranking");
                 root.remove("policy");
             }
-        } else if side == SubsystemBoundKind::Upper
-            && !cyclic_mdp_reward
-            && !cyclic_reward
-        {
+        } else if side == SubsystemBoundKind::Upper && !cyclic_mdp_reward && !cyclic_reward {
             root.remove("ranking");
         }
     }

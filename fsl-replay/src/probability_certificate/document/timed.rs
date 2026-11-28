@@ -13,7 +13,7 @@ use fsl_eval::temporal::{
     AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TimedTrace,
 };
 use num_traits::Zero;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 mod elapsed;
 
@@ -1085,10 +1085,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [
-            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-            | fsl_eval::simulation::model::PredicateReading::Refused(_),
-        ] => Err(ProbabilityDocumentError::Unsupported),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -5082,7 +5082,11 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted { one() } else { zero() }
+        if counted {
+            one()
+        } else {
+            zero()
+        }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {
@@ -5647,10 +5651,7 @@ mod witness_pricing_tests {
             ("F", Some(true), vec![]),
         ]);
 
-        assert_eq!(
-            price(&graph, part(1, 4), &[path(&["X", "I", "F"])]),
-            None
-        );
+        assert_eq!(price(&graph, part(1, 4), &[path(&["X", "I", "F"])]), None);
     }
 
     /// A path whose first step is no outcome of the chosen choice is dropped
