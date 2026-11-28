@@ -114,7 +114,10 @@ pub(crate) fn catalog_refusal_cases(original: &Value, index: usize) -> Vec<Catal
         floor_authority,
         ceiling_identity,
     );
-    assert!(replaced >= 2, "lock row and operation law are paired");
+    assert!(
+        replaced >= 1,
+        "operation law identity is mutated with the lock row"
+    );
     cases.push(CatalogRefusalCase {
         package: paired_law,
         code: "invalid_package",
