@@ -6,12 +6,11 @@ use fsl_command::command::{self, CommandLimits, RunLimits};
 use fsl_foundation::{Setting, SettingLimits, SourceIdentity};
 use fsl_replay::spine::{self, ParseRequest, SpineLimits};
 use fsl_replay::{
-    DependencyInput, Identifier, QualifiedName, ReplayLimits, ReplayPackage, ReplayRequest,
+    replay, DependencyInput, Identifier, QualifiedName, ReplayLimits, ReplayPackage, ReplayRequest,
     ReplayRequestRefusal, ReplayRequestWire, ReplaySource, RequestTargetWire, StateEnvironment,
-    replay,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::time::Instant;
 
 const WIDE: u64 = 1 << 42;
@@ -24,6 +23,7 @@ struct CompilePhaseTimes {
     model_select_ms: u128,
     check_ms: u128,
     package_emit_ms: u128,
+    emitter: fsl_package::test_support::S4PhaseTimes,
 }
 
 fn unlimited_scalar_limits() -> filament_exact::ScalarLimits {
@@ -98,11 +98,13 @@ fn package_bytes(
         .expect("qualified function name");
     let site = fsl_replay::locate_in_checked(&checked, "qsl-3570", &name)
         .expect("the function site is located");
+    fsl_package::test_support::reset_s4_phase_times();
     let package_started = Instant::now();
     let emitted = spine::package(&checked, limits.package, &Cancel::new())
         .expect("the checked package emits")
         .into_value();
     let package_emit_ms = package_started.elapsed().as_millis();
+    let emitter = fsl_package::test_support::s4_phase_times();
     (
         emitted.package().bytes().to_vec(),
         site,
@@ -112,6 +114,7 @@ fn package_bytes(
             model_select_ms,
             check_ms,
             package_emit_ms,
+            emitter,
         },
     )
 }
@@ -415,13 +418,21 @@ fn profile_native_size_replay(count: usize) {
     assert_eq!(result["category"], "success");
     assert_eq!(result["value"], true);
     eprintln!(
-        "QSL3570_NATIVE_REPLAY_PHASE_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} request_json_bytes={request_json_bytes} s1_input_bytes={s1_input_limit} replay_input_bytes={input_bytes} compile_total_ms={compile_ms} parse_forms_ms={} model_select_ms={} check_ms={} package_emit_ms={} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
+        "QSL3570_NATIVE_REPLAY_PHASE_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} request_json_bytes={request_json_bytes} s1_input_bytes={s1_input_limit} replay_input_bytes={input_bytes} compile_total_ms={compile_ms} parse_forms_ms={} model_select_ms={} check_ms={} package_emit_ms={} s4_pre_lock_graph_temporal_us={} s4_lock_us={} s4_inspection_us={} s4_index_us={} s4_producer_temporal_claim_term_us={} s4_source_requirement_operand_us={} s4_final_encode_us={} s4_retained_post_encode_us={} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
         source.len(),
         package.len(),
         phases.parse_forms_ms,
         phases.model_select_ms,
         phases.check_ms,
         phases.package_emit_ms,
+        phases.emitter.pre_lock_graph_temporal_us,
+        phases.emitter.lock_us,
+        phases.emitter.inspection_us,
+        phases.emitter.index_us,
+        phases.emitter.producer_temporal_claim_term_us,
+        phases.emitter.source_requirement_operand_us,
+        phases.emitter.final_encode_us,
+        phases.emitter.retained_post_encode_us,
     );
 }
 
@@ -572,5 +583,21 @@ fn profile_native_replay_at_twenty_thousand_values() {
 #[trace("TC-3242", "FR-862-AC-8")]
 #[test]
 fn profile_native_replay_at_forty_thousand_values() {
+    profile_native_size_replay(40_000);
+}
+
+/// FR-862-AC-8: profile S4 emission subphases while preserving the 20,000-value
+/// native command replay result and exact/one-under replay-input checks.
+#[trace("TC-3242", "FR-862-AC-8")]
+#[test]
+fn profile_s4_emission_at_twenty_thousand_values() {
+    profile_native_size_replay(20_000);
+}
+
+/// FR-862-AC-8: profile S4 emission subphases while preserving the 40,000-value
+/// native command replay result and exact/one-under replay-input checks.
+#[trace("TC-3242", "FR-862-AC-8")]
+#[test]
+fn profile_s4_emission_at_forty_thousand_values() {
     profile_native_size_replay(40_000);
 }

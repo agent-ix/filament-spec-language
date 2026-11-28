@@ -273,6 +273,47 @@ pub use emit::{checked_node_id_of, emit_checked_with_fault};
 #[cfg(all(feature = "std", feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support {
+    /// Timings for major S4 emission subphases, in microseconds.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct S4PhaseTimes {
+        /// Graph/node and temporal setup before lock assembly.
+        pub pre_lock_graph_temporal_us: u128,
+        /// Lock assembly.
+        pub lock_us: u128,
+        /// Inspection source-map construction.
+        pub inspection_us: u128,
+        /// Node and sidecar index rewriting.
+        pub index_us: u128,
+        /// Producer, temporal, claim and term rows.
+        pub producer_temporal_claim_term_us: u128,
+        /// Source, requirement and operand rows.
+        pub source_requirement_operand_us: u128,
+        /// Final canonical package encoding.
+        pub final_encode_us: u128,
+        /// Retained-node and post-encode construction.
+        pub retained_post_encode_us: u128,
+    }
+
+    /// Reset the S4 emission phase timing accumulator for the current thread.
+    pub fn reset_s4_phase_times() {
+        crate::emit::reset_s4_phase_times();
+    }
+
+    /// Read S4 emission phase timings accumulated on the current thread.
+    pub fn s4_phase_times() -> S4PhaseTimes {
+        let times = crate::emit::s4_phase_times();
+        S4PhaseTimes {
+            pre_lock_graph_temporal_us: times.pre_lock_graph_temporal_us,
+            lock_us: times.lock_us,
+            inspection_us: times.inspection_us,
+            index_us: times.index_us,
+            producer_temporal_claim_term_us: times.producer_temporal_claim_term_us,
+            source_requirement_operand_us: times.source_requirement_operand_us,
+            final_encode_us: times.final_encode_us,
+            retained_post_encode_us: times.retained_post_encode_us,
+        }
+    }
+
     /// Reset the number of node-ID slots visited during operand-slot emission.
     pub fn reset_node_id_rewrite_slot_visits() {
         crate::emit::reset_node_id_rewrite_slot_visits();

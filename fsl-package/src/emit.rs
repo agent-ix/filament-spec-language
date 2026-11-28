@@ -112,6 +112,94 @@ static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     static READ_INDEX_REWRITE_WORK_UNITS: Cell<usize> = const { Cell::new(0) };
     static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
+    static S4_PHASE_TIMES: Cell<S4PhaseTimes> = const { Cell::new(S4PhaseTimes::ZERO) };
+}
+
+/// S4 emitter subphase durations accumulated by the test-support build.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct S4PhaseTimes {
+    pub(crate) pre_lock_graph_temporal_us: u128,
+    pub(crate) lock_us: u128,
+    pub(crate) inspection_us: u128,
+    pub(crate) index_us: u128,
+    pub(crate) producer_temporal_claim_term_us: u128,
+    pub(crate) source_requirement_operand_us: u128,
+    pub(crate) final_encode_us: u128,
+    pub(crate) retained_post_encode_us: u128,
+}
+
+#[cfg(feature = "test-support")]
+impl S4PhaseTimes {
+    const ZERO: Self = Self {
+        pre_lock_graph_temporal_us: 0,
+        lock_us: 0,
+        inspection_us: 0,
+        index_us: 0,
+        producer_temporal_claim_term_us: 0,
+        source_requirement_operand_us: 0,
+        final_encode_us: 0,
+        retained_post_encode_us: 0,
+    };
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy)]
+enum S4Phase {
+    PreLockGraphTemporal,
+    Lock,
+    Inspection,
+    Index,
+    ProducerTemporalClaimTerm,
+    SourceRequirementOperand,
+    FinalEncode,
+    RetainedPostEncode,
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_s4_phase_times() {
+    S4_PHASE_TIMES.with(|times| times.set(S4PhaseTimes::ZERO));
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn s4_phase_times() -> S4PhaseTimes {
+    S4_PHASE_TIMES.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+fn record_s4_phase(phase: S4Phase, elapsed: std::time::Duration) {
+    S4_PHASE_TIMES.with(|held| {
+        let mut times = held.get();
+        let elapsed = elapsed.as_micros();
+        match phase {
+            S4Phase::PreLockGraphTemporal => {
+                times.pre_lock_graph_temporal_us =
+                    times.pre_lock_graph_temporal_us.saturating_add(elapsed)
+            }
+            S4Phase::Lock => times.lock_us = times.lock_us.saturating_add(elapsed),
+            S4Phase::Inspection => {
+                times.inspection_us = times.inspection_us.saturating_add(elapsed)
+            }
+            S4Phase::Index => times.index_us = times.index_us.saturating_add(elapsed),
+            S4Phase::ProducerTemporalClaimTerm => {
+                times.producer_temporal_claim_term_us = times
+                    .producer_temporal_claim_term_us
+                    .saturating_add(elapsed)
+            }
+            S4Phase::SourceRequirementOperand => {
+                times.source_requirement_operand_us =
+                    times.source_requirement_operand_us.saturating_add(elapsed)
+            }
+            S4Phase::FinalEncode => {
+                times.final_encode_us = times.final_encode_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedPostEncode => {
+                times.retained_post_encode_us =
+                    times.retained_post_encode_us.saturating_add(elapsed)
+            }
+        }
+        held.set(times);
+    });
 }
 
 #[cfg(feature = "test-support")]
@@ -7897,6 +7985,8 @@ fn emit_package_nodes(
     limits: EmitLimits,
     keep_nodes: bool,
 ) -> Result<(Emission, Vec<CheckedSemanticNodeV2>), EmitRefusal> {
+    #[cfg(feature = "test-support")]
+    let s4_started = std::time::Instant::now();
     let ids_table = StructuralIds::default();
     let ids = &ids_table;
     let denied = || {
@@ -8506,6 +8596,10 @@ fn emit_package_nodes(
     let (edition, definition_selections) =
         catalog_selections(graph.header_layers(), &laws, graph.extension_selections());
     let root = DefinitionRole::Root.identity();
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::PreLockGraphTemporal, s4_started.elapsed());
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let lock = CheckedPackageLockV2 {
         sources: sources.into_iter().collect(),
         edition: edition.clone(),
@@ -8516,7 +8610,17 @@ fn emit_package_nodes(
         refinement_internals: None,
         dependency_clock_selections: dependency_clock_selections(package),
     };
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::Lock, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::Inspection, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let emitted_node_ids = write_index_segments(
         ids,
         &mut nodes,
@@ -8525,11 +8629,15 @@ fn emit_package_nodes(
         &mut schedulability_claim_rows,
         &foreign,
     )?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::Index, phase_started.elapsed());
     // The source map is complete and is written verbatim into the package, so
     // its canonical bytes are a floor on the package's. Charge them, and each
     // typed row section below as it is built, rather than after the final
     // encode.
     meter.charge(&source_map)?;
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let WrittenTemporalRows {
@@ -8596,6 +8704,11 @@ fn emit_package_nodes(
             &source_map,
         );
     }
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::ProducerTemporalClaimTerm, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
         .map(|(key, mut row)| {
@@ -8689,6 +8802,8 @@ fn emit_package_nodes(
     let operation_body_rows = operation_body_rows(graph, &emitted_node_ids, &nodes);
     let correlation_rows = protocol_correlation_rows(graph, &producer_node_ids, &source_map)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::SourceRequirementOperand, phase_started.elapsed());
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: GRAPH_V2.into(),
         nodes,
@@ -8724,6 +8839,8 @@ fn emit_package_nodes(
     drop((candidates, external, foreign));
     drop((declared_forms, source_keys));
     drop(ids_table);
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let package = EmittedPackage::new(graph.package_name(), |name| {
         encode_checked_package_v2_with_path_condition_frames(
             name,
@@ -8754,6 +8871,11 @@ fn emit_package_nodes(
         )
         .map_err(EmitRefusal::from)
     })?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::FinalEncode, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let retained_nodes = RetainedNodes::of(&semantic_graph);
     // The typed nodes outlive the bytes only for a caller that reads them,
     // or for the identity-row selection when the acquisition selected
@@ -8808,6 +8930,8 @@ fn emit_package_nodes(
         },
     }
     .with_identity_row_selection(&document);
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::RetainedPostEncode, phase_started.elapsed());
     Ok((emission, if keep_nodes { document } else { Vec::new() }))
 }
 
