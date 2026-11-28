@@ -66,7 +66,7 @@ fn package_bytes(
     )
     .expect("the replay source parses")
     .into_value();
-    let source_tokens = parsed.cst().tokens().len();
+    let source_tokens = parsed.syntax().cst().tokens().len();
     let models = spine::select(&parsed, packages, limits.model, &Cancel::new())
         .expect("the model inputs admit")
         .into_value();
