@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Run and report the NFR-141 package A/B measurement session.
 
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -222,6 +223,13 @@ struct ProbeEstimate {
     source_documents: u64,
 }
 
+#[implements(
+    "NFR-141-AC-1",
+    "NFR-141-AC-2",
+    "NFR-141-AC-3",
+    "NFR-141-AC-4",
+    "NFR-141-AC-5"
+)]
 fn run_ab(
     a_bench_target: &Path,
     b_bench_target: &Path,
@@ -313,6 +321,13 @@ fn cell_filename(axis: &str, size: usize) -> String {
     format!("{label}-m-{size}.json")
 }
 
+#[implements(
+    "NFR-141-AC-1",
+    "NFR-141-AC-2",
+    "NFR-141-AC-3",
+    "NFR-141-AC-4",
+    "NFR-141-AC-5"
+)]
 fn run_ab_cell(
     axis: &str,
     size: usize,
@@ -429,6 +444,13 @@ fn run_ab_cell(
     }
 }
 
+#[implements(
+    "NFR-141-AC-1",
+    "NFR-141-AC-2",
+    "NFR-141-AC-3",
+    "NFR-141-AC-4",
+    "NFR-141-AC-5"
+)]
 fn report_ab_aggregate(
     a_results_dir: &Path,
     b_results_dir: &Path,
@@ -650,6 +672,13 @@ fn run_scheduled_rounds(
     report_ab(a_results, b_results)
 }
 
+#[implements(
+    "NFR-141-AC-1",
+    "NFR-141-AC-2",
+    "NFR-141-AC-3",
+    "NFR-141-AC-4",
+    "NFR-141-AC-5"
+)]
 fn run_side_round(
     side: &str,
     number: u8,
@@ -962,6 +991,13 @@ fn read_results(path: &Path) -> Result<SideResults, String> {
     serde_json::from_slice(&bytes).map_err(|error| format!("decode {}: {error}", path.display()))
 }
 
+#[implements(
+    "NFR-141-AC-1",
+    "NFR-141-AC-2",
+    "NFR-141-AC-3",
+    "NFR-141-AC-4",
+    "NFR-141-AC-5"
+)]
 fn report_ab(a: &SideResults, b: &SideResults) -> Result<(), String> {
     if a.side != "A" || b.side != "B" {
         return Err("A/B result files must identify sides A and B".to_owned());

@@ -128,24 +128,51 @@ cell file and refuses to replace an existing file.
 
 ```sh
 export CARGO_TARGET_DIR=target/package-recorder
-cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- start
+locked-build run \
+  --class point --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- start
 mkdir -p target/package-a-results target/package-b-results
 # Repeat once for each of the nine axis/M pairs and three RSS sizes.
-cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab-cell package/emit 1 target/package-a-bench target/package-b-bench target/package-a-probe target/package-b-probe target/package-a-results target/package-b-results
-# Select axis package/emit|package/read|replay/request, M 1|10|100;
-# for each RSS measurement use `rss` and its M.
-cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- report-ab-aggregate target/package-a-results target/package-b-results
+locked-build run \
+  --class block --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- \
+  run-ab-cell package/emit 1 target/package-a-bench target/package-b-bench \
+  target/package-a-probe target/package-b-probe \
+  target/package-a-results target/package-b-results
+# Each cell is a separate locked-build request. Select axis package/emit,
+# package/read or replay/request and M 1, 10 or 100. Use this separate form
+# for each RSS size:
+locked-build run \
+  --class block --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- \
+  run-ab-cell rss 1 target/package-a-bench target/package-b-bench \
+  target/package-a-probe target/package-b-probe \
+  target/package-a-results target/package-b-results
+locked-build run \
+  --class point --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- \
+  report-ab-aggregate target/package-a-results target/package-b-results
 ```
 
 The aggregate requires the exact twelve expected files on both sides, each
 containing one exact cell and five complete rounds. It rejects missing/failed
 rows, duplicate or extra JSON files, missing load records, and files whose
-session ids differ from one another or from the active marker. It prints each cell's load records, per-round measurements,
+session ids differ from one another or from the active marker. It prints each
+cell's load records, per-round measurements,
 medians, session noise, parse-call checks, and emit/read scaling exponents.
 Keep every raw per-cell file and diagnostic. Do not rerun a failed cell under
-new output names or combine files from separate `start` sessions. For the
-unfiltered path, `report-ab <A-results.json> <B-results.json>` prints the same
-full-matrix summaries and checks.
+new output names or combine files from separate `start` sessions. A cell file
+is reserved before its first round and checkpointed after each completed
+round. If a measurement fails or the 15-minute timeout interrupts it, that
+file remains with an error or fewer than five rounds; the aggregator rejects
+it. The same cell command refuses to overwrite the file. Preserve the partial
+file and its diagnostic, and do not rerun the cell with another filename as a
+substitute. For the unfiltered path, `report-ab <A-results.json> <B-results.json>`
+prints the same full-matrix summaries and checks.
 
 Do not rerun a failed or invalid full session under new result filenames.
 Preserve the original raw result files and diagnostics. A retest requires
