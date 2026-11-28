@@ -75,6 +75,13 @@ pub struct CertifiedEdge {
 }
 ```
 
+- The request: the concrete subject's model request (whose package, source
+  or admitted, declares the refinement and holds the abstract model; ADR-020
+  RM-1's dependency abstract package is not served), the name of the
+  refinement the claim being settled declares, and the abstract subject's
+  initial states. The checker reads the refinement and both subjects from the
+  checked package and takes no refinement or world object from the producer.
+
 - The byte provision of FR-145 (both packages' sources and the subjects'
   initial snapshots) and the request's model-check limits.
 
@@ -247,6 +254,7 @@ not equal the locus `position`. A `cause` is `{"kind": "Precondition",
 | FR-149-AC-9 | **RETIRED (staleness check withdrawn).** The certificate `concrete_package`, `abstract_package` and `obligation` check is deleted. | Test (TC-556), retired |
 | FR-149-AC-10 | A check cancelled between positions returns `Stopped(Cancelled{source})`, and an FR-120 expansion stop that names no limit, produced by a concrete model whose state constraint has a family that evaluation refuses, returns `Stopped(ResourceExhausted)`; FR-144 settles each V-7. | Test (TC-556) |
 | FR-149-AC-11 | Over `RegisterHistory` with a history field that makes two stored product states differ only in history, the engine's certificate carries the history key in each position and the checker returns `Accepted`; the same certificate with the second state's position given the first state's history key returns `Rejected` with rule `PostDiffers` (or `InitialMismatch` when the position is an initial one), and never `Malformed`. | Test (TC-556) |
+| FR-149-AC-12 | A certificate that names another refinement than the claim's (the request's refinement name) is refused `stale_dependency`/`content-mismatch` naming the certificate's refinement and the claim's one, and is never accepted, on the source route and the package route: with two refinements declared in one package, the valid certificate of one is refused for the claim of the other. A certificate of a refinement whose same-named declaration in the checked package has another body is not accepted. | Test (TC-556) |
 
 ## Dependencies
 

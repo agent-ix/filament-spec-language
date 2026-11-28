@@ -145,6 +145,7 @@ fn run(
     };
     let certified = SimulationCertificateRequest {
         concrete: concrete.clone(),
+        refinement: fsl_replay::RefinementRead::name(refinement).to_owned(),
         abstract_initial: abstract_initial.clone(),
     };
     // FR-630 "Outputs": the replay that reproduces a counterexample gives

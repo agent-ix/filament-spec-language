@@ -10,8 +10,8 @@
 //! It applies its rules in this order and rejects at the first failing
 //! position in index order:
 //!
-//! 1. identity: a certificate that names a refinement the checked package
-//!    does not declare is refused `stale_dependency`/`content-mismatch`
+//! 1. identity: a certificate that names another refinement than the claim's
+//!    (the request's `refinement`) is refused `stale_dependency`/`content-mismatch`
 //!    ([`SimulationRefusal::Undeclared`]);
 //! 2. `Malformed`, before any recomputation: the lists do not match in
 //!    length, or a position has no state because no initial state and no
@@ -453,6 +453,11 @@ pub struct SimulationCertificateRequest<'a> {
     /// each clause with. Its package (source or admitted) holds the
     /// refinement and the abstract model.
     pub concrete: ModelSimulationRequest<'a>,
+    /// The name of the refinement the claim being settled declares. The
+    /// certificate must name it: a valid certificate of another declared
+    /// refinement settles nothing for this claim. Checker data, not a
+    /// producer object.
+    pub refinement: String,
     /// The abstract subject's initial states: its FR-106 snapshots, or the
     /// mapping's image of the concrete initial states.
     pub abstract_initial: crate::refinement::AbstractInitial,
@@ -462,16 +467,15 @@ pub struct SimulationCertificateRequest<'a> {
 /// the certificate's rules, is at fault.
 #[derive(Debug, thiserror::Error)]
 pub enum SimulationRefusal {
-    /// The certificate names a refinement the checked package does not
-    /// declare: the checker reads the package's own refinement, never one
-    /// the producer built (FR-1051 "No producer objects").
+    /// The certificate names another refinement than the claim's: the
+    /// checker settles a claim only by that claim's own refinement.
     #[error(
-        "stale_dependency/content-mismatch: the checked package declares no refinement {certificate} (it declares: {declared})"
+        "stale_dependency/content-mismatch: the certificate names refinement {certificate}, the claim's is {declared}"
     )]
     Undeclared {
         /// The refinement the certificate names.
         certificate: String,
-        /// The refinements the checked package declares, comma-separated.
+        /// The refinement the claim declares: one name.
         declared: String,
     },
     /// A subject did not open, the subject has no initial state, a state
@@ -487,54 +491,34 @@ enum Declared<'a> {
     Package(&'a PackageModelInput<'a>, PackageRefinement<'a>),
 }
 
-/// The refinement of `request`'s own package named `name`.
-fn find_declared<'a>(
-    request: &ModelSimulationRequest<'a>,
-    name: &str,
-) -> Result<Declared<'a>, SimulationRefusal> {
+/// The refinement of `request`'s own package named `name`, or `None`.
+fn find_declared<'a>(request: &ModelSimulationRequest<'a>, name: &str) -> Option<Declared<'a>> {
     use filament_contract_model::CheckedTerm;
     use fsl_package::AnalysisView;
-    let undeclared = |declared: Vec<&str>| SimulationRefusal::Undeclared {
-        certificate: name.to_owned(),
-        declared: declared.join(", "),
-    };
     if let Some(package) = request.source_package() {
-        let refinements = package.graph().refinements();
-        return refinements
+        return package
+            .graph()
+            .refinements()
             .iter()
             .find(|declared| declared.name() == name)
-            .map(|found| Declared::Source(package, found))
-            .ok_or_else(|| undeclared(refinements.iter().map(|row| row.name()).collect()));
+            .map(|found| Declared::Source(package, found));
     }
-    let Some(owner) = request.input.package_owner() else {
-        return Err(Checker::Simulation
-            .fault("the-checked-package-is-open")
-            .into());
-    };
+    let owner = request.input.package_owner()?;
     let bare = owner.package();
     let package = bare.package();
-    let mut names: Vec<&str> = Vec::new();
-    for node in &package.resolved_graph().nodes {
+    package.resolved_graph().nodes.iter().find_map(|node| {
         let Some(CheckedTerm::Refinement { name: row, .. }) = package.term(&node.node_id) else {
-            continue;
+            return None;
         };
         let row: &str = row;
         if row != name {
-            names.push(row);
-            continue;
+            return None;
         }
-        let read = AnalysisView::refinement(bare, &node.node_id)
+        AnalysisView::refinement(bare, &node.node_id)
             .ok()
-            .and_then(|view| PackageRefinement::read(view, bare, owner).ok());
-        return read
+            .and_then(|view| PackageRefinement::read(view, bare, owner).ok())
             .map(|refinement| Declared::Package(owner, refinement))
-            .ok_or_else(|| {
-                Checker::Simulation
-                    .fault("the-package-refinement-reads")
-                    .into()
-            });
-    }
-    Err(undeclared(names))
+    })
 }
 
 /// FR-149: check `certificate` for `request`'s refinement under `limits` and
@@ -554,7 +538,14 @@ pub fn check_simulation_certificate(
     limits: &ModelCheckLimits,
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, SimulationRefusal> {
-    let found = find_declared(&request.concrete, &certificate.refinement)?;
+    if certificate.refinement != request.refinement {
+        return Err(SimulationRefusal::Undeclared {
+            certificate: certificate.refinement.clone(),
+            declared: request.refinement.clone(),
+        });
+    }
+    let found = find_declared(&request.concrete, &request.refinement)
+        .ok_or_else(|| Checker::Simulation.fault("the-claimed-refinement-is-declared"))?;
     let (declared, world): (&dyn crate::RefinementRead, &dyn crate::RefinementWorld) = match &found
     {
         Declared::Source(package, refinement) => (*refinement, *package),

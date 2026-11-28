@@ -85,10 +85,11 @@ fn two_clock_world(third_floor: &str) -> World {
 /// `probability <= 1/2` of `eventually[0 ms, 4 ms] holds(c.late)` over every
 /// scheduler is false, because `first` at 1/2 ms and `third` at 6/5 ms meet
 /// both strict guards, which gives value 1. The reference fires that witness
-/// here, and analysis does not settle the
-/// claim `proved`. The checker half of the seed is the ignored test below.
+/// here, and analysis refutes the claim. The checker half of the seed is the
+/// test below; FR-1051-AC-17 is only half met by this seed, so neither test
+/// carries its tag.
 #[test]
-fn seed_qsl_3444_the_reference_fires_the_strict_witness_and_analysis_does_not_prove_the_claim() {
+fn seed_qsl_3444_the_reference_fires_the_strict_witness_and_analysis_refutes_the_claim() {
     let falsity = two_clock_world("1 ms");
     let timed = &falsity.package.graph().timed_models()[0];
     let start = fsl_definitional_reference::ReferenceClockState::new(
@@ -107,7 +108,14 @@ fn seed_qsl_3444_the_reference_fires_the_strict_witness_and_analysis_does_not_pr
         .expect("the reference fires third")
         .expect("third is enabled 7/10 ms later");
     assert_eq!(after_third.values(), &[rational(7, 10), rational(6, 5)]);
-    assert!(!is_proved(&settle(&falsity, "Max")), "value 1 exceeds 1/2");
+    let record = settle(&falsity, "Max");
+    assert!(!is_proved(&record));
+    let terminal = record.terminal().expect("the claim settles");
+    assert!(
+        matches!(terminal.value(), TerminalValue::Refuted),
+        "value 1 exceeds 1/2, so the claim is refuted: {:?}",
+        terminal.value()
+    );
 }
 
 /// The settlement of `claim` where the certificate of the claim's own graph

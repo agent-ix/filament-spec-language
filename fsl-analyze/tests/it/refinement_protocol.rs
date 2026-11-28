@@ -112,6 +112,7 @@ fn a_twice_protocol_refinement_holds_uncertified() {
         &ModelCheckLimits::default(),
         &SimulationCertificateRequest {
             concrete: world.concrete_request(UNLIMITED),
+            refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
             abstract_initial: vec![world.abstract_initial()].into(),
         },
         &Cancel::new(),
@@ -896,6 +897,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
 
     let certificate_request = SimulationCertificateRequest {
         concrete: world.concrete_request(UNLIMITED),
+        refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
     let refinement = world.refinement();
@@ -1407,6 +1409,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
     ));
     let certificate_request = SimulationCertificateRequest {
         concrete: world.concrete_request(UNLIMITED),
+        refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
     let refinement = world.refinement();
@@ -2815,6 +2818,7 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
     let refused = check_simulation_certificate(
         &SimulationCertificateRequest {
             concrete: world.concrete_request(UNLIMITED),
+            refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
             abstract_initial: vec![world.abstract_initial()].into(),
         },
         &certificate,

@@ -312,6 +312,7 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
         &ModelCheckLimits::default(),
         &SimulationCertificateRequest {
             concrete: concrete.clone(),
+            refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
             abstract_initial: vec![initial.clone()].into(),
         },
         &Cancel::new(),

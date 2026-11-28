@@ -86,6 +86,7 @@ fn budget() -> u64 {
 fn certified(world: &RingWorld, work: u64) -> SimulationCertificateRequest<'_> {
     SimulationCertificateRequest {
         concrete: world.concrete_request(meter(work)),
+        refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
         abstract_initial: vec![world.abstract_initial()].into(),
     }
 }

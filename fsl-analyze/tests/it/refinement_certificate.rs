@@ -41,6 +41,7 @@ use crate::refinement_fixture::{
 fn request(world: &World) -> SimulationCertificateRequest<'_> {
     SimulationCertificateRequest {
         concrete: world.concrete_request(UNLIMITED),
+        refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
         abstract_initial: vec![world.abstract_initial()].into(),
     }
 }
@@ -604,10 +605,9 @@ fn a_transition_limit_stops_the_check() {
     );
 }
 
-/// FR-149-AC-4 (TC-556 step 4): a certificate naming another refinement is
-/// refused `stale_dependency`/`content-mismatch`, and checking the same
-/// certificate twice gives equal results.
-#[trace("TC-556", "FR-149-AC-4")]
+/// FR-149-AC-12 (TC-556): a certificate naming another refinement than the
+/// claim's is refused `stale_dependency`/`content-mismatch`.
+#[trace("TC-556", "FR-149-AC-12")]
 #[test]
 fn another_refinement_is_refused_and_a_check_repeats() {
     let world = safety_only();
@@ -1227,12 +1227,12 @@ fn an_unmatched_concrete_step_names_its_transition_in_the_checker_diagnostic() {
     );
 }
 
-/// FR-149-AC-1, FR-1051 "No producer objects" (QSL-3551): the checker reads
+/// FR-149-AC-12, FR-1051 "No producer objects" (QSL-3551): the checker reads
 /// the refinement from the checked package. A certificate of the holding
 /// `CasRefinesCounter`, checked against a package whose own refinement of the
 /// same name is the `commitB -> stutter` one (which does not hold), is not
 /// accepted.
-#[trace("TC-556", "FR-149-AC-1")]
+#[trace("TC-556", "FR-149-AC-12")]
 #[test]
 fn a_refinement_the_checked_package_does_not_declare_is_not_accepted() {
     let producer = safety_only();
@@ -1253,6 +1253,7 @@ fn a_refinement_the_checked_package_does_not_declare_is_not_accepted() {
     );
     let request = SimulationCertificateRequest {
         concrete: package.concrete_request(UNLIMITED),
+        refinement: fsl_replay::RefinementRead::name(package.refinement()).to_owned(),
         abstract_initial: vec![package.abstract_initial()].into(),
     };
     let outcome = check_simulation_certificate(

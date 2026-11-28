@@ -140,6 +140,7 @@ fn settle(subject: &Subject<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {
 fn certified<'w>(subject: &Subject<'w>) -> SimulationCertificateRequest<'w> {
     SimulationCertificateRequest {
         concrete: subject.concrete.clone(),
+        refinement: fsl_replay::RefinementRead::name(subject.refinement).to_owned(),
         abstract_initial: subject.abstract_initials.clone().into(),
     }
 }
