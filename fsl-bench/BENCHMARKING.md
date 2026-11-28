@@ -117,14 +117,35 @@ the branch before collecting any measurements.
 The A/B Criterion runs do not compile counters; their only difference is
 candidate production code, with the identical FSL benchmark harness. The A/B
 probe runs compile the identical counter seam and harness on both sides. The
-reporter alternates A then B for five rounds,
-records load average before and after each side's round, collects every
-required Criterion estimate and isolated probe at M=1, 10, 100, and writes
-generated side result files without overwriting existing files.
-`report-ab <A-results.json> <B-results.json>` prints per-round measurements,
-medians, session noise and the emit/read scaling exponents. Missing rows,
-failed runs, missing load records, or incomplete rounds invalidate the report.
-Criterion uses 10 samples per estimate in this harness.
+reporter alternates A then B for five rounds and uses 10 Criterion samples per
+estimate. `run-ab` collects the complete matrix in one invocation. When the
+host's measurement limit requires one measurement per command, use the
+filter-scoped form below. Each `run-ab-cell` command measures exactly one axis
+at one M, or one replay RSS size, while retaining five alternating A/B rounds.
+Run `start` once after builds, with the same `CARGO_TARGET_DIR` as every cell
+command. Use one results directory per side; each command creates one unique
+cell file and refuses to replace an existing file.
+
+```sh
+export CARGO_TARGET_DIR=target/package-recorder
+cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- start
+mkdir -p target/package-a-results target/package-b-results
+# Repeat once for each of the nine axis/M pairs and three RSS sizes.
+cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab-cell package/emit 1 target/package-a-bench target/package-b-bench target/package-a-probe target/package-b-probe target/package-a-results target/package-b-results
+# Select axis package/emit|package/read|replay/request, M 1|10|100;
+# for each RSS measurement use `rss` and its M.
+cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- report-ab-aggregate target/package-a-results target/package-b-results
+```
+
+The aggregate requires the exact twelve expected files on both sides, each
+containing one exact cell and five complete rounds. It rejects missing/failed
+rows, duplicate or extra JSON files, missing load records, and files whose
+session ids differ from one another or from the active marker. It prints each cell's load records, per-round measurements,
+medians, session noise, parse-call checks, and emit/read scaling exponents.
+Keep every raw per-cell file and diagnostic. Do not rerun a failed cell under
+new output names or combine files from separate `start` sessions. For the
+unfiltered path, `report-ab <A-results.json> <B-results.json>` prints the same
+full-matrix summaries and checks.
 
 Do not rerun a failed or invalid full session under new result filenames.
 Preserve the original raw result files and diagnostics. A retest requires

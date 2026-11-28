@@ -565,6 +565,7 @@ bench-package:
 	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- $(BENCH_PACKAGE_REPORT)
 
 bench-package-ab:
+	cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- start
 	cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab "$(BENCH_PACKAGE_A_BENCH_TARGET)" "$(BENCH_PACKAGE_B_BENCH_TARGET)" "$(BENCH_PACKAGE_A_PROBE_TARGET)" "$(BENCH_PACKAGE_B_PROBE_TARGET)" "$(BENCH_PACKAGE_A_RESULTS)" "$(BENCH_PACKAGE_B_RESULTS)"
 
 bench-evaluator_kernel:

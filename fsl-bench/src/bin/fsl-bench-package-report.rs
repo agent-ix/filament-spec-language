@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -25,11 +25,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[ix_trace_rs::string_edge]
 fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>> {
     let mut arguments = arguments;
-    match arguments
-        .next()
-        .as_deref()
-        .ok_or_else(|| io::Error::other("expected start, report, run-ab, or report-ab"))?
-    {
+    match arguments.next().as_deref().ok_or_else(|| {
+        io::Error::other(
+            "expected start, report, run-ab, run-ab-cell, report-ab, or report-ab-aggregate",
+        )
+    })? {
         "start" => {
             fs::create_dir_all(target)?;
             let probe_report = target.join("package-probe-report");
@@ -56,6 +56,7 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
             let b_probe_target = required_path(&mut arguments, "B probe target directory")?;
             let a_result = required_path(&mut arguments, "A result file")?;
             let b_result = required_path(&mut arguments, "B result file")?;
+            let session_id = read_session_id(target).map_err(io::Error::other)?;
             run_ab(
                 &a_bench_target,
                 &b_bench_target,
@@ -63,6 +64,35 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
                 &b_probe_target,
                 &a_result,
                 &b_result,
+                &session_id,
+            )
+            .map_err(io::Error::other)?;
+            Ok(())
+        }
+        "run-ab-cell" => {
+            let axis = arguments
+                .next()
+                .ok_or_else(|| io::Error::other("run-ab-cell requires an axis or rss"))?;
+            let size = arguments
+                .next()
+                .ok_or_else(|| io::Error::other("run-ab-cell requires M"))?
+                .parse::<usize>()?;
+            let a_bench_target = required_path(&mut arguments, "A Criterion target directory")?;
+            let b_bench_target = required_path(&mut arguments, "B Criterion target directory")?;
+            let a_probe_target = required_path(&mut arguments, "A probe target directory")?;
+            let b_probe_target = required_path(&mut arguments, "B probe target directory")?;
+            let a_results_dir = required_path(&mut arguments, "A results directory")?;
+            let b_results_dir = required_path(&mut arguments, "B results directory")?;
+            run_ab_cell(
+                &axis,
+                size,
+                &a_bench_target,
+                &b_bench_target,
+                &a_probe_target,
+                &b_probe_target,
+                &a_results_dir,
+                &b_results_dir,
+                target,
             )
             .map_err(io::Error::other)?;
             Ok(())
@@ -108,6 +138,13 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
             report_ab_files(&a_result, &b_result).map_err(io::Error::other)?;
             Ok(())
         }
+        "report-ab-aggregate" => {
+            let a_results_dir = required_path(&mut arguments, "A results directory")?;
+            let b_results_dir = required_path(&mut arguments, "B results directory")?;
+            report_ab_aggregate(&a_results_dir, &b_results_dir, target)
+                .map_err(io::Error::other)?;
+            Ok(())
+        }
         command => Err(io::Error::other(format!("unknown command: {command}")).into()),
     }
 }
@@ -125,6 +162,7 @@ fn required_path(
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SideResults {
     side: String,
+    session_id: String,
     rounds: Vec<RoundResult>,
 }
 
@@ -191,6 +229,7 @@ fn run_ab(
     b_probe_target: &Path,
     a_result_path: &Path,
     b_result_path: &Path,
+    session_id: &str,
 ) -> Result<(), String> {
     if a_result_path.exists() || b_result_path.exists() {
         return Err(
@@ -204,10 +243,12 @@ fn run_ab(
     let b_probe = recorded_artifact(b_probe_target, "package-probe-executable")?;
     let mut a_results = SideResults {
         side: "A".to_owned(),
+        session_id: session_id.to_owned(),
         rounds: Vec::new(),
     };
     let mut b_results = SideResults {
         side: "B".to_owned(),
+        session_id: session_id.to_owned(),
         rounds: Vec::new(),
     };
     let a_criterion_home = a_result_path.with_extension("criterion");
@@ -256,6 +297,325 @@ fn run_ab(
         &mut b_results,
         &mut run_round,
     )
+}
+
+fn read_session_id(target: &Path) -> Result<String, String> {
+    fs::read_to_string(target.join(MARKER))
+        .map_err(|error| format!("read A/B session marker: {error}; run start first"))
+}
+
+fn cell_filename(axis: &str, size: usize) -> String {
+    let label = if axis == "rss" {
+        "replay-request-rss".to_owned()
+    } else {
+        axis.replace('/', "-")
+    };
+    format!("{label}-m-{size}.json")
+}
+
+fn run_ab_cell(
+    axis: &str,
+    size: usize,
+    a_bench_target: &Path,
+    b_bench_target: &Path,
+    a_probe_target: &Path,
+    b_probe_target: &Path,
+    a_results_dir: &Path,
+    b_results_dir: &Path,
+    target: &Path,
+) -> Result<(), String> {
+    if !SIZES.contains(&size) {
+        return Err(format!("unsupported M={size}; expected one of {SIZES:?}"));
+    }
+    let (axis_filters, sizes, include_replay_probes) = if axis == "rss" {
+        (&[][..], &[size][..], true)
+    } else if AXES.contains(&axis) {
+        (&[(axis, axis)][..], &[size][..], false)
+    } else {
+        return Err(format!(
+            "unknown package axis {axis:?}; expected one of {AXES:?} or rss"
+        ));
+    };
+    let a_path = a_results_dir.join(cell_filename(axis, size));
+    let b_path = b_results_dir.join(cell_filename(axis, size));
+    if a_path.exists() || b_path.exists() {
+        return Err(format!(
+            "refusing to overwrite per-cell result files: {} and {}",
+            a_path.display(),
+            b_path.display()
+        ));
+    }
+    let session_id = read_session_id(target)?;
+    let a_bench = recorded_artifact(a_bench_target, "package-bench-executable")?;
+    let b_bench = recorded_artifact(b_bench_target, "package-bench-executable")?;
+    let a_probe = recorded_artifact(a_probe_target, "package-probe-executable")?;
+    let b_probe = recorded_artifact(b_probe_target, "package-probe-executable")?;
+    let a_criterion_home = a_path.with_extension("criterion");
+    let b_criterion_home = b_path.with_extension("criterion");
+    if !include_replay_probes {
+        fs::create_dir_all(&a_criterion_home)
+            .map_err(|error| format!("create A Criterion directory: {error}"))?;
+        fs::create_dir_all(&b_criterion_home)
+            .map_err(|error| format!("create B Criterion directory: {error}"))?;
+    }
+    let mut a_results = SideResults {
+        side: "A".to_owned(),
+        session_id: session_id.clone(),
+        rounds: Vec::new(),
+    };
+    let mut b_results = SideResults {
+        side: "B".to_owned(),
+        session_id,
+        rounds: Vec::new(),
+    };
+    let run_round = |side: &str, round: u8| {
+        let (bench, probe, criterion_home, result_path) = if side == "A" {
+            (&a_bench, &a_probe, &a_criterion_home, &a_path)
+        } else {
+            (&b_bench, &b_probe, &b_criterion_home, &b_path)
+        };
+        run_side_round(
+            side,
+            round,
+            bench,
+            probe,
+            criterion_home,
+            result_path,
+            axis_filters,
+            sizes,
+            include_replay_probes,
+        )
+    };
+    reserve_results(&a_path, &a_results)?;
+    reserve_results(&b_path, &b_results)?;
+    for round in 1..=ROUNDS {
+        a_results.rounds.push(run_round("A", round));
+        persist_results(&a_path, &a_results)?;
+        b_results.rounds.push(run_round("B", round));
+        persist_results(&b_path, &b_results)?;
+    }
+    validate_cell(&a_results, "A", axis, size)?;
+    validate_cell(&b_results, "B", axis, size)?;
+    let mut failures = Vec::new();
+    if axis == "rss" {
+        probe_values(&a_results, size, &mut failures);
+        probe_values(&b_results, size, &mut failures);
+    } else {
+        metric_values(&a_results, axis, size, &mut failures);
+        metric_values(&b_results, axis, size, &mut failures);
+    }
+    for results in [&a_results, &b_results] {
+        for round in &results.rounds {
+            for (name, measurement) in
+                [("before", &round.load_before), ("after", &round.load_after)]
+            {
+                if let Some(error) = &measurement.error {
+                    failures.push(format!(
+                        "side {} round {} load {name}: {error}",
+                        results.side, round.number
+                    ));
+                }
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} per-cell A/B failures; results retained: {}",
+            failures.len(),
+            failures.join("; ")
+        ))
+    }
+}
+
+fn report_ab_aggregate(
+    a_results_dir: &Path,
+    b_results_dir: &Path,
+    target: &Path,
+) -> Result<(), String> {
+    let active_session_id = read_session_id(target)?;
+    let mut a = empty_side("A", String::new());
+    let mut b = empty_side("B", String::new());
+    let mut seen_a = BTreeMap::new();
+    let mut seen_b = BTreeMap::new();
+    for (axis, size) in AXES
+        .into_iter()
+        .flat_map(|axis| SIZES.into_iter().map(move |size| (axis, size)))
+        .chain(std::iter::once_with(|| ("rss", 0)))
+    {
+        let sizes: &[usize] = if axis == "rss" { &SIZES } else { &[size] };
+        for &size in sizes {
+            let filename = cell_filename(axis, size);
+            let a_path = a_results_dir.join(&filename);
+            let b_path = b_results_dir.join(&filename);
+            let a_cell = read_results(&a_path)?;
+            let b_cell = read_results(&b_path)?;
+            validate_cell(&a_cell, "A", axis, size)?;
+            validate_cell(&b_cell, "B", axis, size)?;
+            if a_cell.session_id != b_cell.session_id {
+                return Err(format!("A/B session ids differ for {filename}"));
+            }
+            if a_cell.session_id != active_session_id {
+                return Err(format!(
+                    "{filename} belongs to session {}, active session is {}",
+                    a_cell.session_id, active_session_id
+                ));
+            }
+            for round in 0..usize::from(ROUNDS) {
+                println!(
+                    "cell={axis} M={size} round={} A_load={:?}->{:?} B_load={:?}->{:?}",
+                    round + 1,
+                    a_cell.rounds[round].load_before.value,
+                    a_cell.rounds[round].load_after.value,
+                    b_cell.rounds[round].load_before.value,
+                    b_cell.rounds[round].load_after.value
+                );
+            }
+            for results in [&a_cell, &b_cell] {
+                if results
+                    .rounds
+                    .iter()
+                    .any(|round| round.axes.len() + usize::from(!round.probes.is_empty()) != 1)
+                {
+                    return Err(format!(
+                        "{filename} contains data outside its selected cell"
+                    ));
+                }
+            }
+            if a.session_id.is_empty() {
+                a.session_id = a_cell.session_id.clone();
+                b.session_id = b_cell.session_id.clone();
+            } else if a.session_id != a_cell.session_id || b.session_id != b_cell.session_id {
+                return Err(format!(
+                    "per-cell files belong to different sessions at {filename}"
+                ));
+            }
+            merge_cell(&mut a, &a_cell, axis, size)?;
+            merge_cell(&mut b, &b_cell, axis, size)?;
+            *seen_a.entry(filename.clone()).or_insert(0usize) += 1;
+            *seen_b.entry(filename).or_insert(0usize) += 1;
+        }
+    }
+    if seen_a.values().any(|count| *count != 1) || seen_b.values().any(|count| *count != 1) {
+        return Err("aggregate contains a duplicate per-cell result".to_owned());
+    }
+    ensure_only_expected_cells(a_results_dir)?;
+    ensure_only_expected_cells(b_results_dir)?;
+    report_ab(&a, &b)
+}
+
+fn empty_side(side: &str, session_id: String) -> SideResults {
+    SideResults {
+        side: side.to_owned(),
+        session_id,
+        rounds: (1..=ROUNDS)
+            .map(|number| RoundResult {
+                number,
+                load_before: Measurement::failure("missing per-cell result", ""),
+                load_after: Measurement::failure("missing per-cell result", ""),
+                axes: BTreeMap::new(),
+                probes: BTreeMap::new(),
+            })
+            .collect(),
+    }
+}
+
+fn validate_cell(results: &SideResults, side: &str, axis: &str, size: usize) -> Result<(), String> {
+    if results.side != side {
+        return Err(format!(
+            "{} per-cell file identifies side {}",
+            axis, results.side
+        ));
+    }
+    validate_rounds(results)?;
+    for round in &results.rounds {
+        if round.load_before.value.is_none() || round.load_after.value.is_none() {
+            return Err(format!(
+                "side {side} {axis} M={size} round {} has no load average record",
+                round.number
+            ));
+        }
+        let valid = if axis == "rss" {
+            round.axes.is_empty() && round.probes.len() == 1 && round.probes.contains_key(&size)
+        } else {
+            round.probes.is_empty()
+                && round.axes.len() == 1
+                && round
+                    .axes
+                    .get(axis)
+                    .is_some_and(|sizes| sizes.len() == 1 && sizes.contains_key(&size))
+        };
+        if !valid {
+            return Err(format!(
+                "side {side} {axis} M={size} round {} is not one exact cell",
+                round.number
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn merge_cell(
+    aggregate: &mut SideResults,
+    cell: &SideResults,
+    axis: &str,
+    size: usize,
+) -> Result<(), String> {
+    for (destination, source) in aggregate.rounds.iter_mut().zip(&cell.rounds) {
+        if destination.load_before.value.is_some() || destination.load_after.value.is_some() {
+            // Every cell has its own load envelope; keep the envelope for each cell by
+            // requiring matching values only when it is the first populated entry.
+        } else {
+            destination.load_before = source.load_before.clone();
+            destination.load_after = source.load_after.clone();
+        }
+        if axis == "rss" {
+            destination
+                .probes
+                .insert(size, source.probes[&size].clone());
+        } else {
+            destination
+                .axes
+                .entry(axis.to_owned())
+                .or_default()
+                .insert(size, source.axes[axis][&size].clone());
+        }
+    }
+    Ok(())
+}
+
+fn ensure_only_expected_cells(directory: &Path) -> Result<(), String> {
+    let expected = AXES
+        .into_iter()
+        .flat_map(|axis| SIZES.into_iter().map(move |size| cell_filename(axis, size)))
+        .chain(SIZES.into_iter().map(|size| cell_filename("rss", size)))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut observed = std::collections::BTreeSet::new();
+    for entry in
+        fs::read_dir(directory).map_err(|error| format!("read {}: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read directory entry: {error}"))?;
+        if entry
+            .file_type()
+            .map_err(|error| format!("stat result: {error}"))?
+            .is_file()
+        {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".json") {
+                observed.insert(name);
+            }
+        }
+    }
+    if observed != expected {
+        return Err(format!(
+            "{} expected exact per-cell file set; missing={:?}, extra={:?}",
+            directory.display(),
+            expected.difference(&observed).collect::<Vec<_>>(),
+            observed.difference(&expected).collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
 }
 
 fn recorded_artifact(target: &Path, filename: &str) -> Result<PathBuf, String> {
@@ -573,6 +933,24 @@ fn persist_results(path: &Path, result: &SideResults) -> Result<(), String> {
     })
 }
 
+fn reserve_results(path: &Path, result: &SideResults) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(result)
+        .map_err(|error| format!("serialize {}: {error}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("reserve new results file {}: {error}", path.display()))?;
+    file.write_all(&bytes)
+        .map_err(|error| format!("write {}: {error}", path.display()))?;
+    file.sync_all()
+        .map_err(|error| format!("sync {}: {error}", path.display()))
+}
+
 fn report_ab_files(a_path: &Path, b_path: &Path) -> Result<(), String> {
     let a: SideResults = read_results(a_path)?;
     let b: SideResults = read_results(b_path)?;
@@ -587,6 +965,9 @@ fn read_results(path: &Path) -> Result<SideResults, String> {
 fn report_ab(a: &SideResults, b: &SideResults) -> Result<(), String> {
     if a.side != "A" || b.side != "B" {
         return Err("A/B result files must identify sides A and B".to_owned());
+    }
+    if a.session_id != b.session_id {
+        return Err("A/B result files belong to different sessions".to_owned());
     }
     validate_rounds(a)?;
     validate_rounds(b)?;
@@ -1049,9 +1430,9 @@ fn single_estimate(
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_probe_report, exponent_summary_line, median, metric_summary_line, report_ab_files,
-        scaling_exponent, session_noise, CriterionEstimate, LoadAverage, Measurement,
-        ProbeEstimate, RoundResult, SideResults, AXES, ROUNDS, SIZES,
+        AXES, CriterionEstimate, LoadAverage, Measurement, ProbeEstimate, ROUNDS, RoundResult,
+        SIZES, SideResults, complete_probe_report, exponent_summary_line, median,
+        metric_summary_line, report_ab_files, scaling_exponent, session_noise,
     };
     use ix_trace_rs::trace;
     use std::collections::BTreeMap;
@@ -1256,10 +1637,12 @@ mod tests {
         let b_base = synthetic_side("B", 1.0);
         let mut a = SideResults {
             side: "A".to_owned(),
+            session_id: "test-session".to_owned(),
             rounds: Vec::new(),
         };
         let mut b = SideResults {
             side: "B".to_owned(),
+            session_id: "test-session".to_owned(),
             rounds: Vec::new(),
         };
         let mut run_round = |side: &str, number: u8| {
@@ -1397,6 +1780,82 @@ mod tests {
         std::fs::remove_dir_all(root).expect("temporary A/B results are removed");
     }
 
+    #[trace(
+        "NFR-141-AC-1",
+        "NFR-141-AC-2",
+        "NFR-141-AC-3",
+        "NFR-141-AC-4",
+        "NFR-141-AC-5"
+    )]
+    #[test]
+    fn aggregate_requires_one_exact_cell_file_set_from_one_live_session() {
+        let (root, _, _) = result_paths();
+        let a_dir = root.join("a");
+        let b_dir = root.join("b");
+        let target_dir = root.join("target");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        std::fs::create_dir_all(&b_dir).unwrap();
+        std::fs::create_dir_all(&target_dir).unwrap();
+        std::fs::write(target_dir.join(super::MARKER), "live-session").unwrap();
+        for axis in AXES {
+            for size in SIZES {
+                write_synthetic_cell(&a_dir, axis, size, "A", "live-session", 1.0);
+                write_synthetic_cell(&b_dir, axis, size, "B", "live-session", 0.99);
+            }
+        }
+        for size in SIZES {
+            write_synthetic_cell(&a_dir, "rss", size, "A", "live-session", 1.0);
+            write_synthetic_cell(&b_dir, "rss", size, "B", "live-session", 0.99);
+        }
+        super::report_ab_aggregate(&a_dir, &b_dir, &target_dir)
+            .expect("the complete same-session matrix reports successfully");
+
+        let duplicate = b_dir.join(super::cell_filename("rss", 100));
+        let mut b_results = super::read_results(&duplicate).unwrap();
+        b_results.session_id = "older-session".to_owned();
+        super::persist_results(&duplicate, &b_results).unwrap();
+        let stale_a_path = a_dir.join(super::cell_filename("rss", 100));
+        let mut stale_a = super::read_results(&stale_a_path).unwrap();
+        stale_a.session_id = "older-session".to_owned();
+        super::persist_results(&stale_a_path, &stale_a).unwrap();
+        let error = super::report_ab_aggregate(&a_dir, &b_dir, &target_dir)
+            .expect_err("results from a previous live session must not be combined");
+        assert!(error.contains("active session"));
+
+        let before = std::fs::read(&duplicate).unwrap();
+        assert!(super::reserve_results(&duplicate, &b_results).is_err());
+        assert_eq!(std::fs::read(&duplicate).unwrap(), before);
+        std::fs::remove_dir_all(root).expect("temporary per-cell files are removed");
+    }
+
+    fn write_synthetic_cell(
+        directory: &Path,
+        axis: &str,
+        size: usize,
+        side: &str,
+        session_id: &str,
+        multiplier: f64,
+    ) {
+        let mut results = synthetic_side(side, multiplier);
+        results.session_id = session_id.to_owned();
+        for round in &mut results.rounds {
+            round.axes.retain(|name, _| name == axis);
+            for sizes in round.axes.values_mut() {
+                sizes.retain(|candidate, _| *candidate == size);
+            }
+            round
+                .probes
+                .retain(|candidate, _| axis == "rss" && *candidate == size);
+            if axis != "rss" {
+                round.probes.clear();
+            } else {
+                round.axes.clear();
+            }
+        }
+        let path = directory.join(super::cell_filename(axis, size));
+        super::persist_results(&path, &results).expect("synthetic per-cell result writes");
+    }
+
     fn synthetic_side(side: &str, multiplier: f64) -> SideResults {
         let rounds = (1..=ROUNDS)
             .map(|number| {
@@ -1461,6 +1920,7 @@ mod tests {
             .collect();
         SideResults {
             side: side.to_owned(),
+            session_id: "test-session".to_owned(),
             rounds,
         }
     }
