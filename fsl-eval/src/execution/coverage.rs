@@ -69,14 +69,13 @@ pub fn first_outside_body(
     }
     let mut pending = vec![body];
     while let Some(node) = pending.pop() {
-        let children = node.children();
-        if let Some(construct) = outside_node(graph, node, &children, coverage)? {
+        if let Some(construct) = outside_node(graph, node, coverage)? {
             return Ok(Some(OutsideCoverage {
                 construct,
                 location: node.location().clone(),
             }));
         }
-        pending.extend(children.into_iter().rev());
+        pending.extend(node.children().rev());
     }
     Ok(None)
 }
@@ -264,7 +263,6 @@ fn covered_named_population(node: CheckedNode<'_>) -> bool {
 fn outside_node(
     graph: &CheckedGraph,
     node: CheckedNode<'_>,
-    children: &[CheckedNode<'_>],
     coverage: &BackendCoverage,
 ) -> Result<Option<UntranslatableConstruct>, InternalFault> {
     if let Some(form) = form_name(graph, node) {
@@ -282,14 +280,14 @@ fn outside_node(
             node.value_type().clone(),
         ))));
     }
-    for child in children {
-        if !covered_named_population(*child) && !coverage.lists_type(graph, child.value_type()) {
+    for child in node.children() {
+        if !covered_named_population(child) && !coverage.lists_type(graph, child.value_type()) {
             return Ok(Some(UntranslatableConstruct::ValueType(Box::new(
                 child.value_type().clone(),
             ))));
         }
     }
-    let Some(operation) = operation_of(graph, node, children) else {
+    let Some(operation) = operation_of(graph, node) else {
         return Ok(None);
     };
     if coverage.lists_operation(&operation) {
@@ -383,7 +381,6 @@ fn variant_name<C: std::fmt::Debug>(kind: &NodeKind<C>) -> String {
 fn operation_of(
     graph: &CheckedGraph,
     node: CheckedNode<'_>,
-    children: &[CheckedNode<'_>],
 ) -> Option<CoverageOperation> {
     if let NodeKind::Query { visit, source, .. } = node.kind() {
         let source = node.at(*source);
@@ -452,7 +449,7 @@ fn operation_of(
         NodeKind::RationalNegate(..) | NodeKind::DecimalNegate(..) => CoverageOperator::Negate,
         NodeKind::ConvertDecimal(..) => CoverageOperator::Other("convert-decimal".to_owned()),
         NodeKind::Field { .. }
-            if children.first().is_some_and(|child| {
+            if node.children().next().is_some_and(|child| {
                 coverage_type(graph, child.value_type()) == CoverageValueType::Record
             }) =>
         {
@@ -495,8 +492,8 @@ fn operation_of(
         | NodeKind::Case { .. } => return None,
         other => CoverageOperator::Other(variant_name(other)),
     };
-    let operand_types = children
-        .iter()
+    let operand_types = node
+        .children()
         .map(|child| coverage_type(graph, child.value_type()))
         .collect();
     Some(CoverageOperation {

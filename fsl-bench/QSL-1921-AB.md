@@ -9,14 +9,14 @@ The committed recorder writes one append-only result file per side and axis. Use
 
 ## Prepare A in the existing worktree
 
-Keep the candidate branch and target in this one worktree. These steps temporarily switch the worktree to the fetched base for A; they do not create another worktree. Replace `<B_HEAD>` with the candidate commit that contains the recorder and harness.
+Keep the candidate branch and target in this one worktree. These steps temporarily switch the worktree to the fetched base for A; they do not create another worktree. Keep patches, logs, and results under `/mnt/build`. Replace `<B_HEAD>` with the candidate commit that contains the recorder and harness. Run each Cargo command through `locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo ... -j4`; do not set `CARGO_TARGET_DIR` or `TMPDIR` because locked-build sets them on NVMe.
 
 ```sh
-git show <B_HEAD>:fsl-bench/qsl-1921-a-baseline.patch > /private/tmp/qsl-1921-a-baseline.patch
+git show <B_HEAD>:fsl-bench/qsl-1921-a-baseline.patch > /mnt/build/qsl-1921-a-baseline.patch
 git fetch origin main
 git switch --detach origin/main
-git apply --check /private/tmp/qsl-1921-a-baseline.patch
-git apply /private/tmp/qsl-1921-a-baseline.patch
+git apply --check /mnt/build/qsl-1921-a-baseline.patch
+git apply /mnt/build/qsl-1921-a-baseline.patch
 git show <B_HEAD>:fsl-bench/src/evaluator_cost.rs > fsl-bench/src/evaluator_cost.rs
 git show <B_HEAD>:fsl-bench/src/bin/fsl-bench-evaluator-report.rs > fsl-bench/src/bin/fsl-bench-evaluator-report.rs
 git show <B_HEAD>:fsl-bench/tests/it/evaluator_cost_report.rs > fsl-bench/tests/it/evaluator_cost_report.rs
@@ -26,24 +26,24 @@ Create a local A-only branch at this point if needed. The patch anchors `allocat
 
 ## Record five rounds
 
-Set `CARGO_TARGET_DIR` to a directory inside this worktree for each side (for example `target-a` and `target-b`). Keep result files under `/private/tmp` so branch switches do not remove them. Before each measured Criterion command, start the recorded invocation with the fixed side/round/axis/path. For example:
+Use locked-build's per-worktree target. Keep result files under `/mnt/build` so branch switches do not remove them. Before each measured Criterion command, start the recorded invocation with the fixed side/round/axis/path. For example:
 
 ```sh
-cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- start --record A 1 evaluator/kernel /private/tmp/A-kernel.json
-cargo bench --locked -p fsl-bench --bench evaluator_kernel
-cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- profile evaluator/kernel
-cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/kernel
+locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo -j4 run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- start --record A 1 evaluator/kernel /mnt/build/A-kernel.json
+locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo -j4 bench --locked -p fsl-bench --bench evaluator_kernel
+locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo -j4 run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- profile evaluator/kernel
+locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo -j4 run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/kernel
 ```
 
 For call-chain, use axis `evaluator/call_chain`, `cargo bench --locked -p fsl-bench --bench evaluator`, and the corresponding `profile` and `report` commands. Record rounds 1 through 5 in order for each side/axis. Alternate A and B rounds to reduce load drift. The report command appends the complete raw per-invocation report and after-load metadata to the preselected side/axis file; no manual result assembly is needed. If any Criterion, profile, or report command fails, immediately record it, for example:
 
 ```sh
-cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- fail "Criterion exited with status 101"
+locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo -j4 run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- fail "Criterion exited with status 101"
 ```
 
 Do not continue or retry a failed session. After five successful rounds for both sides, compare each axis using the two fixed result files:
 
 ```sh
-cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- compare evaluator/kernel /private/tmp/A-kernel.json /private/tmp/B-kernel.json /private/tmp/kernel-comparison.json
-cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- compare evaluator/call_chain /private/tmp/A-call-chain.json /private/tmp/B-call-chain.json /private/tmp/call-chain-comparison.json
+locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo -j4 run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- compare evaluator/kernel /mnt/build/A-kernel.json /mnt/build/B-kernel.json /mnt/build/kernel-comparison.json
+locked-build run --owner peter@luna:luna-codex-3 --ticket QSL-1921 --class point -- cargo -j4 run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- compare evaluator/call_chain /mnt/build/A-call-chain.json /mnt/build/B-call-chain.json /mnt/build/call-chain-comparison.json
 ```

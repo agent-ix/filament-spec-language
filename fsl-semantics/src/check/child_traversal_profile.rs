@@ -2,8 +2,10 @@
 //! Feature-gated dynamic accounting for checked-node child iteration.
 
 use std::cell::Cell;
+use ix_trace_rs::implements;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[implements("NFR-141-AC-7")]
 /// Dynamic counters for one evaluation's checked-node child traversal.
 pub struct ChildTraversalProfile {
     /// Number of child iterators constructed during the profiled evaluation.
@@ -22,11 +24,13 @@ thread_local! {
 pub type AllocatorMeasure = fn(&mut dyn FnMut()) -> u64;
 
 /// Start dynamic child-traversal accounting on the current thread.
+#[implements("NFR-141-AC-7")]
 pub fn begin_child_traversal_profile(measure: AllocatorMeasure) {
     ACTIVE.with(|active| active.set(Some((ChildTraversalProfile::default(), measure))));
 }
 
 /// Finish dynamic child-traversal accounting on the current thread.
+#[implements("NFR-141-AC-7")]
 pub fn end_child_traversal_profile() -> ChildTraversalProfile {
     ACTIVE.with(|active| {
         active
@@ -35,6 +39,7 @@ pub fn end_child_traversal_profile() -> ChildTraversalProfile {
     })
 }
 
+#[implements("NFR-141-AC-7")]
 pub(crate) fn measure_child<T>(iterator_construction: bool, operation: impl FnOnce() -> T) -> T {
     let measure = ACTIVE.with(|active| {
         if let Some((mut profile, measure)) = active.get() {
@@ -71,10 +76,12 @@ pub(crate) fn measure_child<T>(iterator_construction: bool, operation: impl FnOn
     }
 }
 
+#[implements("NFR-141-AC-7")]
 pub(crate) fn note_child_yielded() {
     note_children_yielded(1);
 }
 
+#[implements("NFR-141-AC-7")]
 pub(crate) fn note_children_yielded(count: usize) {
     ACTIVE.with(|active| {
         if let Some((mut profile, measure)) = active.get() {

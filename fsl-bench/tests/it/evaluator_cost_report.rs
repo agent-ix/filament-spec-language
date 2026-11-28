@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -482,6 +483,9 @@ fn start_profile_report_populates_five_round_files_with_load_metadata() {
                 result_path,
             )
             .expect("recorded invocation captures before-load metadata");
+            // Some filesystems expose estimate mtimes at one-second resolution.
+            // Let the invocation marker cross that boundary before writing fresh estimates.
+            std::thread::sleep(Duration::from_secs(1));
             for (case, size) in expected_cases(EVALUATOR_CALL_CHAIN_AXIS) {
                 if case == "linked_chain" && size == 1 {
                     let package = linked_chain(size);

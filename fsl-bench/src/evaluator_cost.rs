@@ -7,6 +7,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use ix_trace_rs::implements;
 
 /// The Criterion axis for checked evaluator kernels.
 pub const EVALUATOR_KERNEL_AXIS: &str = "evaluator/kernel";
@@ -49,6 +50,7 @@ pub struct AllocationProbe {
 
 /// Evaluate one real case while recording dynamic child traversal allocations.
 #[cfg(feature = "allocation-probe")]
+#[implements("NFR-141-AC-7")]
 pub fn record_evaluation_probe(
     target: &Path,
     run_id: u128,
@@ -101,6 +103,7 @@ impl ReportRole {
 }
 
 /// Start an invocation and return its unique run identifier.
+#[implements("NFR-141-AC-7")]
 pub fn start_invocation(target: &Path) -> io::Result<u128> {
     fs::create_dir_all(target)?;
     match fs::remove_file(target.join(ROUND_MARKER)) {
@@ -118,6 +121,7 @@ pub fn start_invocation(target: &Path) -> io::Result<u128> {
 }
 
 /// Start a round that `emit_report` will append to the A or B result file.
+#[implements("NFR-141-AC-7")]
 pub fn start_recorded_invocation(
     target: &Path,
     side: &str,
@@ -268,6 +272,7 @@ pub fn current_invocation(target: &Path) -> io::Result<u128> {
 }
 
 /// Record one input's measured child traversal and evaluator allocation counts.
+#[implements("NFR-141-AC-7")]
 pub fn record_probe(
     target: &Path,
     run_id: u128,
@@ -297,6 +302,7 @@ pub fn record_probe(
 }
 
 /// Emit and return the invocation-local report artifact for one evaluator axis.
+#[implements("NFR-141-AC-7")]
 pub fn emit_report(target: &Path, axis: &str, role: ReportRole) -> Result<PathBuf, Box<dyn Error>> {
     let run_id = current_invocation(target)?;
     let expected = expected_cases(axis)?;
@@ -474,7 +480,7 @@ fn parse_load_average_output(text: &str) -> Result<serde_json::Value, io::Error>
         .map(str::parse::<f64>)
         .collect::<Result<Vec<_>, _>>()
         .map_err(io::Error::other)?;
-    load_average_value(values)
+    Ok(load_average_value(values)?)
 }
 
 #[cfg(target_os = "linux")]
@@ -484,7 +490,7 @@ fn system_load_average() -> Result<serde_json::Value, Box<dyn Error>> {
         .take(3)
         .map(str::parse::<f64>)
         .collect::<Result<Vec<_>, _>>()?;
-    load_average_value(values)
+    Ok(load_average_value(values)?)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -571,6 +577,7 @@ fn expected_cases(axis: &str) -> Result<Vec<(&'static str, usize)>, Box<dyn Erro
 /// five ordered rounds. A round contains `round`, `load_before`, `load_after`,
 /// and the complete per-invocation report object under `report`. Each load
 /// object has numeric `1m`, `5m`, and `15m` fields.
+#[implements("NFR-141-AC-7")]
 pub fn compare_ab_result_files(
     a_path: &Path,
     b_path: &Path,
