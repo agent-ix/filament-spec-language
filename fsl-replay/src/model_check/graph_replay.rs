@@ -147,7 +147,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             claim,
             temporal_clock_selections,
             cancel,
-            caller.spine.package.emit(),
+            caller.spine.package.emit().with_read(caller.spine.imports),
         )
         .map_err(|refusal| match refusal {
             crate::model_check::identity::ClauseRootRefusal::Cancelled(cause) => {
@@ -169,7 +169,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             clause,
             temporal_clock_selections,
             cancel,
-            caller.spine.package.emit(),
+            caller.spine.package.emit().with_read(caller.spine.imports),
         )
         .map_err(|refusal| match refusal {
             crate::model_check::identity::ClauseRootRefusal::Cancelled(cause) => {
@@ -207,7 +207,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         observation: caller.observation,
         expansion: subject.expansion,
         meter: request.accounting_limits(),
-        emit: caller.spine.package.emit(),
+        emit: caller.spine.package.emit().with_read(caller.spine.imports),
     };
     let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
     if claim.is_some() {
@@ -446,7 +446,7 @@ pub fn replay_model_graph_from_package(
         observation: caller.observation,
         expansion: subject.expansion,
         meter: request.accounting_limits(),
-        emit: caller.spine.package.emit(),
+        emit: caller.spine.package.emit().with_read(caller.spine.imports),
     };
     let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
     admit_graph_reading(

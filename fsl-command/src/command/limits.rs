@@ -459,6 +459,9 @@ impl CommandLimits {
         if let Some(bound) = self.stage.get(&Setting::EmitOutputBytes) {
             limits.emit = fsl_package::EmitLimits::new(*bound);
         }
+        // The model-check clause-root read-back runs under the caller's
+        // `i2.*` bounds, carried beside `emit.output_bytes` (FR-255-AC-24).
+        limits.emit = limits.emit.with_read(limits.read);
         for (setting, bound) in &self.stage {
             limits.engines.set(*setting, *bound);
             match setting {

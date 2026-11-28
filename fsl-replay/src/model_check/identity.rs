@@ -14,11 +14,12 @@
 
 use filament_exact::NodeKey;
 use filament_exact::{Cancel, CancelCause};
+use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{
     emit_checked_with_temporal_selections_and_cancel, read_import_view, resolve_clause_root,
     resolve_hyper_root, resolve_state_graph_root, AdmittedPackages, CheckedPackage,
-    ClauseRootUnresolved, EmitRefusal, TemporalClockSelection, V2ReadLimits,
+    ClauseRootUnresolved, EmitRefusal, ImportViewRefusal, TemporalClockSelection, V2ReadLimits,
 };
 use fsl_semantics::check::{
     CheckedHyperClause, CheckedStateGraphClaim, CheckedTemporalClause, TemporalClauseNode,
@@ -185,11 +186,23 @@ fn read_back(
         &mut admitted,
         // The clause-root lookup reads nodes and performs no native identity
         // join, so it asks for no native storage: a join attempted here is
-        // refused at once rather than allowed an invented allowance.
-        V2ReadLimits::bounded(0),
+        // refused at once rather than allowed an invented allowance. Every
+        // other I2 bound is the caller's (`i2.*`, FR-255), carried by `emit`.
+        V2ReadLimits {
+            storage: 0,
+            ..emit.read_limits()
+        },
         emit,
     )
-    .map_err(|refusal| ClauseRootRefusal::Package(format!("{refusal:?}")))?;
+    .map_err(|refusal| match refusal {
+        ImportViewRefusal::Read { refusal, .. } => match *refusal {
+            StageFailure::Limit(limit) | StageFailure::LimitWithPayload(limit, _) => {
+                ClauseRootRefusal::Limit(limit)
+            }
+            other => ClauseRootRefusal::Package(format!("{other:?}")),
+        },
+        other => ClauseRootRefusal::Package(format!("{other:?}")),
+    })?;
     Ok((admitted, library))
 }
 
@@ -414,6 +427,10 @@ pub enum ClauseRootRefusal {
     /// look up.
     #[error("clause-root-unresolved: the package did not emit or read: {0}")]
     Package(String),
+    /// The I2 read of the emitted package reached a caller limit (`i2.*`);
+    /// the limit names its setting, bound and the count reached (FR-255).
+    #[error("{0}")]
+    Limit(fsl_foundation::diagnostic::LimitExceeded),
     /// The handle stopped the emission.
     #[error("the emission was cancelled: {0:?}")]
     Cancelled(CancelCause),

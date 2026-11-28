@@ -5,6 +5,7 @@
 //! "Engine refusals" table.
 
 use filament_semantic_value::catalog::CatalogCode;
+use filament_semantic_value::catalog::CatalogCoded;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
 use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, ProtocolTransition};
@@ -18,7 +19,10 @@ use fsl_replay::{
     RefinementTraceSettlement, ReplayRefusal, SubjectRefusal, TemporalCounterexample,
     TerminalValue, UnavailabilityCause, ZoneCertificateRequest,
 };
-use fsl_replay::{ModelCheckItem, ModelCheckLimits, ProtocolCertificateRequest, SubjectIdentity};
+use fsl_replay::{
+    ClauseRootRefusal, ItemRefusal, ModelCheckItem, ModelCheckLimits, ProtocolCertificateRequest,
+    SubjectIdentity,
+};
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::request::{DerivedLimit, DerivedLimits, ItemKind, RequestItem, RequirementItem};
 use fsl_route::Mode;
@@ -1338,6 +1342,18 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
             serde_json::json!(node),
             failure,
         ),
+        // The clause-root read reached a caller limit (`i2.*`): the refusal
+        // keeps the limit's own code and names its setting, bound and the
+        // count reached (FR-255 Behavior 1), not the broken-invariant code.
+        ModelCheckRefusal::Item(ItemRefusal::ClauseRoot(ClauseRootRefusal::Limit(limit))) => {
+            let detail = limit
+                .catalog_fields()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), serde_json::json!(value)))
+                .collect();
+            Refusal::failed_with_detail(limit.catalog_code(), detail)
+        }
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.
@@ -1405,6 +1421,30 @@ mod tests {
             path: Vec::new(),
             kernel: None,
         }
+    }
+
+    /// FR-255-AC-24: a clause-root read that reached a caller `i2.*` limit
+    /// keeps that limit (`stage_limit_exceeded`, setting, bound, count), and
+    /// does not become the broken-invariant failure.
+    #[trace("TC-3242", "FR-255-AC-24")]
+    #[test]
+    fn a_clause_root_limit_refusal_keeps_its_setting_bound_and_actual() {
+        let limit = fsl_foundation::diagnostic::LimitExceeded::new(
+            fsl_foundation::Setting::I2InputBytes,
+            1_000,
+            1_001,
+        );
+        let refusal = model_refusal(&ModelCheckRefusal::Item(ItemRefusal::ClauseRoot(
+            ClauseRootRefusal::Limit(limit),
+        )));
+        let Refusal::FailedWithDetail(code, detail) = refusal else {
+            panic!("a failed refusal carrying the limit");
+        };
+        assert_eq!(code.code(), "stage_limit_exceeded");
+        assert_ne!(code, BROKEN);
+        assert_eq!(detail["setting"], "i2.input_bytes");
+        assert_eq!(detail["bound"], "1000");
+        assert_eq!(detail["actual"], "1001");
     }
 
     fn code(refusal: &Refusal) -> Option<String> {

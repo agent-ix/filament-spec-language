@@ -63,6 +63,10 @@ pub struct EmitLimits {
     /// Inclusive canonical byte count of one package (`emit.output_bytes`),
     /// used as given, including zero.
     pub output_bytes: u64,
+    /// The caller's I2 read limits for a read-back of this emission
+    /// (`i2.*`), when the caller states them; `None` reads back under the
+    /// bounded defaults.
+    read: Option<crate::V2ReadLimits>,
 }
 
 #[cfg(feature = "std")]
@@ -70,7 +74,27 @@ impl EmitLimits {
     /// Limits of `output_bytes` canonical bytes.
     #[must_use]
     pub const fn new(output_bytes: u64) -> Self {
-        Self { output_bytes }
+        Self {
+            output_bytes,
+            read: None,
+        }
+    }
+
+    /// These limits carrying the caller's I2 read limits for any read-back
+    /// of this emission (`i2.*`, FR-255): the clause-root lookup of a model
+    /// check reads its own emission back under them, not under a fixed
+    /// 16 MiB input bound.
+    #[must_use]
+    pub const fn with_read(mut self, read: crate::V2ReadLimits) -> Self {
+        self.read = Some(read);
+        self
+    }
+
+    /// The I2 read limits a read-back of this emission takes: the caller's,
+    /// else the bounded defaults with no native-join storage.
+    #[must_use]
+    pub fn read_limits(self) -> crate::V2ReadLimits {
+        self.read.unwrap_or_else(|| crate::V2ReadLimits::bounded(0))
     }
 
     /// These limits with `emit.output_bytes` set to `bound`.

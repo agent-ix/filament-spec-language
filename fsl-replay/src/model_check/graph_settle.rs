@@ -166,7 +166,8 @@ pub fn settle_state_graph(
                     }
                     ClauseRootRefusal::Undeclared { .. }
                     | ClauseRootRefusal::Unresolved(_)
-                    | ClauseRootRefusal::Package(_) => Row::failed(),
+                    | ClauseRootRefusal::Package(_)
+                    | ClauseRootRefusal::Limit(_) => Row::failed(),
                 };
                 return record_of(row, instance, method, None, None);
             }

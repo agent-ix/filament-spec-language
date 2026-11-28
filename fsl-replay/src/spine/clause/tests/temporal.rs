@@ -5366,6 +5366,59 @@ fn the_model_check_reemit_refuses_a_package_checked_without_the_clock_selection(
     );
 }
 
+/// FR-255-AC-24: the clause-root read-back runs under the caller's
+/// `i2.input_bytes`, not a fixed 16 MiB. A bound equal to the emitted package
+/// admits; one byte below refuses naming `i2.input_bytes`, that bound and the
+/// package's size.
+#[trace("TC-3242", "FR-255-AC-24")]
+#[test]
+fn the_clause_root_read_takes_the_callers_i2_input_bytes() {
+    use crate::model_check::identity::{ClauseIdentity, ClauseRootRefusal};
+    use fsl_foundation::Setting;
+
+    let MixedUnitClock {
+        checked,
+        packages,
+        selections,
+        ..
+    } = mixed_unit_clock(true);
+    let package = checked.package();
+    let [node] = package.graph().temporal_clauses() else {
+        panic!("one clause");
+    };
+    let size = fsl_package::emit_checked_with_temporal_selections(
+        package,
+        &selections,
+        fsl_package::EmitLimits::fixture(),
+    )
+    .unwrap_or_else(|refusal| panic!("the package emits: {refusal}"))
+    .package()
+    .bytes()
+    .len();
+    let resolve = |artifact_bytes: usize| {
+        let read = fsl_package::V2ReadLimits {
+            artifact_bytes,
+            ..fsl_package::V2ReadLimits::bounded(0)
+        };
+        ClauseIdentity::resolve(
+            package,
+            &packages,
+            node.clause(),
+            &selections,
+            &filament_exact::Cancel::new(),
+            fsl_package::EmitLimits::fixture().with_read(read),
+        )
+    };
+    resolve(size).unwrap_or_else(|refusal| panic!("a bound at the size admits: {refusal}"));
+    let refusal = resolve(size - 1).expect_err("one byte under the package refuses");
+    let ClauseRootRefusal::Limit(limit) = refusal else {
+        panic!("a limit refusal naming its setting: {refusal:?}");
+    };
+    assert_eq!(limit.setting(), Setting::I2InputBytes);
+    assert_eq!(limit.configured_bound(), (size - 1) as u64);
+    assert_eq!(limit.actual(), size as u128);
+}
+
 /// A model-check letter reader no re-emit test reaches.
 struct NoLetters;
 
