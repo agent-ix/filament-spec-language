@@ -682,6 +682,11 @@ impl BodyBuilder {
         self.nodes.get(id.0)
     }
 
+    /// The body whose root is the node last pushed.
+    pub(in crate::check) fn finish_pushed(self) -> CheckedBody {
+        CheckedBody::new(self.nodes)
+    }
+
     /// The body whose root is `root`, stored after every pushed node.
     pub(in crate::check) fn finish(mut self, root: Node) -> CheckedBody {
         self.nodes.push(root);

@@ -1082,3 +1082,111 @@ fn a_unit_bound_reaches_inherited_record_fields_and_map_values() {
     );
     assert_eq!(on_map.violation(&map(3), types), None);
 }
+
+/// The check of `functions` over a model whose alias `D` of `ms` is bounded
+/// `max` `3` (named `Config::D` in source): the refusal and the source text
+/// at its region, or `None` when the unit checks.
+fn check_against_alias_bound(
+    functions: &str,
+) -> Option<(fsl_semantics::check::SemanticCheckRefusal, String)> {
+    let document = bounded_document(vec![bound("D", "max", "3", &node("D"))], Vec::new());
+    let body = format!("{UNITS}{functions}\n");
+    let declarations = admit_and_assemble_with_body(&document, &body).expect("assembles");
+    let regions = declarations.regions();
+    let (text, _) = config_unit_with_profiles(&document, "", &body);
+    let refusals = match declarations.check(
+        CheckMode::Linked,
+        filament_semantic_value::checking::CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    ) {
+        Ok(_) => return None,
+        Err(refusals) => refusals,
+    };
+    let [refusal] = refusals.as_slice() else {
+        panic!("{functions}: one refusal: {refusals:?}");
+    };
+    let region = regions.refusal_region(refusal).expect("a region");
+    let at = text[region.start() as usize..region.end() as usize].to_owned();
+    Some((refusal.clone(), at))
+}
+
+/// FSpec FR-154-AC-31 at one source position: each `accepted` function
+/// checks; each `refused` one refuses `ill_typed`/`type-mismatch` at the
+/// outermost constant (`4 ms`, `2 ms + 2 ms`, `2 ms * 2`) naming the alias
+/// `D`, its constraint `D/max`, `max` and `3`.
+fn assert_alias_bound_at(accepted: &[String], refused: &[String]) {
+    for function in accepted {
+        assert!(
+            check_against_alias_bound(function).is_none(),
+            "{function}: within the bound checks"
+        );
+    }
+    for (function, constant) in refused.iter().zip(["4 ms", "2 ms + 2 ms", "2 ms * 2"]) {
+        let (refusal, at) = check_against_alias_bound(function)
+            .unwrap_or_else(|| panic!("{function}: a constant beyond the bound refuses"));
+        assert_eq!(
+            refusal.cause.as_ref(),
+            &CheckCause::UnitBound {
+                member: DeclarationKey {
+                    package: "example/config-version".to_owned(),
+                    node: node("D"),
+                },
+                constraint: DeclarationKey {
+                    package: "example/config-version".to_owned(),
+                    node: node("D/max"),
+                },
+                keyword: "max",
+                bound: "3".to_owned(),
+            },
+            "{function}"
+        );
+        assert_eq!(refusal.cause.code(), Code::IllTyped, "{function}");
+        assert_eq!(at, constant, "{function}: the refusal lands at the constant");
+    }
+}
+
+/// FSpec FR-154-AC-31, the `let` position: with `D` an alias of `ms` under
+/// `max` `3`, `let x: Config::D = 3 ms` and `4 ms - 2 ms` check; `4 ms`,
+/// `2 ms + 2 ms` and `2 ms * 2` refuse at the constant.
+#[trace("TC-685", "FR-154-AC-31")]
+#[test]
+fn a_constant_beyond_an_alias_bound_is_refused_in_a_source_let() {
+    let function = |written: &str| {
+        format!("function f using v(): Config::D pure {{ let x: Config::D = {written}; x }}")
+    };
+    assert_alias_bound_at(
+        &[function("3 ms"), function("4 ms - 2 ms")],
+        &[function("4 ms"), function("2 ms + 2 ms"), function("2 ms * 2")],
+    );
+}
+
+/// FSpec FR-154-AC-31, the argument position: an argument to the source
+/// parameter `q: Config::D`.
+#[trace("TC-685", "FR-154-AC-31")]
+#[test]
+fn a_constant_beyond_an_alias_bound_is_refused_as_a_source_argument() {
+    let function = |written: &str| {
+        format!(
+            "function g using v(q: Config::D): Config::D pure {{ q }}\n\
+             function f using v(): Config::D pure {{ g({written}) }}"
+        )
+    };
+    assert_alias_bound_at(
+        &[function("3 ms"), function("4 ms - 2 ms")],
+        &[function("4 ms"), function("2 ms + 2 ms"), function("2 ms * 2")],
+    );
+}
+
+/// FSpec FR-154-AC-31, the result position: a function typed `Config::D`
+/// whose body is the constant.
+#[trace("TC-685", "FR-154-AC-31")]
+#[test]
+fn a_constant_beyond_an_alias_bound_is_refused_as_a_source_result() {
+    let function = |written: &str| {
+        format!("function f using v(): Config::D pure {{ {written} }}")
+    };
+    assert_alias_bound_at(
+        &[function("3 ms"), function("4 ms - 2 ms")],
+        &[function("4 ms"), function("2 ms + 2 ms"), function("2 ms * 2")],
+    );
+}

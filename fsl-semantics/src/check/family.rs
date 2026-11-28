@@ -1632,7 +1632,12 @@ pub(crate) fn check_declaration_body(
     if !matches!(result, ValueType::Population(_)) {
         typer.check_declared_type(result, input.location)?;
     }
-    let body = typer.check_as(&form.body, result, input.location)?;
+    let result_bounds = input
+        .scope
+        .signature_bounds(&input.own_signature.name)
+        .map(|bounds| bounds.result.as_slice())
+        .unwrap_or_default();
+    let body = typer.check_as_bounded(&form.body, result, result_bounds, input.location)?;
     let slots = typer.slots();
     let slot_names = typer.slot_names().to_vec();
     let mut formed_units = typer.into_formed_units();

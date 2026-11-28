@@ -38,6 +38,7 @@ use crate::check::refusal::{
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use crate::check::DispatchOperation;
+use crate::model::state::MemberBound;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -362,6 +363,8 @@ struct LetFrame<'e, 'r> {
     location: Location,
     /// The resolved declared binder type, when annotated.
     annotation: Option<ValueType>,
+    /// The unit bounds of the model alias the annotation names.
+    bounds: Vec<MemberBound>,
     /// The typed value and the slot it is bound to, once typed.
     value: Option<(Node, Slot)>,
 }
@@ -639,6 +642,8 @@ struct ApplicationFrame<'e, 'r> {
     /// Checked in `order`.
     typed: Vec<NodeId>,
     argument_types: Vec<ValueType>,
+    /// The unit bounds of the model alias each source parameter is typed by.
+    bounds: Vec<Vec<MemberBound>>,
 }
 
 /// A record literal, admitting its initializers in source order.
@@ -1136,12 +1141,30 @@ impl<'a> Typer<'a> {
         required: &ValueType,
         location: &Location,
     ) -> Result<CheckedBody, SemanticCheckRefusal> {
+        self.check_as_bounded(expression, required, &[], location)
+    }
+
+    /// [`Self::check_as`] where a constant the body ends in also satisfies
+    /// `bounds`, the unit bounds of the model alias the result is typed by
+    /// (FSpec FR-154-AC-31).
+    #[implements("FR-154-AC-31")]
+    pub(crate) fn check_as_bounded(
+        &mut self,
+        expression: &Expression,
+        required: &ValueType,
+        bounds: &[MemberBound],
+        location: &Location,
+    ) -> Result<CheckedBody, SemanticCheckRefusal> {
         let root = self.run(Goal::Expect(
             expression.root(),
             Expected::Checked(Cow::Borrowed(required)),
             location.clone(),
         ))?;
-        Ok(std::mem::take(&mut self.body).finish(root))
+        let root = self.push(root);
+        for bound in bounds {
+            self.admit_written(Some(root), bound)?;
+        }
+        Ok(std::mem::take(&mut self.body).finish_pushed())
     }
 
     /// Type `expression` and append an explicit quantity conversion to the
@@ -1310,40 +1333,52 @@ impl<'a> Typer<'a> {
                     .and_then(|position| arguments.get(position).copied()),
                 _ => None,
             };
-            let mut pending: Vec<NodeId> = written.into_iter().collect();
-            while let Some(id) = pending.pop() {
-                let Some(held) = self.body.get(id) else {
-                    continue;
-                };
-                if let Some(magnitude) = self.constant_magnitude(id) {
-                    if !bound.admits_magnitude(&magnitude) {
-                        return Err(refuse(
-                            &held.location,
-                            CheckCause::UnitBound {
-                                member: bound.member.clone(),
-                                constraint: bound.constraint.clone(),
-                                keyword: bound.keyword(),
-                                bound: bound.canonical_bound(),
-                            },
-                        ));
-                    }
-                    continue;
+            self.admit_written(written, bound)?;
+        }
+        Ok(())
+    }
+
+    /// A constant written where `bound` applies, as the value itself, an
+    /// element, a present payload or a branch, satisfies it; the refusal
+    /// lands at the outermost constant expression.
+    fn admit_written(
+        &self,
+        written: Option<NodeId>,
+        bound: &MemberBound,
+    ) -> Result<(), SemanticCheckRefusal> {
+        let mut pending: Vec<NodeId> = written.into_iter().collect();
+        while let Some(id) = pending.pop() {
+            let Some(held) = self.body.get(id) else {
+                continue;
+            };
+            if let Some(magnitude) = self.constant_magnitude(id) {
+                if !bound.admits_magnitude(&magnitude) {
+                    return Err(refuse(
+                        &held.location,
+                        CheckCause::UnitBound {
+                            member: bound.member.clone(),
+                            constraint: bound.constraint.clone(),
+                            keyword: bound.keyword(),
+                            bound: bound.canonical_bound(),
+                        },
+                    ));
                 }
-                match &held.kind {
-                    NodeKind::Collection { elements, .. } => {
-                        pending.extend(elements.iter().rev().copied());
-                    }
-                    NodeKind::OptionSome(payload) => pending.push(*payload),
-                    NodeKind::ConvertCollection { operand, .. } => pending.push(*operand),
-                    NodeKind::If {
-                        then, otherwise, ..
-                    } => pending.extend([*otherwise, *then]),
-                    NodeKind::Let { body, .. } => pending.push(*body),
-                    NodeKind::Case { arms, .. } => {
-                        pending.extend(arms.iter().rev().map(|arm| arm.body));
-                    }
-                    _ => {}
+                continue;
+            }
+            match &held.kind {
+                NodeKind::Collection { elements, .. } => {
+                    pending.extend(elements.iter().rev().copied());
                 }
+                NodeKind::OptionSome(payload) => pending.push(*payload),
+                NodeKind::ConvertCollection { operand, .. } => pending.push(*operand),
+                NodeKind::If {
+                    then, otherwise, ..
+                } => pending.extend([*otherwise, *then]),
+                NodeKind::Let { body, .. } => pending.push(*body),
+                NodeKind::Case { arms, .. } => {
+                    pending.extend(arms.iter().rev().map(|arm| arm.body));
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -1535,12 +1570,14 @@ impl<'a> Typer<'a> {
         frames: &mut Vec<Frame<'e, 'r>>,
     ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
         let value_location = location.child(0);
+        let declared = annotation;
         let annotation = annotation
             .map(|form| self.resolve_type(form, &location))
             .transpose()?;
         if let Some(annotation) = &annotation {
             self.check_declared_type(annotation, &location)?;
         }
+        let bounds = declared.map(|form| self.scope.form_bounds(form)).unwrap_or_default();
         let value_goal = match &annotation {
             Some(annotation) => Goal::Expect(
                 value,
@@ -1555,6 +1592,7 @@ impl<'a> Typer<'a> {
             body,
             location,
             annotation,
+            bounds,
             value: None,
         })));
         Ok(Step::Descend(value_goal))
@@ -2407,11 +2445,16 @@ impl<'a> Typer<'a> {
                     }
                     let arguments: Vec<_> = arguments.iter().map(|id| expression.at(*id)).collect();
                     let count = arguments.len();
+                    let bounds = self
+                        .scope
+                        .signature_bounds(&name.name)
+                        .map(|bounds| bounds.parameters.clone())
+                        .unwrap_or_default();
                     let mut order: Vec<usize> = (0..count).collect();
                     if application.intrinsic_hint(&[]).is_some() {
                         order.sort_by_key(|index| contextual(arguments[*index]));
                     }
-                    return Self::application(
+                    return self.application(
                         Box::new(ApplicationFrame {
                             application,
                             arguments,
@@ -2419,6 +2462,7 @@ impl<'a> Typer<'a> {
                             location,
                             typed: Vec::with_capacity(count),
                             argument_types: Vec::with_capacity(count),
+                            bounds,
                         }),
                         frames,
                     );
@@ -3225,6 +3269,7 @@ impl<'a> Typer<'a> {
     /// Check a call's next argument, or build the call once every argument
     /// is checked.
     fn application<'e, 'r>(
+        &self,
         frame: Box<ApplicationFrame<'e, 'r>>,
         frames: &mut Vec<Frame<'e, 'r>>,
     ) -> Result<Step<'e, 'r>, SemanticCheckRefusal> {
@@ -3259,6 +3304,7 @@ impl<'a> Typer<'a> {
                     order,
                     typed,
                     argument_types,
+                    bounds,
                     ..
                 } = *frame;
                 // Back to source order.
@@ -3269,6 +3315,11 @@ impl<'a> Typer<'a> {
                 by_source.sort_by_key(|(index, _)| *index);
                 let (typed, argument_types): (Vec<_>, Vec<_>) =
                     by_source.into_iter().map(|(_, pair)| pair).unzip();
+                for (argument, bounds) in typed.iter().zip(&bounds) {
+                    for bound in bounds {
+                        self.admit_written(Some(*argument), bound)?;
+                    }
+                }
                 application
                     .finish(typed, argument_types, &location)
                     .map(Step::Typed)
@@ -3750,7 +3801,7 @@ impl<'a> Typer<'a> {
                 };
                 frame.argument_types.push(typed.value_type.clone());
                 frame.typed.push(self.push(typed));
-                Self::application(frame, frames)
+                self.application(frame, frames)
             }
             Frame::Record(mut frame) => {
                 if let Some(index) = frame.awaiting.take() {
@@ -3971,9 +4022,14 @@ impl<'a> Typer<'a> {
                     branches,
                     location,
                     annotation,
+                    bounds,
                     ..
                 } = *frame;
                 let body = typed;
+                let value = self.push(value);
+                for bound in &bounds {
+                    self.admit_written(Some(value), bound)?;
+                }
                 let value_type = match branches {
                     Branches::Expected(expected) => expected.into_type(),
                     Branches::Inferred(_) => body.value_type.clone(),
@@ -3983,7 +4039,7 @@ impl<'a> Typer<'a> {
                         NodeKind::Let {
                             slot,
                             name: self.slot_name(slot, &location)?,
-                            value: self.push(value),
+                            value,
                             body: self.push(body),
                         },
                         value_type,

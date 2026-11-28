@@ -255,6 +255,10 @@ pub(crate) fn member_bounds(views: &[ModelView]) -> Vec<MemberBound> {
 #[derive(Clone, Debug, Default)]
 pub struct CompositeBounds {
     slots: BTreeMap<filament_exact::NodeKey, Vec<MemberBound>>,
+    /// The bounds a value typed by a model alias holds, by the alias's node
+    /// (`ix://<package>/<path>`): the alias is the bounded member. A source
+    /// position typed by the alias is checked against them (FSpec FR-154-AC-31).
+    aliases: BTreeMap<String, Vec<MemberBound>>,
 }
 
 impl CompositeBounds {
@@ -273,6 +277,7 @@ impl CompositeBounds {
         packages: impl IntoIterator<Item = &'r [DomainPackageRecord]>,
     ) -> Self {
         let mut slots = BTreeMap::new();
+        let mut aliases = BTreeMap::new();
         for records in packages {
             if !records
                 .iter()
@@ -282,6 +287,14 @@ impl CompositeBounds {
             }
             let walk = Walk::new(records, false);
             for record in records {
+                if let DomainPackageRecord::AliasType(alias) = record {
+                    let mut bounds = Vec::new();
+                    let held = ValueTypeRef::Package(alias.key.clone());
+                    walk.member(&alias.key, &held, &mut Vec::new(), &mut bounds);
+                    if !bounds.is_empty() {
+                        aliases.insert(alias.key.node.clone(), bounds);
+                    }
+                }
                 let bounds = walk.slots(record);
                 if bounds.is_empty() {
                     continue;
@@ -293,7 +306,13 @@ impl CompositeBounds {
                 }
             }
         }
-        Self { slots }
+        Self { slots, aliases }
+    }
+
+    /// The bounds on a quantity a source position typed by the model alias
+    /// `node` holds; empty for an alias no package bounds.
+    pub(crate) fn alias_bounds(&self, node: &str) -> &[MemberBound] {
+        self.aliases.get(node).map_or(&[], Vec::as_slice)
     }
 
     /// The bounds on the slots of the composite `node`, each path naming its

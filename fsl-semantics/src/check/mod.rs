@@ -3248,7 +3248,7 @@ impl PackageDeclarations {
                 model.symmetric_object_types(|sub, sup| scope.types().conforms(sub, sup))
             })
             .collect();
-        let mut scope = scope.with_symmetric_objects(symmetric_objects);
+        let scope = scope.with_symmetric_objects(symmetric_objects);
         let dispatch_tables = self.dispatch_tables;
         if let Some(index) = self
             .resolved_signatures
@@ -3282,6 +3282,22 @@ impl PackageDeclarations {
         if !refusals.is_empty() {
             return Err(refusals);
         }
+        let signature_bounds: BTreeMap<String, check::SignatureBounds> = self
+            .functions
+            .iter()
+            .map(|function| {
+                let bounds = check::SignatureBounds {
+                    parameters: function
+                        .parameters
+                        .iter()
+                        .map(|(_, form)| scope.form_bounds(form))
+                        .collect(),
+                    result: scope.form_bounds(&function.result),
+                };
+                (function.name.clone(), bounds)
+            })
+            .collect();
+        let mut scope = scope.with_signature_bounds(signature_bounds);
         let has_ieee_literal = self.functions.iter().any(|function| {
             function.body.contains_ieee_literal()
                 || function

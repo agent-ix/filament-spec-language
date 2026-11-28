@@ -1106,6 +1106,9 @@ pub struct Scope {
     /// The unit bounds on the slots of the admitted models' records and
     /// tuples (FSpec FR-154 "Unit bounds").
     unit_bounds: CompositeBounds,
+    /// The bounds of the model alias each source function parameter and
+    /// result is typed by, by function name (FSpec FR-154-AC-31).
+    signature_bounds: BTreeMap<String, SignatureBounds>,
     /// The relationship ends a receiver type navigates (FR-363).
     relationships: Relationships,
     /// Fixed once built, like `types`.
@@ -1525,6 +1528,7 @@ impl Scope {
             types,
             model_records: ModelRecords::default(),
             unit_bounds: CompositeBounds::default(),
+            signature_bounds: BTreeMap::new(),
             relationships: Relationships::default(),
             enums,
             variant_types: Vec::new(),
@@ -1790,6 +1794,35 @@ impl Scope {
             .collect();
         self.unit_bounds = CompositeBounds::of_records(packages.iter().map(Vec::as_slice));
         self
+    }
+
+    /// The unit bounds a source position typed `form` holds: those of the
+    /// model alias it names, empty for any other type (FSpec FR-154-AC-31).
+    pub(crate) fn form_bounds(&self, form: &fsl_forms::TypeForm) -> Vec<MemberBound> {
+        let fsl_forms::TypeFormHead::Name(name) = &form.head else {
+            return Vec::new();
+        };
+        if !form.arguments.is_empty() {
+            return Vec::new();
+        }
+        self.alias_declaration(&name.name)
+            .map(|alias| self.unit_bounds.alias_bounds(&alias.node).to_vec())
+            .unwrap_or_default()
+    }
+
+    /// This scope with the alias bounds of each source function's
+    /// parameters and result.
+    pub(crate) fn with_signature_bounds(
+        mut self,
+        bounds: BTreeMap<String, SignatureBounds>,
+    ) -> Self {
+        self.signature_bounds = bounds;
+        self
+    }
+
+    /// The alias bounds of the function `name`'s parameters and result.
+    pub(crate) fn signature_bounds(&self, name: &str) -> Option<&SignatureBounds> {
+        self.signature_bounds.get(name)
     }
 
     /// The unit bounds on the slots of the composite `declaration`.
@@ -2506,6 +2539,15 @@ impl From<Vec<Signature>> for Signatures {
     fn from(entries: Vec<Signature>) -> Self {
         Self::new(entries)
     }
+}
+
+/// The unit bounds of the model alias each parameter and the result of a
+/// source function is typed by (FSpec FR-154-AC-31); empty where the type is
+/// no bounded alias.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SignatureBounds {
+    pub(crate) parameters: Vec<Vec<MemberBound>>,
+    pub(crate) result: Vec<MemberBound>,
 }
 
 /// A function's declared signature.
