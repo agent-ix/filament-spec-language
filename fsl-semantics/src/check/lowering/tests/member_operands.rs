@@ -114,6 +114,7 @@ fn an_operation_member_is_its_declaration_and_name() {
     );
 }
 
+#[trace("FSpec-FR-322-AC-545")]
 #[test]
 fn position_and_element_members_hold_their_declaration() {
     assert_eq!(
@@ -121,13 +122,36 @@ fn position_and_element_members_hold_their_declaration() {
             declaration: key("pair"),
             position: 1,
         }),
-        around(vec![node("pair")])
+        around(vec![node("pair"), text("1")])
     );
     assert_eq!(
         operands(Member::Element {
             declaration: key("sequence"),
         }),
         around(vec![node("sequence")])
+    );
+}
+
+#[trace("FSpec-FR-322-AC-546")]
+#[test]
+fn field_read_form_has_its_canonical_path_spelling() {
+    let field = |explicit_deref| Member::Field {
+        declaration: key("record"),
+        name: named("next"),
+        explicit_deref,
+        population: None,
+    };
+    assert_eq!(
+        operands(field(None)),
+        around(vec![node("record"), text("next")])
+    );
+    assert_eq!(
+        operands(field(Some(false))),
+        around(vec![node("record"), text("next"), text("bare")])
+    );
+    assert_eq!(
+        operands(field(Some(true))),
+        around(vec![node("record"), text("next"), text("explicit_deref")])
     );
 }
 

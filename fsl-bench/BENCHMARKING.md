@@ -19,9 +19,10 @@ no stored measurements or past results are comparison inputs.
 | Protocol reach `reach/workers` at 1, 2, 4 and all workers | `make bench-reach` | `benches/reach.rs` | `src/mc.rs`, `src/world.rs` |
 | Canonical state-key encoding `key/encode` | `make bench-key` | `benches/key.rs` | `src/mc.rs`, `src/world.rs` |
 | EN-4 Okamoto sampling `en4/sample` | `make bench-en4` | `benches/en4.rs` | `src/mc.rs`, `src/world.rs` |
+| Package emit/read and end-to-end replay request | `make bench-package` | `benches/package.rs` | `src/package.rs`, `src/world.rs` |
 | Counts, refusal boundaries, one-shot large inputs and peak RSS | `make bench-probe` | `src/bin/fsl-bench-probe.rs` | all of the above |
 
-`make bench` runs all eleven criterion suites. Each target runs
+`make bench` runs all twelve criterion suites. Each target runs
 `cargo bench --locked -p fsl-bench --bench <axis>`, and criterion options go
 through `BENCH_ARGS`. Run benches with `-p fsl-bench`, never `--workspace`;
 other crates' dev-dependencies can enable `filament-exact/test-support` and make
@@ -50,12 +51,150 @@ needs no benchmark change; an API change requires updating its generator. Each
 generator has a smallest-size test so invalid inputs fail in `make ci` before
 benchmark time.
 
+### Package emit and read (NFR-141)
+
+`make bench-package` runs the separately selectable `package/emit`,
+`package/read` and `replay/request` groups at 1, 10 and 100 timed models. Each model has one object
+type with one clock and one integer value, one operation, one pre/post timed
+transition and one temporal claim. `src/package.rs` prepares the models and
+checked package before timing; the emit row calls the package emitter and the
+read row admits the already emitted bytes through the evaluation-package
+reader. The replay row executes one end-to-end function replay request over
+the same source package. The invocation-local reporter prints Criterion's
+live estimates as milliseconds per package for emit/read and milliseconds per
+request for replay; emit/read also print the 1→10→100 scaling exponent.
+`BENCH_ARGS='package/emit'`, `package/read` or `replay/request` selects one
+axis. Parse-call counts are collected separately with the `counters` feature
+at the replay spine's parser boundary using a caller-owned counter, so timed
+Criterion replay does not include counter overhead.
+
+The isolated replay RSS probe starts a fixture-preparation child and then a
+fresh replay child. Preparation compiles the checked fixture and writes a
+benchmark-local request artifact. The replay child reconstructs the prepared
+request from that artifact before starting its wall-time timer; it does not
+build the checked package or emission. Its peak RSS is process-wide and
+includes artifact decoding and request reconstruction, but excludes the
+fixture-preparation process. The report requires numeric positive RSS in KiB.
+
+For the five-round A/B protocol, build both variants in this ticket's single
+worktree. A's Criterion binary is current `origin/main` production code plus
+this PR's benchmark-only FSL patch. Its A-only feature patch temporarily changes
+the bench crate's `counters` feature to an empty feature so Cargo can resolve the
+real-main `fsl-replay` without the candidate-only seam. The Criterion build does
+not enable `counters`; the replay seam is absent from A's production sources.
+Reverse the A-only patch before applying the replay counter-seam patch and
+building A's separate probe with `counters` enabled. B's Criterion binary is the
+candidate; B's separate probe binary includes the same counter harness and
+replay seam. The report JSON
+intentionally records side labels and measurements only; it does not infer a
+binary's source from the checkout that happens to run the report.
+
+```sh
+git fetch origin main
+git status --short
+mkdir -p target/package-recorder target/package-a-bench target/package-a-probe target/package-b-bench target/package-b-probe
+git diff --binary origin/main...HEAD -- Cargo.toml Cargo.lock fsl-bench > target/package-bench-harness.patch
+git diff --binary origin/main...HEAD -- fsl-replay > target/package-replay-counter.patch
+git switch --detach origin/main
+git apply target/package-bench-harness.patch
+git apply fsl-bench/qsl-1919-a-disable-replay-counter-feature.patch
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-bench target/package-a-bench
+git apply --reverse fsl-bench/qsl-1919-a-disable-replay-counter-feature.patch
+git apply target/package-replay-counter.patch
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-probe target/package-a-probe
+git reset --hard origin/main
+git switch <candidate-branch>
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-bench target/package-b-bench
+CARGO_TARGET_DIR=target/package-recorder cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- build-probe target/package-b-probe
+CARGO_TARGET_DIR=target/package-recorder make bench-package-ab BENCH_PACKAGE_A_BENCH_TARGET=target/package-a-bench BENCH_PACKAGE_B_BENCH_TARGET=target/package-b-bench BENCH_PACKAGE_A_PROBE_TARGET=target/package-a-probe BENCH_PACKAGE_B_PROBE_TARGET=target/package-b-probe BENCH_PACKAGE_A_RESULTS=target/package-a-results.json BENCH_PACKAGE_B_RESULTS=target/package-b-results.json
+```
+
+Proceed only when `git status --short` is empty. If the PR branch needs to be
+rebased onto the fetched main, do that on the same branch before building; if
+the harness patch does not apply cleanly to current main, stop and reconcile
+the branch before collecting any measurements.
+
+The A/B Criterion runs do not compile counters; their only difference is
+candidate production code, with the identical FSL benchmark harness. The A/B
+probe runs compile the identical counter seam and harness on both sides. The
+reporter alternates A then B for five rounds and uses 10 Criterion samples per
+estimate. `run-ab` collects the complete matrix in one invocation. When the
+host's measurement limit requires one measurement per command, use the
+filter-scoped form below. Each `run-ab-cell` command measures exactly one axis
+at one M, or one replay RSS size, while retaining five alternating A/B rounds.
+Run `start` once after builds, with the same `CARGO_TARGET_DIR` as every cell
+command. Use one results directory per side; each command creates one unique
+cell file and refuses to replace an existing file.
+
+```sh
+export CARGO_TARGET_DIR=target/package-recorder
+locked-build run \
+  --class point --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- start
+mkdir -p target/package-a-results target/package-b-results
+# Repeat once for each of the nine axis/M pairs and three RSS sizes.
+locked-build run \
+  --class block --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- \
+  run-ab-cell package/emit 1 target/package-a-bench target/package-b-bench \
+  target/package-a-probe target/package-b-probe \
+  target/package-a-results target/package-b-results
+# Each cell is a separate locked-build request. Select axis package/emit,
+# package/read or replay/request and M 1, 10 or 100. Use this separate form
+# for each RSS size:
+locked-build run \
+  --class block --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- \
+  run-ab-cell rss 1 target/package-a-bench target/package-b-bench \
+  target/package-a-probe target/package-b-probe \
+  target/package-a-results target/package-b-results
+locked-build run \
+  --class point --owner peter@titan:QSL:codex-lead-1 --ticket QSL-1919 -- \
+  timeout 15m env CARGO_TARGET_DIR=target/package-recorder \
+  cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- \
+  report-ab-aggregate target/package-a-results target/package-b-results
+```
+
+The aggregate requires the exact twelve expected files on both sides, each
+containing one exact cell and five complete rounds. It rejects missing/failed
+rows, duplicate or extra JSON files, missing load records, and files whose
+session ids differ from one another or from the active marker. It prints each
+cell's load records, per-round measurements,
+medians, session noise, parse-call checks, and emit/read scaling exponents.
+Keep every raw per-cell file and diagnostic. Do not rerun a failed cell under
+new output names or combine files from separate `start` sessions. A cell file
+is reserved before its first round and checkpointed after each completed
+round. If a measurement fails or the 15-minute timeout interrupts it, that
+file remains with an error or fewer than five rounds; the aggregator rejects
+it. The same cell command refuses to overwrite the file. Preserve the partial
+file and its diagnostic, and do not rerun the cell with another filename as a
+substitute. For the unfiltered path, `report-ab <A-results.json> <B-results.json>`
+prints the same full-matrix summaries and checks.
+
+Do not rerun a failed or invalid full session under new result filenames.
+Preserve the original raw result files and diagnostics. A retest requires
+explicit authorization for a whole new session; record the prior result paths
+and the retest authorization with the new evidence. Never replace a failed
+round with a loaded rerun or select a subset of rounds.
+
 ## Comparing a candidate with current main
 
-1. Build current `origin/main` (A) and the candidate (B) in separate worktrees
-   with separate target directories.
+For package axes, the commands above are the source/build procedure. The
+general steps below define the five-round comparison and threshold only.
+
+1. Use the ticket's single worktree. Build A's Criterion binary from
+   `origin/main` plus the FSL harness patch, then build A's probe separately
+   after applying the replay counter seam. Build B's Criterion and probe from
+   the candidate using separate target directories. Retain the exact build
+   commands with the evidence; the report does not claim source identity from
+   the reporter checkout.
 2. In one session, alternate A and B for five rounds each on the same machine;
-   record load average before and after every round.
+   record load average before and after every round. For Criterion axes, each
+   round runs the named axis at every required size. For isolated probes, each
+   round starts a fresh process at every required size.
 3. For each benchmark, calculate each side's median of its five point estimates.
 4. Calculate the session noise from those ten live observations: the largest
    of A's and B's MAD/median and, for criterion runs, the widest 95%

@@ -35,6 +35,7 @@ filament-semantic-value = { workspace = true }
 filament-eval = { workspace = true }
 # The package document's bytes are its RFC 8785 encoding (ADR-013:113).
 quire-canonical = { workspace = true }
+serde = { workspace = true }
 serde_json = "1.0.151"
 # FR-064: the probe's two command-line dispatch functions carry
 # `#[string_edge]`, since `xtask string-edge` scans this crate.
@@ -47,7 +48,7 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 
 # Off by default: the workload counters of `src/counters.rs`.
 [features]
-counters = []
+counters = ["fsl-replay/bench-counters"]
 property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]
 
 [dev-dependencies]
@@ -100,6 +101,10 @@ harness = false
 
 [[bench]]
 name = "en4"
+harness = false
+
+[[bench]]
+name = "package"
 harness = false
 
 [lints.rust]

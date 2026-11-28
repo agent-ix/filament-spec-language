@@ -11,6 +11,7 @@
 //! depth.
 
 use filament_exact::CollectionKind;
+use ix_trace_rs::implements;
 use quire_canonical::{Node, NodeRef};
 
 use super::{
@@ -123,6 +124,7 @@ type Charge<'c, E> = &'c mut dyn FnMut() -> Result<(), E>;
 /// # Errors
 ///
 /// Whatever `charge` returns.
+#[implements("FR-106-AC-84")]
 #[ix_trace_rs::string_edge]
 pub(super) fn read_raw_value<E>(
     json: Json<'_>,
@@ -145,6 +147,27 @@ pub(super) fn read_raw_value<E>(
         Record {
             type_identity: String,
             names: Vec<String>,
+            items: Vec<usize>,
+            extra_member: bool,
+        },
+        /// A tuple payload, awaiting its position values.
+        Tuple {
+            type_identity: Option<String>,
+            extra_member: bool,
+            invalid_components: bool,
+            invalid_type: bool,
+            remaining: usize,
+            items: Vec<usize>,
+        },
+        /// A union payload with components, awaiting those values.
+        Variant {
+            type_identity: Option<String>,
+            case: Option<String>,
+            extra_member: bool,
+            invalid_components: bool,
+            invalid_type: bool,
+            invalid_case: bool,
+            remaining: usize,
             items: Vec<usize>,
         },
     }
@@ -169,12 +192,14 @@ pub(super) fn read_raw_value<E>(
                     type_identity,
                     names,
                     mut items,
+                    extra_member,
                 }) => {
                     items.push(done);
                     if items.len() == names.len() {
                         nodes.push(RawNode::Record {
                             type_identity,
                             fields: names.into_iter().zip(items).collect(),
+                            extra_member,
                         });
                         finished = Some(nodes.len() - 1);
                     } else {
@@ -182,6 +207,7 @@ pub(super) fn read_raw_value<E>(
                             type_identity,
                             names,
                             items,
+                            extra_member,
                         });
                     }
                 }
@@ -197,6 +223,70 @@ pub(super) fn read_raw_value<E>(
                     } else {
                         open.push(Open::Collection {
                             kind,
+                            remaining: remaining - 1,
+                            items,
+                        });
+                    }
+                }
+                Some(Open::Tuple {
+                    type_identity,
+                    extra_member,
+                    invalid_components,
+                    invalid_type,
+                    remaining,
+                    mut items,
+                }) => {
+                    items.push(done);
+                    if remaining == 1 {
+                        nodes.push(RawNode::Tuple {
+                            type_identity,
+                            components: Some(items),
+                            extra_member,
+                            invalid_components,
+                            invalid_type,
+                        });
+                        finished = Some(nodes.len() - 1);
+                    } else {
+                        open.push(Open::Tuple {
+                            type_identity,
+                            extra_member,
+                            invalid_components,
+                            invalid_type,
+                            remaining: remaining - 1,
+                            items,
+                        });
+                    }
+                }
+                Some(Open::Variant {
+                    type_identity,
+                    case,
+                    extra_member,
+                    invalid_components,
+                    invalid_type,
+                    invalid_case,
+                    remaining,
+                    mut items,
+                }) => {
+                    items.push(done);
+                    if remaining == 1 {
+                        nodes.push(RawNode::Variant {
+                            type_identity,
+                            case,
+                            extra_member,
+                            components: Some(items),
+                            invalid_components,
+                            invalid_type,
+                            invalid_case,
+                        });
+                        finished = Some(nodes.len() - 1);
+                    } else {
+                        open.push(Open::Variant {
+                            type_identity,
+                            case,
+                            extra_member,
+                            invalid_components,
+                            invalid_type,
+                            invalid_case,
                             remaining: remaining - 1,
                             items,
                         });
@@ -319,15 +409,9 @@ pub(super) fn read_raw_value<E>(
                 }
             }
             "record" => {
-                // Exactly `type` and `fields`: a payload with any other
-                // member, or either missing or of the wrong kind, is not
-                // this shape.
                 let Some(payload) = payload.as_object() else {
                     return Ok(None);
                 };
-                if payload.keys().count() != 2 {
-                    return Ok(None);
-                }
                 let (Some(type_identity), Some(fields)) = (
                     payload.member("type").and_then(Json::as_str),
                     payload.member("fields").and_then(Json::as_object),
@@ -335,12 +419,16 @@ pub(super) fn read_raw_value<E>(
                     return Ok(None);
                 };
                 let members: Vec<(&str, Json<'_>)> = fields.iter().collect();
+                let extra_member = payload
+                    .keys()
+                    .any(|name| !matches!(name, "type" | "fields"));
                 if members.is_empty() {
                     finished = Some(push(
                         &mut nodes,
                         RawNode::Record {
                             type_identity: type_identity.to_owned(),
                             fields: Vec::new(),
+                            extra_member,
                         },
                     ));
                 } else {
@@ -348,9 +436,59 @@ pub(super) fn read_raw_value<E>(
                         type_identity: type_identity.to_owned(),
                         names: members.iter().map(|(name, _)| (*name).to_owned()).collect(),
                         items: Vec::with_capacity(members.len()),
+                        extra_member,
                     });
                     // Pushed last-first, so the first field reads first.
                     pending.extend(members.into_iter().rev().map(|(_, value)| value));
+                }
+            }
+            "tuple" => {
+                let Some(payload) = payload.as_object() else {
+                    finished = Some(push(&mut nodes, RawNode::NonObject));
+                    continue;
+                };
+                let mut type_identity = None;
+                let mut invalid_type = false;
+                let mut components = None;
+                let mut invalid_components = false;
+                let mut extra_member = false;
+                for (name, member) in payload.iter() {
+                    match name {
+                        "type" => match member.as_str() {
+                            Some(text) => type_identity = Some(text.to_owned()),
+                            None => invalid_type = true,
+                        },
+                        "components" => match member.as_array() {
+                            Some(items) => components = Some(items.collect::<Vec<_>>()),
+                            None => invalid_components = true,
+                        },
+                        _ => extra_member = true,
+                    }
+                }
+                match components {
+                    Some(items) if !items.is_empty() => {
+                        open.push(Open::Tuple {
+                            type_identity,
+                            extra_member,
+                            invalid_components,
+                            invalid_type,
+                            remaining: items.len(),
+                            items: Vec::with_capacity(items.len()),
+                        });
+                        pending.extend(items.into_iter().rev());
+                    }
+                    components => {
+                        finished = Some(push(
+                            &mut nodes,
+                            RawNode::Tuple {
+                                type_identity,
+                                components: components.map(|_| Vec::new()),
+                                extra_member,
+                                invalid_components,
+                                invalid_type,
+                            },
+                        ));
+                    }
                 }
             }
             "variant" => {
@@ -364,27 +502,56 @@ pub(super) fn read_raw_value<E>(
                 let mut type_identity = None;
                 let mut case = None;
                 let mut extra_member = false;
+                let mut components = None;
+                let mut invalid_components = false;
+                let mut invalid_type = false;
+                let mut invalid_case = false;
                 for (name, member) in payload.iter() {
                     match name {
                         "type" => match member.as_str() {
                             Some(text) => type_identity = Some(text.to_owned()),
-                            None => return Ok(None),
+                            None => invalid_type = true,
                         },
                         "case" => match member.as_str() {
                             Some(text) => case = Some(text.to_owned()),
-                            None => return Ok(None),
+                            None => invalid_case = true,
+                        },
+                        "components" => match member.as_array() {
+                            Some(items) => components = Some(items.collect::<Vec<_>>()),
+                            None => invalid_components = true,
                         },
                         _ => extra_member = true,
                     }
                 }
-                finished = Some(push(
-                    &mut nodes,
-                    RawNode::Variant {
-                        type_identity,
-                        case,
-                        extra_member,
-                    },
-                ));
+                match components {
+                    Some(items) if !items.is_empty() => {
+                        open.push(Open::Variant {
+                            type_identity,
+                            case,
+                            extra_member,
+                            invalid_components,
+                            invalid_type,
+                            invalid_case,
+                            remaining: items.len(),
+                            items: Vec::with_capacity(items.len()),
+                        });
+                        pending.extend(items.into_iter().rev());
+                    }
+                    components => {
+                        finished = Some(push(
+                            &mut nodes,
+                            RawNode::Variant {
+                                type_identity,
+                                case,
+                                extra_member,
+                                components: components.map(|_| Vec::new()),
+                                invalid_components,
+                                invalid_type,
+                                invalid_case,
+                            },
+                        ));
+                    }
+                }
             }
             _ => {
                 finished = Some(push(
