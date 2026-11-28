@@ -30,7 +30,7 @@ filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "5d85
 # `fsl-replay` reads and writes and `fsl-source` produces: one pin, one type.
 quire-rs = { git = "https://github.com/agent-ix/quire-rs", tag = "v0.62.3", default-features = false }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "e3849c3b78fd9c8f9dec2e577a1b040c6f0b5c39" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "4a45e6936141e161535a9af6e6d8d2cb51d7d5b9" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "b7929dd9b807ee9291fb4f6b5cf9d15e288a9b45" }
 
