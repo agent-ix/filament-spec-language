@@ -636,8 +636,8 @@ fn rewalk_slots(
         }
     }
     let mut region_of = HashMap::<(usize, bool, usize), u64>::new();
-    for visit in 0..numbered {
-        region_of.entry(lexical[visit]).or_insert(visit as u64);
+    for (visit, &key) in lexical.iter().enumerate().take(numbered) {
+        region_of.entry(key).or_insert(visit as u64);
     }
     let mut slots = Vec::with_capacity(end + listed - numbered);
     for place in 0..end {

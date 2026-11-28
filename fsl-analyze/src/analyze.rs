@@ -3042,6 +3042,21 @@ pub fn analyze_items(
     records
 }
 
+/// The occurrence, request index, temporal form and method of one state-graph
+/// item built through [`test_support_state_graph_item`].
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy)]
+pub struct StateGraphItemTarget<'a> {
+    /// The occurrence the item checks.
+    pub key: &'a OccurrenceKey,
+    /// The request index of the item.
+    pub index: RequestIndex,
+    /// The temporal form requested.
+    pub form: &'a TemporalItem,
+    /// The requested method, if any.
+    pub method: Option<&'a str>,
+}
+
 /// Run one state-graph item through the real analyze settlement path.
 ///
 /// This adapter is available only to integration tests that exercise the
@@ -3053,14 +3068,18 @@ pub fn test_support_state_graph_item<'a>(
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
-    key: &OccurrenceKey,
-    index: RequestIndex,
-    form: &TemporalItem,
-    method: Option<&str>,
+    target: &StateGraphItemTarget<'_>,
     cancel: &Cancel,
 ) -> Option<AnalyzeRecord> {
     let item = state_graph_item::state_graph_item(
-        analysis, binding, limits, provision, key, index, form, method,
+        analysis,
+        binding,
+        limits,
+        provision,
+        target.key,
+        target.index,
+        target.form,
+        target.method,
     )?;
     analyze_items(
         engines,
