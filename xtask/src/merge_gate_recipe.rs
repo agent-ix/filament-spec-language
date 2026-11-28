@@ -4692,6 +4692,61 @@ mod tests {
             .all(|selector| selector.filter.is_some()));
     }
 
+    struct MetadataRunner<'a> {
+        inner: &'a FakeRunner,
+    }
+
+    impl CommandRunner for MetadataRunner<'_> {
+        fn run(
+            &self,
+            cwd: &Path,
+            program: &OsStr,
+            arguments: &[OsString],
+        ) -> std::io::Result<ProcessOutput> {
+            if arguments.first().is_some_and(|argument| argument == "metadata") {
+                let output = Command::new(program)
+                    .current_dir(cwd)
+                    .args(arguments)
+                    .output()?;
+                return Ok(ProcessOutput {
+                    success: output.status.success(),
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                });
+            }
+            self.inner.run(cwd, program, arguments)
+        }
+    }
+
+    #[test]
+    fn recipe_emits_required_features_of_test_targets() {
+        let recipe = plan(workspace_root(), &["fsl-source/tests/it/quire_source.rs"]);
+        let fake = FakeRunner::new();
+        let runner = MetadataRunner { inner: &fake };
+        let output = run_with_verified_main(
+            workspace_root(),
+            &[OsString::from("fsl-source/tests/it/quire_source.rs")],
+            &runner,
+            recipe,
+            MainCheck {
+                head: "h".to_owned(),
+                main: "m".to_owned(),
+                merge_base: "b".to_owned(),
+                overlaps: BTreeSet::new(),
+            },
+        )
+        .expect("recipe");
+        assert!(
+            output.contains(
+                "cargo test --locked -p fsl-source --features quire-extraction --test it --no-run\n"
+            ),
+            "{output}"
+        );
+        for line in output.lines().filter(|line| line.contains("-p fsl-source")) {
+            assert!(line.contains("--features quire-extraction"), "{line}");
+        }
+    }
+
     #[test]
     fn semantics_integration_commands_enable_test_support() {
         let source_objects = plan(
