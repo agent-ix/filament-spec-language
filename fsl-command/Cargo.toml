@@ -49,6 +49,8 @@ filament-mltl = { git = "https://github.com/agent-ix/filament-mltl", rev = "2de0
 
 [dev-dependencies]
 filament-observation = { workspace = true }
+# QSL-3570's S4 regression reads the feature-gated operand rewrite counter.
+fsl-package = { path = "../fsl-package", features = ["test-support"] }
 tempfile = "3.27.0"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 # FR-400-AC-9: command unit tests construct checked declaration keys.

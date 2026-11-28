@@ -3987,6 +3987,29 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
     );
 }
 
+/// FR-194-AC-4 and FR-194-AC-7: an aggregate over a model subject is refused
+/// as an unsupported expression at the aggregate term.
+#[trace("FR-194-AC-4", "FR-194-AC-7")]
+#[test]
+fn a_window_aggregate_on_model_subject_refuses_at_the_aggregate_term() {
+    let aggregate = "count where holds(c.phase = 1) over past[0 ms, 5 ms]";
+    let claim = exact_claim(
+        "ev",
+        "Steady",
+        CONFIDENT,
+        &format!("probability >= 0.5 [ {aggregate} >= 1 ]"),
+    );
+
+    assert_eq!(
+        located(&claim),
+        [(
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            aggregate.to_owned()
+        )]
+    );
+}
+
 /// FR-764-AC-3: a bare decimal literal is checked exactly as the
 /// `decimal(c, s)` it spells.
 #[trace("TC-2162", "FR-764-AC-3")]
