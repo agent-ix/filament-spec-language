@@ -16,8 +16,8 @@ use fsl_eval::simulation::model::{
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedTemporalFormula, ClaimActivation,
-    DelayDistribution, Event, FormulaNode, FractionMeasure, ProbForm, ReachTarget, UnaryTemporal,
-    Weighting,
+    DelayDistribution, Event, FormulaNode, FractionMeasure, ProbForm, ProbScheduler, ReachTarget,
+    UnaryTemporal, Weighting,
 };
 
 use super::*;
@@ -47,6 +47,8 @@ pub(super) fn certificate_route(
         form,
         read_from: position_of(system, timed, claim, cancel)?,
         takes_event_maximum,
+        workload_mean_time: matches!(claim.form, ProbForm::MeanTime { .. })
+            && matches!(claim.scheduler, ProbScheduler::Workload(_)),
     };
     match en5_admission(conditions) {
         Admission::Digital => Ok(TimedProbabilityRoute::Digital),

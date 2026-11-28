@@ -83,6 +83,10 @@ pub struct RouteConditions {
     /// matching `always`: a `<=` bound on `eventually` or `until`, or a `>=`
     /// bound on `always`.
     pub takes_event_maximum: bool,
+    /// Whether the claim reads an expected elapsed time under a workload, which
+    /// resolves free delays itself (ADR-038 workload-resolved infinite mean time,
+    /// FR-204-AC-24): a mixed subject is not read over regions for it.
+    pub workload_mean_time: bool,
 }
 
 /// What a row admits for a `free` subject.
@@ -271,8 +275,9 @@ fn closed_admission(conditions: RouteConditions) -> Admission {
         form,
         read_from,
         takes_event_maximum,
+        workload_mean_time,
     } = conditions;
-    if delays == DelayClass::Mixed {
+    if delays == DelayClass::Mixed && !workload_mean_time {
         return Admission::Region(RegionCause::MixedDelays);
     }
     if fairness {
@@ -351,6 +356,7 @@ mod tests {
             form,
             read_from,
             takes_event_maximum: false,
+            workload_mean_time: false,
         }
     }
 
@@ -450,6 +456,7 @@ mod tests {
             assert_eq!(en5_admission(free_case), free, "free {form:?} {from:?}");
             let top = RouteConditions {
                 takes_event_maximum: true,
+                workload_mean_time: false,
                 ..free_case
             };
             assert_eq!(en5_admission(top), maximum, "maximum {form:?} {from:?}");
