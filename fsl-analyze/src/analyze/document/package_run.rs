@@ -36,13 +36,13 @@ use fsl_eval::simulation::model::{PackageModelInput, PendingClauseForm, PendingP
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
-use fsl_replay::value_check::ValueTarget;
 use fsl_replay::TerminalRecord;
+use fsl_replay::value_check::ValueTarget;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::implements;
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 
 use super::super::hyper_route::PackageRelationSubject;
 use super::super::package_hyper::PackageHyperSubject;
@@ -57,10 +57,10 @@ mod probability;
 mod schedule;
 
 use super::{
-    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
-    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
-    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
-    SubjectSelection,
+    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
+    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
+    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
+    write_run,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -472,6 +472,7 @@ pub fn settle_package_call(
 }
 
 #[ix_trace_rs::string_edge]
+#[implements("FR-940-AC-39")]
 fn settle_package_run_inner(
     run: PackageRun<'_>,
     call: Option<(&str, &[super::CallItem])>,
@@ -524,28 +525,6 @@ fn settle_package_run_inner(
         .then(|| PackageModelInput::of(package, binding.packages, limits.normalization))
         .transpose()
         .map_err(input_refusal)?;
-    // Schedulability candidate resolution uses its admitted claim relations
-    // before the later TaskProduct refusal; it does not read the timed model
-    // form at this stage.
-    if input
-        .as_ref()
-        .is_some_and(|input| !input.input().time_sources.is_empty())
-        && named.iter().any(|item| {
-            !matches!(
-                item,
-                Named::Settled(_) | Named::StateGraph { .. } | Named::Schedule { .. }
-            )
-        })
-    {
-        return Err(PackageRunError::Pending(PendingPackageFamily {
-            request_index: None,
-            note: None,
-            family: PendingFamily::ModelForm(UnreadModelForm::TimedModel),
-            node: package
-                .first_unread_model_form()
-                .map(|(_, node)| node.clone()),
-        }));
-    }
     // FR-1044: each composition the default items select, read from its
     // admitted facts, and each component package its premise items run over:
     // the package view the request's own join already authenticated (no
@@ -1236,6 +1215,9 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
         }
         PendingPackageForm::MultipleTimedPreconditions { node, count } => Some(format!(
             "the timed operation at {node:?} has {count} matching preconditions"
+        )),
+        PendingPackageForm::MultipleTimedPostconditions { node, count } => Some(format!(
+            "the timed operation at {node:?} has {count} matching postconditions"
         )),
         PendingPackageForm::SourceModel(fault) => Some(fault.to_string()),
         PendingPackageForm::Probabilistic(_) => Some(
@@ -3078,6 +3060,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// route's `resolve_one` resolves it: the record's extent and candidates
     /// from the package form's requirement record, narrowed to the claim's
     /// form (FR-628).
+    #[implements("FR-940-AC-39")]
     fn state_graph(
         &self,
         index: RequestIndex,
@@ -4055,6 +4038,7 @@ fn input_refusal(refusal: PendingPackageForm) -> PackageRunError {
         | PendingPackageForm::Probabilistic(_)
         | PendingPackageForm::Reward(_)
         | PendingPackageForm::MultipleTimedPreconditions { .. }
+        | PendingPackageForm::MultipleTimedPostconditions { .. }
         // Only `source_object_probabilistic_model` reads the source-object
         // rows, so `of` never gives this one.
         | PendingPackageForm::SourceModel(_)) => PackageRunError::Input(refusal),

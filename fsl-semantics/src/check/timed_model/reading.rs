@@ -1992,7 +1992,7 @@ pub(super) fn constraints(places: Places, op: ClockOp, bound: &Rational, span: S
         binding: None,
         op,
         bound: bound.clone(),
-        span,
+        site: super::TimedSite::Source(span),
         parameter: place.parameter,
     };
     let positive = places

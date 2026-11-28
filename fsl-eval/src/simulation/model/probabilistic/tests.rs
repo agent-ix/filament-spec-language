@@ -136,7 +136,7 @@ fn probability_clause_factory_shares_work_but_keeps_other_counters_fresh() {
         let mut first_meter = probe.meter();
         let one = system
             .evaluator()
-            .evaluate_clause(&set[0].0, set[0].1, &mut first_meter)
+            .evaluate_clause(&set[0].0, set[0].1, system.types, &mut first_meter)
             .unwrap();
         assert!(matches!(
             one.evaluation.outcome,
@@ -149,7 +149,7 @@ fn probability_clause_factory_shares_work_but_keeps_other_counters_fresh() {
         let scope = WorkScope::new(limits);
         let evaluated = system
             .evaluator()
-            .evaluate_clause_set(&set, &mut || scope.meter())
+            .evaluate_clause_set(&set, system.types, &mut || scope.meter())
             .unwrap();
         assert_eq!(evaluated.outcome, ClauseSetOutcome::Incomplete);
         assert_eq!(evaluated.results.len(), 2);
@@ -176,7 +176,7 @@ fn probability_clause_factory_shares_work_but_keeps_other_counters_fresh() {
         let fresh = WorkScope::new(limits);
         let complete = system
             .evaluator()
-            .evaluate_clause_set(&set, &mut || fresh.meter())
+            .evaluate_clause_set(&set, system.types, &mut || fresh.meter())
             .unwrap();
         assert_eq!(complete.outcome, ClauseSetOutcome::True);
         assert_eq!(fresh.consumed_work(), work * 2);
@@ -185,7 +185,7 @@ fn probability_clause_factory_shares_work_but_keeps_other_counters_fresh() {
         let mut calls = 0;
         let cancelled = system
             .evaluator()
-            .evaluate_clause_set(&set, &mut || {
+            .evaluate_clause_set(&set, system.types, &mut || {
                 calls += 1;
                 if calls == 2 {
                     cancel.cancel(filament_exact::CancelCause::Requested);
@@ -403,7 +403,7 @@ fn probability_candidate_then_current_clause_and_reward_share_scope_on_both_rout
         let set = [(name, &observation)];
         let control = system
             .evaluator()
-            .evaluate_clause_set(&set, &mut || system.fresh_meter())
+            .evaluate_clause_set(&set, system.types, &mut || system.fresh_meter())
             .expect("the real clause port evaluates");
         assert_eq!(control.outcome, ClauseSetOutcome::True);
         assert!(
@@ -422,7 +422,7 @@ fn probability_candidate_then_current_clause_and_reward_share_scope_on_both_rout
         assert_eq!(scope.consumed_work(), expansion);
         let unpaid = system
             .evaluator()
-            .evaluate_clause_set(&set, &mut || system.fresh_meter())
+            .evaluate_clause_set(&set, system.types, &mut || system.fresh_meter())
             .expect("the unpaid clause retains its typed evaluation");
         assert_eq!(unpaid.outcome, ClauseSetOutcome::Incomplete);
         let [entry] = unpaid.results.as_slice() else {
@@ -491,7 +491,7 @@ fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set
         let mut calls = 0;
         let evaluated = system
             .evaluator()
-            .evaluate_clause_set(&set, &mut || {
+            .evaluate_clause_set(&set, system.types, &mut || {
                 calls += 1;
                 scope.meter()
             })
@@ -508,7 +508,7 @@ fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set
         let duplicates = vec![set[0].clone(), set[0].clone()];
         assert!(system
             .evaluator()
-            .evaluate_clause_set(&duplicates, &mut || {
+            .evaluate_clause_set(&duplicates, system.types, &mut || {
                 calls += 1;
                 scope.meter()
             })

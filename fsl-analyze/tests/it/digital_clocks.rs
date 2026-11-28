@@ -32,7 +32,7 @@ fn ratio(numerator: i64, denominator: i64) -> Rational {
 
 /// `Retx`: `late` is `delivered`, `send(lost)` needs `x >= guard` and resets
 /// `x`, the invariant `x <= 2 ms` holds until delivery.
-fn retx(guard: &str, reset: bool, declarations: &str, claims: &str) -> World {
+pub(crate) fn retx(guard: &str, reset: bool, declarations: &str, claims: &str) -> World {
     retx_with(
         &[("send", &["late", "x"])],
         guard,

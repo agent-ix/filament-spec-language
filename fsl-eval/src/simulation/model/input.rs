@@ -408,6 +408,15 @@ pub enum PendingPackageForm {
         /// Number of matching precondition clauses.
         count: usize,
     },
+    /// The timed model joins an operation to multiple postcondition clauses,
+    /// a package form the dense timed reader does not support.
+    #[error("the timed model has multiple matching postconditions at {node:?} ({count})")]
+    MultipleTimedPostconditions {
+        /// The operation anchor whose postcondition join was ambiguous.
+        node: CheckedNodeId,
+        /// Number of matching postcondition clauses.
+        count: usize,
+    },
     /// The package's declarations could not be read from its nodes and
     /// identity rows.
     #[error("the package's declarations are not readable: {0:?}")]
@@ -754,6 +763,9 @@ impl<'p> PackageModelInput<'p> {
                     },
                     fsl_package::BareTimedModelFailure::MultiplePreconditions { node, count } => {
                         PendingPackageForm::MultipleTimedPreconditions { node, count }
+                    }
+                    fsl_package::BareTimedModelFailure::MultiplePostconditions { node, count } => {
+                        PendingPackageForm::MultipleTimedPostconditions { node, count }
                     }
                 })?
         };
@@ -1195,19 +1207,9 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         clause: &QualifiedName,
         observations: &AdmittedObservations,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure>;
-
-    /// Evaluate a state clause against the model system's admitted types.
-    fn evaluate_clause_with_types(
-        &self,
-        clause: &QualifiedName,
-        observations: &AdmittedObservations,
-        _types: &filament_semantic_value::declaration::TypeEnvironment,
-        meter: &mut Meter,
-    ) -> Result<ClauseEvaluation, CallFailure> {
-        self.evaluate_clause(clause, observations, meter)
-    }
 
     /// FR-107 "Clause sets": the state clauses of one invocation, object or
     /// state, each with an ordinary fresh meter supplied by the owning run.
@@ -1218,18 +1220,9 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure>;
-
-    /// Evaluate a clause set against the model system's admitted types.
-    fn evaluate_clause_set_with_types(
-        &self,
-        clauses: &[(QualifiedName, &AdmittedObservations)],
-        _types: &filament_semantic_value::declaration::TypeEnvironment,
-        fresh_meter: &mut dyn FnMut() -> Meter,
-    ) -> Result<ClauseSetEvaluation, CallFailure> {
-        self.evaluate_clause_set(clauses, fresh_meter)
-    }
 
     /// FR-940: the `holds` atom `atom` of a temporal clause, keyed by the
     /// clause node and the atom's formula position, over `objects`. Both
@@ -1428,26 +1421,12 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_state_predicate(
         &self,
         predicate: &dyn StatePredicate,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
-
-    /// Evaluate a state predicate against the model system's admitted types.
-    /// Package implementations may need model declarations absent from their
-    /// standalone package world.
-    fn evaluate_state_predicate_with_types(
-        &self,
-        predicate: &dyn StatePredicate,
-        _types: &filament_semantic_value::declaration::TypeEnvironment,
-        current: &ObjectEnvironment,
-        over: Option<ObjectReference>,
-        further: Vec<Value>,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        self.evaluate_state_predicate(predicate, current, over, further, meter)
-    }
 
     /// [`crate::value::evaluate_state_predicate_at_absent_key`].
     ///
@@ -1478,26 +1457,12 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
-
-    /// Evaluate a state-graph predicate against the model system's admitted
-    /// types, including declarations supplied by selected domain packages.
-    fn evaluate_state_graph_predicate_with_types(
-        &self,
-        claim: &fsl_foundation::source::provenance::OccurrenceKey,
-        role: fsl_semantics::check::PredicateRole,
-        _types: &filament_semantic_value::declaration::TypeEnvironment,
-        current: &ObjectEnvironment,
-        over: Option<ObjectReference>,
-        further: Vec<Value>,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        self.evaluate_state_graph_predicate(claim, role, current, over, further, meter)
-    }
 
     /// FR-156, FR-940 "Package form of a state-graph claim": the symbolic
     /// locations the predicate of `role` of the claim at `claim` reads, as the
@@ -1525,25 +1490,12 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         key: ObjectReference,
         binding: String,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
-
-    /// Absent-key counterpart of [`Self::evaluate_state_graph_predicate_with_types`].
-    fn evaluate_state_graph_predicate_at_absent_key_with_types(
-        &self,
-        claim: &fsl_foundation::source::provenance::OccurrenceKey,
-        role: fsl_semantics::check::PredicateRole,
-        _types: &filament_semantic_value::declaration::TypeEnvironment,
-        current: &ObjectEnvironment,
-        key: ObjectReference,
-        binding: String,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        self.evaluate_state_graph_predicate_at_absent_key(claim, role, current, key, binding, meter)
-    }
 
     /// [`crate::value::evaluate_activation_guard`].
     ///
@@ -1978,6 +1930,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         clause: &QualifiedName,
         observations: &AdmittedObservations,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_clause(self, clause, observations, meter)
@@ -1986,6 +1939,7 @@ impl ModelEvaluator for CheckedPackage {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
         crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
@@ -2199,6 +2153,7 @@ impl ModelEvaluator for CheckedPackage {
     fn evaluate_state_predicate(
         &self,
         predicate: &dyn StatePredicate,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
@@ -2246,6 +2201,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
         further: Vec<Value>,
@@ -2259,6 +2215,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         key: ObjectReference,
         binding: String,
@@ -2583,17 +2540,8 @@ impl ModelEvaluator for BarePackage<'_> {
         Ok(self.admit_protocol_state(model, packages, limits, state, identity))
     }
 
-    fn evaluate_clause(
-        &self,
-        clause: &QualifiedName,
-        observations: &AdmittedObservations,
-        meter: &mut Meter,
-    ) -> Result<ClauseEvaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_clause(self, clause, observations, meter)
-    }
-
     #[implements("FR-940-AC-39")]
-    fn evaluate_clause_with_types(
+    fn evaluate_clause(
         &self,
         clause: &QualifiedName,
         observations: &AdmittedObservations,
@@ -2610,21 +2558,13 @@ impl ModelEvaluator for BarePackage<'_> {
     }
 
     #[implements("FR-940-AC-39")]
-    fn evaluate_clause_set_with_types(
+    fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
         types: &filament_semantic_value::declaration::TypeEnvironment,
         fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
         crate::value::evaluate_clause_set_with_types(self, clauses, Some(types), fresh_meter)
-    }
-
-    fn evaluate_clause_set(
-        &self,
-        clauses: &[(QualifiedName, &AdmittedObservations)],
-        fresh_meter: &mut dyn FnMut() -> Meter,
-    ) -> Result<ClauseSetEvaluation, CallFailure> {
-        crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
     }
 
     fn evaluate_holds(
@@ -2852,28 +2792,6 @@ impl ModelEvaluator for BarePackage<'_> {
     fn evaluate_state_predicate(
         &self,
         predicate: &dyn StatePredicate,
-        current: &ObjectEnvironment,
-        over: Option<ObjectReference>,
-        further: Vec<Value>,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        let world = self
-            .world()
-            .map_err(|_| InternalFault::new("FR-940", "timed-predicate-world-is-admitted"))?;
-        self.evaluate_state_predicate_with_types(
-            predicate,
-            world.types(),
-            current,
-            over,
-            further,
-            meter,
-        )
-    }
-
-    #[implements("FR-940-AC-39")]
-    fn evaluate_state_predicate_with_types(
-        &self,
-        predicate: &dyn StatePredicate,
         types: &filament_semantic_value::declaration::TypeEnvironment,
         current: &ObjectEnvironment,
         over: Option<ObjectReference>,
@@ -2965,31 +2883,8 @@ impl ModelEvaluator for BarePackage<'_> {
         crate::value::package_term_reads(predicate.projection(), world.types(), model, &over)
     }
 
-    fn evaluate_state_graph_predicate(
-        &self,
-        claim: &fsl_foundation::source::provenance::OccurrenceKey,
-        role: fsl_semantics::check::PredicateRole,
-        current: &ObjectEnvironment,
-        over: Option<ObjectReference>,
-        further: Vec<Value>,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        let world = self
-            .world()
-            .map_err(|_| InternalFault::new("FR-940", "state-graph-predicate-world"))?;
-        self.evaluate_state_graph_predicate_with_types(
-            claim,
-            role,
-            world.types(),
-            current,
-            over,
-            further,
-            meter,
-        )
-    }
-
     #[implements("FR-940-AC-39")]
-    fn evaluate_state_graph_predicate_with_types(
+    fn evaluate_state_graph_predicate(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,
@@ -3009,29 +2904,6 @@ impl ModelEvaluator for BarePackage<'_> {
     }
 
     fn evaluate_state_graph_predicate_at_absent_key(
-        &self,
-        claim: &fsl_foundation::source::provenance::OccurrenceKey,
-        role: fsl_semantics::check::PredicateRole,
-        current: &ObjectEnvironment,
-        key: ObjectReference,
-        binding: String,
-        meter: &mut Meter,
-    ) -> Result<Evaluation, InternalFault> {
-        let world = self
-            .world()
-            .map_err(|_| InternalFault::new("FR-940", "state-graph-predicate-world"))?;
-        self.evaluate_state_graph_predicate_at_absent_key_with_types(
-            claim,
-            role,
-            world.types(),
-            current,
-            key,
-            binding,
-            meter,
-        )
-    }
-
-    fn evaluate_state_graph_predicate_at_absent_key_with_types(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         role: fsl_semantics::check::PredicateRole,

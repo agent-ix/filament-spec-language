@@ -544,14 +544,6 @@ impl ReaderProtocolProjection {
             .any(|node| matches!(node.kind, NodeKind::Local(read) if read == slot))
     }
 
-    /// The admitted type of a local parameter slot, when the expression
-    /// contains a read of that slot.
-    pub fn local_value_type(&self, slot: usize) -> Option<&ValueType> {
-        self.nodes.iter().find_map(|node| {
-            matches!(node.kind, NodeKind::Local(read) if read == slot).then_some(&node.value_type)
-        })
-    }
-
     /// Join a projected HP-1 read to its admitted symbolic execution owner.
     pub(crate) fn model_relation_components(
         &self,

@@ -20,8 +20,8 @@ use fsl_route::request::ExtentClassification;
 use fsl_semantics::check::Capability;
 use ix_trace_rs::implements;
 
-use super::super::super::{schedule_item, AnalyzeItem, ClaimItem, ItemOptions};
-use super::super::{candidate_list, invalid_kind, unknown_option, ItemSelection, ResolvedClaim};
+use super::super::super::{AnalyzeItem, ClaimItem, ItemOptions, schedule_item};
+use super::super::{ItemSelection, ResolvedClaim, candidate_list, invalid_kind, unknown_option};
 use super::{ClaimReads, PackageRunError, Resolution};
 
 /// What a package's rows hold for one schedulability claim.

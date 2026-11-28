@@ -554,7 +554,7 @@ fn package_claims_resolve_through_the_claim_name_table() {
 /// FR-940-AC-11: the four state-graph claims, one of each form, settle over
 /// a package with the source route's records, witnesses or counterexamples,
 /// replays and certificates, and no package-route record is `unsupported`.
-#[trace("TC-3034", "FR-940-AC-11")]
+#[trace("TC-3034", "FR-940-AC-11", "FR-940-AC-39")]
 #[test]
 fn a_package_state_graph_claim_settles_as_its_source_claim() {
     let body = format!("{}{}", bounded(), state_graph_claims());

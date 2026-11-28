@@ -236,7 +236,9 @@ impl Lowering<'_> {
                 None => guards.push(GuardNodes {
                     operation,
                     point_anchor,
-                    span: guard.span(),
+                    span: guard
+                        .span()
+                        .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
                     parts,
                 }),
             }
@@ -314,7 +316,9 @@ impl Lowering<'_> {
                     point_anchor: point_anchor.clone(),
                     target,
                     value: reset.value().clone(),
-                    span: reset.span(),
+                    span: reset
+                        .span()
+                        .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
                 });
             }
         }
@@ -372,7 +376,9 @@ impl Lowering<'_> {
                 predicate,
                 binders,
                 bounds,
-                span: invariant.span(),
+                span: invariant.span().ok_or_else(|| {
+                    super::fault(input.declaration, KeyFault::UnkeyableRequirements)
+                })?,
             });
         }
         Ok(TimedClauseNodes {
@@ -440,7 +446,9 @@ impl Lowering<'_> {
                 },
                 comparison: constraint.op(),
                 bound: constraint.bound().clone(),
-                span: constraint.span(),
+                span: constraint
+                    .span()
+                    .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
             }),
             None => self.place_constraint(constraint, context, location, slot_binders),
         }
@@ -478,7 +486,9 @@ impl Lowering<'_> {
             },
             comparison: constraint.op(),
             bound: constraint.bound().clone(),
-            span: constraint.span(),
+            span: constraint
+                .span()
+                .ok_or_else(|| super::fault(location, KeyFault::UnkeyableRequirements))?,
         })
     }
 

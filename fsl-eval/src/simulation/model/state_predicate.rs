@@ -162,17 +162,15 @@ impl ModelSystem<'_> {
                         &mut meter,
                     )
                 }
-                (None, Some(occurrence)) => {
-                    self.evaluator().evaluate_state_graph_predicate_with_types(
-                        occurrence,
-                        *role,
-                        self.input().types,
-                        &walk.observation.environment,
-                        bound,
-                        Vec::new(),
-                        &mut meter,
-                    )
-                }
+                (None, Some(occurrence)) => self.evaluator().evaluate_state_graph_predicate(
+                    occurrence,
+                    *role,
+                    self.input().types,
+                    &walk.observation.environment,
+                    bound,
+                    Vec::new(),
+                    &mut meter,
+                ),
                 (None, None) => return Err(stop(BROKEN)),
             }
             .map_err(|_| stop(BROKEN))?;
@@ -268,7 +266,7 @@ impl ModelSystem<'_> {
                     .map_err(|_| stop(BROKEN))?
             } else {
                 self.evaluator()
-                    .evaluate_state_predicate_with_types(
+                    .evaluate_state_predicate(
                         *predicate,
                         self.input().types,
                         &walk.observation.environment,

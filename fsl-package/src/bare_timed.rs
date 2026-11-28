@@ -39,12 +39,14 @@ pub enum BareTimedModelFailure {
         /// Number of matching clauses.
         count: usize,
     },
-}
-
-impl From<CheckedNodeId> for BareTimedModelFailure {
-    fn from(node: CheckedNodeId) -> Self {
-        Self::Unread(node)
-    }
+    /// A timed reset has more than one matching postcondition clause.
+    #[error("timed operation at {node:?} has {count} matching postconditions")]
+    MultiplePostconditions {
+        /// The timed operation anchor whose postcondition join was ambiguous.
+        node: CheckedNodeId,
+        /// Number of matching clauses.
+        count: usize,
+    },
 }
 
 impl BarePackage<'_> {
@@ -108,9 +110,13 @@ impl BarePackage<'_> {
         &self,
         expression: filament_exact::NodeKey,
         binders: Vec<filament_exact::NodeKey>,
+        parameter_types: Vec<ValueType>,
         state_clause_owner: Option<(String, usize)>,
         type_declaration_owner: Option<String>,
     ) -> Result<CheckedTimedPredicate, BareSelectionFailure> {
+        if binders.len() != parameter_types.len() {
+            return Err(fault("timed-predicate-types-match-binders"));
+        }
         let mut provisional =
             PackagePredicate::new(expression.clone(), binders.len()).with_binders(binders.clone());
         if let Some((clause, index)) = &state_clause_owner {
@@ -121,7 +127,7 @@ impl BarePackage<'_> {
         }
         let projected = self.project_timed_predicate(&provisional)?;
         let mut parameters = Vec::with_capacity(binders.len());
-        for binder in &binders {
+        for (binder, value_type) in binders.iter().zip(parameter_types) {
             let node = self
                 .node_by_key(binder)?
                 .ok_or_else(|| fault("timed-predicate-binder-is-admitted"))?;
@@ -129,15 +135,9 @@ impl BarePackage<'_> {
                 .and_then(text)
                 .ok_or_else(|| fault("timed-predicate-binder-has-a-name"))?
                 .to_owned();
-            let slot = projected
-                .projection()
-                .local_slot(binder)
-                .ok_or_else(|| fault("timed-predicate-binder-has-a-local-slot"))?;
-            let value_type = projected
-                .projection()
-                .local_value_type(slot)
-                .cloned()
-                .ok_or_else(|| fault("timed-predicate-binder-has-a-type"))?;
+            if projected.projection().local_slot(binder).is_none() {
+                return Err(fault("timed-predicate-binder-has-a-local-slot"));
+            }
             parameters.push((name, value_type));
         }
         let reads_self = projected
@@ -233,7 +233,7 @@ impl BarePackage<'_> {
             }
             let source = ModelTimeSource {
                 model: model.model().to_owned(),
-                model_node,
+                model_node: model_node.clone(),
                 span: fsl_foundation::Span {
                     start: usize::try_from(region.start()).map_err(|_| bad())?,
                     end: usize::try_from(region.end()).map_err(|_| bad())?,
@@ -290,7 +290,6 @@ impl BarePackage<'_> {
             if joined.len() != root.clock_places.len() {
                 return Err(bad());
             }
-            let span = fsl_foundation::Span { start: 0, end: 0 };
             let constraint = |id: &CheckedNodeId| {
                 let checked = root
                     .constraints
@@ -312,14 +311,14 @@ impl BarePackage<'_> {
                     ClockComparison::Gt => ClockOp::Greater,
                 };
                 let bound = package_rational(&checked.bound).ok_or_else(bad)?;
-                Ok(ClockConstraint::from_parts(
+                Ok(ClockConstraint::from_package_parts(
                     clock,
                     Vec::new(),
                     Vec::new(),
                     None,
                     operation,
                     bound,
-                    span,
+                    self.node_key(&checked.metadata.node_id).ok_or_else(bad)?,
                     None,
                 ))
             };
@@ -348,9 +347,22 @@ impl BarePackage<'_> {
                     .collect::<Vec<_>>();
                 let [(index, clause)] = matching.as_slice() else {
                     if matching.len() > 1 {
-                        return Err(BareTimedModelFailure::MultiplePreconditions {
-                            node: anchor.clone(),
-                            count: matching.len(),
+                        return Err(match observation {
+                            fsl_semantics::model::clause_observation::Observation::Pre => {
+                                BareTimedModelFailure::MultiplePreconditions {
+                                    node: anchor.clone(),
+                                    count: matching.len(),
+                                }
+                            }
+                            fsl_semantics::model::clause_observation::Observation::Post => {
+                                BareTimedModelFailure::MultiplePostconditions {
+                                    node: anchor.clone(),
+                                    count: matching.len(),
+                                }
+                            }
+                            fsl_semantics::model::clause_observation::Observation::Current => {
+                                BareTimedModelFailure::Unread(root.metadata.node_id.clone())
+                            }
                         });
                     }
                     return Err(bad());
@@ -386,15 +398,24 @@ impl BarePackage<'_> {
                     if !part.binders.is_empty() || part.quantifier.is_some() {
                         return Err(bad());
                     }
-                    self.node_key(&part.predicate).ok_or_else(bad)?;
+                    let predicate = self.node_key(&part.predicate).ok_or_else(bad)?;
                     let state_clause = self
                         .project_state_clause(&clause_node, &clause)
                         .map_err(|_| bad())?;
                     let predicate_owner = (clause.clone(), state_clause.owner_index());
                     let data = self
                         .checked_timed_predicate(
-                            state_clause.expression().clone(),
+                            predicate,
                             state_clause.binders().to_vec(),
+                            std::iter::once(ValueType::Reference(context.clone()))
+                                .chain(
+                                    operation
+                                        .declaration
+                                        .parameters()
+                                        .iter()
+                                        .map(|(_, value_type)| value_type.clone()),
+                                )
+                                .collect(),
                             Some(predicate_owner),
                             None,
                         )
@@ -418,8 +439,16 @@ impl BarePackage<'_> {
                     parts.push(part);
                 }
                 guards.push(
-                    ClockGuard::from_parts(clause, operation, parts, index, context, span, None)
-                        .ok_or_else(bad)?,
+                    ClockGuard::from_package_parts(
+                        clause,
+                        operation,
+                        parts,
+                        index,
+                        context,
+                        self.node_key(&guard.metadata.node_id).ok_or_else(bad)?,
+                        None,
+                    )
+                    .ok_or_else(bad)?,
                 );
             }
             let mut resets = Vec::new();
@@ -439,9 +468,17 @@ impl BarePackage<'_> {
                 }
                 let clock = *place_clocks.get(place).ok_or_else(bad)?;
                 let value = package_rational(&reset.value).ok_or_else(bad)?;
-                let reset = ClockReset::from_parts(clock, value, span, None, None, Vec::new());
+                let reset_origin = self.node_key(&reset.metadata.node_id).ok_or_else(bad)?;
+                let reset = ClockReset::from_package_parts(
+                    clock,
+                    value,
+                    reset_origin.clone(),
+                    None,
+                    None,
+                    Vec::new(),
+                );
                 resets.push(
-                    ClockResets::from_parts(
+                    ClockResets::from_package_parts(
                         clause,
                         operation,
                         vec![reset],
@@ -451,30 +488,25 @@ impl BarePackage<'_> {
                         Vec::new(),
                         index,
                         context,
-                        span,
+                        reset_origin,
                         None,
                     )
                     .ok_or_else(bad)?,
                 );
             }
             let mut invariants = Vec::new();
-            let invariant_contexts = state_clauses
-                .iter()
-                .map(|clause| clause.context.clone())
-                .collect::<BTreeSet<_>>();
-            if invariant_contexts.len() != 1 {
-                return Err(bad());
-            }
-            let invariant_context = invariant_contexts.iter().next().ok_or_else(bad)?;
+            let invariant_context = state
+                .direct_dense_model_context(&model_node)
+                .ok_or_else(bad)?;
             let self_declaration = state_clauses
                 .iter()
-                .find(|clause| &clause.context == invariant_context)
+                .find(|clause| clause.context == invariant_context)
                 .ok_or_else(bad)?;
             let self_clause = self
                 .project_state_clause(&self_declaration.identity, &self_declaration.name)
                 .map_err(|_| bad())?;
             let self_binder = self_clause.binders().first().cloned().ok_or_else(bad)?;
-            for (index, invariant) in root.invariants.iter().enumerate() {
+            for invariant in &root.invariants {
                 if !invariant.binders.is_empty() {
                     return Err(bad());
                 }
@@ -484,12 +516,9 @@ impl BarePackage<'_> {
                     .checked_timed_predicate(
                         expression,
                         binders,
+                        vec![ValueType::Reference(invariant_context.clone())],
                         None,
-                        Some(fsl_semantics::check::invariant_site(
-                            model.model(),
-                            index,
-                            0,
-                        )),
+                        None,
                     )
                     .map_err(|_| bad())?;
                 let context = match data.parameters().first() {
@@ -503,14 +532,12 @@ impl BarePackage<'_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let alternative = StateAlternative::from_parts(Vec::new(), data);
                 invariants.push(
-                    TimeInvariant::from_parts(
-                        format!("package-invariant-{index}"),
+                    TimeInvariant::from_package_parts(
                         context,
                         vec![alternative],
                         bounds,
                         Vec::new(),
-                        span,
-                        false,
+                        self.node_key(&invariant.metadata.node_id).ok_or_else(bad)?,
                     )
                     .ok_or_else(bad)?,
                 );

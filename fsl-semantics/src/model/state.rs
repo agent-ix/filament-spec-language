@@ -10,6 +10,7 @@
 //! between two states is [`crate::model::population::decide_frame`], called
 //! directly over the model's [`StateModel::population_index`].
 
+use ix_trace_rs::implements;
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
@@ -499,6 +500,30 @@ impl StateModel {
             view.view.domain_package().model_selection.identity.clone(),
             node.clone(),
         )
+    }
+
+    /// The checked object type denoted by one selected dense timed model.
+    #[implements("FR-940-AC-39")]
+    pub fn direct_dense_model_context(
+        &self,
+        node: &filament_exact::NodeKey,
+    ) -> Option<filament_exact::EffectiveId> {
+        let mut matches = self
+            .views
+            .iter()
+            .filter(|view| !view.is_source())
+            .filter_map(|view| {
+                let model = crate::check::lowering::AdmittedModel::from_view(&view.view);
+                (model.object_type_model_node_keys().as_slice() == [node.clone()]).then_some(model)
+            });
+        let model = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        let mut object_types = model.object_types();
+        let (declaration, context) = object_types.next()?;
+        (object_types.next().is_none() && model.model_node_key(declaration).as_ref() == Some(node))
+            .then_some(context)
     }
 
     /// Move the genuine owners into one shared invocation container, reserving

@@ -21,11 +21,9 @@ use fsl_replay::ZoneCertificateRefusal;
 use fsl_replay::{CounterexampleKind, ModelCheckOutcome};
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{
-    analyze, label, package_selection, request_over, Workspace,
-};
+use crate::analyze_cli_support::{Workspace, analyze, label, package_selection, request_over};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit, rpc_unit_with};
 use crate::zone_replay::{replay, reproduced};
 use crate::zone_search::{assert_edges_cover, claim, operations, proved, violated};
@@ -351,7 +349,10 @@ fn a_timed_state_graph_claim_is_decided_from_a_package_selection() {
     let items = json!([{"claim": "Reaches"}]);
     let source_path = request_over(
         &ws,
-        &rpc_unit(4, "possible Reaches using v over (c: M::Call) { c.phase = 1 }\n"),
+        &rpc_unit(
+            4,
+            "possible Reaches using v over (c: M::Call) { c.phase = 1 }\n",
+        ),
         &crate::zone_search::rpc_document(),
         &[rpc_snapshot()],
         json!({"items": items.clone()}),
@@ -360,10 +361,9 @@ fn a_timed_state_graph_claim_is_decided_from_a_package_selection() {
     let source_document: Value = source.document();
     assert_eq!(label(&source.item(0)), "proved", "{source_document}");
 
-    let source_request: Value = serde_json::from_slice(
-        &std::fs::read(&source_path).expect("source request"),
-    )
-    .expect("source request JSON");
+    let source_request: Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request"))
+            .expect("source request JSON");
     let (members, _) = package_selection(&ws, &source_request["request"]);
     let package_path = ws.write(
         "package-analyze.json",
@@ -385,6 +385,133 @@ fn a_timed_state_graph_claim_is_decided_from_a_package_selection() {
         source.item(0)["certificate"],
         "{package_document}"
     );
+}
+
+/// FR-940-AC-39: each package guard disjunct keeps its own data predicate,
+/// matching the source route on the same timed model.
+#[trace("FR-940-AC-39")]
+#[test]
+fn package_timed_guard_parts_match_their_source_predicates() {
+    let ws = Workspace::new("timed-package-guard-parts");
+    let unit = rpc_unit(
+        4,
+        "possible Reaches using v over (c: M::Call) { c.phase = 1 }\n",
+    )
+    .replace(
+        "pre SendIdle using v on M::Call::send { self.phase = 0 }",
+        "pre SendIdle using v on M::Call::send { \
+                 (self.phase = 0 and self.x <= 0 ms) or \
+                 (self.phase = 1 and self.x >= 0 ms) }",
+    );
+    let items = json!([{"claim": "Reaches"}]);
+    let source_path = request_over(
+        &ws,
+        &unit,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": items.clone()}),
+    );
+    let source = analyze(&source_path);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+
+    let source_request: Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request"))
+            .expect("source request JSON");
+    let (members, _) = package_selection(&ws, &source_request["request"]);
+    let package_path = ws.write(
+        "package-guard-parts.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let package = analyze(&package_path);
+    assert_eq!(package.exit, source.exit, "{}", package.document());
+    assert_eq!(package.item(0)["record"], source.item(0)["record"]);
+    assert_eq!(
+        package.item(0)["certificate"],
+        source.item(0)["certificate"]
+    );
+}
+
+/// FR-940-AC-39: multiple matching resets are identified as postcondition
+/// ambiguity by the package reader.
+#[trace("FR-940-AC-39")]
+#[test]
+fn package_timed_reset_ambiguity_names_postconditions() {
+    let ws = Workspace::new("timed-package-postcondition-ambiguity");
+    let unit = rpc_unit(
+        4,
+        "possible Reaches using v over (c: M::Call) { c.phase = 1 }\n",
+    )
+    .replace(
+        "post Send using v on M::Call::send { self.phase = 1 and self.inflight and not self.late and self.x = 0 ms }",
+        "post Send using v on M::Call::send { self.phase = 1 and self.inflight and not self.late and self.x = 0 ms }\n\
+         post SendAgain using v on M::Call::send { self.phase = 1 }",
+    );
+    let source_path = request_over(
+        &ws,
+        &unit,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Reaches"}]}),
+    );
+    let source_request: Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request"))
+            .expect("source request JSON");
+    let (members, _) = package_selection(&ws, &source_request["request"]);
+    let package_path = ws.write(
+        "package-postcondition-ambiguity.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let package = analyze(&package_path);
+    let document = package.document();
+    assert_eq!(package.exit, 21, "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["cause"],
+        "ambiguous-timed-postcondition"
+    );
+    assert_eq!(document["items"], json!([]));
+}
+
+/// FR-940-AC-39: timed invariants of a package selection reach state-graph
+/// analysis and match the source route's result and certificate.
+#[trace("FR-940-AC-39")]
+#[test]
+fn package_timed_invariant_matches_its_source_route() {
+    let ws = Workspace::new("timed-package-strict-origin");
+    let unit = rpc_unit(
+        4,
+        "possible Reaches using v over (c: M::Call) { c.phase = 1 }\n",
+    )
+    .replace("self.x <= 3 ms", "self.x < 3 ms");
+    let items = json!([{"claim": "Reaches"}]);
+    let source_path = request_over(
+        &ws,
+        &unit,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": items}),
+    );
+    let source = analyze(&source_path);
+    let source_request: Value =
+        serde_json::from_slice(&std::fs::read(&source_path).expect("source request"))
+            .expect("source request JSON");
+    let (members, _) = package_selection(&ws, &source_request["request"]);
+    let package_path = ws.write(
+        "package-strict-origin.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    let package = analyze(&package_path);
+    let item = package.item(0);
+    let source_item = source.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(label(&source_item), "proved", "{source_item}");
+    assert_eq!(item["record"], source_item["record"]);
+    assert_eq!(item["certificate"], source_item["certificate"]);
 }
 
 /// An item carrying a member no route reads (`witness_samples` on a clause)
@@ -2107,7 +2234,7 @@ fn digital_clocks_prove_a_true_always_inside_eventually() {
 #[trace("FR-239-AC-10", "FR-243-AC-8")]
 #[test]
 fn an_initial_position_violation_is_refuted_on_both_timed_routes() {
-    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    use crate::timed_world::{DENSE, PACKAGE, document, unit_text};
 
     let body = format!(
         "{}\

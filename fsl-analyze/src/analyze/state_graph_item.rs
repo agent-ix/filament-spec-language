@@ -19,8 +19,8 @@ use fsl_eval::simulation::model::{
     claim_start, ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
     PendingClauseForm, TimedState, TimedSubjectRefusal, TimedSystem, TimedVacuity,
 };
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence, GraphEvidenceEnvelope,
@@ -30,29 +30,29 @@ use fsl_replay::{
     StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure,
     WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
+use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
-use fsl_route::StateGraphFormKind;
 use fsl_semantics::check::{
     Capability, CheckedStateGraphClaim, DeclarationFamily, PredicateRole, StateGraphForm,
 };
 use ix_trace_rs::implements;
 
 use super::instance_records::{decisive, undecided};
-use super::items::{model_refusal, INVALID_VALUE};
+use super::items::{INVALID_VALUE, model_refusal};
 use super::timed_item::subject_refusal;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
     SubjectBinding, TemporalItem,
 };
-use crate::model_check::digitisable::{digitisation_decline, DigitalItem};
+use crate::model_check::digitisable::{DigitalItem, digitisation_decline};
 use crate::model_check::manifest as en1;
 use crate::model_check::{
-    check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
+    StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
 };
 use crate::zone_check::{
-    certificate_item, explore_timed_state_graph, undecided_cause, TimedStateGraphDecision,
-    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, ZoneUndecided,
+    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, ZoneUndecided,
+    certificate_item, explore_timed_state_graph, undecided_cause,
 };
 
 /// The property form of a checked claim.
@@ -1145,12 +1145,21 @@ fn digital_closed_refusal(timed: &TimedSystem<'_, '_>) -> Option<Refusal> {
                 fsl_semantics::check::ClockOp::Less | fsl_semantics::check::ClockOp::Greater
             )
         })?;
-    let span = constraint.span();
     let mut detail = serde_json::Map::new();
-    detail.insert(
-        "strict_constraint".to_owned(),
-        serde_json::json!({"start": span.start, "end": span.end}),
-    );
+    match constraint.site() {
+        fsl_semantics::check::TimedSite::Source(span) => {
+            detail.insert(
+                "strict_constraint".to_owned(),
+                serde_json::json!({"start": span.start, "end": span.end}),
+            );
+        }
+        fsl_semantics::check::TimedSite::PackageOrigin(node) => {
+            detail.insert(
+                "strict_constraint".to_owned(),
+                serde_json::json!({"package_node": node.to_string()}),
+            );
+        }
+    }
     Some(Refusal::declined_with_detail(
         fsl_replay::ProofRefusalCause::InvalidInput,
         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),

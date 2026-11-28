@@ -51,7 +51,7 @@ use super::ir::{CheckedBody, CheckedNode};
 use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
 use super::refusal::TimedConstruct;
 use super::refusal::{
-    CheckCause, ExcludedClauseForm, KeyFault, SemanticCheckRefusal, TemporalCause, TimedOmission,
+    CheckCause, ExcludedClauseForm, SemanticCheckRefusal, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
@@ -63,18 +63,6 @@ use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
 use super::time_units::{TimeScale, TimeUnits};
 use crate::family::CheckContext;
 use crate::value::member::AcceptedPoint;
-
-fn package_builder_invariant(
-    location: &filament_semantic_value::location::ExpressionLocation,
-    invariant: &'static str,
-) -> SemanticCheckRefusal {
-    SemanticCheckRefusal {
-        location: location.clone(),
-        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
-            filament_semantic_value::catalog::InternalFault::new("S3", invariant),
-        )))),
-    }
-}
 
 mod collection_write;
 mod quantified;
@@ -264,6 +252,25 @@ pub enum SlotRef {
     Family,
 }
 
+/// Stable identity of one timed form's source or package origin.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TimedSite {
+    /// A form read from source, located by byte span.
+    Source(Span),
+    /// A form read from an admitted package, located by its checked node.
+    PackageOrigin(NodeKey),
+}
+
+impl TimedSite {
+    /// The source location when the form originated in source.
+    pub const fn source_span(&self) -> Option<Span> {
+        match self {
+            Self::Source(span) => Some(*span),
+            Self::PackageOrigin(_) => None,
+        }
+    }
+}
+
 /// An atomic clock constraint `x ~ c` over the clock `x` of `self`, or of
 /// the object `self` reaches through the reference fields `via`, its bound
 /// exact in the model's unit (FR-230 `ClockConstraint`).
@@ -277,7 +284,7 @@ pub struct ClockConstraint {
     binding: Option<ElementBinding>,
     op: ClockOp,
     bound: Rational,
-    span: Span,
+    site: TimedSite,
     /// The position of the operation's `Clock` parameter the constraint
     /// reads (FR-230 "Operation parameters"): it constrains the place an
     /// instance binds that parameter to, when that place is of `clock`.
@@ -305,7 +312,31 @@ impl ClockConstraint {
             binding,
             op,
             bound,
-            span,
+            site: TimedSite::Source(span),
+            parameter,
+        }
+    }
+
+    /// Construct a clock constraint whose origin is an admitted package node.
+    #[implements("FR-940-AC-39")]
+    pub fn from_package_parts(
+        clock: ClockId,
+        via: Vec<PlaceStep>,
+        slots: Vec<SlotRef>,
+        binding: Option<ElementBinding>,
+        op: ClockOp,
+        bound: Rational,
+        origin: NodeKey,
+        parameter: Option<usize>,
+    ) -> Self {
+        Self {
+            clock,
+            via,
+            slots,
+            binding,
+            op,
+            bound,
+            site: TimedSite::PackageOrigin(origin),
             parameter,
         }
     }
@@ -354,8 +385,13 @@ impl ClockConstraint {
     }
 
     /// The span of the constraint as written.
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn site(&self) -> &TimedSite {
+        &self.site
+    }
+
+    /// The source location when this constraint originated in source.
+    pub fn span(&self) -> Option<Span> {
+        self.site.source_span()
     }
 }
 
@@ -623,7 +659,7 @@ pub struct ClockGuard {
     /// The precondition's context type, which `self` ranges over.
     pub(crate) context: EffectiveId,
     /// The precondition's declaration span.
-    span: Span,
+    site: TimedSite,
     /// The execution point the precondition is bound to, whose
     /// point-qualified anchor the guard names by its `point_anchor` (FSpec
     /// FR-342-AC-13).
@@ -652,7 +688,32 @@ impl ClockGuard {
             parts,
             index,
             context,
-            span,
+            site: TimedSite::Source(span),
+            point,
+        })
+    }
+
+    /// Construct one package-origin operation guard.
+    #[implements("FR-940-AC-39")]
+    pub fn from_package_parts(
+        clause: String,
+        operation: ClauseOperation,
+        parts: Vec<ConvexPart>,
+        index: usize,
+        context: EffectiveId,
+        origin: NodeKey,
+        point: Option<AcceptedPoint>,
+    ) -> Option<Self> {
+        if parts.is_empty() {
+            return None;
+        }
+        Some(Self {
+            clause,
+            operation,
+            parts,
+            index,
+            context,
+            site: TimedSite::PackageOrigin(origin),
             point,
         })
     }
@@ -679,8 +740,13 @@ impl ClockGuard {
     }
 
     /// The precondition's declaration span.
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn site(&self) -> &TimedSite {
+        &self.site
+    }
+
+    /// The source location when this guard originated in source.
+    pub fn span(&self) -> Option<Span> {
+        self.site.source_span()
     }
 }
 
@@ -690,7 +756,7 @@ impl ClockGuard {
 pub struct ClockReset {
     clock: ClockId,
     value: Rational,
-    span: Span,
+    site: TimedSite,
     selection: Option<SlotSelection>,
     /// The position of the operation's `Clock` parameter the reset writes,
     /// when it writes one (FR-230 "Operation parameters").
@@ -761,7 +827,27 @@ impl ClockReset {
         Self {
             clock,
             value,
-            span,
+            site: TimedSite::Source(span),
+            selection,
+            parameter,
+            slots,
+        }
+    }
+
+    /// Construct a reset whose origin is an admitted package node.
+    #[implements("FR-940-AC-39")]
+    pub fn from_package_parts(
+        clock: ClockId,
+        value: Rational,
+        origin: NodeKey,
+        selection: Option<SlotSelection>,
+        parameter: Option<usize>,
+        slots: Vec<u64>,
+    ) -> Self {
+        Self {
+            clock,
+            value,
+            site: TimedSite::PackageOrigin(origin),
             selection,
             parameter,
             slots,
@@ -797,8 +883,13 @@ impl ClockReset {
     }
 
     /// The span of the reset conjunct.
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn site(&self) -> &TimedSite {
+        &self.site
+    }
+
+    /// The source location when this reset originated in source.
+    pub fn span(&self) -> Option<Span> {
+        self.site.source_span()
     }
 }
 
@@ -853,7 +944,7 @@ pub struct ClockResets {
     /// The postcondition's context type, which `self` ranges over.
     pub(crate) context: EffectiveId,
     /// The postcondition's declaration span.
-    span: Span,
+    site: TimedSite,
     /// The execution point the postcondition is bound to, whose
     /// point-qualified anchor the reset names by its `point_anchor` (FSpec
     /// FR-342-AC-13).
@@ -891,7 +982,41 @@ impl ClockResets {
             requires,
             index,
             context,
-            span,
+            site: TimedSite::Source(span),
+            point,
+        })
+    }
+
+    /// Construct one package-origin reset table.
+    #[allow(clippy::too_many_arguments)]
+    #[implements("FR-940-AC-39")]
+    pub fn from_package_parts(
+        clause: String,
+        operation: ClauseOperation,
+        resets: Vec<ClockReset>,
+        writes: Vec<CollectionWrite>,
+        drops: Vec<ClockId>,
+        drop_spans: Vec<Span>,
+        requires: Vec<(ClockId, bool)>,
+        index: usize,
+        context: EffectiveId,
+        origin: NodeKey,
+        point: Option<AcceptedPoint>,
+    ) -> Option<Self> {
+        if drop_spans.len() != drops.len() {
+            return None;
+        }
+        Some(Self {
+            clause,
+            operation,
+            resets,
+            writes,
+            drops,
+            drop_spans,
+            requires,
+            index,
+            context,
+            site: TimedSite::PackageOrigin(origin),
             point,
         })
     }
@@ -917,8 +1042,13 @@ impl ClockResets {
     }
 
     /// The postcondition's declaration span.
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn site(&self) -> &TimedSite {
+        &self.site
+    }
+
+    /// The source location when this reset table originated in source.
+    pub fn span(&self) -> Option<Span> {
+        self.site.source_span()
     }
 
     /// The writes of clock collection fields, in source order (FR-230
@@ -949,14 +1079,14 @@ impl ClockResets {
 /// clocks.
 #[derive(Debug)]
 pub struct TimeInvariant {
-    name: String,
+    name: Option<String>,
     context: EffectiveId,
     alternatives: Vec<StateAlternative>,
     bounds: Vec<ClockConstraint>,
     binders: Vec<ElementBinding>,
     /// The declaration's span: the `time invariant` declaration, or the
     /// time declaration for a bound of a `max` constraint on clocks.
-    span: Span,
+    site: TimedSite,
     /// Whether the invariant is a `max` constraint on clocks (FR-230
     /// "Clock constraints on a type"), whose predicate is `true`.
     from_bound: bool,
@@ -1132,19 +1262,43 @@ impl TimeInvariant {
             return None;
         }
         Some(Self {
-            name,
+            name: Some(name),
             context,
             alternatives,
             bounds,
             binders,
-            span,
+            site: TimedSite::Source(span),
             from_bound,
         })
     }
 
-    /// The declared name.
+    /// Construct a time invariant read from an admitted package node.
+    #[implements("FR-940-AC-39")]
+    pub fn from_package_parts(
+        context: EffectiveId,
+        alternatives: Vec<StateAlternative>,
+        bounds: Vec<ClockConstraint>,
+        binders: Vec<ElementBinding>,
+        origin: NodeKey,
+    ) -> Option<Self> {
+        if alternatives.is_empty() || bounds.is_empty() {
+            return None;
+        }
+        Some(Self {
+            name: None,
+            context,
+            alternatives,
+            bounds,
+            binders,
+            site: TimedSite::PackageOrigin(origin),
+            from_bound: false,
+        })
+    }
+
+    /// The declared name, or a generic label when a package node has no
+    /// source declaration name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_deref().unwrap_or("time invariant")
     }
 
     /// The object type `self` ranges over.
@@ -1170,8 +1324,13 @@ impl TimeInvariant {
     }
 
     /// The declaration's span.
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn site(&self) -> &TimedSite {
+        &self.site
+    }
+
+    /// The source location when this invariant originated in source.
+    pub fn span(&self) -> Option<Span> {
+        self.site.source_span()
     }
     /// Whether the invariant is a `max` constraint on clocks, whose
     /// predicate is `true` (FR-230 "Clock constraints on a type").
@@ -1840,13 +1999,13 @@ impl TimedModel {
     /// FR-322 "Clause nodes" and FR-322-AC-267): `None` when S4 writes every
     /// clock place, guard, reset, time invariant, `Clock` parameter and
     /// urgency of the model.
-    pub fn unwritten(&self) -> Option<(TimedOmission, Span)> {
+    pub fn unwritten(&self) -> Option<(TimedOmission, TimedSite)> {
         use TimedOmission::{Excluded, Unwritten};
         use UnwrittenTimedMember as Member;
         for (at, guard) in self.guards.iter().enumerate() {
             for (index, part) in guard.parts.iter().enumerate() {
                 if !part.elements.is_empty() || !part.families.is_empty() {
-                    return Some((Unwritten(Member::QuantifiedClause), guard.span));
+                    return Some((Unwritten(Member::QuantifiedClause), guard.site.clone()));
                 }
                 if part.clocks.is_empty()
                     && !guard.covered()
@@ -1855,17 +2014,18 @@ impl TimedModel {
                 {
                     // Located at the disjunct: its data predicate's site.
                     let site = guard_part_site(&self.model, at, index);
-                    let span = self
+                    let site = self
                         .sites
                         .iter()
                         .find(|(held, _)| *held == site)
                         .and_then(|(_, spans)| spans.span(spans.root()))
-                        .unwrap_or(guard.span);
-                    return Some((Excluded(ExcludedClauseForm::DataOnlyDisjunct), span));
+                        .map(TimedSite::Source)
+                        .unwrap_or_else(|| guard.site.clone());
+                    return Some((Excluded(ExcludedClauseForm::DataOnlyDisjunct), site));
                 }
                 if let Some(found) = part.clocks.iter().find_map(|constraint| {
                     self.unwritten_constraint(constraint)
-                        .map(|member| (Unwritten(member), constraint.span))
+                        .map(|member| (Unwritten(member), constraint.site.clone()))
                 }) {
                     return Some(found);
                 }
@@ -1873,11 +2033,19 @@ impl TimedModel {
         }
         for written in &self.resets {
             if let Some(write) = written.writes.first() {
-                return Some((Excluded(ExcludedClauseForm::CollectionWrite), write.span()));
+                return Some((
+                    Excluded(ExcludedClauseForm::CollectionWrite),
+                    TimedSite::Source(write.span()),
+                ));
             }
             if !written.drops.is_empty() {
-                let span = written.drop_spans.first().copied().unwrap_or(written.span);
-                return Some((Excluded(ExcludedClauseForm::PresenceDrop), span));
+                let site = written
+                    .drop_spans
+                    .first()
+                    .copied()
+                    .map(TimedSite::Source)
+                    .unwrap_or_else(|| written.site.clone());
+                return Some((Excluded(ExcludedClauseForm::PresenceDrop), site));
             }
             for reset in &written.resets {
                 if reset.parameter.is_some() {
@@ -1902,15 +2070,18 @@ impl TimedModel {
                         ..
                     }) => {
                         return Some(if *presence {
-                            (Unwritten(Member::ElementReset), *span)
+                            (Unwritten(Member::ElementReset), TimedSite::Source(*span))
                         } else {
-                            (Excluded(ExcludedClauseForm::ElementDataSelection), *span)
+                            (
+                                Excluded(ExcludedClauseForm::ElementDataSelection),
+                                TimedSite::Source(*span),
+                            )
                         });
                     }
                     Some(_) if slots == 1 => continue,
                     None | Some(_) => Unwritten(Member::ElementReset),
                 };
-                return Some((omission, reset.span));
+                return Some((omission, reset.site.clone()));
             }
         }
         for invariant in &self.invariants {
@@ -1920,7 +2091,7 @@ impl TimedModel {
                         .binding()
                         .is_some_and(|binding| invariant.binders.contains(binding))
             }) {
-                return Some((Unwritten(Member::QuantifiedClause), invariant.span));
+                return Some((Unwritten(Member::QuantifiedClause), invariant.site.clone()));
             }
         }
         self.urgency
@@ -1929,7 +2100,12 @@ impl TimedModel {
             .find(|(urgency, predicate)| {
                 matches!(urgency, Urgency::When { .. }) && predicate.is_none()
             })
-            .map(|(urgency, _)| (Unwritten(Member::ElementPresence), urgency.span()))
+            .map(|(urgency, _)| {
+                (
+                    Unwritten(Member::ElementPresence),
+                    TimedSite::Source(urgency.span()),
+                )
+            })
     }
 
     /// Why S4 does not write `constraint` yet, `None` when it does: a
@@ -3764,7 +3940,9 @@ fn draft_part(
             })
     }) {
         return Err(timed(TemporalCause::UnprovedPresence {
-            span: unproved.span,
+            span: unproved
+                .span()
+                .unwrap_or_else(|| located.span(located.root())),
         }));
     }
     let (families, literals): (Vec<_>, Vec<_>) = literals
@@ -4835,20 +5013,20 @@ fn time_invariant(
                             .unwrap_or(bound.span),
                     })
                     .map_err(timed)?;
-                bounds.push(ClockConstraint::from_parts(
+                bounds.push(ClockConstraint {
+                    parameter: None,
                     clock,
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    if bound.strict {
+                    via: Vec::new(),
+                    slots: Vec::new(),
+                    binding: None,
+                    op: if bound.strict {
                         ClockOp::Less
                     } else {
                         ClockOp::LessOrEqual
                     },
-                    clocks.quantity(&bound.bound).map_err(timed)?,
-                    bound.span,
-                    None,
-                ));
+                    bound: clocks.quantity(&bound.bound).map_err(timed)?,
+                    site: TimedSite::Source(bound.span),
+                });
             }
             fsl_forms::TimeInvariantBoundForm::Quantified(bound) => {
                 if bound.quantifier == fsl_forms::QuantifierKind::Exists {
@@ -4874,7 +5052,7 @@ fn time_invariant(
                 .any(|alternative| !alternative.presences.contains(&(bound.clock, true)))
     }) {
         return Err(timed(TemporalCause::UnprovedPresence {
-            span: unproved.span,
+            span: unproved.span().unwrap_or(form.span),
         }));
     }
     Ok(InvariantDraft {
@@ -4919,7 +5097,9 @@ fn state_alternatives(
     for (literals, constraints) in dnf {
         if let Some(constraint) = constraints.first() {
             return Err(timed(TemporalCause::ClockReadOutsideConstraint {
-                span: constraint.span,
+                span: constraint
+                    .span()
+                    .unwrap_or_else(|| located.span(located.root())),
             }));
         }
         let (presences, literals): (Vec<_>, Vec<_>) = literals
@@ -5002,16 +5182,16 @@ fn clock_bounds(
             by_owner
                 .entry(field.owner.clone())
                 .or_default()
-                .push(ClockConstraint::from_parts(
-                    ClockId(index),
-                    Vec::new(),
+                .push(ClockConstraint {
+                    parameter: None,
+                    clock: ClockId(index),
+                    via: Vec::new(),
                     slots,
-                    None,
-                    ClockOp::LessOrEqual,
-                    bound.value.clone(),
-                    span,
-                    None,
-                ));
+                    binding: None,
+                    op: ClockOp::LessOrEqual,
+                    bound: bound.value.clone(),
+                    site: TimedSite::Source(span),
+                });
         }
         for (owner, bounds) in by_owner {
             let population =
@@ -5820,10 +6000,10 @@ fn typed_alternative_in(
         Some(named.clone()),
     )?;
     *nodes_used = (*nodes_used).max(used);
-    Ok(StateAlternative::from_parts(
-        alternative.presences,
+    Ok(StateAlternative {
+        presences: alternative.presences,
         predicate,
-    ))
+    })
 }
 
 fn state_view<'v>(
@@ -5932,24 +6112,19 @@ fn check_part(
             Ok(QuantifiedFamily { path, each, parts })
         })
         .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?;
-    ConvexPart::from_parts(
+    Ok(ConvexPart {
         data,
-        part.presences,
-        part.element_presences,
-        part.elements
+        presences: part.presences,
+        element_presences: part.element_presences,
+        elements: part
+            .elements
             .into_iter()
             .map(|(binding, _)| binding)
             .collect(),
-        clock_binders,
-        part.empty_collection_branch,
-        part.clocks,
+        binders: clock_binders,
+        empty_collection_branch: part.empty_collection_branch,
+        clocks: part.clocks,
         families,
-    )
-    .ok_or_else(|| {
-        package_builder_invariant(
-            declarations.location,
-            "checked-timed-guard-part-has-normalized-bindings",
-        )
     })
 }
 
@@ -6007,23 +6182,15 @@ pub(crate) fn check(
                     &mut nodes_used,
                 )?);
             }
-            guards.push(
-                ClockGuard::from_parts(
-                    clause.name.clone(),
-                    operation.clone(),
-                    checked,
-                    index,
-                    clause.context.clone(),
-                    clause.spans.declaration,
-                    clause.execution_point.clone(),
-                )
-                .ok_or_else(|| {
-                    package_builder_invariant(
-                        checking.declarations.location,
-                        "checked-timed-guard-has-parts",
-                    )
-                })?,
-            );
+            guards.push(ClockGuard {
+                clause: clause.name.clone(),
+                operation: operation.clone(),
+                parts: checked,
+                index,
+                context: clause.context.clone(),
+                site: TimedSite::Source(clause.spans.declaration),
+                point: clause.execution_point.clone(),
+            });
         }
         let mut invariants = Vec::with_capacity(draft.invariants.len());
         for invariant in draft.invariants {
@@ -6074,23 +6241,15 @@ pub(crate) fn check(
             let Some(context) = context else {
                 continue;
             };
-            invariants.push(
-                TimeInvariant::from_parts(
-                    invariant.name,
-                    context,
-                    alternatives,
-                    invariant.bounds,
-                    invariant.binders,
-                    invariant.span,
-                    invariant.from_bound,
-                )
-                .ok_or_else(|| {
-                    package_builder_invariant(
-                        checking.declarations.location,
-                        "checked-time-invariant-has-alternatives-and-bounds",
-                    )
-                })?,
-            );
+            invariants.push(TimeInvariant {
+                name: Some(invariant.name),
+                context,
+                alternatives,
+                bounds: invariant.bounds,
+                binders: invariant.binders,
+                site: TimedSite::Source(invariant.span),
+                from_bound: invariant.from_bound,
+            });
         }
         let mut urgency = Vec::with_capacity(draft.urgency.len());
         let mut urgency_predicates = Vec::with_capacity(draft.urgency.len());
@@ -6234,61 +6393,44 @@ pub(crate) fn check(
                         })
                     }
                 };
-                checked.push(ClockReset::from_parts(
-                    reset.clock,
-                    reset.value,
-                    reset.span,
+                checked.push(ClockReset {
+                    clock: reset.clock,
+                    value: reset.value,
+                    site: TimedSite::Source(reset.span),
                     selection,
-                    reset.parameter,
-                    reset.slots.iter().map(|slot| slot.value).collect(),
-                ));
+                    parameter: reset.parameter,
+                    slots: reset.slots.iter().map(|slot| slot.value).collect(),
+                });
             }
-            resets.push(
-                ClockResets::from_parts(
-                    written.clause,
-                    written.operation,
-                    checked,
-                    written.writes,
-                    written.drops,
-                    written.drop_spans,
-                    written.requires,
-                    written.index,
-                    written.context,
-                    written.span,
-                    written.point,
-                )
-                .ok_or_else(|| {
-                    package_builder_invariant(
-                        checking.declarations.location,
-                        "checked-clock-reset-table-has-drop-spans",
-                    )
-                })?,
-            );
+            resets.push(ClockResets {
+                clause: written.clause,
+                index: written.index,
+                context: written.context,
+                site: TimedSite::Source(written.span),
+                point: written.point,
+                operation: written.operation,
+                resets: checked,
+                writes: written.writes,
+                drops: written.drops,
+                drop_spans: written.drop_spans,
+                requires: written.requires,
+            });
         }
-        let model = TimedModel {
+        models.push(TimedModel {
             model: draft.model,
             model_node: draft.model_node,
             clocks: draft.clocks,
             clock_parameters: draft.clock_parameters,
             dimensions: draft.dimensions,
-            guards: Vec::new(),
-            resets: Vec::new(),
-            invariants: Vec::new(),
+            guards,
+            resets,
+            invariants,
             urgency,
             urgency_predicates,
             sites,
             clause_nodes: None,
             place_nodes: Vec::new(),
-        };
-        let model = model
-            .with_package_clauses(guards, resets, invariants)
-            .ok_or_else(|| {
-                package_builder_invariant(
-                    checking.declarations.location,
-                    "checked-timed-model-clauses-reference-admitted-clock-places",
-                )
-            })?;
-        models.push(model);
+        });
     }
     Ok((models, nodes_used))
 }
@@ -6298,7 +6440,8 @@ pub(crate) fn check(
 /// compiled and silently missing from the package's identity. `None` when
 /// S4 writes the whole model.
 pub(crate) fn not_emitted(model: &TimedModel) -> Option<SemanticCheckRefusal> {
-    let (omission, span) = model.unwritten()?;
+    let (omission, site) = model.unwritten()?;
+    let span = site.source_span()?;
     let model = model.model.clone();
     Some(refusal(timed(match omission {
         TimedOmission::Unwritten(member) => TemporalCause::TimedModelNotEmitted {
