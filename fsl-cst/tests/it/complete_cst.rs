@@ -62,6 +62,12 @@ fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
     );
     assert!(parsed.is_admissible());
     assert_eq!(parsed.cst().render(), SOURCE.as_bytes());
+    for token in parsed.cst().tokens() {
+        assert_eq!(
+            token.spelling(),
+            &SOURCE.as_bytes()[token.span().start..token.span().end],
+        );
+    }
     assert_eq!(parsed.source().text(), SOURCE);
     // Distinct occurrences never collapse to one identity: nodes that share
     // one exact span (an `Expression` wrapping an `Implication` wrapping ...)
