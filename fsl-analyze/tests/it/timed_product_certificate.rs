@@ -694,10 +694,78 @@ fn a_workload_alone_makes_a_mean_time_infinite() {
     assert_eq!(disposed.kind, DispositionKind::Unsupported);
 }
 
+/// FR-921 independently derives target nonreachability for the close-window
+/// and multiple-free-delay product shapes.
+#[trace("TC-2490", "FR-204-AC-24", "FR-921-AC-7")]
+#[test]
+fn workload_infinite_mean_checker_rederives_free_delay_refusal_shapes() {
+    for (send_guard, toggle_guard, delays, target) in [
+        (
+            "",
+            " and self.x <= 0 ms",
+            "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
+            "holds(c.late)",
+        ),
+        (
+            " and self.x >= 1 ms",
+            " and self.x >= 1 ms",
+            "",
+            "holds(false)",
+        ),
+    ] {
+        let target_world = free_delay_mean_world(
+            send_guard,
+            toggle_guard,
+            delays,
+            "under One",
+            target,
+            ">= 3 ms",
+        );
+        let source = race(1);
+        let source_record = settle(&source, "MeanTime");
+        let source_bytes = source_record
+            .terminal()
+            .and_then(|terminal| terminal.exact_certificate_document())
+            .expect("the source claim retains its certificate");
+        let mut typed = fsl_replay::read_probability_certificate(
+            source_bytes,
+            limits(),
+            &Cancel::new(),
+        )
+        .expect("source certificate parses");
+        let target_claim = target_world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim("MeanTime")
+            .expect("target claim");
+        typed.identity = fsl_replay::probabilistic_claim_identity(target_claim)
+            .expect("target identity");
+        typed.targets.clear();
+        let doc: Value = serde_json::from_slice(
+            &fsl_replay::write_probability_certificate(&typed, limits(), &Cancel::new())
+                .expect("rewritten source certificate"),
+        )
+        .expect("rewritten document parses");
+        let checked = check(&target_world, "MeanTime", &doc);
+        assert!(
+            matches!(checked, Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))),
+            "{checked:?}"
+        );
+    }
+}
+
 /// `send` and `toggle`, each disabling the other, with the guards and delay
 /// distributions given, under `One`: MeanTime until `late`, which `send`
 /// alone sets, so some scheduler reaches it and the workload may not.
-fn uncertified_race(send: &str, toggle: &str, delays: &str) -> World {
+fn free_delay_mean_world(
+    send: &str,
+    toggle: &str,
+    delays: &str,
+    scheduler: &str,
+    target: &str,
+    bound: &str,
+) -> World {
     let declarations = format!(
         "pre Send using v on M::Call::send {{ not self.late and not self.retried{send} }}\n\
          post Sent using v on M::Call::send {{ self.late }}\n\
@@ -706,14 +774,18 @@ fn uncertified_race(send: &str, toggle: &str, delays: &str) -> World {
          {delays}\
          workload One on M {{ weight Call::send = 1; weight Call::toggle = 1; }}\n\
          time invariant Deadline when {{ not self.late and not self.retried }} {{ self.x <= 2 ms }}\n\
-         probabilistic MeanTime using inf on M over (c: M::Call) under One on origin \
-         {{ expected elapsed until holds(c.late) >= 3 ms }}\n"
+         probabilistic MeanTime using inf on M over (c: M::Call) {scheduler} on origin \
+         {{ expected elapsed until {target} {bound} }}\n"
     );
     timed_world::world(
         &timed_world::document(&["x"], &[("send", &["late"]), ("toggle", &["retried"])]),
         PROFILES,
         &format!("{}{declarations}", timed_world::DENSE),
     )
+}
+
+fn uncertified_race(send: &str, toggle: &str, delays: &str) -> World {
+    free_delay_mean_world(send, toggle, delays, "under One", "holds(c.late)", ">= 3 ms")
 }
 
 fn is_not_yet_certifiable(world: &World) {
@@ -742,35 +814,44 @@ fn a_region_route_workload_infinity_is_not_yet_certified() {
     ));
 }
 
-/// FR-204-AC-24, not yet certifiable: `send` and `toggle` both choose their
-/// delay and are enabled together.
+/// FR-204-AC-24: a reachable target under the free-delay workload still has a
+/// finite, scheduler-dependent mean and remains unsupported.
 #[trace("TC-639", "FR-204-AC-24")]
 #[test]
-fn a_workload_infinity_with_racing_free_delays_is_not_yet_certified() {
-    // The race is refused under its own code (`CatalogCode`
-    // `workload-free-delays-race`), not as not-yet-implemented.
-    is_unsupported_with(
-        &uncertified_race(" and self.x >= 1 ms", " and self.x >= 1 ms", ""),
-        "workload-free-delays-race",
-    );
+fn a_workload_infinity_with_a_reachable_free_delay_target_is_not_certified() {
+    let world = uncertified_race(" and self.x >= 1 ms", " and self.x >= 1 ms", "");
+    is_unsupported_with(&world, "not-yet-implemented");
 }
 
-/// FR-204-AC-24, not yet certifiable: `toggle` chooses its delay and a unit
-/// delay closes its window before it fires.
+/// FR-204-AC-24: the checker rederives target nonreachability across both
+/// scheduler-chosen free delays.
 #[trace("TC-639", "FR-204-AC-24")]
+#[trace("TC-2490", "FR-921-AC-7")]
 #[test]
-fn a_workload_infinity_with_a_closing_free_window_is_not_yet_certified() {
-    // Refused under the refusal's own code (`ClosesBeforeFiring`): a free
-    // delay under the workload is not decided (FR-203-AC-17), and the least
-    // expected time may be 1 ms, not infinity.
-    is_unsupported_with(
-        &uncertified_race(
-            "",
-            " and self.x <= 0 ms",
-            "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
-        ),
-        "workload-free-delay-window-closes",
+fn a_workload_infinity_with_racing_free_delays_and_no_target_is_certified() {
+    let world = free_delay_mean_world(
+        " and self.x >= 1 ms",
+        " and self.x >= 1 ms",
+        "",
+        "under One",
+        "holds(false)",
+        ">= 3 ms",
     );
+    is_certified_infinite(&world, "MeanTime");
+}
+
+/// FR-204-AC-24: the checker proves the target unreachable for every
+/// scheduler-chosen free delay before accepting infinity.
+#[trace("TC-639", "FR-204-AC-24")]
+#[trace("TC-2490", "FR-921-AC-7")]
+#[test]
+fn a_workload_infinity_with_a_closing_free_window_is_certified() {
+    let world = uncertified_race(
+        "",
+        " and self.x <= 0 ms",
+        "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
+    );
+    is_certified_infinite(&world, "MeanTime");
 }
 
 const NEVER: &str = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
