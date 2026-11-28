@@ -12,6 +12,7 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
+use std::time::Instant;
 
 const WIDE: u64 = 1 << 42;
 const AUTHORITY: &str = "agent-ix";
@@ -36,7 +37,7 @@ fn package_bytes(
     source_text: &str,
     packages: &fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
-) -> (Vec<u8>, fsl_replay::FunctionSite) {
+) -> (Vec<u8>, fsl_replay::FunctionSite, usize) {
     let identity = SourceIdentity::new(AUTHORITY, SOURCE_ID);
     let source_limits = fsl_cst::Limits {
         source_bytes: 1 << 28,
@@ -65,6 +66,7 @@ fn package_bytes(
     )
     .expect("the replay source parses")
     .into_value();
+    let source_tokens = parsed.cst().tokens().len();
     let models = spine::select(&parsed, packages, limits.model, &Cancel::new())
         .expect("the model inputs admit")
         .into_value();
@@ -85,7 +87,7 @@ fn package_bytes(
     let emitted = spine::package(&checked, limits.package, &Cancel::new())
         .expect("the checked package emits")
         .into_value();
-    (emitted.package().bytes().to_vec(), site)
+    (emitted.package().bytes().to_vec(), site, source_tokens)
 }
 
 fn request_wire(
@@ -268,6 +270,92 @@ fn command_replay_with_exact_input_bound(wire: &ReplayRequestWire) -> Value {
     row
 }
 
+fn timed_command_replay_with_exact_input_bound(
+    wire: &ReplayRequestWire,
+) -> (Value, u128, u128, u128, usize) {
+    let setup_started = Instant::now();
+    let envelope = request_file_value(wire);
+    let bytes = serde_json::to_vec(&envelope).expect("request envelope serializes");
+    let directory = tempfile::tempdir().expect("replay workspace");
+    let request_path = directory.path().join("request.json");
+    std::fs::write(&request_path, &bytes).expect("request file writes");
+    std::fs::write(
+        directory.path().join("unit.native"),
+        &wire.byte_provision[0].2,
+    )
+    .expect("source provision writes");
+    let setup_ms = setup_started.elapsed().as_millis();
+
+    let decode_started = Instant::now();
+    let exact_input_bytes =
+        match ReplayRequest::decode(wire.clone(), ReplayLimits::default().with_input_bytes(0)) {
+            Err(ReplayRequestRefusal::BoundExceeded(limit)) => {
+                usize::try_from(limit.actual).expect("measured replay bytes fit usize")
+            }
+            Err(other) => panic!("unexpected zero-bound replay request result: {other:?}"),
+            Ok(_) => panic!("zero-byte replay input bound admitted the request"),
+        };
+    let decode_ms = decode_started.elapsed().as_millis();
+
+    let mut caller = CommandLimits::replay();
+    assert!(caller.set_bound(Setting::ReplayInputBytes, exact_input_bytes as u64));
+    let run_limits = RunLimits {
+        request_bytes: 1 << 30,
+        dependent_bytes: 1 << 30,
+    };
+    let exact_started = Instant::now();
+    let result = command::replay_with_limits(&request_path, run_limits, &caller)
+        .expect("command replay admits the exact replay-input byte count");
+    let exact_ms = exact_started.elapsed().as_millis();
+    assert_eq!(result.exit_code, 0);
+    let row = result.value.as_value()["results"][0].clone();
+
+    assert!(caller.set_bound(Setting::ReplayInputBytes, (exact_input_bytes - 1) as u64));
+    let refusal = command::replay_with_limits(&request_path, run_limits, &caller)
+        .expect_err("one byte below replay.input_bytes refuses");
+    let detail = format!("{refusal:?}");
+    assert!(detail.contains("replay.input_bytes"), "{detail}");
+    assert!(
+        detail.contains(&(exact_input_bytes - 1).to_string()),
+        "{detail}"
+    );
+    assert!(detail.contains(&exact_input_bytes.to_string()), "{detail}");
+    (row, setup_ms, decode_ms, exact_ms, exact_input_bytes)
+}
+
+fn profile_native_size_replay(count: usize) {
+    let values = (0..count)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let source = model_function(
+        None,
+        &format!(
+            "let values: Sequence<Integer>[0, {count}] = sequence[{values}] in \
+             size<Integer>(values) = {count}"
+        ),
+        "Boolean",
+    );
+    let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
+    limits.intake = limits.intake.with_sequence_maximum(count as u32);
+    let compile_started = Instant::now();
+    let (package, site, source_tokens) = package_bytes(&source, &empty_packages(), limits);
+    let compile_ms = compile_started.elapsed().as_millis();
+    let wire = request_wire(&package, &source, &site);
+    let (result, setup_ms, decode_ms, exact_ms, input_bytes) =
+        timed_command_replay_with_exact_input_bound(&wire);
+
+    assert_eq!(result["arm"], "input");
+    assert_eq!(result["settlement"], "reproduced-without-witness");
+    assert_eq!(result["category"], "success");
+    assert_eq!(result["value"], true);
+    eprintln!(
+        "QSL3570_NATIVE_REPLAY_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} replay_input_bytes={input_bytes} compile_ms={compile_ms} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
+        source.len(),
+        package.len(),
+    );
+}
+
 fn model_function(model_identity: Option<&str>, expression: &str, result_type: &str) -> String {
     model_function_with_declarations(model_identity, "", expression, result_type)
 }
@@ -302,7 +390,7 @@ fn command_replays_the_ten_thousand_term_sum_with_exact_input_bytes() {
         .collect::<Vec<_>>()
         .join(" + ");
     let source = model_function(None, &format!("({sum}) = 10000"), "Boolean");
-    let (package, site) = package_bytes(
+    let (package, site, _) = package_bytes(
         &source,
         &empty_packages(),
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
@@ -326,7 +414,7 @@ fn command_replays_one_thousand_enum_declarations() {
     let source = model_function_with_declarations(None, &enum_declarations(), "true", "Boolean");
     let limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default()
         .with_declaration_records(3_000);
-    let (package, site) = package_bytes(&source, &empty_packages(), limits);
+    let (package, site, _) = package_bytes(&source, &empty_packages(), limits);
     assert_command_replay(request_wire(&package, &source, &site));
 }
 
@@ -367,7 +455,7 @@ fn command_replays_both_thousand_link_variants() {
         let limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default()
             .with_ancestor_steps(1_000)
             .with_derivation_facts(1_504_502);
-        let (package, site) = package_bytes(&source, &empty_packages(), limits);
+        let (package, site, _) = package_bytes(&source, &empty_packages(), limits);
         assert_command_replay(request_wire(&package, &source, &site));
     }
 }
@@ -392,10 +480,28 @@ fn command_replays_one_hundred_thousand_ordered_values() {
     );
     let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
     limits.intake = limits.intake.with_sequence_maximum(COUNT as u32);
-    let (package, site) = package_bytes(&source, &empty_packages(), limits);
+    let (package, site, _) = package_bytes(&source, &empty_packages(), limits);
     let result = command_replay_with_exact_input_bound(&request_wire(&package, &source, &site));
     assert_eq!(result["arm"], "input");
     assert_eq!(result["settlement"], "reproduced-without-witness");
     assert_eq!(result["category"], "success");
     assert_eq!(result["value"], true);
+}
+
+#[trace("TC-3242", "FR-862-AC-8")]
+#[test]
+fn profile_native_replay_at_ten_thousand_values() {
+    profile_native_size_replay(10_000);
+}
+
+#[trace("TC-3242", "FR-862-AC-8")]
+#[test]
+fn profile_native_replay_at_twenty_thousand_values() {
+    profile_native_size_replay(20_000);
+}
+
+#[trace("TC-3242", "FR-862-AC-8")]
+#[test]
+fn profile_native_replay_at_forty_thousand_values() {
+    profile_native_size_replay(40_000);
 }
