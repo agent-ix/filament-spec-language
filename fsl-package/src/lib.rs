@@ -292,6 +292,44 @@ pub mod test_support {
         pub final_encode_us: u128,
         /// Retained-node and post-encode construction.
         pub retained_post_encode_us: u128,
+        /// Retained-node summary construction.
+        pub retained_summary_us: u128,
+        /// Exact-row selection and typed-graph conversion/drop.
+        pub retained_disposition_us: u128,
+        /// Emission value assembly.
+        pub retained_emission_assembly_us: u128,
+        /// Exact identity-row membership selection.
+        pub retained_identity_selection_us: u128,
+    }
+
+    /// Test-only write-index rewrite work report.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct WriteIndexDiagnostics {
+        /// Linear mapping build, one-pass slot visits/lookups and sidecars.
+        pub linear_work_units: usize,
+        /// Slot visits and path allowances for the repeated replacement scans.
+        pub repeated_scan_work_units: usize,
+        /// ID slots visited by the simulated one-pass node traversal.
+        pub one_pass_id_slots: usize,
+        /// Number of structural ID rewrites collected.
+        pub changed_ids: usize,
+        /// Structural-key lookups in the linear mapping and sidecar passes.
+        pub structural_key_lookups: usize,
+    }
+
+    /// Retained-path counts for interpreting the S4 subphase timings.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct S4RetainedCounts {
+        /// Number of nodes in the typed semantic graph before disposition.
+        pub graph_node_count: usize,
+        /// Selected exact declaration rows.
+        pub exact_declaration_count: usize,
+        /// Selected exact field rows.
+        pub exact_field_count: usize,
+        /// Whether the caller requested typed nodes to be retained.
+        pub keep_nodes: bool,
+        /// Number of document nodes produced after disposition.
+        pub document_node_count: usize,
     }
 
     /// Reset the S4 emission phase timing accumulator for the current thread.
@@ -311,6 +349,39 @@ pub mod test_support {
             source_requirement_operand_us: times.source_requirement_operand_us,
             final_encode_us: times.final_encode_us,
             retained_post_encode_us: times.retained_post_encode_us,
+            retained_summary_us: times.retained_summary_us,
+            retained_disposition_us: times.retained_disposition_us,
+            retained_emission_assembly_us: times.retained_emission_assembly_us,
+            retained_identity_selection_us: times.retained_identity_selection_us,
+        }
+    }
+
+    /// Reset write-index diagnostic work for the current thread.
+    pub fn reset_write_index_diagnostics() {
+        crate::emit::reset_write_index_diagnostics();
+    }
+
+    /// Read the current thread's write-index diagnostic work.
+    pub fn write_index_diagnostics() -> WriteIndexDiagnostics {
+        let diagnostics = crate::emit::write_index_diagnostics();
+        WriteIndexDiagnostics {
+            linear_work_units: diagnostics.linear_work_units,
+            repeated_scan_work_units: diagnostics.repeated_scan_work_units,
+            one_pass_id_slots: diagnostics.one_pass_id_slots,
+            changed_ids: diagnostics.changed_ids,
+            structural_key_lookups: diagnostics.structural_key_lookups,
+        }
+    }
+
+    /// Read retained/post-encode path counts for the current thread.
+    pub fn s4_retained_counts() -> S4RetainedCounts {
+        let counts = crate::emit::s4_retained_counts();
+        S4RetainedCounts {
+            graph_node_count: counts.graph_node_count,
+            exact_declaration_count: counts.exact_declaration_count,
+            exact_field_count: counts.exact_field_count,
+            keep_nodes: counts.keep_nodes,
+            document_node_count: counts.document_node_count,
         }
     }
 

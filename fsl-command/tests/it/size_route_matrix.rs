@@ -8,7 +8,7 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_command::command::{self, RequestOverrides, RunLimits};
 use fsl_foundation::Setting;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const NESTED: usize = 1_000;
 
@@ -84,8 +84,8 @@ impl fsl_analyze::analyze::document::Negotiate for FslNegotiate {
         Option<fsl_analyze::analyze::Diagnostic>,
     ) {
         use fsl_analyze::analyze::{Diagnostic, Payload};
-        use fsl_route::NegotiationOutcome;
         use fsl_route::routing::Disposition;
+        use fsl_route::NegotiationOutcome;
 
         match candidates {
             fsl_route::CandidateOutcome::UnknownBackend(backend) => (
@@ -1012,11 +1012,37 @@ fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
     );
 
     fsl_package::test_support::reset_read_index_rewrite_work_units();
+    fsl_package::test_support::reset_write_index_diagnostics();
+    fsl_package::test_support::reset_s4_phase_times();
     let outcome =
         command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
             .expect("the 12,000-value sequence compiles with the raised independent limits");
     assert!(!outcome.package_bytes().is_empty());
     assert_eq!(outcome.package_bytes(), repeated_package_bytes);
+
+    let write_index = fsl_package::test_support::write_index_diagnostics();
+    eprintln!(
+        "QSL3570_WRITE_INDEX_WORK values={N} linear_work_units={} repeated_scan_work_units={} one_pass_id_slots={} changed_ids={} structural_key_lookups={}",
+        write_index.linear_work_units,
+        write_index.repeated_scan_work_units,
+        write_index.one_pass_id_slots,
+        write_index.changed_ids,
+        write_index.structural_key_lookups,
+    );
+    let retained = fsl_package::test_support::s4_phase_times();
+    let retained_counts = fsl_package::test_support::s4_retained_counts();
+    eprintln!(
+        "QSL3570_RETAINED_PHASE values={N} retained_summary_us={} disposition_us={} emission_assembly_us={} identity_selection_us={} graph_nodes={} exact_declarations={} exact_fields={} keep_nodes={} document_nodes={}",
+        retained.retained_summary_us,
+        retained.retained_disposition_us,
+        retained.retained_emission_assembly_us,
+        retained.retained_identity_selection_us,
+        retained_counts.graph_node_count,
+        retained_counts.exact_declaration_count,
+        retained_counts.exact_field_count,
+        retained_counts.keep_nodes,
+        retained_counts.document_node_count,
+    );
 
     let work_units = fsl_package::test_support::read_index_rewrite_work_units();
     assert!(

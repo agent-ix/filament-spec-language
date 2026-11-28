@@ -113,6 +113,8 @@ thread_local! {
     static READ_INDEX_REWRITE_WORK_UNITS: Cell<usize> = const { Cell::new(0) };
     static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
     static S4_PHASE_TIMES: Cell<S4PhaseTimes> = const { Cell::new(S4PhaseTimes::ZERO) };
+    static WRITE_INDEX_DIAGNOSTICS: Cell<WriteIndexDiagnostics> = const { Cell::new(WriteIndexDiagnostics::ZERO) };
+    static S4_RETAINED_COUNTS: Cell<S4RetainedCounts> = const { Cell::new(S4RetainedCounts::ZERO) };
 }
 
 /// S4 emitter subphase durations accumulated by the test-support build.
@@ -127,6 +129,10 @@ pub(crate) struct S4PhaseTimes {
     pub(crate) source_requirement_operand_us: u128,
     pub(crate) final_encode_us: u128,
     pub(crate) retained_post_encode_us: u128,
+    pub(crate) retained_summary_us: u128,
+    pub(crate) retained_disposition_us: u128,
+    pub(crate) retained_emission_assembly_us: u128,
+    pub(crate) retained_identity_selection_us: u128,
 }
 
 #[cfg(feature = "test-support")]
@@ -140,6 +146,10 @@ impl S4PhaseTimes {
         source_requirement_operand_us: 0,
         final_encode_us: 0,
         retained_post_encode_us: 0,
+        retained_summary_us: 0,
+        retained_disposition_us: 0,
+        retained_emission_assembly_us: 0,
+        retained_identity_selection_us: 0,
     };
 }
 
@@ -154,11 +164,58 @@ enum S4Phase {
     SourceRequirementOperand,
     FinalEncode,
     RetainedPostEncode,
+    RetainedSummary,
+    RetainedDisposition,
+    RetainedEmissionAssembly,
+    RetainedIdentitySelection,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct WriteIndexDiagnostics {
+    pub(crate) linear_work_units: usize,
+    pub(crate) repeated_scan_work_units: usize,
+    pub(crate) one_pass_id_slots: usize,
+    pub(crate) changed_ids: usize,
+    pub(crate) structural_key_lookups: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl WriteIndexDiagnostics {
+    const ZERO: Self = Self {
+        linear_work_units: 0,
+        repeated_scan_work_units: 0,
+        one_pass_id_slots: 0,
+        changed_ids: 0,
+        structural_key_lookups: 0,
+    };
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct S4RetainedCounts {
+    pub(crate) graph_node_count: usize,
+    pub(crate) exact_declaration_count: usize,
+    pub(crate) exact_field_count: usize,
+    pub(crate) keep_nodes: bool,
+    pub(crate) document_node_count: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl S4RetainedCounts {
+    const ZERO: Self = Self {
+        graph_node_count: 0,
+        exact_declaration_count: 0,
+        exact_field_count: 0,
+        keep_nodes: false,
+        document_node_count: 0,
+    };
 }
 
 #[cfg(feature = "test-support")]
 pub(crate) fn reset_s4_phase_times() {
     S4_PHASE_TIMES.with(|times| times.set(S4PhaseTimes::ZERO));
+    S4_RETAINED_COUNTS.with(|counts| counts.set(S4RetainedCounts::ZERO));
 }
 
 #[cfg(feature = "test-support")]
@@ -197,9 +254,60 @@ fn record_s4_phase(phase: S4Phase, elapsed: std::time::Duration) {
                 times.retained_post_encode_us =
                     times.retained_post_encode_us.saturating_add(elapsed)
             }
+            S4Phase::RetainedSummary => {
+                times.retained_summary_us = times.retained_summary_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedDisposition => {
+                times.retained_disposition_us =
+                    times.retained_disposition_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedEmissionAssembly => {
+                times.retained_emission_assembly_us =
+                    times.retained_emission_assembly_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedIdentitySelection => {
+                times.retained_identity_selection_us =
+                    times.retained_identity_selection_us.saturating_add(elapsed)
+            }
         }
         held.set(times);
     });
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_write_index_diagnostics() {
+    WRITE_INDEX_DIAGNOSTICS.with(|diagnostics| diagnostics.set(WriteIndexDiagnostics::ZERO));
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn write_index_diagnostics() -> WriteIndexDiagnostics {
+    WRITE_INDEX_DIAGNOSTICS.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+fn record_write_index_diagnostics(additional: WriteIndexDiagnostics) {
+    WRITE_INDEX_DIAGNOSTICS.with(|held| {
+        let mut current = held.get();
+        current.linear_work_units = current
+            .linear_work_units
+            .saturating_add(additional.linear_work_units);
+        current.repeated_scan_work_units = current
+            .repeated_scan_work_units
+            .saturating_add(additional.repeated_scan_work_units);
+        current.one_pass_id_slots = current
+            .one_pass_id_slots
+            .saturating_add(additional.one_pass_id_slots);
+        current.changed_ids = current.changed_ids.saturating_add(additional.changed_ids);
+        current.structural_key_lookups = current
+            .structural_key_lookups
+            .saturating_add(additional.structural_key_lookups);
+        held.set(current);
+    });
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn s4_retained_counts() -> S4RetainedCounts {
+    S4_RETAINED_COUNTS.with(Cell::get)
 }
 
 #[cfg(feature = "test-support")]
@@ -8875,8 +8983,17 @@ fn emit_package_nodes(
     record_s4_phase(S4Phase::FinalEncode, phase_started.elapsed());
 
     #[cfg(feature = "test-support")]
-    let phase_started = std::time::Instant::now();
+    let retained_started = std::time::Instant::now();
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
     let retained_nodes = RetainedNodes::of(&semantic_graph);
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::RetainedSummary, retained_phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
+    #[cfg(feature = "test-support")]
+    let graph_node_count = semantic_graph.nodes.len();
     // The typed nodes outlive the bytes only for a caller that reads them,
     // or for the identity-row selection when the acquisition selected
     // exact rows; otherwise they are dropped here, before the package is
@@ -8892,6 +9009,24 @@ fn emit_package_nodes(
         drop(semantic_graph);
         Vec::new()
     };
+    #[cfg(feature = "test-support")]
+    record_s4_phase(
+        S4Phase::RetainedDisposition,
+        retained_phase_started.elapsed(),
+    );
+    #[cfg(feature = "test-support")]
+    S4_RETAINED_COUNTS.with(|counts| {
+        counts.set(S4RetainedCounts {
+            graph_node_count,
+            exact_declaration_count: selected_exact_declaration_rows.len(),
+            exact_field_count: selected_exact_field_rows.len(),
+            keep_nodes,
+            document_node_count: document.len(),
+        });
+    });
+
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
     let emission = Emission {
         package,
         artifact_identity: graph.source().clone(),
@@ -8928,10 +9063,22 @@ fn emit_package_nodes(
             profile_selections: lock.profile_selections,
             bindings: temporal_bindings,
         },
-    }
-    .with_identity_row_selection(&document);
+    };
     #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::RetainedPostEncode, phase_started.elapsed());
+    record_s4_phase(
+        S4Phase::RetainedEmissionAssembly,
+        retained_phase_started.elapsed(),
+    );
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
+    let emission = emission.with_identity_row_selection(&document);
+    #[cfg(feature = "test-support")]
+    record_s4_phase(
+        S4Phase::RetainedIdentitySelection,
+        retained_phase_started.elapsed(),
+    );
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::RetainedPostEncode, retained_started.elapsed());
     Ok((emission, if keep_nodes { document } else { Vec::new() }))
 }
 
@@ -11528,12 +11675,38 @@ fn write_index_segments(
     // The memo holds every operand allocation it keyed, so rewriting ids in
     // place never reuses an address it has seen.
     let mut graph_wire: HashMap<NodeKey, CheckedNodeId> = HashMap::with_capacity(nodes.len());
+    #[cfg(feature = "test-support")]
+    let mut diagnostics = WriteIndexDiagnostics::default();
     for (node, key) in nodes.iter_mut().zip(&graph_keys) {
         let holder = node.node_id.clone();
         let mut seen: HashSet<NodeKey> = HashSet::new();
         let mut changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
         for id in reachable_ids(node) {
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(1 + id.path.len());
+            }
             if holds_segment(id, is_operand) {
+                #[cfg(feature = "test-support")]
+                {
+                    for operand in id.path.iter().filter_map(|segment| match segment {
+                        Segment::Node(operand) => Some(operand),
+                        _ => None,
+                    }) {
+                        diagnostics.structural_key_lookups =
+                            diagnostics.structural_key_lookups.saturating_add(2);
+                        diagnostics.linear_work_units = diagnostics
+                            .linear_work_units
+                            .saturating_add(2 + 2 * operand.path.len());
+                    }
+                    diagnostics.structural_key_lookups =
+                        diagnostics.structural_key_lookups.saturating_add(1);
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
+                }
                 let new = wire_of(&mut keys, &holder, id)?;
                 if seen.insert(keys.key(id).map_err(invariant)?) {
                     changes.push((id.clone(), new.clone()));
@@ -11548,10 +11721,44 @@ fn write_index_segments(
         for (old, new) in &changes {
             node.replace_node_id(old, new);
         }
+        #[cfg(feature = "test-support")]
+        {
+            let mut node_id_slots = 0_usize;
+            let mut node_path_units = 0_usize;
+            node.map_node_ids(|id| {
+                node_id_slots = node_id_slots.saturating_add(1);
+                node_path_units = node_path_units.saturating_add(id.path.len());
+                None
+            });
+            diagnostics.one_pass_id_slots =
+                diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+            let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
+            diagnostics.linear_work_units = diagnostics
+                .linear_work_units
+                .saturating_add(one_pass_slot_work);
+            diagnostics.repeated_scan_work_units = diagnostics
+                .repeated_scan_work_units
+                .saturating_add(one_pass_slot_work.saturating_mul(changes.len()));
+            diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changes.len());
+        }
         graph_wire.insert(key.clone(), node.node_id.clone());
     }
     let mut sidecar = |id: &mut CheckedNodeId| -> Result<(), EmitRefusal> {
+        #[cfg(feature = "test-support")]
+        {
+            diagnostics.linear_work_units = diagnostics
+                .linear_work_units
+                .saturating_add(1 + id.path.len());
+        }
         if holds_segment(id, is_operand) {
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.structural_key_lookups =
+                    diagnostics.structural_key_lookups.saturating_add(2);
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(2 + 2 * id.path.len());
+            }
             let key = keys.key(id).map_err(invariant)?;
             *id = graph_wire
                 .get(&key)
@@ -11569,6 +11776,10 @@ fn write_index_segments(
     for row in schedulability_rows {
         sidecar(&mut row.declaration)?;
     }
+    #[cfg(feature = "test-support")]
+    drop(sidecar);
+    #[cfg(feature = "test-support")]
+    record_write_index_diagnostics(diagnostics);
     Ok(graph_wire)
 }
 

@@ -24,6 +24,7 @@ struct CompilePhaseTimes {
     check_ms: u128,
     package_emit_ms: u128,
     emitter: fsl_package::test_support::S4PhaseTimes,
+    retained_counts: fsl_package::test_support::S4RetainedCounts,
 }
 
 fn unlimited_scalar_limits() -> filament_exact::ScalarLimits {
@@ -105,6 +106,7 @@ fn package_bytes(
         .into_value();
     let package_emit_ms = package_started.elapsed().as_millis();
     let emitter = fsl_package::test_support::s4_phase_times();
+    let retained_counts = fsl_package::test_support::s4_retained_counts();
     (
         emitted.package().bytes().to_vec(),
         site,
@@ -115,6 +117,7 @@ fn package_bytes(
             check_ms,
             package_emit_ms,
             emitter,
+            retained_counts,
         },
     )
 }
@@ -418,7 +421,7 @@ fn profile_native_size_replay(count: usize) {
     assert_eq!(result["category"], "success");
     assert_eq!(result["value"], true);
     eprintln!(
-        "QSL3570_NATIVE_REPLAY_PHASE_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} request_json_bytes={request_json_bytes} s1_input_bytes={s1_input_limit} replay_input_bytes={input_bytes} compile_total_ms={compile_ms} parse_forms_ms={} model_select_ms={} check_ms={} package_emit_ms={} s4_pre_lock_graph_temporal_us={} s4_lock_us={} s4_inspection_us={} s4_index_us={} s4_producer_temporal_claim_term_us={} s4_source_requirement_operand_us={} s4_final_encode_us={} s4_retained_post_encode_us={} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
+        "QSL3570_NATIVE_REPLAY_PHASE_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} request_json_bytes={request_json_bytes} s1_input_bytes={s1_input_limit} replay_input_bytes={input_bytes} compile_total_ms={compile_ms} parse_forms_ms={} model_select_ms={} check_ms={} package_emit_ms={} s4_pre_lock_graph_temporal_us={} s4_lock_us={} s4_inspection_us={} s4_index_us={} s4_producer_temporal_claim_term_us={} s4_source_requirement_operand_us={} s4_final_encode_us={} s4_retained_summary_us={} s4_retained_disposition_us={} s4_retained_emission_assembly_us={} s4_retained_identity_selection_us={} s4_retained_post_encode_us={} graph_nodes={} exact_declarations={} exact_fields={} keep_nodes={} document_nodes={} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
         source.len(),
         package.len(),
         phases.parse_forms_ms,
@@ -432,7 +435,16 @@ fn profile_native_size_replay(count: usize) {
         phases.emitter.producer_temporal_claim_term_us,
         phases.emitter.source_requirement_operand_us,
         phases.emitter.final_encode_us,
+        phases.emitter.retained_summary_us,
+        phases.emitter.retained_disposition_us,
+        phases.emitter.retained_emission_assembly_us,
+        phases.emitter.retained_identity_selection_us,
         phases.emitter.retained_post_encode_us,
+        phases.retained_counts.graph_node_count,
+        phases.retained_counts.exact_declaration_count,
+        phases.retained_counts.exact_field_count,
+        phases.retained_counts.keep_nodes,
+        phases.retained_counts.document_node_count,
     );
 }
 
