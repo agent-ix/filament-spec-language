@@ -220,6 +220,8 @@ fn genuine_tick_authority_retains_complete_original_values_and_same_emission() {
 
 /// FR-531-AC-32 / TC-1331: the admitted plan authority is the context used by
 /// the final emission's real native identity join and selected type closure.
+#[trace("TC-1331", "FR-531-AC-32")]
+#[trace("FSpec-FR-322-AC-490")]
 #[test]
 fn retained_tick_plan_context_drives_native_join_and_type_closure() {
     use filament_contract_model::{SelectedMonitorClosureRows, SelectedMonitorTimeSource};

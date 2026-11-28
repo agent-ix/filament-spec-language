@@ -144,7 +144,11 @@ member forms; the member `lu_bounds` is written `bounds`.
     `InitialMismatch` at its `ZoneNode`.
   Every other check below applies unchanged.
 - The checker SHALL recompute every successor of every node by every
-  enabled transition identity with DBM code separate from EN-6's.
+  enabled transition identity with DBM code separate from EN-6's. In a
+  liveness product, with a declared fairness or without, it SHALL take an
+  undefined reading, and every step after it, into a node of FR-244's
+  reserved automaton state, and count that node in every automaton
+  acceptance set.
 - The checker SHALL check each of the following:
   - the listed edges cover every enabled identity from each node;
   - each successor is covered by its named target under the aLU simulation
@@ -160,7 +164,8 @@ member forms; the member `lu_bounds` is written `bounds`.
     stated reason holds;
   - for the time-lock-freedom item, each node's divergence path exists in
     the certificate and ends at a divergent target;
-  - for a proof of an item decided on a liveness product, the certificate
+  - for a proof of an item decided on a liveness product, other than a
+    TT-1 or TT-2 claim (FSpec FR-416 "Non-Zeno premise"), the certificate
     carries `non_zeno` (FSpec FR-418), and its value is the one the checker
     recomputes: `Assumed` exactly when some component of its own recomputed
     graph holds a cycle, a node of every acceptance set other than the
@@ -217,6 +222,7 @@ member forms; the member `lu_bounds` is written `bounds`.
 | FR-245-AC-10 | The certificates of FR-240-AC-1's response proof over `Rpc` with `T = 4 ms` and of its `reply` self-loop variant carry `non_zeno` `NotRequired` and `Assumed` and are `Accepted`; either with the value swapped or removed, and the time-lock-freedom certificate of `Rpc` given a `non_zeno`, is `Rejected` with `NonZenoMismatch` at `CertificateMember{non_zeno}`. | Test (TC-3021) |
 | FR-245-AC-11 | FR-244-AC-7's `Replied` and `BackToIdle` certificates over the Zeno-only `Rpc` variant, whose reachable graph holds no quiescent node and no cycle of positive total delay, are each `Accepted`, and the items settle `certified`; either certificate given an `admitted` member is `Rejected` `Malformed` at `CertificateMember("admitted")`; FR-244-AC-1's `NoLateReply` certificate with `admitted` removed is `Rejected` `Malformed` at `CertificateMember("admitted")`. | Test (TC-3030) |
 | FR-245-AC-12 | The refinement certificate of FR-430-AC-6 with the `taken` of the edge into the locked entry node changed from `Taken::Failing` to `None` is `Rejected` `PostDiffers` at that `ZoneEdge`; the same edge restored and an edge inside the locked region given `Taken::Failing` is `Rejected` `PostDiffers` at that edge; a `Taken::Failing` on a passing edge is `Rejected` `PostDiffers`; the unmodified certificate is `Accepted`. Over a timed abstract model, the certificate with `candidate_blocks` removed, of another length, or unsorted is `Rejected` `Malformed` at `CertificateMember("positions")`, and the same member over an untimed abstract model is `Rejected` the same way. | Test (TC-700) |
+| FR-245-AC-13 | A `ZoneCertificate` over FR-239-AC-11's subject whose `phase = 1` node is not marked `locked` is rejected `BadState` at that node (ADR-018 UE-6). With that node `locked` and no time-divergent continuation from it, the checker reads it as AC-7's time-locked variant does and accepts it. | Test (TC-710) |
 
 ## Dependencies
 

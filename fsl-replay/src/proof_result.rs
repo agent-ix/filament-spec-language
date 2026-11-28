@@ -559,7 +559,10 @@ pub enum IncompleteCause {
     /// FSpec FR-331: a bounded task-automaton search stopped at a choice it
     /// cannot resolve (continuous demand or jitter, or a full job queue).
     /// Wire cause `bounded-search-incomplete` with reason
-    /// `unresolved-dynamics`; it always accompanies `task_search` evidence.
+    /// `unresolved-dynamics`; a task search carries `task_search` evidence.
+    /// Two timed routes settle it with no evidence: an unbuilt clock-region
+    /// process (QSL-3495) and a digital state graph that stops at a protocol
+    /// expression with no value.
     UnresolvedDynamics,
     /// FSpec FR-331: an exhaustive result closed without an accepted core
     /// certificate, including an HP-1 relation or an FR-418 task product.

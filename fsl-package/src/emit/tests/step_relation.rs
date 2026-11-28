@@ -1122,7 +1122,7 @@ fn checking_a_path_a_step_relation_cannot_read_refuses_with_its_cause() {
     let CheckCause::Abstraction(cause) = refusal.cause.as_ref() else {
         panic!("an abstraction refusal: {refusal:?}");
     };
-    assert_empty_segment(&**cause);
+    assert_empty_segment(cause);
 }
 
 /// The claim node's occurrences: role, ordinal and location.

@@ -943,7 +943,7 @@ fn a_requirement_no_check_evaluates_stays_pending_beside_an_uncertified_proof() 
     ))
     .item(0);
     let requirement = obligations(&item)
-        .into_iter()
+        .iter()
         .find(|entry| entry["obligation"]["kind"] == "requirement")
         .unwrap_or_else(|| panic!("a requirement obligation: {item}"));
     assert_eq!(requirement["verdict"], "pending", "{item}");

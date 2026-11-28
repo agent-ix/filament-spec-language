@@ -135,6 +135,7 @@ fn objective(checked: &CheckedSynthesis) -> PlanObjective {
     "FR-569-AC-9",
     "FR-480-AC-2"
 )]
+#[ix_trace_rs::string_edge]
 pub(super) fn run(
     plan: PlanRun<'_, '_>,
     overrides: &super::RequestOverrides<'_>,
