@@ -332,11 +332,7 @@ fn single(
                 .first()
                 .zip(instance.instance.first())
                 .map(|(parameter, (_, key))| {
-                    serde_json::json!({
-                        "type": "instance",
-                        "parameter": parameter.name,
-                        "key": key,
-                    })
+                    fsl_replay::StateGraphInstance::new(parameter.name.as_str(), key.as_str())
                 })
         };
         let report = super::GraphReport {

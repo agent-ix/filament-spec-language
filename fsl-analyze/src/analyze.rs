@@ -1415,7 +1415,7 @@ pub struct GraphReport {
     pub record: fsl_replay::StateGraphRecord,
     /// The selected claim binding, including for a non-proved record without
     /// evidence.
-    pub instance: Option<serde_json::Value>,
+    pub instance: Option<fsl_replay::StateGraphInstance>,
     /// The explored graph's counts (FR-621 `exploration`).
     pub exploration: fsl_replay::RunStats,
     /// A refuted record's evidence in FSpec FR-393's spelling.

@@ -463,6 +463,7 @@ pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use instance_records::{combine_instance_records, InstanceRecord};
 pub use not_digitisable::{NotDigitisable, NotDigitisableRule};
 pub use outcome::undefined_reason;
+pub use outcome::StateGraphInstance;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,

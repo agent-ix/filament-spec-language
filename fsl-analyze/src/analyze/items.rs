@@ -1131,31 +1131,21 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
     }
 }
 
-/// FR-125-AC-13, AC-23: the refusal of two records of one universe key with
-/// different types, naming the key and both types.
+/// The refusal of two records of one universe key with different types,
+/// naming the key and both types (FR-125-AC-13, AC-23).
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
 pub(crate) fn conflicting_identity(
     conflict: &fsl_eval::simulation::ConflictingIdentity,
 ) -> Refusal {
-    let detail = [
-        ("key", &conflict.key),
-        ("first_type", &conflict.first_type),
-        ("second_type", &conflict.second_type),
-    ]
-    .into_iter()
-    .map(|(name, value)| (name.to_owned(), serde_json::json!(value)))
-    .collect();
-    Refusal::declined_with_detail(
-        ProofRefusalCause::InvalidInput,
-        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-        CatalogCode::new("invalid_runtime_input", "conflicting-identity"),
-        detail,
-    )
+    admission(&conflict.admission_failure())
 }
 
 /// What a claim with no admitted instance does with its item (FR-125
 /// "Instancing"): settle `inconclusive` with a cause, or refuse. The one
 /// mapping of [`fsl_eval::simulation::model::NoClaimInstances`] to an item
-/// outcome, in FR-125's order, for every route that reports an item.
+/// outcome, in FR-125's order, for the routes that settle through this module;
+/// the model-check, statistical, SMT and product-checker routes keep their own
+/// matches over their own refusal types.
 pub(crate) enum InstanceStop {
     /// The item settles `inconclusive` with this cause.
     Inconclusive(fsl_replay::InconclusiveCause),
@@ -1164,6 +1154,7 @@ pub(crate) enum InstanceStop {
 }
 
 /// The outcome of a claim with no admitted instance.
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
 pub(crate) fn instance_stop(
     failure: fsl_eval::simulation::model::NoClaimInstances,
 ) -> InstanceStop {

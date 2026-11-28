@@ -71,18 +71,17 @@ fn item_instance(
     record: &StateGraphRecord,
     claim: &CheckedStateGraphClaim,
     instance: Option<&ModelInstance>,
-) -> Option<serde_json::Value> {
+) -> Option<fsl_replay::StateGraphInstance> {
     if matches!(&record.value, TerminalValue::Proved { .. }) {
         return None;
     }
     let (Some(parameter), Some(instance)) = (claim.over(), instance) else {
         return None;
     };
-    Some(serde_json::json!({
-        "type": "instance",
-        "parameter": parameter.name,
-        "key": instance.key,
-    }))
+    Some(fsl_replay::StateGraphInstance::new(
+        parameter.name.as_str(),
+        instance.key.as_str(),
+    ))
 }
 
 #[implements("FR-125-AC-13", "FR-125-AC-23")]

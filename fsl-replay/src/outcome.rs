@@ -1020,6 +1020,29 @@ enum ItemCauseMember {
     Omitted {},
 }
 
+/// The `{type: "instance", parameter, key}` binding that names the claim
+/// instance a state-graph item rests on (FR-621-AC-24, FR-628-AC-4). The one
+/// writer of that wire shape.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct StateGraphInstance {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    parameter: String,
+    key: String,
+}
+
+impl StateGraphInstance {
+    /// The binding of the claim parameter `parameter` to the universe key `key`.
+    #[must_use]
+    pub fn new(parameter: impl Into<String>, key: impl Into<String>) -> Self {
+        Self {
+            kind: "instance",
+            parameter: parameter.into(),
+            key: key.into(),
+        }
+    }
+}
+
 /// One requested item of a `prove`, `analyze` or `monitor` outcome: its
 /// terminal record and its category.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1098,7 +1121,7 @@ pub struct OutcomeItem {
     certificate_document: Option<serde_json::Value>,
     /// The selected state-graph claim instance, including when no evidence exists.
     #[serde(skip_serializing_if = "Option::is_none")]
-    instance: Option<serde_json::Value>,
+    instance: Option<StateGraphInstance>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1635,7 +1658,7 @@ impl OutcomeItem {
     /// Attach the selected instance of a claim-level state-graph record.
     #[implements("FR-628-AC-4")]
     #[must_use]
-    pub fn with_state_graph_instance(mut self, instance: Option<serde_json::Value>) -> Self {
+    pub fn with_state_graph_instance(mut self, instance: Option<StateGraphInstance>) -> Self {
         self.instance = instance;
         self
     }
@@ -4322,11 +4345,7 @@ mod tests {
             0,
             TerminalValue::Inconclusive(InconclusiveCause::BoundReached { depth: 1 }),
         )
-        .with_state_graph_instance(Some(json!({
-            "type": "instance",
-            "parameter": "c",
-            "key": "a",
-        })));
+        .with_state_graph_instance(Some(StateGraphInstance::new("c", "a")));
 
         assert_eq!(
             serde_json::to_value(item).expect("serializes"),

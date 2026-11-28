@@ -140,8 +140,9 @@ fn weakest(proofs: &[(&ProofBasis, Certification)]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InconclusiveCause, StateGraphRecord};
+    use crate::{InconclusiveCause, SolverHorizon, SolverMethod, StateGraphRecord, WitnessSource};
     use ix_trace_rs::trace;
+    use std::collections::BTreeSet;
 
     fn record(value: TerminalValue) -> StateGraphRecord {
         StateGraphRecord {
@@ -166,7 +167,7 @@ mod tests {
         }
     }
 
-    #[trace("FR-621-AC-9")]
+    #[trace("TC-3219", "FR-621-AC-9")]
     #[test]
     fn refutation_beats_an_earlier_incomplete_record() {
         let records = [
@@ -176,37 +177,93 @@ mod tests {
         assert_eq!(combine_instance_records(&records), 1);
     }
 
-    #[trace("FR-621-AC-25")]
-    #[test]
-    fn reduced_proof_is_selected_when_all_instances_prove() {
-        let records = [
-            record(TerminalValue::Proved {
-                basis: ProofBasis::Exhaustive,
-                certification: Certification::Certified,
-            }),
-            record(TerminalValue::Proved {
-                basis: ProofBasis::Reduced {
-                    reductions: Vec::new(),
-                },
-                certification: Certification::Certified,
-            }),
-        ];
-        assert_eq!(combine_instance_records(&records), 1);
+    fn bounded(depth: u64) -> ProofBasis {
+        ProofBasis::BoundedComplete { depth }
     }
 
-    #[trace("FR-621-AC-25")]
+    fn reduced() -> ProofBasis {
+        ProofBasis::Reduced {
+            reductions: Vec::new(),
+        }
+    }
+
+    /// The instance, 0 for `p` and 1 for `q`, a proved item over the two
+    /// takes its record from.
+    fn pick(p: (ProofBasis, Certification), q: (ProofBasis, Certification)) -> usize {
+        let records = [p, q].map(|(basis, certification)| {
+            record(TerminalValue::Proved {
+                basis,
+                certification,
+            })
+        });
+        combine_instance_records(&records)
+    }
+
+    #[trace("TC-3219", "FR-621-AC-25")]
     #[test]
-    fn weaker_certification_is_selected_when_all_instances_prove() {
-        let records = [
-            record(TerminalValue::Proved {
-                basis: ProofBasis::Exhaustive,
-                certification: Certification::Certified,
-            }),
-            record(TerminalValue::Proved {
-                basis: ProofBasis::Exhaustive,
-                certification: Certification::Uncertified,
-            }),
-        ];
-        assert_eq!(combine_instance_records(&records), 1);
+    fn a_proved_item_rests_on_its_weakest_instance() {
+        use Certification::{Certified, Trusted, Uncertified};
+        let exhaustive = || ProofBasis::Exhaustive;
+        let inductive = || ProofBasis::Inductive { depth: 1 };
+        let witness = || ProofBasis::Witness {
+            sources: vec![WitnessSource::Explored],
+        };
+        let solver = ProofBasis::BoundedSolver {
+            method: SolverMethod::FlowpipeOutwardRounded,
+            horizon: SolverHorizon::new(
+                Rational::new(3_i64.into(), 1_i64.into()).expect("nonzero"),
+            )
+            .expect("a horizon"),
+            jumps: 1,
+            exhaustive: BTreeSet::new(),
+        };
+        // (a) to (j) and (l) of FR-621-AC-25, `p` first. Case (k), a state
+        // constraint on `q`'s run, has no input: no engine reports one.
+        // (a)
+        assert_eq!(
+            pick((exhaustive(), Certified), (exhaustive(), Uncertified)),
+            1
+        );
+        // (b)
+        assert_eq!(
+            pick((bounded(3), Certified), (exhaustive(), Uncertified)),
+            1
+        );
+        // (c)
+        assert_eq!(
+            pick((exhaustive(), Uncertified), (exhaustive(), Trusted)),
+            1
+        );
+        // (d)
+        assert_eq!(pick((reduced(), Uncertified), (bounded(5), Uncertified)), 1);
+        // (e)
+        assert_eq!(
+            pick((bounded(5), Uncertified), (bounded(3), Uncertified)),
+            1
+        );
+        // (f)
+        assert_eq!(
+            pick((exhaustive(), Uncertified), (reduced(), Uncertified)),
+            1
+        );
+        // (g)
+        assert_eq!(
+            pick((exhaustive(), Certified), (exhaustive(), Certified)),
+            0
+        );
+        // (h)
+        assert_eq!(
+            pick((exhaustive(), Uncertified), (inductive(), Uncertified)),
+            0
+        );
+        // (i)
+        assert_eq!(
+            pick((inductive(), Uncertified), (bounded(5), Uncertified)),
+            1
+        );
+        // (j)
+        assert_eq!(pick((witness(), Certified), (bounded(5), Certified)), 1);
+        // (l)
+        assert_eq!(pick((bounded(5), Uncertified), (solver, Uncertified)), 0);
     }
 }

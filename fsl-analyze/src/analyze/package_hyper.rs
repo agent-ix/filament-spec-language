@@ -333,25 +333,9 @@ impl<'a> PackageHyperSubject<'a> {
             };
             let refuted = matches!(settled.record.value, TerminalValue::Refuted);
             let proved = matches!(settled.record.value, TerminalValue::Proved { .. });
-            // FSpec FR-390: a non-proved record names its instance.
-            let named = if proved {
-                None
-            } else {
-                clause
-                    .parameters()
-                    .first()
-                    .zip(instance.instance.first())
-                    .map(|(parameter, (_, key))| {
-                        serde_json::json!({
-                            "type": "instance",
-                            "parameter": parameter.name,
-                            "key": key,
-                        })
-                    })
-            };
             reports.push(super::GraphReport {
                 record: settled.record,
-                instance: named,
+                instance: None,
                 exploration: instance.stats,
                 counterexample: if refuted { wire.clone() } else { None },
                 evidence: if !refuted { wire } else { None },
