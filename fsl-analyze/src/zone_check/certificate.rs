@@ -27,6 +27,10 @@ use num_bigint::BigInt;
 #[path = "certificate/mutation_tests.rs"]
 mod mutation_tests;
 
+#[cfg(test)]
+#[path = "certificate/false_claim_tests.rs"]
+mod false_claim_tests;
+
 use super::divergence::{EscapeTarget, EscapeWitness, Move};
 use super::search::{Halt, Run, SymbolicEdge, TimedStateGraph};
 use super::{Bound, Dbm, ZoneCheckRefusal};
