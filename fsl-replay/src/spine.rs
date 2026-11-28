@@ -296,25 +296,28 @@ mod native_result;
 mod protocol_premises;
 mod protocol_proof;
 mod protocol_structure;
+#[cfg(test)]
+pub(crate) use native_result::reencode_clause_document as native_result_reencode_for_tests;
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
-    read_native_run_result, read_native_run_result_bounded, read_outcome_diagnostics,
-    temporal_disposition_json, write_clause_run_result, write_clause_run_result_for,
-    CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord, ClosureRead,
-    CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
+    item_run_result_value, read_native_run_result, read_native_run_result_bounded,
+    read_outcome_diagnostics, temporal_disposition_json, write_clause_run_result,
+    write_clause_run_result_for, CallLocation, CallLocusRecord, CallOrigin, ClauseRunRecord,
+    ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
     FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
-    IndeterminateReasonRead, LocatedRead, ModelBindingRead, ModelStepRead, ModelTransitionRead,
-    NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError,
-    OutcomeDiagnosticRead, PositionRead, ProgressValueRead, ProtocolAnalysisKind,
+    IndeterminateReasonRead, ItemRunOutcome, Located, ModelBindingRead, ModelStepRead,
+    ModelTransitionRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError, NativeRunResult,
+    NativeRunResultError, OutcomeDiagnosticRead, ProgressValueRead, ProtocolAnalysisKind,
     ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
-    ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
+    ProtocolRecordError, ProtocolSettlementEntry, RefusalLocus, RunPosition, RunSpan, SourceRef,
     TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
 };
 pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
 pub use native_result::{
-    write_clause_run_result_for_with_extraction, ExtractionBinding, ExtractionBody, ExtractionMap,
-    ExtractionOriginal, ExtractionOutcome, ExtractionPosition, ExtractionRecord, ExtractionRegion,
-    ExtractionSegment, ExtractionSpan,
+    write_clause_run_result_for_with_extraction, DocumentObject, ExtractionBinding, ExtractionBody,
+    ExtractionMap, ExtractionOriginal, ExtractionOutcome, ExtractionPosition, ExtractionRecord,
+    ExtractionRegion, ExtractionSegment, ExtractionSegments, ExtractionSpan, FieldValue,
+    FieldsView, OperationClause,
 };
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
