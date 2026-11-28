@@ -792,7 +792,6 @@ fn reference_crate_has_only_the_declared_semantic_dependencies() {
     for required in [
         "fsl-foundation =",
         "fsl-semantics =",
-        "fsl-package =",
         "filament-exact =",
         "filament-checked =",
         "filament-contract-model =",

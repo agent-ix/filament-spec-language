@@ -820,6 +820,7 @@ fn relabel_term_data_inner(
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
     if by_id.is_empty() {
+        sort_body_rows(data);
         return;
     }
     // Some(true): the row moved, Some(false): unchanged, None: dropped.
@@ -889,30 +890,32 @@ fn relabel_term_data_inner(
             ))
         });
     }
-    let mut changed = false;
-    data.body_locations.retain_mut(|row| {
-        let moved = relabel(&row.application, &mut row.occurrence);
-        changed |= moved != Some(false);
-        moved.is_some()
+    data.body_locations
+        .retain_mut(|row| relabel(&row.application, &mut row.occurrence).is_some());
+    sort_body_rows(data);
+}
+
+/// A record node's id also changes with a field rename (FR-487), which can
+/// move its place among the rows, so the rows are always put in key order
+/// again, with or without a renumbering.
+fn sort_body_rows(data: &mut filament_contract_model::CheckedTermDataV2) {
+    data.body_locations.sort_by(|left, right| {
+        (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
+            &right.application,
+            &right.occurrence,
+            right.term_ordinal,
+        ))
     });
-    if changed {
-        data.body_locations.sort_by(|left, right| {
-            (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
-                &right.application,
-                &right.occurrence,
-                right.term_ordinal,
-            ))
-        });
-    }
 }
 
 #[cfg(test)]
 mod rewalk_tests {
     use super::{rewalk_slots, Slot};
 
-    use super::{relabel_occurrences, synthetic_copies, Mapping, Synthetics};
+    use super::{relabel_occurrences, relabel_term_data, synthetic_copies, Mapping, Synthetics};
     use filament_contract_model::{
-        CheckedNodeId, CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole,
+        CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation, CheckedNodeId,
+        CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole, CheckedTermDataV2,
     };
     use std::collections::BTreeMap;
 
@@ -998,6 +1001,74 @@ mod rewalk_tests {
         let copies = synthetic_copies(&rows, &synthetics, |row| (&row.0, &row.1), |row| &mut row.1);
         assert_eq!(ordinals(&copies), [(id("app"), 9)]);
         assert_eq!(ordinals(&rows), [(id("app"), 4)]);
+    }
+
+    fn body_row(function: &str, ordinal: u64) -> CheckedBodySemanticLocation {
+        CheckedBodySemanticLocation {
+            application: id("app"),
+            occurrence: CheckedOccurrence {
+                role: CheckedOccurrenceRole::Expression,
+                ordinal,
+            },
+            term_ordinal: 0,
+            location: CheckedBodyLocation {
+                origin: CheckedBodyLocationOrigin::FunctionBody {
+                    function: id(function),
+                    name: function.into(),
+                    index: 0,
+                },
+                up: 0,
+                down: Vec::new(),
+            },
+        }
+    }
+
+    fn functions(data: &CheckedTermDataV2) -> Vec<(String, u64)> {
+        data.body_locations
+            .iter()
+            .map(|row| {
+                let CheckedBodyLocationOrigin::FunctionBody { name, .. } = &row.location.origin;
+                (name.to_string(), row.occurrence.ordinal)
+            })
+            .collect()
+    }
+
+    /// FSpec FR-322-AC-541 (QSL-3613): a body row follows the occurrence of
+    /// the visit it locates. A crossing mapping (0 to 1, 1 to 0) gives g's row
+    /// occurrence 1 and h's occurrence 0, and the rows are in key order again.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-541")]
+    #[test]
+    fn body_rows_follow_a_crossing_renumbering_and_are_sorted_by_key() {
+        let mut data = CheckedTermDataV2 {
+            body_locations: vec![body_row("g", 0), body_row("h", 1)],
+            ..CheckedTermDataV2::default()
+        };
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(0))];
+        let by_id: BTreeMap<_, _> = [(id("app"), mapping)].into_iter().collect();
+        relabel_term_data(&by_id, &Synthetics::new(), &mut data);
+        assert_eq!(functions(&data), [("h".to_owned(), 0), ("g".to_owned(), 1)]);
+    }
+
+    /// FSpec FR-322-AC-541 (QSL-3613): a rename with no renumbering still puts
+    /// the body rows in key order.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-541")]
+    #[test]
+    fn body_rows_are_sorted_when_nothing_is_renumbered() {
+        let mut first = body_row("g", 0);
+        first.application = id("b");
+        let mut second = body_row("h", 0);
+        second.application = id("a");
+        let mut data = CheckedTermDataV2 {
+            body_locations: vec![first, second],
+            ..CheckedTermDataV2::default()
+        };
+        relabel_term_data(&BTreeMap::new(), &Synthetics::new(), &mut data);
+        let order: Vec<_> = data
+            .body_locations
+            .iter()
+            .map(|row| row.application.clone())
+            .collect();
+        assert_eq!(order, [id("a"), id("b")]);
     }
 
     fn pairs(slots: &[Slot]) -> Vec<(bool, u64, u64)> {

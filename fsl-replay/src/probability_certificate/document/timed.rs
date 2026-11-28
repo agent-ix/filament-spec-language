@@ -4080,13 +4080,12 @@ type DigitalWorkloadChoices = (Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::Product
 /// identity enabled now (`WorkloadResolve`).
 ///
 /// Several racing given delays race together: the least draw wins and the
-/// workload's weights order the identities tied at it. Two states
-/// refuse, where the `WorkloadResolve` reading and ADR-026 SD-1 and SD-3 (the
-/// scheduler picks each free identity's delay inside its window) give
-/// different verdicts, until the standard rules between them: several free
-/// identities enabled now, and a free identity that the unit delay disables.
+/// workload's weights order the identities tied at it. For claims other than
+/// MeanTime, the checker refuses states where the `WorkloadResolve` reading
+/// and ADR-026 SD-1 and SD-3 disagree. MeanTime uses the independently
+/// enumerated free-delay assignments to rederive infinite-time certificates.
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-204-AC-5")]
+#[implements("FR-204-AC-5", "FR-204-AC-24", "FR-921-AC-7")]
 fn digital_workload_choices(
     run: &WorkloadRun<'_, '_>,
     current: &RegionState,
@@ -4133,33 +4132,111 @@ fn digital_workload_choices(
         .iter()
         .filter(|action| discrete_delay(run.system, &action.identity.operation).is_none())
         .collect();
-    // FR-204 reads this state as `UnitDelay` and one weighted
-    // `WorkloadResolve`; ADR-026 SD-1 and SD-3 (and FR-204's own
-    // `FreeDelays` rule) have the scheduler pick each free identity's
-    // delay inside its window. The two readings give different verdicts
-    // where several free identities are enabled now, and where the unit
-    // delay disables one that is enabled now, so neither is decided here.
-    if free_now.len() >= 2 {
-        return Err(ProbabilityDocumentError::WorkloadFreeDelays(
-            WorkloadFreeDelayRefusal::ManyFreeEnabled,
-        ));
-    }
-    if reach >= 1 {
-        for action in &free_now {
-            let closes = windows
-                .iter()
-                .find(|window| window.identity == action.identity)
-                .is_some_and(|window| !window.contains(1, reach));
-            if closes {
-                return Err(ProbabilityDocumentError::WorkloadFreeDelays(
-                    WorkloadFreeDelayRefusal::ClosesBeforeFiring,
-                ));
+    if !matches!(
+        &run.claim.form,
+        fsl_semantics::check::ProbForm::MeanTime { .. }
+    ) {
+        if free_now.len() >= 2 {
+            return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                WorkloadFreeDelayRefusal::ManyFreeEnabled,
+            ));
+        }
+        if reach >= 1 {
+            for action in &free_now {
+                let closes = windows
+                    .iter()
+                    .find(|window| window.identity == action.identity)
+                    .is_some_and(|window| !window.contains(1, reach));
+                if closes {
+                    return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                        WorkloadFreeDelayRefusal::ClosesBeforeFiring,
+                    ));
+                }
             }
         }
     }
     let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
     let mut scheduler_actions: Vec<Vec<crate::ProductAction>> = Vec::new();
     if racers.is_empty() {
+        if !free_now.is_empty()
+            && matches!(
+                &run.claim.form,
+                fsl_semantics::check::ProbForm::MeanTime { .. }
+            )
+        {
+            // With no given draw, the scheduler chooses one delay for every
+            // enabled free identity. Each assignment is one MDP action; a
+            // unit-delay transition cannot move an identity past its window.
+            let free_windows = free_now
+                .iter()
+                .map(|action| {
+                    windows
+                        .iter()
+                        .find(|window| window.identity == action.identity)
+                        .ok_or(ProbabilityDocumentError::Malformed)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let edge_limit = u64::try_from(run.limits.edges).unwrap_or(u64::MAX);
+            let assignments = free_windows.iter().fold(1_u64, |count, window| {
+                count.saturating_mul(u64::try_from(window.delays.len()).unwrap_or(u64::MAX))
+            });
+            if assignments > edge_limit {
+                return Err(ProbabilityDocumentError::Limit {
+                    limit: ProbabilityDocumentLimit::Edges,
+                    bound: edge_limit,
+                    actual: assignments,
+                });
+            }
+            let mut positions = vec![0_usize; free_windows.len()];
+            loop {
+                poll(run.cancel)?;
+                let delays = free_windows
+                    .iter()
+                    .zip(&positions)
+                    .map(|(window, position)| {
+                        window
+                            .delays
+                            .iter()
+                            .copied()
+                            .nth(*position)
+                            .ok_or(ProbabilityDocumentError::Malformed)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let delay = delays
+                    .iter()
+                    .copied()
+                    .min()
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                let tied = free_windows
+                    .iter()
+                    .zip(&delays)
+                    .filter(|(_, chosen)| **chosen == delay)
+                    .map(|(window, _)| window.identity.clone())
+                    .collect::<Vec<_>>();
+                let states = run.race_states(&trajectory, delay, &tied, &one())?;
+                let mut choice = Vec::new();
+                run.choice_of(states, &mut choice, reached, pending, storage)?;
+                choices.push(choice);
+                scheduler_actions.push(Vec::new());
+                charge_work(meter, run.cancel, 1)?;
+
+                let mut position = positions.len();
+                let mut advanced = false;
+                while position > 0 {
+                    position -= 1;
+                    positions[position] += 1;
+                    if positions[position] < free_windows[position].delays.len() {
+                        advanced = true;
+                        break;
+                    }
+                    positions[position] = 0;
+                }
+                if !advanced {
+                    break;
+                }
+            }
+            return Ok((choices, scheduler_actions));
+        }
         let time_choices = digital_time_choices(
             run.system,
             run.timed,
