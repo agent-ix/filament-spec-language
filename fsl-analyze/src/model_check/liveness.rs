@@ -91,7 +91,6 @@
 //! from its `Enabled` finding, and a run that completes to its horizon
 //! settles `ReductionHorizon`.
 
-use ix_trace_rs::implements;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -2474,7 +2473,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     if run.binding.applied.is_none() {
                         return Ok(ModelCheckOutcome::Violated {
                             counterexample,
-                            stats: totals.stats(),
+                            stats: totals.stats(self.system),
                         });
                     }
                     if reduced_refutation.is_none() {
@@ -2495,7 +2494,9 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         totals.stats(self.system),
                     ));
                 }
-                Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats(self.system))),
+                Second::Stopped(cause, limit) => {
+                    return Ok(stopped(cause, limit, totals.stats(self.system)))
+                }
                 Second::NoneFair => {}
             }
             // A reduction never ends the loop: each binding, or each orbit
@@ -2593,7 +2594,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         if let Some(counterexample) = reduced_refutation {
             return Ok(ModelCheckOutcome::Violated {
                 counterexample,
-                stats: totals.stats(),
+                stats: totals.stats(self.system),
             });
         }
         // ADR-021 RV-1: the reductions in the order symmetry, partial-order.
@@ -2769,7 +2770,9 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         totals: &Totals,
     ) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         match self.halt_ending(product)? {
-            Some(Ending::Stopped(cause, limit)) => Ok(stopped(cause, limit, totals.stats(self.system))),
+            Some(Ending::Stopped(cause, limit)) => {
+                Ok(stopped(cause, limit, totals.stats(self.system)))
+            }
             Some(Ending::Complete) | None => Err(fault("a-halted-start-recorded-its-halt")),
         }
     }

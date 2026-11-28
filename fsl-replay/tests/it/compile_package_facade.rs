@@ -42,7 +42,7 @@ fn spine_run(
     let refusal = |failure| {
         spine::refusal_or_fault(failure).expect("the front end does not fault on this source")
     };
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &source,
             path: "unit.native",
@@ -53,7 +53,7 @@ fn spine_run(
     )
     .map_err(refusal)?
     .into_value();
-    let models = spine::select(&qsl3309_parser_context, &parsed, packages, limits.model, &cancel)
+    let models = spine::select(&parsed, packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
     let checked = spine::check(

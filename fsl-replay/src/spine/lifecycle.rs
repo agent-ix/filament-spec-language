@@ -80,8 +80,6 @@
 //! }
 //! ```
 
-use ix_trace_rs::implements;
-
 use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -1544,12 +1542,25 @@ pub fn parse_selecting_extensions(
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
+    let context = fsl_cst::ParserContext::new();
+    parse_selecting_extensions_context(request, catalog, limits, cancel, &context)
+}
+
+/// FR-354 compile path using the caller-owned parser context.
+#[implements("NFR-141-AC-10")]
+pub fn parse_selecting_extensions_context(
+    request: &ParseRequest<'_>,
+    catalog: ProfileCatalogInput<'_>,
+    limits: SourceLimits,
+    cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
+) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
     let source_len =
         |identity: &SourceIdentity| (identity == request.source).then_some(request.bytes.len());
     let held = stage(cancel, &source_len, |work| {
-        select_extensions(request, catalog, limits, cancel, &mut work.s1)
+        select_extensions(request, catalog, limits, cancel, context, &mut work.s1)
     })?;
-    parse_with_extensions(request, &held.into_value(), limits, cancel)
+    parse_with_extensions_context(request, &held.into_value(), limits, cancel, context)
 }
 
 /// FR-354 "Compile path" steps 1 and 2 for one source: read its header
@@ -1563,10 +1574,12 @@ fn select_extensions(
     catalog: ProfileCatalogInput<'_>,
     limits: SourceLimits,
     cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
     s1: &mut u64,
 ) -> Result<HeldExtensions, Box<CompileRefusal>> {
     let header = charged(cancel, s1, || {
         fsl_cst::parse_with_cancel(
+            context,
             request.source.clone(),
             request.path,
             request.bytes,
@@ -2967,20 +2980,19 @@ fn parse_unit(
     cancel: &Cancel,
     context: Option<&fsl_cst::ParserContext>,
 ) -> Result<ParsedUnitSource, StageError> {
+    let local_context;
+    let context = match context {
+        Some(context) => context,
+        None => {
+            local_context = fsl_cst::ParserContext::new();
+            &local_context
+        }
+    };
     let parsed = match context {
-        Some(context) if held.is_empty() => {
+        context if held.is_empty() => {
             context.parse_with_cancel(source, path, bytes, limits, cancel)
         }
-        Some(context) => context.parse_with_extensions(
-            source,
-            path,
-            bytes,
-            limits,
-            &extension_forms(held),
-            cancel,
-        ),
-        None if held.is_empty() => fsl_cst::parse_with_cancel(source, path, bytes, limits, cancel),
-        None => fsl_cst::parse_with_extensions(
+        context => context.parse_with_extensions(
             source,
             path,
             bytes,
@@ -3145,7 +3157,9 @@ fn bounded_protocol_clause_declarations(
         let text = source_text.get(start_byte..end)?;
         let header = "language \"ix:native\" edition \"1-draft\";\n";
         let isolated_text = format!("{header}{text}");
+        let parser_context = fsl_cst::ParserContext::new();
         let isolated = fsl_cst::parse_with_cancel(
+            &parser_context,
             parsed.source().identity().clone(),
             parsed.source().path(),
             isolated_text.as_bytes(),
@@ -3619,8 +3633,9 @@ fn parse_type_invariants(
     models: SelectedModels,
     limits: SourceLimits,
 ) -> Result<SelectedModels, Box<CompileRefusal>> {
+    let parser_context = fsl_cst::ParserContext::new();
     models
-        .with_parsed_type_invariants(|text| parse_clause_text(text, limits))
+        .with_parsed_type_invariants(|text| parse_clause_text(&parser_context, text, limits))
         .map_err(|failure| {
             Box::new(CompileRefusal::TypeInvariant {
                 clause: failure.clause,
@@ -3639,8 +3654,9 @@ fn parse_operation_clauses(
     models: SelectedModels,
     limits: SourceLimits,
 ) -> Result<SelectedModels, Box<CompileRefusal>> {
+    let parser_context = fsl_cst::ParserContext::new();
     models
-        .with_parsed_operation_clauses(|text| parse_clause_text(text, limits))
+        .with_parsed_operation_clauses(|text| parse_clause_text(&parser_context, text, limits))
         .map_err(|failure| {
             Box::new(CompileRefusal::OperationClause {
                 operation: failure.operation,
@@ -4230,6 +4246,7 @@ impl<'a> Resolution<'a> {
         let Some(catalog) = self.extension_catalog else {
             return Ok(HeldExtensions::default());
         };
+        let parser_context = fsl_cst::ParserContext::new();
         select_extensions(
             &ParseRequest {
                 source: &supplied.source,
@@ -4239,6 +4256,7 @@ impl<'a> Resolution<'a> {
             catalog,
             self.limits.source,
             self.cancel,
+            &parser_context,
             &mut self.work.s1,
         )
     }

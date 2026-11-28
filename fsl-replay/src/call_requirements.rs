@@ -339,11 +339,11 @@ mod tests {
         function sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }\n";
 
     fn checked(test: impl FnOnce(&CheckedGraph)) {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let source = SourceIdentity::new("a", "u");
         let limits = SpineLimits::default();
         let cancel = Cancel::new();
-        let parsed = spine::parse(&qsl3309_parser_context,
+        let parsed = spine::parse(
             &ParseRequest {
                 source: &source,
                 path: "unit.native",
@@ -354,7 +354,7 @@ mod tests {
         )
         .expect("parses")
         .into_value();
-        let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)
+        let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)
             .expect("selects")
             .into_value();
         let unit = spine::check(

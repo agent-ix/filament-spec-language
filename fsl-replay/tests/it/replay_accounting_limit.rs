@@ -47,6 +47,7 @@ fn request(source_text: &str, function: &str, argument: i64) -> ReplayRequestWir
     let name = QualifiedName::new(vec![Identifier::new(function).expect("function identifier")])
         .expect("qualified function name");
     let site = call_site(
+        &fsl_cst::ParserContext::new(),
         source.clone(),
         CallSiteUnit::new("fixture".to_owned(), "unit.native", source_text.as_bytes()),
         [],

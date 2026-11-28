@@ -18,7 +18,7 @@ fn compile(source: &str) -> spine::CheckedUnit {
     let identity = SourceIdentity::new("a", "text-literals");
     let limits = SpineLimits::default();
     let cancel = filament_exact::Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &identity,
             path: "text-literals.native",
@@ -29,7 +29,7 @@ fn compile(source: &str) -> spine::CheckedUnit {
     )
     .expect("source parses")
     .into_value();
-    let models = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &cancel)
+    let models = spine::select(&parsed, &Default::default(), limits.model, &cancel)
         .expect("models select")
         .into_value();
     spine::check(

@@ -100,8 +100,6 @@ mod closed;
 mod lift;
 mod reductions;
 
-use ix_trace_rs::implements;
-
 use std::cell::{Cell, Ref};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;

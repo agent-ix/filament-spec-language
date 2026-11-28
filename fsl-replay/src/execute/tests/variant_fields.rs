@@ -35,7 +35,7 @@ fn package_over(document: &serde_json::Value, alias: &str) -> CheckedPackage {
          function keep using v(): Boolean pure {{ true }}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "variant-fields"),
         "variant-fields.native",
         source.as_bytes(),

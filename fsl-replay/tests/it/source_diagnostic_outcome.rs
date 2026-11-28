@@ -193,7 +193,7 @@ fn actual_source_reads_and_parse_refusals_use_the_same_projection_bytes() {
         let expected = OutcomeDocument::from_parse(&Err(StageFailure::Refused(Box::new(
             CompileRefusal::Source(read),
         ))));
-        let result = spine::parse(&qsl3309_parser_context,
+        let result = spine::parse(
             &ParseRequest {
                 source: &source,
                 path,

@@ -19,7 +19,7 @@ fn check_operation_takes_the_supplied_law() {
     let identity = SourceIdentity::new("agent-ix", "division-check");
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &identity,
             path: "unit.fsl",
@@ -30,7 +30,7 @@ fn check_operation_takes_the_supplied_law() {
     )
     .unwrap()
     .into_value();
-    let models = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &cancel)
+    let models = spine::select(&parsed, &Default::default(), limits.model, &cancel)
         .unwrap()
         .into_value();
     let dependencies = DependencyInput::default();
@@ -109,7 +109,7 @@ fn multi_unit_checker_takes_one_caller_selection() {
             let text = UNIT
                 .replace("function q ", &format!("function q_{name} "))
                 .replace("function r ", &format!("function r_{name} "));
-            spine::parse(&qsl3309_parser_context,
+            spine::parse(
                 &ParseRequest {
                     source: &identity,
                     path: "unit.fsl",
@@ -123,7 +123,7 @@ fn multi_unit_checker_takes_one_caller_selection() {
         })
         .collect();
     let admitted = spine::admit_parsed_unit_list(units, &dependencies).unwrap();
-    let models = spine::select_units(&qsl3309_parser_context,
+    let models = spine::select_units(
         &admitted,
         &Default::default(),
         limits.model,

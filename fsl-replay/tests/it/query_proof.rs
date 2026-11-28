@@ -31,7 +31,7 @@ fn checked_collection_query() -> CheckedUnit {
     );
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &source,
             path: "query-proof.native",
@@ -44,7 +44,7 @@ fn checked_collection_query() -> CheckedUnit {
     .into_value();
     let packages = fsl_semantics::model::intake::package_input([MODEL])
         .expect("the checked model fixture is valid");
-    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .expect("model package is admitted")
         .into_value();
     spine::check(

@@ -452,7 +452,7 @@ pub(in crate::spine) fn lookup_driver_context(
 
     let cancel = Cancel::new();
     let source_identity = source();
-    let parsed = crate::spine::parse(&qsl3309_parser_context,
+    let parsed = crate::spine::parse(
         &crate::spine::ParseRequest {
             source: &source_identity,
             path: "tc-792-lookup.native",
@@ -463,7 +463,7 @@ pub(in crate::spine) fn lookup_driver_context(
     )
     .expect("the lookup driver source parses")
     .into_value();
-    let models = crate::spine::select(&qsl3309_parser_context,
+    let models = crate::spine::select(
         &parsed,
         &fixture.packages,
         SpineLimits::default().model,
@@ -844,7 +844,7 @@ fn tc_792_driver_returns_the_admitted_reference_identity() {
         fsl_semantics::model::intake::package_input([crate::spine::spine_model::DOCUMENT]).unwrap();
     let cancel = Cancel::new();
     let identity = source();
-    let parsed = crate::spine::parse(&qsl3309_parser_context,
+    let parsed = crate::spine::parse(
         &crate::spine::ParseRequest {
             source: &identity,
             path: "spine-model.native",
@@ -855,7 +855,7 @@ fn tc_792_driver_returns_the_admitted_reference_identity() {
     )
     .unwrap()
     .into_value();
-    let models = crate::spine::select(&qsl3309_parser_context, &parsed, &packages, SpineLimits::default().model, &cancel)
+    let models = crate::spine::select(&parsed, &packages, SpineLimits::default().model, &cancel)
         .unwrap()
         .into_value();
     let checked = crate::spine::check(

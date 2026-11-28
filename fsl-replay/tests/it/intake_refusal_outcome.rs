@@ -17,7 +17,7 @@ fn check(text: &str, packages: &BTreeMap<String, Vec<u8>>) -> spine::FrontEndFai
     let source = SourceIdentity::new("test", "refused-model");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &source,
             path: "unit.native",
@@ -28,7 +28,7 @@ fn check(text: &str, packages: &BTreeMap<String, Vec<u8>>) -> spine::FrontEndFai
     )
     .expect("the source parses")
     .into_value();
-    let models = match spine::select(&qsl3309_parser_context, &parsed, packages, limits.model, &cancel) {
+    let models = match spine::select(&parsed, packages, limits.model, &cancel) {
         Ok(models) => models.into_value(),
         Err(failure) => return failure,
     };

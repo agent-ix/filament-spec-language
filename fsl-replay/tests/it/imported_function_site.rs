@@ -80,6 +80,7 @@ fn selected<S: fsl_replay::CallSiteSelection>(
     selection: &S,
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", unit.as_bytes()),
         [],
@@ -93,6 +94,7 @@ fn selected<S: fsl_replay::CallSiteSelection>(
 /// function: the site FR-121-AC-32 requires the imported selection to equal.
 fn standalone(body: &str, name: &str) -> CallSite<FunctionSite> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "units"),
         fsl_replay::CallSiteUnit::new(
             "test/units".to_owned(),
@@ -468,7 +470,7 @@ fn a_package_name_that_is_no_library_name_is_a_fault() {
     let source = SourceIdentity::new("a", "u");
     let limits = spine::SpineLimits::default();
     let cancel = filament_exact::Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &spine::ParseRequest {
             source: &source,
             path: "unit.native",
@@ -481,7 +483,7 @@ fn a_package_name_that_is_no_library_name_is_a_fault() {
     .into_value();
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no packages");
-    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .expect("the models select")
         .into_value();
     let dependencies = DependencyInput::new(vec![units()]).expect("a dependency input");

@@ -1043,18 +1043,20 @@ pub(crate) fn run_reading_with_integer_division<T>(
         bytes,
     };
     let parsed = match profile_catalog {
-        Some(catalog) => front_end::parse_selecting_extensions(
-            &parser_context,
+        Some(catalog) => front_end::parse_selecting_extensions_context(
             &parse_request,
             catalog,
             limits.source,
             cancel,
+            &parser_context,
         ),
-        None => front_end::parse(&parser_context, &parse_request, limits.source, cancel),
+        None => {
+            front_end::parse_with_context(&parse_request, limits.source, cancel, &parser_context)
+        }
     }
     .map_err(refusal)?
     .into_value();
-    let models = front_end::select(&parser_context, &parsed, packages, limits.model, cancel)
+    let models = front_end::select(&parsed, packages, limits.model, cancel)
         .map_err(refusal)?
         .into_value();
     let check_selections = call.clocks.check_selections(&parsed);

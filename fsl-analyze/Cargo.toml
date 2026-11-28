@@ -17,6 +17,7 @@ description = "ADR-011 §6.1 layer A: in-process analysis engines, including ret
 # and its arithmetic is its own, so the checker recomputes it independently.
 [dependencies]
 fsl-eval = { path = "../fsl-eval" }
+fsl-cst = { path = "../fsl-cst" }
 fsl-forms = { path = "../fsl-forms" }
 # ADR-011 §6.1 layer H: the reference hybrid provider (FR-1019) this crate
 # registers as `Engine::hybrid_reference`.

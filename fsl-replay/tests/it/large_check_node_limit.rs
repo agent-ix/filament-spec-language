@@ -50,7 +50,7 @@ fn a_100000_term_sum_checks_at_its_node_count_on_the_default_stack() {
         parse_limits.source.nodes = 1 << 28;
         parse_limits.source.work_units = 1 << 40;
         let cancel = Cancel::new();
-        let parsed = spine::parse(&qsl3309_parser_context,
+        let parsed = spine::parse(
             &ParseRequest {
                 source: &identity,
                 path: "large.native",
@@ -61,7 +61,7 @@ fn a_100000_term_sum_checks_at_its_node_count_on_the_default_stack() {
         )
         .expect("the 100,000-term source parses")
         .into_value();
-        let models = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), parse_limits.model, &cancel)
+        let models = spine::select(&parsed, &Default::default(), parse_limits.model, &cancel)
             .expect("the empty model set selects")
             .into_value();
 
@@ -138,7 +138,7 @@ fn a_100000_term_package_and_node_keys_match_on_512kib_and_8mib_stacks() {
                     .with_work_budget(1 << 42);
                 limits.package = PackageLimits::default().with_output_bytes(1 << 30);
 
-                let parsed = spine::parse(&qsl3309_parser_context,
+                let parsed = spine::parse(
                     &ParseRequest {
                         source: &identity,
                         path: "large.native",
@@ -150,7 +150,7 @@ fn a_100000_term_package_and_node_keys_match_on_512kib_and_8mib_stacks() {
                 .expect("the 100,000-term source parses")
                 .into_value();
                 let models =
-                    spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &Cancel::new())
+                    spine::select(&parsed, &Default::default(), limits.model, &Cancel::new())
                         .expect("the empty model set selects")
                         .into_value();
                 let checked = spine::check(

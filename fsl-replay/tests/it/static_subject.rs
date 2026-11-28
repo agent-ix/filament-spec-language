@@ -34,7 +34,7 @@ fn checked(
     let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity::new("test", "unit");
     let cancel = Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &identity,
             path: "unit.native",
@@ -48,7 +48,7 @@ fn checked(
     let input = [("acme/orders".to_owned(), model.to_vec())]
         .into_iter()
         .collect();
-    let admitted = spine::select(&qsl3309_parser_context, &parsed, &input, limits.model, &cancel)
+    let admitted = spine::select(&parsed, &input, limits.model, &cancel)
         .expect("select")
         .into_value();
     let dependencies = DependencyInput::new(libraries).expect("dependency input");
@@ -325,7 +325,7 @@ fn aggregate_units_keep_sibling_imports_and_references_out_of_each_subject() {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let parse_unit = |source: &SourceIdentity, bytes: &str| {
-        spine::parse(&qsl3309_parser_context,
+        spine::parse(
             &ParseRequest {
                 source,
                 path: "unit.native",
@@ -361,7 +361,7 @@ fn aggregate_units_keep_sibling_imports_and_references_out_of_each_subject() {
     ]
     .into_iter()
     .collect();
-    let models = spine::select_units(&qsl3309_parser_context,
+    let models = spine::select_units(
         &admitted,
         &model_input,
         limits.model,
@@ -605,7 +605,7 @@ fn a_refused_check_produces_no_static_subject() {
     let identity = SourceIdentity::new("test", "bad");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &identity,
             path: "bad.native",
@@ -619,7 +619,7 @@ fn a_refused_check_produces_no_static_subject() {
     let input = [("acme/orders".to_owned(), MODEL.to_vec())]
         .into_iter()
         .collect();
-    let admitted = spine::select(&qsl3309_parser_context, &parsed, &input, limits.model, &cancel)
+    let admitted = spine::select(&parsed, &input, limits.model, &cancel)
         .expect("select")
         .into_value();
     let refusal = spine::check(

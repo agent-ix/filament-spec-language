@@ -104,7 +104,7 @@ fn parse_unit_for_package(
          profile m = \"filament.model.complete/v1\";\n\
          model {model} = {package:?};\n{declarations}"
     );
-    spine::parse(&qsl3309_parser_context,
+    spine::parse(
         &ParseRequest {
             source,
             path: "unit.native",
@@ -279,7 +279,7 @@ fn d10_single(swapped: bool) -> spine::CheckedUnit {
          pre PB2 using m on M::Sub::size {{ {pb2} }}\n\
          pre I using m on M::Sub::probe {{ self.size() = 2 }}\n"
     );
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &source,
             path: "single.native",
@@ -726,7 +726,7 @@ fn aggregate_resolves_a_reused_import_alias_per_source_unit() {
     let source_b = SourceIdentity::new("test", "import-b");
     let parse = |source: &SourceIdentity, library: &str, body: &str| {
         let text = format!("{header}import \"{library}\" as m;\n{body}");
-        spine::parse(&qsl3309_parser_context,
+        spine::parse(
             &ParseRequest {
                 source,
                 path: "unit.native",
@@ -773,7 +773,7 @@ fn aggregate_resolves_a_reused_import_alias_per_source_unit() {
     assert_eq!(checked.len(), 2);
 
     let source_without_import = SourceIdentity::new("test", "import-none");
-    let no_import = spine::parse(&qsl3309_parser_context,
+    let no_import = spine::parse(
         &ParseRequest {
             source: &source_without_import,
             path: "unit.native",

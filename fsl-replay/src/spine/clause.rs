@@ -1871,8 +1871,7 @@ fn run_clause_reading_with_source_map(
     };
     let parser_context = fsl_cst::ParserContext::new();
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
-        let parsed = front_end::parse(
-            &parser_context,
+        let parsed = front_end::parse_with_context(
             &front_end::ParseRequest {
                 source: unit.identity,
                 path: unit.path,
@@ -1880,19 +1879,14 @@ fn run_clause_reading_with_source_map(
             },
             request.limits.source,
             &cancel,
+            &parser_context,
         )?
         .into_value();
         if let Some(actual) = extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
             return Ok(Err(actual));
         }
-        let models = front_end::select(
-            &parser_context,
-            &parsed,
-            &request.packages,
-            request.limits.model,
-            &cancel,
-        )?
-        .into_value();
+        let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
+            .into_value();
         let by_name = temporal_selections.is_empty();
         let check_selections = if by_name {
             request.clocks.check_selections(&parsed)
@@ -2555,8 +2549,7 @@ fn compile_program_parts(
     let cancel = Cancel::new();
     let parser_context = fsl_cst::ParserContext::new();
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
-        let parsed = front_end::parse(
-            &parser_context,
+        let parsed = front_end::parse_with_context(
             &front_end::ParseRequest {
                 source: unit.identity,
                 path: unit.path,
@@ -2564,13 +2557,13 @@ fn compile_program_parts(
             },
             limits.source,
             &cancel,
+            &parser_context,
         )?
         .into_value();
         if let Some(actual) = extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
             return Ok(Err(actual));
         }
-        let models = front_end::select(&parser_context, &parsed, packages, limits.model, &cancel)?
-            .into_value();
+        let models = front_end::select(&parsed, packages, limits.model, &cancel)?.into_value();
         let check_selections = clocks.check_selections(&parsed);
         let checked = front_end::check_with_refinement_internals(
             &parsed,

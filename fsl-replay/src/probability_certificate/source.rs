@@ -2,7 +2,7 @@
 //! FR-282 source-backed probability certificate checking without an analyzer.
 
 use super::document::{
-    ProbabilityDocumentError, ProbabilityDocumentLimits, check_probability_certificate_document_as,
+    check_probability_certificate_document_as, ProbabilityDocumentError, ProbabilityDocumentLimits,
 };
 use super::{CertificateRole, ExactProbabilityCertificateCheck, ObligationIdentity};
 use crate::spine::{
@@ -13,9 +13,9 @@ use filament_exact::{Cancel, ScalarLimits};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::node_wire::{node_key_from_text, node_key_to_json};
 use fsl_foundation::source::{Source, SourceReadCause, SourceReadError};
+use fsl_foundation::SourceIdentity;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
 use ix_trace_rs::implements;
@@ -316,8 +316,7 @@ fn check_recompiled(
     }
     let packages = package_input(request.provision.package_documents())
         .map_err(|refusal| ProbabilitySourceError::Packages(Box::new(refusal)))?;
-    let parsed = spine::parse(
-        parser_context,
+    let parsed = spine::parse_with_context(
         &ParseRequest {
             source: &identity,
             path: request.source.identity(),
@@ -325,21 +324,16 @@ fn check_recompiled(
         },
         limits.spine.source,
         cancel,
+        parser_context,
     )
     .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
     .into_value();
     if !parsed.unit().selections().imports.is_empty() {
         return Err(ProbabilityDocumentError::Unsupported.into());
     }
-    let models = spine::select(
-        parser_context,
-        &parsed,
-        &packages,
-        limits.spine.model,
-        cancel,
-    )
-    .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
-    .into_value();
+    let models = spine::select(&parsed, &packages, limits.spine.model, cancel)
+        .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
+        .into_value();
     let checked = spine::check(
         &parsed,
         request.package_name.to_owned(),

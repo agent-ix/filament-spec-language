@@ -238,7 +238,10 @@ pub fn ring_state_graph(
 ) -> Result<World, AxisError> {
     let top = values.saturating_sub(1);
     let claim = format!("possible Wraps using v over (c: M::Cell) {{ c.v = {top} }}\n");
-    Ok(World::build_with_context(&ring(objects, values, symmetric, &claim), parser)?)
+    Ok(World::build_with_context(
+        &ring(objects, values, symmetric, &claim),
+        parser,
+    )?)
 }
 
 /// `mc/state_graph`: FR-167 `check_state_graph` over the ring, with a
@@ -256,7 +259,7 @@ pub fn run_state_graph(world: &World, symmetric: bool) -> Result<Work, AxisError
         // `ring_state_graph` builds exactly one `Wraps` claim, so use the
         // model's first checked claim instead of selecting it by wire text.
         .first()
-        .ok_or_else(|| fail("claim", "Wraps is not checked"), parser)?;
+        .ok_or_else(|| fail("claim", "Wraps is not checked"))?;
     let mut reductions = fsl_route::reductions::Reductions::default();
     if symmetric {
         let keys: Vec<String> = world
@@ -309,13 +312,20 @@ pub fn run_state_graph(world: &World, symmetric: bool) -> Result<Work, AxisError
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
 #[implements("NFR-141-AC-10")]
-pub fn ring_safety(objects: usize, values: usize, parser: &ParserContext) -> Result<World, AxisError> {
+pub fn ring_safety(
+    objects: usize,
+    values: usize,
+    parser: &ParserContext,
+) -> Result<World, AxisError> {
     let top = values.saturating_sub(1);
     let clause = format!(
         "temporal Bounded using t0 over (c: M::Cell) clock \"model-steps\" on origin \
          {{ always holds(c.v <= {top}) }}\n"
     );
-    Ok(World::build_with_context(&ring(objects, values, false, &clause), parser)?)
+    Ok(World::build_with_context(
+        &ring(objects, values, false, &clause),
+        parser,
+    )?)
 }
 
 /// What a `check_model` run returns, as counts and the atoms evaluated.
@@ -358,7 +368,7 @@ fn first_clause(world: &World) -> Result<&fsl_semantics::check::CheckedTemporalC
         .temporal_clauses()
         .first()
         .map(|node| node.clause())
-        .ok_or_else(|| fail("clause", "the unit declares no temporal clause"), parser)
+        .ok_or_else(|| fail("clause", "the unit declares no temporal clause"))
 }
 
 /// `mc/safety`: `check_model` of the invariant clause `Bounded`, or, with
@@ -391,10 +401,17 @@ pub fn run_safety(world: &World, deadlock: bool) -> Result<(Work, u64), AxisErro
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
 #[implements("NFR-141-AC-10")]
-pub fn ring_liveness(objects: usize, values: usize, parser: &ParserContext) -> Result<World, AxisError> {
+pub fn ring_liveness(
+    objects: usize,
+    values: usize,
+    parser: &ParserContext,
+) -> Result<World, AxisError> {
     let clause = "temporal Returns using t0 over (c: M::Cell) clock \"model-steps\" on origin \
          { fair weak each M::Cell::step; always eventually holds(c.v = 0) }\n";
-    Ok(World::build_with_context(&ring(objects, values, false, clause), parser)?)
+    Ok(World::build_with_context(
+        &ring(objects, values, false, clause),
+        parser,
+    )?)
 }
 
 /// `mc/liveness`: `check_model` of `always eventually` under weak fairness
@@ -860,8 +877,8 @@ mod tests {
 mod counter_tests {
     use super::tests::work;
     use super::*;
-    use ix_trace_rs::trace;
     use crate::counters::{fingerprint, Counters};
+    use ix_trace_rs::trace;
 
     fn counters(states: u64, edges: u64, encodes: u64, atoms: u64, expansions: u64) -> Counters {
         Counters {

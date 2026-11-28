@@ -1077,7 +1077,7 @@ fn admitted_float_arithmetic_and_rational_conversion_evaluate_through_the_source
             let source = SourceIdentity::new("a", "ieee");
             let limits = SpineLimits::default();
             let cancel = Cancel::new();
-            let parsed = spine::parse(&qsl3309_parser_context,
+            let parsed = spine::parse(
                 &ParseRequest {
                     source: &source,
                     path: "ieee.native",
@@ -1088,7 +1088,7 @@ fn admitted_float_arithmetic_and_rational_conversion_evaluate_through_the_source
             )
             .expect("source parses")
             .into_value();
-            let models = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &cancel)
+            let models = spine::select(&parsed, &Default::default(), limits.model, &cancel)
                 .expect("models select")
                 .into_value();
             let checked = spine::check(

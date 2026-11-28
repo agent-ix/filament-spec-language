@@ -36,8 +36,6 @@
 //! successor of the class from the state's mapped abstract state, and taken by
 //! an edge when the edge's `check_step` result lists an identity of it.
 
-use ix_trace_rs::implements;
-
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::Cancel;

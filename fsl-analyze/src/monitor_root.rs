@@ -20,10 +20,10 @@
 use filament_exact::Cancel;
 use fsl_foundation::SourceIdentity;
 use fsl_package::{
-    CheckedPackage, Emission, EmitRefusal, MonitorPlanWire, emit_checked, emit_monitor_plan_over,
+    emit_checked, emit_monitor_plan_over, CheckedPackage, Emission, EmitRefusal, MonitorPlanWire,
 };
 use fsl_replay::spine::{
-    CheckedUnit, DependencyInput, ParseRequest, SpineLimits, check, parse, refusal_or_fault, select,
+    check, refusal_or_fault, select, CheckedUnit, DependencyInput, ParseRequest, SpineLimits,
 };
 use fsl_replay::{
     MonitorPlanRefusal, MonitorTarget, ReplayRefusal, TimedMonitorPlan, TimingObligation,
@@ -32,15 +32,15 @@ use fsl_replay::{
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::PackageInput;
 
-use crate::monitor_entries::{WIRE_FIELD_NAMES, names, render, spec_from_plan};
+use crate::monitor_entries::{names, render, spec_from_plan, WIRE_FIELD_NAMES};
 use crate::monitor_plan::produce;
 
 mod order;
 mod progress;
 pub use order::{ModelStepOrder, ModelStepOrderRefusal, ModelStepOrderRefusalCode};
 pub use progress::{
-    AdmittedPlanAuthority, PlanAuthorityRefusal, PlanAuthorityRefusalCode, PlanAuthoritySelection,
-    PlanAuthorityValidationCaps, ProgressSelectionRefusalCode, admit_progress_view,
+    admit_progress_view, AdmittedPlanAuthority, PlanAuthorityRefusal, PlanAuthorityRefusalCode,
+    PlanAuthoritySelection, PlanAuthorityValidationCaps, ProgressSelectionRefusalCode,
 };
 
 /// The authored unit and the selection the plan root is written for.
@@ -150,13 +150,12 @@ fn front_end(failure: fsl_replay::spine::FrontEndFailure) -> PlanRootRefusal {
 
 #[ix_trace_rs::implements("NFR-141-AC-10")]
 fn compile(
-    parser: &fsl_replay::spine::ParserContext,
+    parser: &fsl_cst::ParserContext,
     request: &PlanRootRequest<'_>,
     bytes: &[u8],
     cancel: &Cancel,
 ) -> Result<CheckedUnit, PlanRootRefusal> {
-    let parsed = parse(
-        parser,
+    let parsed = fsl_replay::spine::parse_with_context(
         &ParseRequest {
             source: request.source,
             path: request.path,
@@ -164,18 +163,13 @@ fn compile(
         },
         request.limits.source,
         cancel,
-    )
-    .map_err(front_end)?
-    .into_value();
-    let admitted = select(
         parser,
-        &parsed,
-        request.packages,
-        request.limits.model,
-        cancel,
     )
     .map_err(front_end)?
     .into_value();
+    let admitted = select(&parsed, request.packages, request.limits.model, cancel)
+        .map_err(front_end)?
+        .into_value();
     let checked = check(
         &parsed,
         request.package_name.as_str().to_owned(),
@@ -216,7 +210,7 @@ pub fn emit_plan_root(
     request: &PlanRootRequest<'_>,
     cancel: &Cancel,
 ) -> Result<PlanRoot, PlanRootRefusal> {
-    let parser = fsl_replay::spine::ParserContext::new();
+    let parser = fsl_cst::ParserContext::new();
     let authored = compile(&parser, request, request.bytes, cancel)?;
     let node = clause_of(authored.package(), request.clause)?;
     let (plan, obligations) = produce(

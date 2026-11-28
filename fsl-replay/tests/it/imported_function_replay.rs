@@ -94,6 +94,7 @@ fn imported_under(
     clocks: &RequestClocks,
 ) -> CallSite<ImportedFunctionSite> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", unit.as_bytes()),
         [],
@@ -110,6 +111,7 @@ fn imported_under(
 /// The unit's own site of `name`.
 fn own(unit: &str, libraries: Vec<SuppliedLibrary>, name: &str) -> CallSite<FunctionSite> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", unit.as_bytes()),
         [],
