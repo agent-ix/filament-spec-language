@@ -841,6 +841,19 @@ impl DeepSum {
     }
 }
 
+/// Resident and high-water resident set size, printed at a named stage.
+fn rss(stage: &str) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let kib = |key: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(key))
+            .map_or("?", |rest| rest.trim().trim_end_matches(" kB").trim())
+            .to_owned()
+    };
+    eprintln!("RSS stage={stage} vm_rss_kb={} vm_hwm_kb={}", kib("VmRSS:"), kib("VmHWM:"));
+}
+
 /// The `replay.input_bytes` bound the deep requests fit under.
 fn deep_replay_limits() -> ReplayLimits {
     // The emitted package carries a validity record per operation, so it
@@ -875,11 +888,12 @@ fn tc_736_a_100000_term_source_is_refused_at_the_default_stage_limits() {
 /// `s3.*`, `i2.*` and `emit.output_bytes` settings, and whose
 /// `replay.input_bytes` is raised to fit, replays to the proving run's
 /// verdict.
+#[trace("TC-736", "FR-263-AC-1")]
 #[test]
-#[ignore = "QSL-2825: memory; the last recorded run of this test aborted at a 12 GiB address-space limit"]
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
     on_small_stack(|| {
         let sum = DeepSum::compile();
+        rss("compiled");
         let raised = deep_replay_limits();
         let limits: BTreeMap<String, u64> = BTreeMap::from(
             [
@@ -909,13 +923,16 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
         // The raised settings replay, from the witness and from the input.
         let mut wire = sum.witness();
         wire.stage_limits = limits.clone();
+        rss("request-built");
         assert_reproduced(replay(wire, raised));
+        rss("witness-replayed");
         let mut input = sum.request(typed_input(
             sum.parameter.clone(),
             list(sum.record.clone(), DEEP_TERMS),
         ));
         input.stage_limits = limits;
         assert_reproduced(replay(input, raised));
+        rss("input-replayed");
     });
 }
 

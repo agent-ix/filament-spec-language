@@ -99,6 +99,19 @@ fn checked_family(family: Family, count: usize) -> (String, CheckedPackage) {
     (text, CheckedPackage::link(graph))
 }
 
+/// Resident and high-water resident set size, printed at a named stage.
+fn rss(stage: &str) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let kib = |key: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(key))
+            .map_or("?", |rest| rest.trim().trim_end_matches(" kB").trim())
+            .to_owned()
+    };
+    eprintln!("RSS stage={stage} vm_rss_kb={} vm_hwm_kb={}", kib("VmRSS:"), kib("VmHWM:"));
+}
+
 fn qualify(family: Family, count: usize, require_default_denial: bool) {
     let (text, package) = checked_family(family, count);
     let body = package.graph().function_state(0).unwrap().body.body();
@@ -177,6 +190,7 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         limits.storage,
         limits.locations
     );
+    rss("checked");
     let emission = crate::emit::emit_checked(&package, crate::EmitLimits::new(limits.bytes))
         .unwrap_or_else(|failure| {
             panic!("{family:?}: emission failed with code {:?}", failure.code())
@@ -184,6 +198,64 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
     let actual_bytes = emission.package().bytes().len();
     assert!(u64::try_from(actual_bytes).unwrap() <= limits.bytes);
     eprintln!("EMITTED family={family:?} bytes={actual_bytes}");
+    rss("emitted");
+    if require_default_denial {
+        const DEFAULT: u64 = 16_777_216;
+        let failure = match crate::emit::emit_checked(&package, crate::EmitLimits::new(DEFAULT)) {
+            Err(failure) => failure,
+            Ok(_) => panic!("{family:?}: published default unexpectedly emitted"),
+        };
+        let EmitRefusal::OutputLimit(limit) = failure else {
+            panic!("{family:?}: expected OutputLimit")
+        };
+        assert_eq!(limit.setting(), fsl_foundation::Setting::EmitOutputBytes);
+        assert_eq!(limit.configured_bound(), DEFAULT);
+        assert_eq!(limit.actual(), u128::from(DEFAULT) + 1);
+        eprintln!(
+            "DEFAULT_DENIAL family={family:?} configured={DEFAULT} first_unpaid={}",
+            limit.actual()
+        );
+    }
+    let mut previous: Option<&ExpressionLocation> = None;
+    for term in &terms {
+        let location = term.location();
+        // Prove the checker's full path by induction over shared persistent
+        // ancestors, without expanding all checked paths. The cursor equality
+        // after the read compares the entire current path.
+        match family {
+            Family::Sum => {
+                if let Some(previous) = previous {
+                    assert!(location.parent().unwrap().shares_chain_with(previous));
+                    assert_eq!(location.last_index(), Some(0));
+                } else {
+                    assert_eq!(location.depth(), 0);
+                }
+            }
+            Family::Lets => {
+                let parent = location.parent().unwrap();
+                assert_eq!(location.last_index(), Some(0));
+                if let Some(previous) = previous {
+                    assert_eq!(parent.last_index(), Some(1));
+                    assert!(parent
+                        .parent()
+                        .unwrap()
+                        .shares_chain_with(&previous.parent().unwrap()));
+                } else {
+                    assert_eq!(parent.depth(), 0);
+                }
+            }
+        }
+        previous = Some(location);
+    }
+    // Only the wire bytes and the evidence outlive the checked graph, its
+    // terms and the emission, so the strict read below does not stack its
+    // working set on them.
+    let wire = emission.package().clone();
+    let evidence = emission.evidence().clone();
+    drop(terms);
+    drop(emission);
+    drop(package);
+    rss("released");
     let mut budget = NativeJoinBudget::new(limits.read_work, limits.storage)
         .with_read_storage_limit(limits.storage);
     let read_limits = CheckedPackageReadLimits {
@@ -194,10 +266,11 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         diagnostics: limits.shape + 4096,
         work: limits.read_work,
     };
+    rss("before-read");
     let admitted = match CheckedPackageV2::read_with_budget(
-        emission.package().bytes(),
+        wire.bytes(),
         read_limits,
-        emission.evidence(),
+        &evidence,
         &mut budget,
     ) {
         CheckedPackageV2BudgetedReadResult::Admitted(package) => package,
@@ -249,42 +322,24 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         }
     );
     assert_eq!(*index, 0);
+    rss("read");
     let mut cursor = admitted.body_locations(function, limits.locations).unwrap();
     let mut expected = Vec::with_capacity(count);
-    let mut previous: Option<&ExpressionLocation> = None;
-    for (visit, term) in terms.iter().enumerate() {
-        let location = term.location();
-        // Prove the checker's full path by induction over shared persistent
-        // ancestors, without expanding all checked paths. Cursor equality below
-        // compares the entire current path, not merely its last component.
+    for visit in 0..count {
         match family {
             Family::Sum => {
-                if let Some(previous) = previous {
-                    assert!(location.parent().unwrap().shares_chain_with(previous));
-                    assert_eq!(location.last_index(), Some(0));
+                if visit > 0 {
                     expected.push(CheckedKeyOrdinal::Safe(0));
-                } else {
-                    assert_eq!(location.depth(), 0);
                 }
             }
             Family::Lets => {
-                let parent = location.parent().unwrap();
-                assert_eq!(location.last_index(), Some(0));
-                if let Some(previous) = previous {
-                    assert_eq!(parent.last_index(), Some(1));
-                    assert!(parent
-                        .parent()
-                        .unwrap()
-                        .shares_chain_with(&previous.parent().unwrap()));
+                if visit > 0 {
                     expected.pop();
                     expected.push(CheckedKeyOrdinal::Safe(1));
-                } else {
-                    assert_eq!(parent.depth(), 0);
                 }
                 expected.push(CheckedKeyOrdinal::Safe(0));
             }
         }
-        previous = Some(location);
         let view = cursor
             .next_location()
             .unwrap()
@@ -306,32 +361,13 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
     assert!(cursor.next_location().unwrap().is_none());
     let location_work = cursor.work_consumed();
     assert!(location_work <= limits.locations);
+    rss("walked");
     eprintln!(
         "MEASURED family={family:?} count={count} bytes={actual_bytes} rows={} relative_entries={entries} strict_work={} strict_read_storage={read_storage} logical_storage={} location_work={location_work}",
         rows.len(),
         charged.work,
         charged.storage
     );
-    drop(cursor);
-    drop(admitted);
-    drop(emission);
-    if require_default_denial {
-        const DEFAULT: u64 = 16_777_216;
-        let failure = match crate::emit::emit_checked(&package, crate::EmitLimits::new(DEFAULT)) {
-            Err(failure) => failure,
-            Ok(_) => panic!("{family:?}: published default unexpectedly emitted"),
-        };
-        let EmitRefusal::OutputLimit(limit) = failure else {
-            panic!("{family:?}: expected OutputLimit")
-        };
-        assert_eq!(limit.setting(), fsl_foundation::Setting::EmitOutputBytes);
-        assert_eq!(limit.configured_bound(), DEFAULT);
-        assert_eq!(limit.actual(), u128::from(DEFAULT) + 1);
-        eprintln!(
-            "DEFAULT_DENIAL family={family:?} configured={DEFAULT} first_unpaid={}",
-            limit.actual()
-        );
-    }
 }
 
 fn on_small_stack(count: usize, default_denial: bool) {
@@ -402,7 +438,6 @@ fn row_preflight_names_the_first_unpaid_byte_and_legacy_whole_path_refuses() {
 #[trace("FR-531-AC-41", "TC-3133", "FSpec-FR-322-AC-510")]
 #[trace("TC-738", "FR-264-AC-8")]
 #[test]
-#[ignore = "QSL-2894: two 100,000-step families exceed the 12 GB queue watchdog (14.3 GB peak, 10m11s wall, killed); run this exact test in its named lane"]
 fn two_100000_step_families_measure_complete_wire_and_native_work() {
     on_small_stack(100_000, true);
 }
