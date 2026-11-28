@@ -489,8 +489,7 @@ pub(super) fn prepare(
         path: source.source().path(),
         bytes: source.source().text().as_bytes(),
     };
-    let parsed = fsl_replay::spine::parse_selecting_extensions(
-        intake.parser_context(),
+    let parsed = fsl_replay::spine::parse_selecting_extensions_context(
         &parse_request,
         fsl_replay::spine::ProfileCatalogInput {
             catalog: &extension_catalog,
@@ -498,6 +497,7 @@ pub(super) fn prepare(
         },
         limits.source,
         &cancel,
+        intake.parser_context(),
     )
     .map_err(failure)?
     .into_value();

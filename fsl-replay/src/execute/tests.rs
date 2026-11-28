@@ -695,7 +695,6 @@ fn tc_444_a_non_function_target_refuses_before_the_recompile() {
 #[trace("TC-759", "FR-278-AC-3")]
 #[test]
 fn tc_759_the_emitted_provision_replays_to_the_same_package() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = proved();
     let limits = SpineLimits::default();
     let cancel = filament_exact::Cancel::new();

@@ -24,7 +24,10 @@ fsl-eval = { path = "../fsl-eval" }
 # `deep_input`: the S1-to-S4 spine compile the deep-input fuzz target drives.
 fsl-replay = { path = "../fsl-replay" }
 # The model-check, state-graph, statistical and protocol axes (`src/mc.rs`).
-fsl-analyze = { path = "../fsl-analyze" }
+# The fsl-replay test route enables replay's test-support RunStats fields.
+# Keep the analysis crate's cfgs aligned while this benchmark-only crate is
+# built as fsl-replay's dev-dependency.
+fsl-analyze = { path = "../fsl-analyze", features = ["test-support"] }
 # The symmetry declaration a state-graph request carries.
 fsl-route = { path = "../fsl-route" }
 filament-exact = { workspace = true }

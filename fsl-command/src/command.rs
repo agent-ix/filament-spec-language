@@ -425,8 +425,7 @@ fn check_outcome_inner(
         }
         let extension_catalog = extension_catalog(&extensions, &mut intake)?;
         let cancel = filament_exact::Cancel::new();
-        let parsed = match fsl_replay::spine::parse_selecting_extensions(
-            intake.parser_context(),
+        let parsed = match fsl_replay::spine::parse_selecting_extensions_context(
             &fsl_replay::spine::ParseRequest {
                 source: source.source().identity(),
                 path: source.source().path(),
@@ -438,6 +437,7 @@ fn check_outcome_inner(
             },
             inputs.limits.source,
             &cancel,
+            intake.parser_context(),
         ) {
             Ok(parsed) => parsed.into_value(),
             Err(failure) => {
@@ -3135,6 +3135,8 @@ pub fn compile_outcome(path: &Path) -> std::result::Result<CompileOutcome, Box<R
         RunLimits::default(),
         &RequestOverrides::default(),
         false,
+        #[cfg(feature = "test-support")]
+        None,
     )
 }
 
@@ -3152,7 +3154,14 @@ pub fn compile_outcome_with_overrides(
     path: &Path,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_inner(path, RunLimits::default(), overrides, false)
+    compile_outcome_inner(
+        path,
+        RunLimits::default(),
+        overrides,
+        false,
+        #[cfg(feature = "test-support")]
+        None,
+    )
 }
 
 /// Compile with caller-configured request/dependent byte ceilings and request
@@ -3162,7 +3171,26 @@ pub fn compile_outcome_with_limits_and_overrides(
     run_limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_inner(path, run_limits, overrides, true)
+    compile_outcome_inner(
+        path,
+        run_limits,
+        overrides,
+        true,
+        #[cfg(feature = "test-support")]
+        None,
+    )
+}
+
+/// Compile with an explicit test observer passed through the complete emit route.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn compile_outcome_with_probe(
+    path: &Path,
+    run_limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    probe: &mut dyn fsl_package::test_support::EmitProbe,
+) -> std::result::Result<CompileOutcome, Box<RunError>> {
+    compile_outcome_inner(path, run_limits, overrides, true, Some(probe))
 }
 
 fn compile_outcome_inner(
@@ -3170,8 +3198,9 @@ fn compile_outcome_inner(
     run_limits: RunLimits,
     overrides: &RequestOverrides<'_>,
     request_limit_is_configured: bool,
+    #[cfg(feature = "test-support")] mut probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
+    let result = with_request_limits(path, run_limits.request_bytes, move |directory, bytes| {
         request_shape::admit(request_shape::Family::Compile, bytes)?;
         overrides::admit(overrides::RunRoute::Compile, overrides)?;
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
@@ -3318,6 +3347,8 @@ fn compile_outcome_inner(
             &sources,
             overrides.limits.map(|_| overrides.spine_limits()).as_ref(),
             integer_division,
+            #[cfg(feature = "test-support")]
+            probe.take(),
         )?;
         outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         if let Some(handoff) = &request.handoff {
@@ -3769,12 +3800,29 @@ fn complete(
     sources: &[FormalSource],
     supplied_limits: Option<&fsl_replay::spine::SpineLimits>,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
     let limits = supplied_limits.copied().unwrap_or_default();
     if sources.len() == 1 {
-        return complete_single(request, intake, &sources[0], limits, integer_division);
+        return complete_single(
+            request,
+            intake,
+            &sources[0],
+            limits,
+            integer_division,
+            #[cfg(feature = "test-support")]
+            probe,
+        );
     }
-    complete_units(request, intake, sources, limits, integer_division)
+    complete_units(
+        request,
+        intake,
+        sources,
+        limits,
+        integer_division,
+        #[cfg(feature = "test-support")]
+        probe,
+    )
 }
 
 fn complete_single(
@@ -3783,6 +3831,7 @@ fn complete_single(
     source: &FormalSource,
     limits: fsl_replay::spine::SpineLimits,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
     complete_sources(
         request,
@@ -3791,6 +3840,8 @@ fn complete_single(
         false,
         limits,
         integer_division,
+        #[cfg(feature = "test-support")]
+        probe,
     )
 }
 
@@ -3801,8 +3852,18 @@ fn complete_units(
     sources: &[FormalSource],
     limits: fsl_replay::spine::SpineLimits,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, sources, true, limits, integer_division)
+    complete_sources(
+        request,
+        intake,
+        sources,
+        true,
+        limits,
+        integer_division,
+        #[cfg(feature = "test-support")]
+        probe,
+    )
 }
 
 /// Shared request, dependency, parsing, and emission pipeline for one source
@@ -3815,6 +3876,7 @@ fn complete_sources(
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] mut probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
     check_sources(
         request,
@@ -3835,6 +3897,24 @@ fn complete_sources(
          inventory,
          failure| {
             let cancel = filament_exact::Cancel::new();
+            #[cfg(feature = "test-support")]
+            let result = if let Some(probe) = probe.as_deref_mut() {
+                fsl_replay::spine::package_with_temporal_selections_and_probe(
+                    &checked,
+                    selections,
+                    limits.package,
+                    &cancel,
+                    probe,
+                )
+            } else {
+                fsl_replay::spine::package_with_temporal_selections(
+                    &checked,
+                    selections,
+                    limits.package,
+                    &cancel,
+                )
+            };
+            #[cfg(not(feature = "test-support"))]
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
                 selections,
@@ -4095,8 +4175,7 @@ fn check_sources<T>(
     let parsed = parse_requests
         .iter()
         .map(|parse_request| {
-            fsl_replay::spine::parse_selecting_extensions(
-                intake.parser_context(),
+            fsl_replay::spine::parse_selecting_extensions_context(
                 parse_request,
                 fsl_replay::spine::ProfileCatalogInput {
                     catalog: &extension_catalog,
@@ -4104,6 +4183,7 @@ fn check_sources<T>(
                 },
                 limits.source,
                 &cancel,
+                intake.parser_context(),
             )
             .map(|stage| stage.into_value())
             .map_err(failure)
@@ -5193,8 +5273,7 @@ fn prepare_complete_run(
             bytes: source.source().text().as_bytes(),
         };
         let cancel = filament_exact::Cancel::new();
-        let parsed = fsl_replay::spine::parse_selecting_extensions(
-            intake.parser_context(),
+        let parsed = fsl_replay::spine::parse_selecting_extensions_context(
             &parse_request,
             fsl_replay::spine::ProfileCatalogInput {
                 catalog: &extension_catalog,
@@ -5202,6 +5281,7 @@ fn prepare_complete_run(
             },
             stage_limits.source,
             &cancel,
+            intake.parser_context(),
         )
         .map(|stage| stage.into_value())
         .map_err(

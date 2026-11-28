@@ -442,7 +442,6 @@ pub(in crate::spine) fn lookup_driver_context(
     filament_exact::ObjectReference,
     filament_exact::ObjectReference,
 ) {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_semantic_value::object_closure::ObjectClosure;
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::population::{
@@ -837,7 +836,6 @@ fn typed_model_values_bind_without_integer_coercion() {
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16")]
 fn tc_792_driver_returns_the_admitted_reference_identity() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = crate::spine::spine_model::unit();
     let bytes = unit.as_bytes();
     let packages =

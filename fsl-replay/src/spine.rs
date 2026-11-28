@@ -100,6 +100,8 @@ pub use lifecycle::{
     ProfileCheckInputs, ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport,
     TypeRequirement,
 };
+#[cfg(feature = "test-support")]
+pub use lifecycle::package_with_temporal_selections_and_probe;
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
     ExternalPackageBytes, UnitCheckOptions,

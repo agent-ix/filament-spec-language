@@ -65,7 +65,6 @@ fn document(document: &OutcomeDocument) -> Value {
 #[test]
 #[trace("TC-771", "FR-287-AC-10")]
 fn compilation_retains_the_actual_core_document_and_the_existing_artifact() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let directory = tempfile::tempdir().unwrap();
     let path = compile_request(directory.path(), PROGRAM);
     let actual = command::compile_outcome(&path).unwrap();
@@ -74,7 +73,7 @@ fn compilation_retains_the_actual_core_document_and_the_existing_artifact() {
     let identity = SourceIdentity::new("offered issuer", "offered:unit");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &identity,
             path: "program.native",
@@ -85,7 +84,7 @@ fn compilation_retains_the_actual_core_document_and_the_existing_artifact() {
     )
     .unwrap()
     .into_value();
-    let selected = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &cancel)
+    let selected = spine::select(&parsed, &Default::default(), limits.model, &cancel)
         .unwrap()
         .into_value();
     let checked = spine::check(

@@ -59,7 +59,7 @@ serde_json = "1.0.151"
 # and the candidate that `Por::ample` decides on. Only the dev-dependency on
 # this crate enables the feature; no shipped build has the methods.
 [features]
-test-support = []
+test-support = ["fsl-eval/test-support", "fsl-replay/test-support"]
 
 [dev-dependencies]
 fsl-definitional-reference = { path = "../fsl-definitional-reference" }

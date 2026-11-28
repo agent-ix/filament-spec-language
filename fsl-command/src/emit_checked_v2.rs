@@ -550,8 +550,7 @@ pub(crate) fn compile_inputs(
             Error::Producer(Box::new(ReplayRefusal::DomainPackages(Box::new(refused))))
         })?;
     let cancel = Cancel::new();
-    let parsed = spine::parse(
-        parser,
+    let parsed = spine::parse_with_context(
         &ParseRequest {
             source: &unit,
             path: &path,
@@ -559,6 +558,7 @@ pub(crate) fn compile_inputs(
         },
         limits.source,
         &cancel,
+        parser,
     )
     .map_err(refusal)?
     .into_value();
@@ -766,7 +766,8 @@ fn per_trace_clocks(checked: &CheckedUnit, clause: &str, span: fsl_foundation::S
 /// Emit the `filament.checked-package/v2` bytes of `request`'s source through
 /// the spine's parse, select, check and package operations.
 pub fn emit(request: &Request) -> Result<Vec<u8>, Error> {
-    Ok(compile(request)?.emitted.package().bytes().to_vec())
+    let parser = fsl_cst::ParserContext::new();
+    Ok(compile(&parser, request)?.emitted.package().bytes().to_vec())
 }
 
 /// Parse `arguments`, emit, and write the bytes to `--out` or `stdout`.

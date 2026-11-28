@@ -1663,7 +1663,6 @@ mod tests {
                 .expect("function name");
         let parser_context = fsl_cst::ParserContext::new();
         let site = crate::call_site(
-            &fsl_cst::ParserContext::new(),
             &parser_context,
             identity("unit"),
             crate::CallSiteUnit::new("fixture", "unit.native", source.as_bytes()),

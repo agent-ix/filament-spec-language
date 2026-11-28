@@ -149,7 +149,6 @@ pub fn check_native_fences(
     let fences = fsl_source::extract_native_fences(request.original, limits.extraction)
         .map_err(|error| StageFailure::Refused(FenceCheckCause::Extraction(error)))?;
     let mut results = Vec::with_capacity(fences.len());
-    let parser_context = fsl_cst::ParserContext::new();
     let mut work = StageWork::default();
     for fence in fences {
         if cancel.poll() {
@@ -212,19 +211,17 @@ pub fn check_native_fences(
             let checked = (|| {
                 let parsed = if let Some(catalog) = request.extensions {
                     super::parse_selecting_extensions(
-                        &parser_context,
                         &parse,
                         catalog,
                         limits.spine.source,
                         cancel,
                     )?
                 } else {
-                    super::parse(&parser_context, &parse, limits.spine.source, cancel)?
+                    super::parse(&parse, limits.spine.source, cancel)?
                 };
                 add_work(&mut work, parsed.work());
                 let parsed = parsed.into_value();
                 let models = super::select(
-                    &parser_context,
                     &parsed,
                     request.packages,
                     limits.spine.model,

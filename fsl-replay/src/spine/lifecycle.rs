@@ -2772,6 +2772,36 @@ pub fn package_with_temporal_selections(
     limits: PackageLimits,
     cancel: &Cancel,
 ) -> Result<Staged<EmittedUnit>, FrontEndFailure> {
+    package_with_temporal_selections_impl(
+        checked,
+        selections,
+        limits,
+        cancel,
+        #[cfg(feature = "test-support")]
+        None,
+    )
+}
+
+/// E4 test-support route using a caller-owned per-emission observer.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn package_with_temporal_selections_and_probe(
+    checked: &CheckedUnit,
+    selections: &[fsl_package::TemporalClockSelection],
+    limits: PackageLimits,
+    cancel: &Cancel,
+    probe: &mut dyn fsl_package::test_support::EmitProbe,
+) -> Result<Staged<EmittedUnit>, FrontEndFailure> {
+    package_with_temporal_selections_impl(checked, selections, limits, cancel, Some(probe))
+}
+
+fn package_with_temporal_selections_impl(
+    checked: &CheckedUnit,
+    selections: &[fsl_package::TemporalClockSelection],
+    limits: PackageLimits,
+    cancel: &Cancel,
+    #[cfg(feature = "test-support")] mut probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
+) -> Result<Staged<EmittedUnit>, FrontEndFailure> {
     stage(
         cancel,
         &|_| None,
@@ -2807,6 +2837,16 @@ pub fn package_with_temporal_selections(
                 .cloned()
                 .collect();
             let protocol_emission = charged(cancel, &mut work.e4, || {
+                #[cfg(feature = "test-support")]
+                if let Some(probe) = probe.as_deref_mut() {
+                    return fsl_package::emit_checked_with_protocol_results_and_temporal_selections_and_cancel_with_probe(
+                        &checked.package,
+                        &own,
+                        cancel,
+                        limits.emit(),
+                        probe,
+                    );
+                }
                 fsl_package::emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
                     &checked.package,
                     &own,

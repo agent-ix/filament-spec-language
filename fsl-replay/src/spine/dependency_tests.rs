@@ -612,7 +612,6 @@ fn the_source_bytes_limit_refuses_the_library_that_would_exceed_it() {
 #[trace("FR-091-AC-24", "TC-405")]
 #[test]
 fn the_assembler_refuses_only_the_unadmitted_import() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_semantics::check::{AdmittedImport, AssemblyCause, PackageDeclarations};
     let geometry = library("test/geometry", "geometry", F);
     let alone = compose(
@@ -630,7 +629,9 @@ fn the_assembler_refuses_only_the_unadmitted_import() {
         import("test/geometry", "g"),
         import("test/other", "o"),
     ));
+    let parser_context = fsl_cst::ParserContext::new();
     let parsed = fsl_cst::parse(
+        &parser_context,
         SourceIdentity::new("a", "u"),
         "u.native",
         source.as_bytes(),

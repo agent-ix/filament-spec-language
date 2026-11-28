@@ -360,7 +360,6 @@ mod tests {
         function: &str,
         identity: SourceIdentity,
     ) -> (OccurrenceKey, Vec<NodeKey>) {
-        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let limits = CallerLimits::default().spine;
         let cancel = Cancel::new();
         let parsed = spine::parse(

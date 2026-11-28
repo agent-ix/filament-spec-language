@@ -339,7 +339,6 @@ mod tests {
         function sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }\n";
 
     fn checked(test: impl FnOnce(&CheckedGraph)) {
-        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let source = SourceIdentity::new("a", "u");
         let limits = SpineLimits::default();
         let cancel = Cancel::new();

@@ -533,6 +533,7 @@ fn forms_refusal_is_attributed_to_its_declaration_and_source() {
             &super::HeldExtensions::default(),
             SourceLimits::default(),
             &cancel,
+            None,
         )
         .unwrap_or_else(|_| panic!("the source reaches the protocol-aware forms builder"))
     };
@@ -671,7 +672,6 @@ fn protocol_check_stage_with_packages(
     checking: CheckingLimits,
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
     let parsed = super::parse_for_continuation(&request(bytes), SourceLimits::default(), &cancel)
         .unwrap_or_else(|failure| panic!("protocol source parses: {failure:?}"))
@@ -2304,7 +2304,6 @@ fn syntax_refusal_does_not_suppress_clean_protocol_emission() {
 #[trace("FR-510-AC-5", "TC-1305")]
 #[test]
 fn a_continued_protocol_refusal_has_no_subject_or_partial_reference_rows() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = format!(
         "{HEADER}model M = \"acme/orders\";\n\
          function base using v(x: Int[0, 9]): Int[0, 10] pure {{ x + 1 }}\n\
@@ -2360,7 +2359,6 @@ fn a_continued_protocol_refusal_has_no_subject_or_partial_reference_rows() {
 #[trace("FR-098-AC-1")]
 #[test]
 fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = format!(
         "{HEADER}model M = \"acme/orders\";\n{}\n{}",
         protocol_source("W", true),
@@ -4852,7 +4850,6 @@ fn type_report_resolves_a_deep_body_without_rewalking_each_ancestry() {
 #[trace("TC-1784", "FR-098-AC-34")]
 #[test]
 fn the_recompile_checks_under_the_given_check_mode() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_semantic_value::checking::CheckMode;
     let unit = format!("{HEADER}function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
     let cancel = Cancel::new();
@@ -4911,7 +4908,6 @@ fn the_recompile_checks_under_the_given_check_mode() {
 /// raised, and the importing unit is never compiled.
 #[test]
 fn library_packages_are_charged_as_each_is_emitted() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let shapes = SuppliedLibrary {
         identity: "test/shapes".to_owned(),
         source: SourceIdentity::new("a", "shapes"),

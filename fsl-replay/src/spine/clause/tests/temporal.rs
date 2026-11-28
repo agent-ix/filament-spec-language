@@ -758,7 +758,13 @@ fn temporal_clock_selections(
     use fsl_forms::DeclarationForm;
     use fsl_package::{ClockConfiguration, TemporalClockSelection};
 
-    let parsed = fsl_cst::parse(identity.clone(), path, bytes, fsl_cst::Limits::default())
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
+        identity.clone(),
+        path,
+        bytes,
+        fsl_cst::Limits::default(),
+    )
         .expect("the test source parses");
     let unit = fsl_forms::build_unit(&parsed).expect("the test source forms");
     let profiles = &unit.selections().profiles;

@@ -167,14 +167,14 @@ fn package_failure(file: &str, error: fsl_package::PackageAdmissionRefusal) -> R
     if let Some(limit) = &error.limit {
         return RunCause::AnalyzePackage {
             code: error.code,
-            cause: error.reader_cause(),
+            cause: error.reader_cause().map(str::to_owned),
             pointer: error.pointer,
             message: format!("{file}: {limit}"),
         };
     }
     RunCause::AnalyzePackage {
         code: error.code,
-        cause: error.reader_cause(),
+        cause: error.reader_cause().map(str::to_owned),
         pointer: error.pointer.clone(),
         message: format!("{file}: {}", error.label()),
     }

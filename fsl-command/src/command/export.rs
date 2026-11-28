@@ -856,7 +856,7 @@ fn admission_cause(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     }
     RunCause::AnalyzePackage {
         code,
-        cause,
+        cause: cause.map(str::to_owned),
         pointer,
         message,
     }

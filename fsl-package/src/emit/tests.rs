@@ -299,6 +299,21 @@ fn emit_checked(package: &CheckedPackage) -> Result<Emission, EmitRefusal> {
     super::emit_checked(package, ceiling())
 }
 
+fn emit_checked_with_typed_graph(
+    package: &CheckedPackage,
+) -> (Emission, (Vec<filament_contract_model::CheckedSemanticNodeV2>, Vec<filament_contract_model::CheckedSourceMapEntry>)) {
+    let mut typed_graph = None;
+    let mut observer = |event: crate::test_support::EmitProbeEvent<'_>| {
+        if let crate::test_support::EmitProbeEvent::TypedGraph(nodes, map) = event {
+            typed_graph = Some((nodes.to_vec(), map.to_vec()));
+        }
+    };
+    let mut probe = crate::test_support::EmissionProbe::new(&mut observer);
+    let emission = super::emit_checked_with_probe(package, ceiling(), &mut probe)
+        .expect("the package emits");
+    (emission, typed_graph.expect("the observer received the typed graph"))
+}
+
 /// The entry with an explicit ceiling for a measured large fixture.
 fn emit_checked_with_limits(
     package: &CheckedPackage,
@@ -411,7 +426,7 @@ fn operand_slot_rows_preserve_the_retained_document_graph() {
         ceiling(),
     )
     .expect("the package emits");
-    assert_eq!(document_nodes(graph).unwrap(), typed);
+    assert_eq!(document_nodes(graph, &mut NoopEmitProbe).unwrap(), typed);
     assert!(matches!(read_back(&emission), Read::Verified { .. }));
 }
 
@@ -427,9 +442,11 @@ fn one_pass_operand_rewrite_preserves_package_bytes() {
     ));
 
     let one_pass = emit_checked(&package).expect("the package emits with one-pass rewrites");
-    let repeated = with_repeated_operand_rewrite(|| {
-        emit_checked(&package).expect("the package emits with repeated rewrites")
-    });
+    let mut events = |_: crate::test_support::EmitProbeEvent<'_>| {};
+    let mut probe = crate::test_support::EmissionProbe::new(&mut events);
+    probe.force_repeated_operand_rewrite();
+    let repeated = super::emit_checked_with_probe(&package, ceiling(), &mut probe)
+        .expect("the package emits with repeated rewrites");
 
     assert_eq!(one_pass.package().bytes(), repeated.package().bytes());
 }
@@ -472,7 +489,7 @@ fn operand_slot_numbering_visits_only_identity_paths_in_canonical_order() {
         graph_version: GRAPH_V2.into(),
         nodes,
         operand_rows: rows,
-    })
+    }, &mut NoopEmitProbe)
     .unwrap();
     assert_eq!(restored[0].body, foreign);
     let mut authored = json!({"semantic_graph": {"nodes": restored}});
@@ -1330,6 +1347,7 @@ fn written_nodes(package: &CheckedPackage) -> Vec<Value> {
         &mut [],
         &mut [],
         &ForeignNodes::default(),
+        &mut NoopEmitProbe,
     )
     .expect("every operand is written");
     nodes
