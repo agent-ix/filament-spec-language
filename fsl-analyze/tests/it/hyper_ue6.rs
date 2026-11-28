@@ -649,7 +649,7 @@ fn a_closed_atom_at_a_position_is_read_before_that_positions_contract() {
         &universal(
             "ep",
             "",
-            "always [0, 3] holds(quotient(1 - v.l @ a) >= 0 and quotient(1 - v.l @ b) >= 0)",
+            "eventually [0, 3] holds(quotient(1 - v.l @ a) < 0 and quotient(1 - v.l @ b) < 0)",
         ),
     );
     assert!(
@@ -664,7 +664,7 @@ fn a_closed_atom_at_a_position_is_read_before_that_positions_contract() {
 /// subject models.
 fn settled_two(world: &World) -> (HyperOutcome, String) {
     let outcome = world
-        .run(ModelCheckLimits::default(), &Cancel::new())
+        .run_selecting(fsl_route::reductions::Reductions::default())
         .expect("not refused");
     let record = fsl_replay::settle_hyper_check(
         &outcome,
@@ -724,7 +724,11 @@ fn first_read(a_inputs: &[i64], b_inputs: &[i64]) -> (ClosedLocus, u64) {
         GUARDED,
         false,
         &[(0, 0)],
-        &universal("ep", "", "always [0, 3] holds(quotient(1 - v.l @ b) >= 0)"),
+        &universal(
+            "ep",
+            "",
+            "eventually [0, 3] holds(quotient(1 - v.l @ b) < 0)",
+        ),
         QUOTIENT,
     );
     let seams = world.seams();
