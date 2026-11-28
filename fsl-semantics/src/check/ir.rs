@@ -1484,6 +1484,30 @@ mod tests {
         assert_eq!(visited, [NodeId(8), NodeId(3)]);
     }
 
+    /// Child access exposes direct operands as an exact-size iterator.
+    #[trace("NFR-141-AC-6")]
+    #[test]
+    fn checked_children_iterate_direct_operands_in_order() {
+        let node = |kind| Node {
+            kind,
+            value_type: ValueType::Integer,
+            location: Location::root(Origin::Expression),
+            equality_producer: None,
+            field_population: None,
+            equality_range_context: None,
+            type_argument: None,
+            binder_annotation: None,
+        };
+        let mut builder = BodyBuilder::default();
+        let child = builder.push(node(NodeKind::Local(0)));
+        let body = builder.finish(node(NodeKind::Negate(child)));
+
+        let mut children = body.root().children();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children.next().expect("one direct operand").id(), child);
+        assert!(children.next().is_none());
+    }
+
     /// FR-258 behaviour 2: a 100,000-deep checked body clones, compares
     /// equal to its clone and unequal to a body differing at its deepest
     /// node, walks every node, formats for debug and drops on a 512 KiB
