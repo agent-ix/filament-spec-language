@@ -1350,7 +1350,10 @@ mod tests {
     fn the_production_incomplete_admit_item_reads_as_an_incomplete_clause_run() {
         use fsl_semantics::model::observation::AdmissionFailure;
         let failure = fsl_replay::spine::ValueInvariantsBatchFailure::Admission(
-            AdmissionFailure::Incomplete(admission_record("missing_evidence", "missing")),
+            AdmissionFailure::Incomplete(admission_record(
+                "incomplete_population",
+                "incomplete-scope",
+            )),
         );
         let (items, exit) = value_invariant_items(Err(failure)).expect("an incomplete item");
         assert_eq!(exit, 22);
@@ -1358,7 +1361,7 @@ mod tests {
         assert_eq!(document["disposition"]["category"], "incomplete");
         assert_eq!(
             document["disposition"]["refusal"]["code"],
-            "missing_evidence"
+            "incomplete_population"
         );
         assert!(document["disposition"].get("truth").is_none());
         let read = read_clause(&document);
