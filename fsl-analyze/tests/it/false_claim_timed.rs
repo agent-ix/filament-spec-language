@@ -1,22 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-1051 AC-16/AC-17 seeds on the timed routes. Each seed is a hand-forged,
-//! structurally self-consistent certificate for a false claim, and the
-//! package entry `check_probability_certificate_package` (which recompiles the
-//! model from bytes and takes no producer object) must reject it by a
-//! semantic rule. The truth of each claim is computed by the definitional
-//! reference from the checked package, never by the analyzer.
+//! FR-1051 AC-16/AC-17 seeds on the timed routes. Each seed is a forged,
+//! structurally self-consistent certificate for a false claim that the
+//! checker must reject by a semantic rule. The truth of each claim is
+//! computed by the definitional reference from the checked package, never by
+//! the analyzer.
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, AnalyzeRecord, Engines, SourceProvision,
+    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
+    Engines,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
-use fsl_replay::{
-    ExactProbabilityCertificateCheck, ProbabilityCertificateRejection, ProbabilityCertificateRule,
-    TerminalValue,
-};
+use fsl_replay::{CertificateRule, ExactProbabilityCertificate, InconclusiveCause, TerminalValue};
 
 use crate::timed_world::{self, World};
 
@@ -60,89 +57,6 @@ pub(crate) fn is_proved(record: &AnalyzeRecord) -> bool {
         record.terminal().map(|terminal| terminal.value()),
         Some(TerminalValue::Proved { .. })
     )
-}
-
-fn document_limits() -> fsl_replay::ProbabilityDocumentLimits {
-    fsl_replay::ProbabilityDocumentLimits {
-        bytes: 1_000_000,
-        storage_bytes: 8_000_000,
-        states: 4096,
-        edges: 65_536,
-        scalar_bits: 128,
-        accounting: fsl_replay::AccountingLimits::default().0,
-    }
-}
-
-/// The checker's verdict on `certificate` for `claim`, through the package
-/// entry: the emitted package bytes, the byte provision of the source and the
-/// domain documents, and the claim identity. No analyzer or producer value
-/// is passed.
-pub(crate) fn package_check(
-    world: &World,
-    claim: &str,
-    certificate: &[u8],
-) -> Result<ExactProbabilityCertificateCheck, fsl_replay::ProbabilitySourceError> {
-    let emitted = fsl_package::emit_checked(
-        &world.package,
-        fsl_replay::spine::SpineLimits::default().package.emit(),
-    )
-    .expect("the checked package emits");
-    let simulation = world.request();
-    let provision_source = SourceProvision::single(world.package.graph().source(), &world.unit);
-    let mut documents = vec![world.document.clone()];
-    documents.extend(world.snapshots.values().cloned());
-    let provision = fsl_replay::ByteProvision::admit(
-        provision_source
-            .entries()
-            .map(|(authority, identity, bytes)| {
-                (authority.to_owned(), identity.to_owned(), bytes.to_vec())
-            })
-            .collect(),
-        documents,
-        std::iter::empty(),
-    )
-    .expect("the provision admits");
-    let item = fsl_replay::probabilistic_claim_identity(
-        world
-            .package
-            .graph()
-            .probabilistic_model()
-            .claim(claim)
-            .expect("the claim checks"),
-    )
-    .expect("the claim has an identity");
-    fsl_replay::check_probability_certificate_package(
-        fsl_replay::ProbabilityPackageRequest {
-            package: emitted.package().bytes(),
-            package_name: Some("package"),
-            provision: &provision,
-            item: &item,
-            initial: simulation.initial.clone(),
-            universes: simulation.universes.clone(),
-            certificate,
-            role: fsl_replay::CertificateRole::Claim,
-        },
-        fsl_replay::ProbabilitySourceLimits {
-            spine: fsl_replay::spine::SpineLimits::default(),
-            observation: simulation.observation,
-            expansion: simulation.expansion,
-            scalar: simulation.meter,
-            document: document_limits(),
-        },
-        &Cancel::new(),
-    )
-}
-
-pub(crate) fn rejection_rule(
-    checked: Result<ExactProbabilityCertificateCheck, fsl_replay::ProbabilitySourceError>,
-) -> ProbabilityCertificateRule {
-    match checked {
-        Ok(ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
-            rule,
-            ..
-        })) => rule,
-        other => panic!("expected a semantic rejection, got {other:?}"),
-    }
 }
 
 /// QSL-3444's model: `first` is guarded by `x in (0, 1) ms` and resets `x`;
@@ -196,55 +110,53 @@ fn seed_qsl_3444_the_reference_fires_the_strict_witness_and_analysis_does_not_pr
     assert!(!is_proved(&settle(&falsity, "Max")), "value 1 exceeds 1/2");
 }
 
-/// FR-1051-AC-17, seed QSL-3444, the checker half. Expected: the package
-/// entry rejects a self-consistent value-0 certificate of the falsity world's
-/// graph with a semantic rule. It is ignored because no self-consistent
-/// certificate of that graph can be built yet: the checker compares the
-/// certificate's `targets` with the target keys of its own graph before it
-/// reads a value (`document/timed.rs`, `replay_targets != document.targets`),
-/// so the proof of any other model ends in `ObjectiveMismatch`, a document
-/// refusal that AC-16 does not accept, and the producer reaches its
-/// certificate step only for a claim that holds. Needed: a producer hook that
-/// writes the certificate of the falsity world's own graph (its keys and
-/// targets) so a test can set the values to 0.
+/// The settlement of `claim` where the certificate of the claim's own graph
+/// is built even though the bound fails and `tamper` alters it.
+fn settle_tampered(
+    world: &World,
+    claim: &str,
+    tamper: impl Fn(&mut ExactProbabilityCertificate),
+) -> AnalyzeRecord {
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = exact_probabilistic_item_tampered(
+        RequestIndex::new(0),
+        product_request(world, claim),
+        tamper,
+    );
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
+}
+
+/// FR-1051-AC-17, seed QSL-3444, the checker half. The falsity world's claim
+/// is false (value 1, above). The certificate of that world's own graph, with
+/// every value set to 0 as the wrong maximum the bug produced, is
+/// structurally self-consistent: the same states, targets and objective. The
+/// checker rejects it by `InequalityFails`, a one-step equation that does not
+/// hold: a target state must be worth 1, and the claim does not settle
+/// `proved`.
 #[test]
-#[ignore = "QSL-3550: no certificate of the falsity world's own graph can be built; see the doc comment"]
 fn seed_qsl_3444_a_certificate_of_maximum_zero_is_rejected_for_the_strict_two_clock_claim() {
     let falsity = two_clock_world("1 ms");
-    let truth = two_clock_world("3 ms");
-    let record = settle(&truth, "Max");
+    let record = settle_tampered(&falsity, "Max", |certificate| {
+        for entry in &mut certificate.values {
+            entry.value = rational(0, 1);
+        }
+    });
+    let terminal = record.terminal().expect("the claim settles");
     assert!(
-        is_proved(&record),
-        "a model whose third cannot fire has maximum 0"
-    );
-    let proof = record
-        .terminal()
-        .and_then(|terminal| terminal.exact_certificate_document())
-        .expect("the proof of the maximum-zero model has a certificate")
-        .to_vec();
-    // Self-consistent for the falsity world's claim: only the claim identity
-    // is retargeted, as a forger would, so the checker reaches its rules.
-    let mut candidate =
-        fsl_replay::read_probability_certificate(&proof, document_limits(), &Cancel::new())
-            .expect("the proof is a canonical certificate document");
-    candidate.identity = fsl_replay::probabilistic_claim_identity(
-        falsity
-            .package
-            .graph()
-            .probabilistic_model()
-            .claim("Max")
-            .expect("the claim checks"),
-    )
-    .expect("the claim has an identity");
-    let forged =
-        fsl_replay::write_probability_certificate(&candidate, document_limits(), &Cancel::new())
-            .expect("the retargeted certificate is well formed");
-    assert!(matches!(
-        package_check(&truth, "Max", &proof),
-        Ok(ExactProbabilityCertificateCheck::Accepted(_))
-    ));
-    assert_eq!(
-        rejection_rule(package_check(&falsity, "Max", &forged)),
-        ProbabilityCertificateRule::Malformed,
+        matches!(
+            terminal.value(),
+            TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::InequalityFails,
+                ..
+            })
+        ),
+        "the value-0 certificate of the falsity world is rejected by a semantic rule: {:?}",
+        terminal.value()
     );
 }
