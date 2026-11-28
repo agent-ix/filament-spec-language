@@ -13,7 +13,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 
 use super::application::OperationRef;
 use super::frames;
-use super::walk::{walk_of, Budget};
+use super::walk::{walk_of, CandidateCount};
 
 /// One field of one object of a model state: the population and key that
 /// hold the object, and the field's declaration key and name.
@@ -80,7 +80,7 @@ impl ModelSystem<'_> {
     ) -> Result<Vec<ModelTransition>, ExpansionStop> {
         let mut walk = walk_of(self, state, None)?;
         walk.rows.extend(absent_rows(self, state));
-        let mut budget = Budget::new(self.limits.max_candidates);
+        let mut budget = CandidateCount::new(self.limits.max_candidates);
         let mut found = Vec::new();
         for row in &walk.rows {
             if let Some(application) = self.application_at(row, operation) {

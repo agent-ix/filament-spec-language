@@ -450,7 +450,7 @@ pub fn check_protocol_initial(
         concrete_initial,
         max,
         consumed,
-        None,
+        Some(&protocol.replay_retained()),
     )?;
     protocol.charge_replay_transitions(result.abstract_successors);
     Ok(result)
@@ -579,7 +579,7 @@ pub fn check_protocol_step(
         step,
         max,
         consumed,
-        None,
+        Some(&protocol.replay_retained()),
     );
     protocol.charge_replay_transitions(result.abstract_successors);
     result
@@ -1335,7 +1335,7 @@ fn make_protocol_trace(
 pub const PROTOCOL_CLOSURE_PATH_OVERHEAD_BYTES: u64 = 256;
 
 /// The charged bytes for one newly retained shared protocol path node.
-fn closure_path_node_bytes(candidate_key: &[u8]) -> u64 {
+pub(crate) fn closure_path_node_bytes(candidate_key: &[u8]) -> u64 {
     let key_bytes = u64::try_from(candidate_key.len()).unwrap_or(u64::MAX);
     let transition_bytes = u64::try_from(std::mem::size_of::<
         fsl_eval::simulation::protocol::ProtocolTransition,

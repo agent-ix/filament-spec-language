@@ -369,8 +369,8 @@ pub use model_check::outcome::{
 };
 pub use model_check::refinement_replay::{
     replay_free_delay_refinement_trace, replay_protocol_assumption_witness,
-    replay_refinement_trace, replay_timed_refinement_trace, ProtocolAssumptionReplaySettlement,
-    RefinementTraceSettlement,
+    replay_refinement_trace, replay_refinement_trace_retained, replay_timed_refinement_trace,
+    ProtocolAssumptionReplaySettlement, RefinementTraceSettlement,
 };
 pub use model_check::refinement_settle::{
     settle_refinement, settle_refinement_refusal, settle_refinement_safety,

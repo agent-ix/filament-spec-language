@@ -130,8 +130,8 @@ use fsl_replay::{
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use ix_trace_rs::implements;
+use quire_canonical as canonical_api;
 use quire_canonical::{Encode, Sink, Writer};
-use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
@@ -971,23 +971,6 @@ impl Encode for PropertyKey {
         &self,
         writer: &mut Writer<'_, S>,
     ) -> Result<(), quire_canonical::Error> {
-        writer.begin_array()?;
-        match self {
-            Self::After(index) => {
-                writer.string("after")?;
-                writer.integer(i128::try_from(*index).unwrap_or(i128::MAX))?;
-            }
-            Self::Undefined => writer.string("undefined")?,
-        }
-        writer.end_array()
-    }
-}
-
-impl canonical_api::Encode for PropertyKey {
-    fn encode_into<S: canonical_api::Sink + ?Sized>(
-        &self,
-        writer: &mut canonical_api::Writer<'_, S>,
-    ) -> Result<(), canonical_api::Error> {
         writer.begin_array()?;
         match self {
             Self::After(index) => {
