@@ -494,14 +494,21 @@ fn materialize_inner(
         source_key = post_key;
         state = post;
     }
-    let locus = match path.read {
-        UndefinedRead::FractionValue => fsl_replay::UndefinedLocus::FractionValue,
-        UndefinedRead::Atom(atom) => fsl_replay::UndefinedLocus::Atom(atom),
-        UndefinedRead::Predicate(role) => fsl_replay::UndefinedLocus::ClaimPredicate(match role {
-            PredicateRole::From => fsl_replay::ClaimPredicate::From,
-            PredicateRole::Until => fsl_replay::ClaimPredicate::Until,
-            PredicateRole::Target => fsl_replay::ClaimPredicate::Target,
-        }),
+    let (locus, guarded) = match &path.read {
+        UndefinedRead::FractionValue => (fsl_replay::UndefinedLocus::FractionValue, None),
+        UndefinedRead::Atom(atom) => (fsl_replay::UndefinedLocus::Atom(*atom), None),
+        UndefinedRead::Predicate(role) => (
+            fsl_replay::UndefinedLocus::ClaimPredicate(match role {
+                PredicateRole::From => fsl_replay::ClaimPredicate::From,
+                PredicateRole::Until => fsl_replay::ClaimPredicate::Until,
+                PredicateRole::Target => fsl_replay::ClaimPredicate::Target,
+            }),
+            None,
+        ),
+        UndefinedRead::Contract(contract) => (
+            fsl_replay::UndefinedLocus::Contract(contract.clause.clone()),
+            contract.guard_of.clone(),
+        ),
     };
     let product_state = if path.steps.is_empty() {
         initial_key.clone()
@@ -533,7 +540,7 @@ fn materialize_inner(
                     position: path.position,
                     state_key: path.state_key.clone(),
                     locus,
-                    transition: None,
+                    transition: guarded,
                     time: None,
                 },
                 cause: path.cause.clone(),

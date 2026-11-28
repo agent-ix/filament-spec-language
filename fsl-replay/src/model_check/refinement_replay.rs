@@ -1328,6 +1328,45 @@ fn settle_positions(
             StepVerdict::Fault(_) => return Err(fault("refinement-step")),
         }
     }
+    // A contract conjunction of the concrete model with no value at the
+    // trace's last state (ADR-018 UE-6): every step passed, and the state's
+    // own expansion is the one that refutes.
+    if matches!(found, Found::Nothing)
+        && matches!(
+            &payload.kind,
+            CounterexampleKind::UndefinedEvaluation(claimed)
+                if matches!(claimed.site.locus, UndefinedLocus::Contract(_))
+        )
+    {
+        if let Some(last) = positions.last() {
+            match systems.concrete.successors(&last.state) {
+                Ok(expansion) => {
+                    if let Some(contract) = expansion
+                        .findings
+                        .iter()
+                        .find_map(ModelFinding::undefined_contract)
+                    {
+                        let Ok((bytes, _)) = systems
+                            .concrete
+                            .state_key(&last.state, fsl_foundation::IdentityLimits::default())
+                        else {
+                            return Err(fault("concrete-state-encodes"));
+                        };
+                        found = Found::Undefined(Box::new(UndefinedEvaluation::of_contract(
+                            u64::try_from(positions.len().saturating_sub(1)).unwrap_or(u64::MAX),
+                            fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+                            contract,
+                        )));
+                    }
+                }
+                Err(stop) => match stop_verdict(&systems.concrete, stop) {
+                    StepVerdict::Stopped(reached) => found = Found::Stopped(reached),
+                    StepVerdict::Undetermined(_) => found = Found::Undetermined,
+                    _ => return Err(fault("concrete-contract-expansion")),
+                },
+            }
+        }
+    }
     if let Some(lasso) = payload.lasso.as_ref() {
         if let Some(RefinementFailure::Divergence {
             protocol_class: Some(class),
@@ -1377,6 +1416,21 @@ fn settle_positions(
                             position: evaluation.site.position,
                             row: site.row.clone(),
                         }) =>
+            {
+                RefinementTraceSettlement::Reproduced {
+                    failure: recorded.clone(),
+                    mapped,
+                }
+            }
+            (
+                CounterexampleKind::UndefinedEvaluation(claimed),
+                UndefinedLocus::Contract(clause),
+            ) if claimed == evaluation.as_ref()
+                && *recorded
+                    == (RefinementFailure::UndefinedContract {
+                        position: evaluation.site.position,
+                        clause: clause.clone(),
+                    }) =>
             {
                 RefinementTraceSettlement::Reproduced {
                     failure: recorded.clone(),

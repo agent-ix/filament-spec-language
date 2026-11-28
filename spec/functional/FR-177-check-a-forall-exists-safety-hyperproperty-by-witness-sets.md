@@ -109,6 +109,12 @@ partner has failed.
   undefined evaluation of that member's component (ADR-018 UE-6): the
   counterexample is the `undefined` kind whose paths end at the member's
   tuple, with the locus `contract` naming the existential component alone.
+  When several existential partners have an undefined expression, the
+  engine reports the one whose undefined position is earliest (shortest
+  prefix first, ADR-018 UE-4), the first of them in the partner list on a
+  tie. Every partner is read: a holding partner listed before or after an
+  undefined one does not witness, and the verdict does not depend on the
+  order of the partners.
 - When the evaluation is on the universal side at a product state whose `X`
   is not empty, the existential variables' paths SHALL be the path of the
   first member of `X` in `X`'s sorted order, which ends at that member's
@@ -226,6 +232,7 @@ Findings are ranked within one instance only.
 | FR-177-AC-10 | `Opaque` over the secure vault with the added `match` conjunct `(if present(a.step.Vault::step.i) then q(value(a.step.Vault::step.i)) else 0) = 0` (`q` is AC-5's Kernel-checked function, FR-495-AC-3, FR-952) on the universal variable `a`: the item returns `Violated` with an `Undefined` counterexample at position 1 with cause `division-by-zero`, whose trace for `a` takes `step(0)` and whose trace for `b` is the first member's path, from the initial state `(1, 0)` with no step, one step short of `a`'s; `variables` and `state_keys` hold two entries. With a second universal variable `c` before `b` they hold three, in the order `a`, `c`, `b`. | Test (TC-602) |
 | FR-177-AC-11 | Each instance is decided on its own findings, and the item takes the first refuted instance in order. With two instances, `v` first and `w`: when both end at the undefined `μ_E` of AC-5 at position 1, the run returns `v`'s counterexample. When `v` is violated at position 0 by an empty `X` and `w` has an atom with no value at position 0, the run returns `v`'s `WitnessExhausted` counterexample, and a `max_states` under which a run of `v` alone returns `Violated` returns `v`'s `Violated` for both. When `v` is violated at position 1 and `w` at position 0, the run returns `v`'s counterexample at position 1. When `v`'s `X_0` has a member, `w`'s `X_0` is empty with a fair universal cycle and `max_witness_set` is 0, so that `v` stops on `MaxWitnessSet`, the run returns `w`'s `Violated`, not `v`'s `Stopped`. | Test (TC-602) |
 | FR-177-AC-12 | `Opaque` over the secure vault from the one initial state `(0, 0)`, where both variables share the secret so `X_0` is empty, with a `μ_U` conjunct that has no value on every joint step, is refused with `HyperRefusal::NoPartnerPath` and returns no outcome. With a second instance whose empty `X` is at the same position as the refusal: when the refusing instance is first in order, the refusal ends the item; when the other instance is first, the item returns its `Violated`. | Test (TC-602) |
+| FR-177-AC-13 | Over the closed event-position form `forall` `exists`, one existential partner of a universal tuple holds and another has an atom with no value at position 1: the tuple refutes with the undefined atom at position 1 whether the holding partner is listed before or after the undefined one, and no holding partner witnesses it. | Test (TC-2243) |
 
 ## Dependencies
 

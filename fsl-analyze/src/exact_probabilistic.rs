@@ -596,7 +596,7 @@ impl ProbProduct {
 }
 
 /// The predicate of a claim an undefined reading names.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UndefinedRead {
     /// The tentative value of a completed weighted fraction.
     FractionValue,
@@ -604,6 +604,10 @@ pub enum UndefinedRead {
     Atom(FormulaNodeId),
     /// A state predicate of the claim's measure or unbounded form.
     Predicate(PredicateRole),
+    /// A contract conjunction of the model, a precondition guard included,
+    /// that the state's expansion evaluated with no value (ADR-018 UE-6): the
+    /// claim need not read the state for it to refute.
+    Contract(Box<fsl_eval::simulation::model::UndefinedContract>),
 }
 
 /// Which predicate of a claim a state predicate is.

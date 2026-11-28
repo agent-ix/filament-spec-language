@@ -1249,17 +1249,14 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
         // The forms and subjects EN-1 does not decide yet: a liveness or
         // refinement form, a protocol refinement or abstract side, a liveness
-        // clause over an `ra` `parallel`, and an undefined read on a closed tuple.
+        // clause over an `ra` `parallel`.
         ModelCheckRefusal::ProtocolRefinement
         | ModelCheckRefusal::FormNotDecided { form: Some(_) }
         | ModelCheckRefusal::WeakLiveness
         | ModelCheckRefusal::ProtocolAbstractSide
-        | ModelCheckRefusal::Hyper(
-            HyperRefusal::ClosedUndefined
-            | HyperRefusal::FormNotDecided {
-                form: Some(fsl_semantics::check::HyperForm::Other { .. }),
-            },
-        ) => Refusal::Unsupported(NOT_YET),
+        | ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+            form: Some(fsl_semantics::check::HyperForm::Other { .. }),
+        }) => Refusal::Unsupported(NOT_YET),
         // Characterization only: FR-337-AC-12 requires CaptureRead to produce
         // no engine verdict. These assertions document the current mapping of
         // that refusal, an undefined hyper constraint and missing form data;
@@ -1586,7 +1583,6 @@ mod tests {
             ModelCheckRefusal::FormNotDecided {
                 form: Some(filament_semantic_value::fairness::PropertyForm::Liveness),
             },
-            ModelCheckRefusal::Hyper(HyperRefusal::ClosedUndefined),
             ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
                 form: Some(fsl_semantics::check::HyperForm::Other {
                     reason: fsl_semantics::check::HyperUnsupported::ExistentialBeforeUniversal,

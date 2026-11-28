@@ -2213,11 +2213,39 @@ impl Run<'_, '_> {
     }
 
     /// Check every edge out of node `at`, in canonical order.
+    #[implements("FR-142-AC-9")]
     fn expand(&mut self, at: usize) -> Result<(), End> {
         let expansion = self
             .concrete
             .successors(&self.nodes[at].state)
             .map_err(|stop| self.expansion_stop(stop))?;
+        // A contract conjunction with no value at a reachable concrete state
+        // refutes the refinement (ADR-018 UE-6, ADR-020 RE-5), whatever the
+        // fairness set reads; only a refused one is undecided below.
+        if let Some(contract) = expansion
+            .findings
+            .iter()
+            .find_map(ModelFinding::undefined_contract)
+        {
+            let (bytes, _) = Self::encoding(self.concrete.state_key(
+                &self.nodes[at].state,
+                fsl_foundation::IdentityLimits::default(),
+            ))?;
+            let position = u64::try_from(self.nodes[at].depth).unwrap_or(u64::MAX);
+            let clause = contract.clause.clone();
+            let evaluation = fsl_replay::UndefinedEvaluation::of_contract(
+                position,
+                fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+                contract,
+            );
+            return Err(End::Violated(Box::new(Failure {
+                from: Some(at),
+                edge: None,
+                initial_index: self.nodes[at].initial_index,
+                failure: RefinementFailure::UndefinedContract { position, clause },
+                kind: CounterexampleKind::UndefinedEvaluation(evaluation),
+            })));
+        }
         if let Some((transition, clause)) = expansion.findings.iter().find_map(|finding| {
             let ModelFinding::ContractUndetermined {
                 transition, clause, ..
@@ -2523,6 +2551,7 @@ impl Run<'_, '_> {
 
     /// The position and `Taken` a passing verdict gives, or the end the
     /// verdict is.
+    #[implements("FR-142-AC-9")]
     fn judge(
         &self,
         verdict: StepVerdict,
@@ -2543,18 +2572,23 @@ impl Run<'_, '_> {
             StepVerdict::Passes { post, taken } => Ok((*post, *taken)),
             StepVerdict::Fails(failure) => Err(failed(*failure, CounterexampleKind::Formula)),
             StepVerdict::Undefined(evaluation) => {
-                let row = match &evaluation.site.locus {
-                    fsl_replay::UndefinedLocus::Mapping(site) => site.row.clone(),
+                let failure = match &evaluation.site.locus {
+                    fsl_replay::UndefinedLocus::Mapping(site) => RefinementFailure::Undefined {
+                        position: evaluation.site.position,
+                        row: site.row.clone(),
+                    },
+                    fsl_replay::UndefinedLocus::Contract(clause) => {
+                        RefinementFailure::UndefinedContract {
+                            position: evaluation.site.position,
+                            clause: clause.clone(),
+                        }
+                    }
                     _ => {
                         return Err(End::Fault(InternalFault::new(
                             "refinement-check",
                             "an-undefined-mapping-names-its-row",
                         )));
                     }
-                };
-                let failure = RefinementFailure::Undefined {
-                    position: evaluation.site.position,
-                    row,
                 };
                 Err(failed(
                     failure,

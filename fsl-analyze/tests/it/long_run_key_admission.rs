@@ -255,7 +255,9 @@ fn producer_cancellation_observes_real_larger_candidate_representation() {
                 "the owner must consult the caller for a larger frame candidate"
             );
             match (cause,result) {
-            (None,Err(BudgetedProductError::Product(fsl_analyze::exact_probabilistic::ProductRefusal::UndecidedSuccessor(_))))=>{},
+            // The fixture's post `1 mod 0` has no value, so the uncancelled
+            // build ends on the undefined contract (ADR-018 UE-6).
+            (None,Err(BudgetedProductError::Undefined(_)))=>{},
             (Some(cause),Err(BudgetedProductError::Key(error)))=>assert_eq!(budget.inner.refusal(error),ProbabilityDocumentError::Cancelled(cause)),
             (Some(cause),Err(BudgetedProductError::Product(fsl_analyze::exact_probabilistic::ProductRefusal::Stopped(fsl_analyze::exact_probabilistic::ProductStop::Cancelled(actual)))))=>assert_eq!(actual,cause),
             (cause,other)=>panic!("candidate control {cause:?} must retain actual undecided/cancellation semantics, got {other:?}"),
