@@ -487,6 +487,16 @@ struct Violation {
 }
 
 impl Finish {
+    /// Whether this end gives way to a refutation the run already found: an
+    /// undecided successor, a bound or a limit does; a cancellation does not
+    /// (ADR-023 HV-8).
+    fn yields_to_refutation(&self) -> bool {
+        !matches!(
+            self,
+            Self::Violated(_) | Self::Stopped(IncompleteCause::Cancelled { .. }, _)
+        )
+    }
+
     fn violated(kind: CounterexampleKind, at: usize, binding: Option<ModelInstance>) -> Self {
         Self::Violated(Box::new(Violation { kind, at, binding }))
     }
@@ -1840,17 +1850,11 @@ fn check_reduced(
                 }
             }
             Err(Halt::Refusal(refusal)) => return Err(refusal),
-            Err(Halt::Finish(Finish::Undecided(cause))) => {
-                return Ok(ModelCheckOutcome::Undecided {
-                    cause,
-                    stats: total,
-                });
-            }
-            // A refutation this plan found within its budget wins over a
-            // limit that ended the search after it; only a cancellation
-            // overrides it (ADR-023 HV-8).
-            Err(Halt::Finish(Finish::Stopped(cause, _)))
-                if !matches!(cause, IncompleteCause::Cancelled { .. })
+            // A refutation this plan found within its budget wins over an
+            // undecided successor, a bound or a limit that ended the search
+            // after it; only a cancellation overrides it (ADR-023 HV-8).
+            Err(Halt::Finish(ref finish))
+                if finish.yields_to_refutation()
                     && run.first_bad.is_some()
                     && !run.has_unresolved_local_access() =>
             {
@@ -1885,6 +1889,12 @@ fn check_reduced(
                     }
                     Err(Halt::Refusal(refusal)) => Err(refusal),
                 };
+            }
+            Err(Halt::Finish(Finish::Undecided(cause))) => {
+                return Ok(ModelCheckOutcome::Undecided {
+                    cause,
+                    stats: total,
+                });
             }
             Err(Halt::Finish(Finish::Stopped(cause, limit))) => {
                 return Ok(ModelCheckOutcome::Stopped {
@@ -2631,7 +2641,13 @@ where
         states
             .into_iter()
             .zip(outcomes)
-            .map(|((position, _), result)| (position, result))
+            .map(|((position, state), result)| {
+                #[cfg(test)]
+                let result = super::scripted::apply(system.atom_state(&state).as_ref(), result);
+                #[cfg(not(test))]
+                drop(state);
+                (position, result)
+            })
             .collect()
     }
 
@@ -2919,15 +2935,11 @@ where
                 }
             }),
             Err(Halt::Refusal(refusal)) => Err(refusal),
-            Err(Halt::Finish(Finish::Undecided(cause))) => Ok(ModelCheckOutcome::Undecided {
-                cause,
-                stats: self.stats(),
-            }),
-            // A refutation the search found within its budget wins over a
-            // limit that ended the search after it; only a cancellation
-            // overrides it (ADR-023 HV-8).
-            Err(Halt::Finish(Finish::Stopped(cause, _)))
-                if !matches!(cause, IncompleteCause::Cancelled { .. })
+            // A refutation the search found within its budget wins over an
+            // undecided successor, a bound or a limit that ended the search
+            // after it; only a cancellation overrides it (ADR-023 HV-8).
+            Err(Halt::Finish(ref finish))
+                if finish.yields_to_refutation()
                     && self.first_bad.is_some()
                     && !self.has_unresolved_local_access() =>
             {
@@ -2936,6 +2948,10 @@ where
                 };
                 self.refutation(*violation)
             }
+            Err(Halt::Finish(Finish::Undecided(cause))) => Ok(ModelCheckOutcome::Undecided {
+                cause,
+                stats: self.stats(),
+            }),
             Err(Halt::Finish(Finish::Stopped(cause, limit))) => Ok(ModelCheckOutcome::Stopped {
                 cause,
                 limit,

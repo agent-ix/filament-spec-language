@@ -32,6 +32,8 @@ mod refine;
 mod relation;
 mod request;
 mod scc;
+#[cfg(test)]
+mod scripted;
 pub mod smt;
 mod state_graph;
 

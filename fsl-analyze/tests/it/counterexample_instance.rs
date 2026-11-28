@@ -30,35 +30,35 @@ fn the_first_refuted_instance_is_reported_over_a_shorter_later_one() {
     assert_eq!(counterexample.prefix.len(), 2);
 }
 
-/// FR-125, FR-126: the search over the instances before the one first found
-/// refuted is charged to the same budget as the first search. `b` is found at
-/// position 0 with one state, so `max_states` 3 leaves two states for the
-/// search that must reach `a`'s three-state refutation: the item stops
-/// incomplete on `max_states`, and reports no instance.
+/// FR-125, FR-126-AC-28: a limit does not discard a refutation the run
+/// found. `b` is found at position 0 with one state; `max_states` 3 leaves
+/// two states for the search that must reach `a`'s three-state refutation,
+/// which stops on `max_states`. The refutation found within the budget is the
+/// item's outcome: bound to `b`, not `Stopped`.
 #[trace("TC-520", "FR-125-AC-16")]
 #[test]
 fn the_search_for_an_earlier_refuted_instance_shares_the_budget() {
     let mut limits = ModelCheckLimits::default();
     limits.limits.max_states = 3;
     let outcome = outcome_under(limits);
-    assert!(
-        matches!(outcome, ModelCheckOutcome::Stopped { .. }),
-        "expected a stop, got {outcome:?}"
-    );
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected the refutation found within the budget, got {outcome:?}");
+    };
+    assert_eq!(counterexample.over_binding, Some(instance("b")));
 }
 
-/// FR-125: a search over the earlier instances that reaches its horizon without
-/// deciding them leaves the item incomplete; the later instance `b`, found at
-/// position 0, is not reported as the first refuted one. With `max_depth` 1,
-/// `a`'s two-step refutation is out of reach.
+/// FR-125, FR-126-AC-27: a search over the earlier instances that reaches its
+/// horizon without deciding them does not discard the later instance's
+/// refutation. `b` is found at position 0; with `max_depth` 1, `a`'s two-step
+/// refutation is out of reach, so the item is bound to `b`.
 #[trace("TC-520", "FR-125-AC-16")]
 #[test]
-fn an_undecided_search_for_an_earlier_instance_is_not_reported_as_refuted() {
+fn an_undecided_search_for_an_earlier_instance_does_not_discard_a_later_refutation() {
     let outcome = outcome_with(ModelCheckLimits::default(), Some(1), Default::default());
-    assert!(
-        matches!(outcome, ModelCheckOutcome::BoundReached { .. }),
-        "expected BoundReached, got {outcome:?}"
-    );
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected the refutation within the horizon, got {outcome:?}");
+    };
+    assert_eq!(counterexample.over_binding, Some(instance("b")));
 }
 
 /// FR-125 on the reduced route: partial-order reduction reports the first

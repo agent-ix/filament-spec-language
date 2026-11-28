@@ -667,12 +667,15 @@ impl<'a> LiveSubject for ModelSystem<'a> {
         enforce: bool,
         _stutter_closure: bool,
     ) -> Result<Bounded<ModelTransition, ModelSimState>, ExpansionStop> {
-        if enforce {
+        let expanded = if enforce {
             self.successors_enforced(state)
         } else {
             self.successors(state)
         }
-        .map(|expansion| (expansion, Cut::default()))
+        .map(|expansion| (expansion, Cut::default()));
+        #[cfg(test)]
+        let expanded = super::scripted::apply(state, expanded);
+        expanded
     }
 
     fn expand_live_batch(

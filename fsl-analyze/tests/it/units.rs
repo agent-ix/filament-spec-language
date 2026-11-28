@@ -101,7 +101,7 @@ impl Domain {
         format!("ix://{}/{suffix}", self.package)
     }
 
-    fn key(&self, suffix: &str) -> DeclarationKey {
+    pub(crate) fn key(&self, suffix: &str) -> DeclarationKey {
         DeclarationKey {
             package: self.package.to_owned(),
             node: self.ident(suffix),

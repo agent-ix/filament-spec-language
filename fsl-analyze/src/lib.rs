@@ -99,5 +99,9 @@ pub(crate) mod letters;
 pub(crate) mod counter;
 
 #[cfg(test)]
+#[path = "../tests/it/units.rs"]
+pub(crate) mod units;
+
+#[cfg(test)]
 #[path = "../tests/it/timed_world.rs"]
 pub(crate) mod timed_world;
