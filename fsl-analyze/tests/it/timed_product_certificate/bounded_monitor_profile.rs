@@ -87,6 +87,7 @@ fn timed_eventually_with_closed_horizon_settles_at_ninety_nine_percent() {
 
 /// A refutation decided by the drawn delay alone: `step` is drawn at
 /// 3 ms, past the window.
+#[trace("FR-204-AC-21")]
 #[test]
 fn repro_a_drawn_delay_decides_a_refuted_event() {
     let claim = claim_under(

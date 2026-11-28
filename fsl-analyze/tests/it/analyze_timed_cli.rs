@@ -1973,6 +1973,7 @@ fn a_clock_owner_with_no_universe_requires_a_bound() {
         over_no_universe("timed-no-universe-clocked", &locking_document(), LOCKING),
         requires_bound_on_all_four()
     );
+#[trace("FR-245-AC-2")]
 #[test]
 fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
     let items = stalling_items("timed-zone-resetting-deadline", true);
@@ -1982,6 +1983,7 @@ fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
 
 /// TC-2290: EN-1's digital-clock route agrees with the zone route on a true
 /// bounded eventual-always claim after the two-step subject reaches phase 2.
+#[trace("FR-243-AC-5")]
 #[test]
 fn digital_clocks_prove_a_true_always_inside_eventually() {
     use crate::timed_world::{document, unit_text, DENSE, PACKAGE};

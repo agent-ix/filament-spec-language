@@ -922,6 +922,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     }
 
     /// The idle-tail stutters from `at`: the state's letter read again.
+    #[implements("FR-243-AC-5")]
     fn stutter(
         &mut self,
         product: &mut Product,

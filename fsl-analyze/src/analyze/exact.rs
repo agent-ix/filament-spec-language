@@ -4707,6 +4707,7 @@ fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> 
 /// clock-guarded step therefore settles not-yet); a step expansion or key
 /// encoding that stops names its stop; only a search that exhausted every
 /// chain without reaching the wanted state is a fault.
+#[implements("FR-204-AC-21")]
 fn timed_step_for(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
