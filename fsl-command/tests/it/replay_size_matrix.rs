@@ -18,6 +18,14 @@ const WIDE: u64 = 1 << 42;
 const AUTHORITY: &str = "agent-ix";
 const SOURCE_ID: &str = "test:qsl-3570-replay-matrix";
 
+#[derive(Clone, Copy, Debug)]
+struct CompilePhaseTimes {
+    parse_forms_ms: u128,
+    model_select_ms: u128,
+    check_ms: u128,
+    package_emit_ms: u128,
+}
+
 fn unlimited_scalar_limits() -> filament_exact::ScalarLimits {
     filament_exact::ScalarLimits {
         integer_bits: u64::MAX,
@@ -37,7 +45,7 @@ fn package_bytes(
     source_text: &str,
     packages: &fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
-) -> (Vec<u8>, fsl_replay::FunctionSite, usize) {
+) -> (Vec<u8>, fsl_replay::FunctionSite, usize, CompilePhaseTimes) {
     let identity = SourceIdentity::new(AUTHORITY, SOURCE_ID);
     let source_limits = fsl_cst::Limits {
         source_bytes: 1 << 28,
@@ -55,6 +63,7 @@ fn package_bytes(
         package: spine::PackageLimits::default().with_output_bytes(WIDE),
         ..SpineLimits::default()
     };
+    let parse_started = Instant::now();
     let parsed = spine::parse(
         &ParseRequest {
             source: &identity,
@@ -66,10 +75,14 @@ fn package_bytes(
     )
     .expect("the replay source parses")
     .into_value();
+    let parse_forms_ms = parse_started.elapsed().as_millis();
     let source_tokens = parsed.syntax().cst().tokens().len();
+    let select_started = Instant::now();
     let models = spine::select(&parsed, packages, limits.model, &Cancel::new())
         .expect("the model inputs admit")
         .into_value();
+    let model_select_ms = select_started.elapsed().as_millis();
+    let check_started = Instant::now();
     let checked = spine::check(
         &parsed,
         "qsl-3570".to_owned(),
@@ -80,14 +93,27 @@ fn package_bytes(
     )
     .expect("the replay source checks")
     .into_value();
+    let check_ms = check_started.elapsed().as_millis();
     let name = QualifiedName::new(vec![Identifier::new("ready").expect("function name")])
         .expect("qualified function name");
     let site = fsl_replay::locate_in_checked(&checked, "qsl-3570", &name)
         .expect("the function site is located");
+    let package_started = Instant::now();
     let emitted = spine::package(&checked, limits.package, &Cancel::new())
         .expect("the checked package emits")
         .into_value();
-    (emitted.package().bytes().to_vec(), site, source_tokens)
+    let package_emit_ms = package_started.elapsed().as_millis();
+    (
+        emitted.package().bytes().to_vec(),
+        site,
+        source_tokens,
+        CompilePhaseTimes {
+            parse_forms_ms,
+            model_select_ms,
+            check_ms,
+            package_emit_ms,
+        },
+    )
 }
 
 fn request_wire(
@@ -376,7 +402,7 @@ fn profile_native_size_replay(count: usize) {
     let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
     limits.intake = limits.intake.with_sequence_maximum(count as u32);
     let compile_started = Instant::now();
-    let (package, site, source_tokens) = package_bytes(&source, &empty_packages(), limits);
+    let (package, site, source_tokens, phases) = package_bytes(&source, &empty_packages(), limits);
     let compile_ms = compile_started.elapsed().as_millis();
     let mut wire = request_wire(&package, &source, &site);
     let (request_json_bytes, s1_input_limit) =
@@ -389,9 +415,13 @@ fn profile_native_size_replay(count: usize) {
     assert_eq!(result["category"], "success");
     assert_eq!(result["value"], true);
     eprintln!(
-        "QSL3570_NATIVE_REPLAY_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} request_json_bytes={request_json_bytes} s1_input_bytes={s1_input_limit} replay_input_bytes={input_bytes} compile_ms={compile_ms} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
+        "QSL3570_NATIVE_REPLAY_PHASE_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} request_json_bytes={request_json_bytes} s1_input_bytes={s1_input_limit} replay_input_bytes={input_bytes} compile_total_ms={compile_ms} parse_forms_ms={} model_select_ms={} check_ms={} package_emit_ms={} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
         source.len(),
         package.len(),
+        phases.parse_forms_ms,
+        phases.model_select_ms,
+        phases.check_ms,
+        phases.package_emit_ms,
     );
 }
 
@@ -429,7 +459,7 @@ fn command_replays_the_ten_thousand_term_sum_with_exact_input_bytes() {
         .collect::<Vec<_>>()
         .join(" + ");
     let source = model_function(None, &format!("({sum}) = 10000"), "Boolean");
-    let (package, site, _) = package_bytes(
+    let (package, site, _, _) = package_bytes(
         &source,
         &empty_packages(),
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
@@ -453,7 +483,7 @@ fn command_replays_one_thousand_enum_declarations() {
     let source = model_function_with_declarations(None, &enum_declarations(), "true", "Boolean");
     let limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default()
         .with_declaration_records(3_000);
-    let (package, site, _) = package_bytes(&source, &empty_packages(), limits);
+    let (package, site, _, _) = package_bytes(&source, &empty_packages(), limits);
     assert_command_replay(request_wire(&package, &source, &site));
 }
 
@@ -494,7 +524,7 @@ fn command_replays_both_thousand_link_variants() {
         let limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default()
             .with_ancestor_steps(1_000)
             .with_derivation_facts(1_504_502);
-        let (package, site, _) = package_bytes(&source, &empty_packages(), limits);
+        let (package, site, _, _) = package_bytes(&source, &empty_packages(), limits);
         assert_command_replay(request_wire(&package, &source, &site));
     }
 }
@@ -519,7 +549,7 @@ fn command_replays_one_hundred_thousand_ordered_values() {
     );
     let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
     limits.intake = limits.intake.with_sequence_maximum(COUNT as u32);
-    let (package, site, _) = package_bytes(&source, &empty_packages(), limits);
+    let (package, site, _, _) = package_bytes(&source, &empty_packages(), limits);
     let result = command_replay_with_exact_input_bound(&request_wire(&package, &source, &site));
     assert_eq!(result["arm"], "input");
     assert_eq!(result["settlement"], "reproduced-without-witness");
