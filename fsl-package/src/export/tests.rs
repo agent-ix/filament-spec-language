@@ -36,6 +36,7 @@ invariant ThroughSub using v on M::Sub at current { self.f >= 0 }\n";
 
 /// The unit with `clauses` against the fixture package, checked and linked.
 fn package(clauses: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let unit = format!(
@@ -44,7 +45,7 @@ fn package(clauses: &str) -> CheckedPackage {
          model M = {:?};\n{clauses}",
         fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:abstraction"),
         "program.native",
         unit.as_bytes(),

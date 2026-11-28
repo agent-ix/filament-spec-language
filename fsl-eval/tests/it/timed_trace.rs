@@ -46,6 +46,7 @@ pub(crate) fn timed(body: &str) -> Fixture {
 
 /// [`timed`] under `activation`.
 pub(crate) fn timed_on(activation: &str, body: &str) -> Fixture {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = counters_document(vec![increment()], false);
     let packages = package_input([document.as_slice()]).unwrap();
     let text = format!(
@@ -58,7 +59,7 @@ pub(crate) fn timed_on(activation: &str, body: &str) -> Fixture {
          unit ms : Time = rational(1, 1000) * s;\n\
          temporal C using t0 over (c: M::Counter) clock \"model-time\" {activation} {{ {body} }}\n",
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

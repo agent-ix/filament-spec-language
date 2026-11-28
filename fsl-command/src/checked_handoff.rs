@@ -55,8 +55,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageReadLimits,
+    CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
 };
 use ix_trace_rs::implements;
 
@@ -363,13 +363,17 @@ pub const READ_LIMITS: CheckedPackageReadLimits = CheckedPackageReadLimits::boun
 
 /// Compile `request` and write its handoff directory at `directory`, a path
 /// that does not exist yet. See the module documentation for the layout.
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn write(request: &CheckedHandoffRequest, directory: &Path) -> Result<(), Error> {
-    write_with(request, directory, &RealEnvironment)
+    let parser = fsl_cst::ParserContext::new();
+    write_with(&parser, request, directory, &RealEnvironment)
 }
 
 /// [`write()`] over `environment`, which a test replaces to inject a refusal or
 /// a failure.
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn write_with(
+    parser: &fsl_cst::ParserContext,
     request: &CheckedHandoffRequest,
     directory: &Path,
     environment: &dyn Environment,
@@ -379,7 +383,7 @@ pub fn write_with(
             path: directory.display().to_string(),
         });
     }
-    let compiled = emit_checked_v2::compile(&request.emit)?;
+    let compiled = emit_checked_v2::compile(parser, &request.emit)?;
     write_compiled(request, directory, environment, compiled, None)
 }
 
@@ -573,14 +577,16 @@ impl CompiledHandoff {
 /// [`Error::Compile`] for the compiler's refusal, [`Error::ReadBackDiffers`]
 /// when the recompiled bytes are not `checked-package.json` or the admitted
 /// package departs from the sidecar, and the reader's refusals.
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
+    let parser = fsl_cst::ParserContext::new();
     let package_ceiling = usize::try_from(READ_LIMITS.bytes).unwrap_or(usize::MAX);
     let selection = Selection::read(&tree::read(directory, "selection.json", package_ceiling)?)?;
     let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
     let inputs = selection
         .inputs(|file| tree::read(directory, file, fsl_foundation::source::MAX_SOURCE_BYTES))?;
     let named_selections = inputs.temporal_selections.clone();
-    let compiled = emit_checked_v2::compile_inputs(inputs)?;
+    let compiled = emit_checked_v2::compile_inputs(&parser, inputs)?;
     if compiled.emitted.package().bytes() != bytes.as_slice() {
         return Err(Error::ReadBackDiffers {
             detail: "the sources compile to bytes other than checked-package.json".to_owned(),
@@ -622,7 +628,9 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
 /// The command's inspect/read-back surface uses this entry point; the return
 /// value retains the admitted package and the checked in-process package for
 /// callers that need them.
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
+    let parser = fsl_cst::ParserContext::new();
     let _ = std::fs::read_dir(directory).map_err(|source| Error::Read {
         path: directory.display().to_string(),
         source,
@@ -632,7 +640,7 @@ pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
     let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
     let inputs = selection
         .inputs(|file| tree::read(directory, file, fsl_foundation::source::MAX_SOURCE_BYTES))?;
-    let compiled = emit_checked_v2::compile_inputs(inputs)?;
+    let compiled = emit_checked_v2::compile_inputs(&parser, inputs)?;
     let evidence = read_evidence(&compiled)?;
     let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
     selection
@@ -748,8 +756,10 @@ fn insert_inputs(
 
 /// The evidence Contract IR's reader needs to read the package `request`
 /// compiles to.
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn evidence(request: &CheckedHandoffRequest) -> Result<CheckedPackageEvidence, Error> {
-    read_evidence(&emit_checked_v2::compile(&request.emit)?)
+    let parser = fsl_cst::ParserContext::new();
+    read_evidence(&emit_checked_v2::compile(&parser, &request.emit)?)
 }
 
 /// The compiler's evidence, the domain package documents the writer holds,

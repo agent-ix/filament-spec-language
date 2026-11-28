@@ -38,7 +38,9 @@ fn emitted(name: &str, declarations: &str) -> (Emission, CheckedPackageV2) {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}"
     );
+    let parser_context = fsl_cst::ParserContext::new();
     let parsed = fsl_cst::parse(
+        &parser_context,
         fsl_foundation::SourceIdentity::new("fixture", name),
         "unit.native",
         source.as_bytes(),

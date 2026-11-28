@@ -23,7 +23,7 @@ use fsl_package::{
     emit_checked, emit_monitor_plan_over, CheckedPackage, Emission, EmitRefusal, MonitorPlanWire,
 };
 use fsl_replay::spine::{
-    check, parse, refusal_or_fault, select, CheckedUnit, DependencyInput, ParseRequest, SpineLimits,
+    check, refusal_or_fault, select, CheckedUnit, DependencyInput, ParseRequest, SpineLimits,
 };
 use fsl_replay::{
     MonitorPlanRefusal, MonitorTarget, ReplayRefusal, TimedMonitorPlan, TimingObligation,
@@ -148,12 +148,14 @@ fn front_end(failure: fsl_replay::spine::FrontEndFailure) -> PlanRootRefusal {
     }))
 }
 
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 fn compile(
+    parser: &fsl_cst::ParserContext,
     request: &PlanRootRequest<'_>,
     bytes: &[u8],
     cancel: &Cancel,
 ) -> Result<CheckedUnit, PlanRootRefusal> {
-    let parsed = parse(
+    let parsed = fsl_replay::spine::parse_with_context(
         &ParseRequest {
             source: request.source,
             path: request.path,
@@ -161,6 +163,7 @@ fn compile(
         },
         request.limits.source,
         cancel,
+        parser,
     )
     .map_err(front_end)?
     .into_value();
@@ -202,11 +205,13 @@ fn clause_of<'p>(
 }
 
 /// Produce the plan-root package of `request`'s clause and target.
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn emit_plan_root(
     request: &PlanRootRequest<'_>,
     cancel: &Cancel,
 ) -> Result<PlanRoot, PlanRootRefusal> {
-    let authored = compile(request, request.bytes, cancel)?;
+    let parser = fsl_cst::ParserContext::new();
+    let authored = compile(&parser, request, request.bytes, cancel)?;
     let node = clause_of(authored.package(), request.clause)?;
     let (plan, obligations) = produce(
         authored.package(),
@@ -220,7 +225,7 @@ pub fn emit_plan_root(
     let mut with_entries = request.bytes.to_vec();
     with_entries.push(b'\n');
     with_entries.extend_from_slice(entries.as_bytes());
-    let combined = compile(request, &with_entries, cancel)?;
+    let combined = compile(&parser, request, &with_entries, cancel)?;
     let node = clause_of(combined.package(), request.clause)?;
     let (again, _) = produce(
         combined.package(),

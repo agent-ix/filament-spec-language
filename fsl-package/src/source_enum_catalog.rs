@@ -542,6 +542,7 @@ mod tests {
     }
 
     fn fixture(body: &str, model: bool) -> Fixture {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let mut evidence = CheckedPackageEvidence::new();
         let checked = if model {
             let document = serde_json::to_vec(&model_fixture::document()).unwrap();
@@ -552,6 +553,7 @@ mod tests {
                 model_fixture::PACKAGE
             );
             let parsed = fsl_cst::parse(
+                &qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("test", "enum-catalog"),
                 "catalog.native",
                 text.as_bytes(),

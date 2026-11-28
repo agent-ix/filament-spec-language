@@ -4261,7 +4261,9 @@ mod locus_tests {
 
     /// `text` through S1, S2 and the assembler.
     fn unit_from_text(text: &str) -> PackageDeclarations {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
@@ -4390,6 +4392,7 @@ mod locus_tests {
     /// (1,999 expression nodes), through S1, S2 and the assembler, with its
     /// source text.
     fn sum_unit() -> (PackageDeclarations, String) {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let terms = vec!["1"; 1_000].join(" + ");
         let text = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
@@ -4397,6 +4400,7 @@ mod locus_tests {
              function f using v(): Integer pure {{ {terms} }}\n"
         );
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

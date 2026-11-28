@@ -942,6 +942,7 @@ pub(super) fn admit_and_assemble_with_profiles(
     profiles: &str,
     body: &str,
 ) -> Result<PackageDeclarations, fsl_semantics::check::AssemblyRefusal> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (unit, packages) = config_unit_with_profiles(document, profiles, body);
     let built = parse_and_build(&unit);
     let models = admit_unit(
@@ -951,10 +952,10 @@ pub(super) fn admit_and_assemble_with_profiles(
     )
     .unwrap_or_else(|refusal| panic!("I1 refused: {refusal:?}"))
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .unwrap_or_else(|failure| panic!("a kept operation clause does not parse: {failure:?}"));
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-459"),
         "unit.native",
         unit.as_bytes(),
@@ -986,6 +987,7 @@ pub(super) fn try_assemble_units(
     units: &[(&str, &str)],
     documents: &[&[u8]],
 ) -> Result<PackageDeclarations, fsl_semantics::check::AssemblyRefusal> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_exact::Cancel;
     use fsl_semantics::check::AssemblyLimits;
     use fsl_semantics::model::intake::admit_units_with_cancel;
@@ -994,7 +996,7 @@ pub(super) fn try_assemble_units(
         .iter()
         .map(|(identity, text)| {
             let source = format!("language \"ix:native\" edition \"1-draft\";\n{text}\n");
-            let parsed = fsl_cst::parse(
+            let parsed = fsl_cst::parse(&qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("test", *identity),
                 "unit.native",
                 source.as_bytes(),
@@ -1411,7 +1413,8 @@ pub(super) fn config_version_document_with_population(
 }
 
 pub(super) fn parse_and_build(unit: &str) -> fsl_forms::ParsedUnit {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-458"),
         "unit.native",
         unit.as_bytes(),
@@ -1444,6 +1447,7 @@ pub(super) fn admit(
 /// with no declarations of its own besides the `model Config = ...`
 /// selection.
 pub(super) fn admit_and_assemble(document: &[u8]) -> Result<PackageDeclarations, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (unit, packages) = config_unit(document);
     let built = parse_and_build(&unit);
     let models = admit_unit(
@@ -1452,7 +1456,7 @@ pub(super) fn admit_and_assemble(document: &[u8]) -> Result<PackageDeclarations,
         ModelNormalizationLimits::default(),
     )
     .map_err(|refusal| format!("I1 refused: {refusal:?}"))?;
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-458"),
         "unit.native",
         unit.as_bytes(),

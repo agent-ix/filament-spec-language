@@ -65,8 +65,9 @@ const QUARTER: &str = "dimension Beat ~ Time by 1 beat = rational(1, 4) s;";
 const EQUAL: &str = "dimension Beat ~ Time by 1 beat = 1 s;";
 
 fn refusal_region_text(functions: &str) -> (CheckCause, String) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{functions}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

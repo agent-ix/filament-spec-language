@@ -49,8 +49,9 @@ fn package_with(
     source: &str,
     models: impl FnOnce(&fsl_forms::ParsedUnit) -> fsl_semantics::model::intake::SelectedModels,
 ) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{source}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "observation.native",
         source.as_bytes(),

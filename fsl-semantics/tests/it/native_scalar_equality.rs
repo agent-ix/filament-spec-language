@@ -30,8 +30,9 @@ fn parse(
     fsl_forms::ParsedUnit,
     fsl_foundation::source::provenance::RawSourceRef,
 ) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "native-eq"),
         "native-eq.native",
         text.as_bytes(),

@@ -43,6 +43,7 @@ pre NoteVal using v on R::Order::note {\n\
 pre NoteSame using v on R::Order::note { secondApprover = secondApprover }\n";
 
 fn package() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let fixture_bytes = serde_json::to_vec(&fixture::document()).expect("fixture serializes");
     let packages = package_input([fixture_bytes.as_slice()]).expect("fixture package is read");
     let source = format!(
@@ -53,7 +54,7 @@ fn package() -> CheckedPackage {
         package = fixture::PACKAGE,
         declarations = DECLARATIONS,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-2054-refunds"),
         "tc-2054-refunds.native",
         source.as_bytes(),

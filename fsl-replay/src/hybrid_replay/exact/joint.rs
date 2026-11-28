@@ -357,7 +357,7 @@ impl Joint {
         })
     }
 
-    pub(super) fn exists(
+    pub(super) fn has_witness(
         &self,
         env: &Env<'_>,
         at: &ExactReal,
@@ -378,7 +378,7 @@ impl Joint {
         )?;
         let (levels, projected) = cad::project(set, self.variables.len(), meter)?;
         decisions.extend(projected);
-        Kernel::new(at, meter).exists(&levels, &mut |kernel| Decision::holds(&body, kernel))
+        Kernel::new(at, meter).has_witness(&levels, &mut |kernel| Decision::holds(&body, kernel))
     }
 }
 #[cfg(test)]
@@ -440,7 +440,7 @@ mod tests {
         let mut decisions = Vec::new();
         let mut meter = HybridReplayMeter::new(u64::MAX);
         let found = joint
-            .exists(&env, at, &mut decisions, &mut meter)
+            .has_witness(&env, at, &mut decisions, &mut meter)
             .expect("an unmetered linear elimination");
         (found, decisions)
     }
@@ -570,7 +570,7 @@ mod nonlinear_tests {
         };
         let mut decisions = Vec::new();
         let mut meter = HybridReplayMeter::new(bound);
-        let result = joint.exists(&env, at, &mut decisions, &mut meter);
+        let result = joint.has_witness(&env, at, &mut decisions, &mut meter);
         (result, decisions, meter.consumed)
     }
 

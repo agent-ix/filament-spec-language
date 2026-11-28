@@ -474,6 +474,7 @@ pub fn check_models_with_profiles(
          {temporal}{profiles}{selections}{body}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "tc-544"),
         "unit.native",
         text.as_bytes(),

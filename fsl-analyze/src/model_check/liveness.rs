@@ -476,6 +476,7 @@ struct Certify<'r> {
 /// The bindings' run over `system`, after the settlements no exploration
 /// reaches: a cancelled resolution or request, no initial state, no
 /// instance.
+#[implements("FR-126-AC-26")]
 fn decide_bindings<S: LiveSubject>(
     system: &S,
     bound: Bound<'_, S>,
@@ -487,7 +488,7 @@ fn decide_bindings<S: LiveSubject>(
         return Ok(stopped(
             IncompleteCause::Cancelled { source },
             None,
-            totals.stats(),
+            totals.stats(system),
         ));
     }
     if cancel.poll() {
@@ -495,20 +496,20 @@ fn decide_bindings<S: LiveSubject>(
             return Ok(stopped(
                 IncompleteCause::Cancelled { source },
                 None,
-                totals.stats(),
+                totals.stats(system),
             ));
         }
     }
     if bound.no_initial {
         return Ok(ModelCheckOutcome::Undecided {
             cause: UndecidedCause::NoInitialState,
-            stats: totals.stats(),
+            stats: totals.stats(system),
         });
     }
     if bound.bindings.is_empty() {
         return Ok(ModelCheckOutcome::Undecided {
             cause: UndecidedCause::NoInstance,
-            stats: totals.stats(),
+            stats: totals.stats(system),
         });
     }
     let meter = request.meter;
@@ -894,8 +895,14 @@ impl Totals {
         )
     }
 
-    fn stats(&self) -> RunStats {
+    #[implements("FR-126-AC-26")]
+    fn stats<S: SubjectSystem>(&self, system: &S) -> RunStats {
+        let _ = system;
         RunStats {
+            #[cfg(feature = "test-support")]
+            generated_model_initial_states: system.generated_model_initial_states(),
+            #[cfg(feature = "test-support")]
+            constructed_protocol_initial_states: system.constructed_protocol_initial_states(),
             product_states: self.states,
             product_edges: self.edges,
             stutter_edges: 0,
@@ -2392,7 +2399,8 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         "FR-126-AC-15",
         "FR-156-AC-1",
         "FR-160-AC-6",
-        "FR-161-AC-5"
+        "FR-161-AC-5",
+        "FR-126-AC-26"
     )]
     fn decide(&self, mut totals: Totals) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         let mut explored = Vec::with_capacity(self.bindings.len());
@@ -2427,15 +2435,15 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         // root below the finding may hold a shallower one.
                         let dead = self.dead_phase(&run, Some(depth), &mut totals)?;
                         if let Some(Ending::Stopped(cause, limit)) = dead.stopped {
-                            return Ok(stopped(cause, limit, totals.stats()));
+                            return Ok(stopped(cause, limit, totals.stats(self.system)));
                         }
                         let hit = match dead.hit {
                             Some((dead_depth, dead_hit)) if dead_depth < depth => dead_hit,
                             _ => hit,
                         };
-                        return Ok(hit.outcome(totals.stats()));
+                        return Ok(hit.outcome(totals.stats(self.system)));
                     }
-                    _ => return Ok(stopped(cause.clone(), *limit, totals.stats())),
+                    _ => return Ok(stopped(cause.clone(), *limit, totals.stats(self.system))),
                 }
             }
             let dead =
@@ -2444,14 +2452,14 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             if let Some(Ending::Stopped(cause, limit)) = dead.stopped {
                 // The pass did not finish, so a shallower finding may be
                 // hidden: the stop is the answer.
-                return Ok(stopped(cause, limit, totals.stats()));
+                return Ok(stopped(cause, limit, totals.stats(self.system)));
             }
             match (live, dead.hit) {
                 (Some((live_depth, _)), Some((dead_depth, hit))) if dead_depth < live_depth => {
-                    return Ok(hit.outcome(totals.stats()));
+                    return Ok(hit.outcome(totals.stats(self.system)));
                 }
-                (Some((_, hit)), _) => return Ok(hit.outcome(totals.stats())),
-                (None, Some((_, hit))) => return Ok(hit.outcome(totals.stats())),
+                (Some((_, hit)), _) => return Ok(hit.outcome(totals.stats(self.system))),
+                (None, Some((_, hit))) => return Ok(hit.outcome(totals.stats(self.system))),
                 (None, None) => {}
             }
             cut |= run.dead_cut
@@ -2465,7 +2473,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     if run.binding.applied.is_none() {
                         return Ok(ModelCheckOutcome::Violated {
                             counterexample,
-                            stats: totals.stats(),
+                            stats: totals.stats(self.system),
                         });
                     }
                     if reduced_refutation.is_none() {
@@ -2483,10 +2491,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     return Ok(stopped(
                         IncompleteCause::Cancelled { source },
                         None,
-                        totals.stats(),
+                        totals.stats(self.system),
                     ));
                 }
-                Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
+                Second::Stopped(cause, limit) => {
+                    return Ok(stopped(cause, limit, totals.stats(self.system)))
+                }
                 Second::NoneFair => {}
             }
             // A reduction never ends the loop: each binding, or each orbit
@@ -2538,7 +2548,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 }
             }
         }
-        let mut stats = totals.stats();
+        let mut stats = totals.stats(self.system);
         stats.message_bound_limited = widen(message_limited.len());
         // FR-158 (ADR-025 MB-4, ADR-027 AE-4): a run that found no violation
         // and stored a boundary state settles `ConstraintReached` first,
@@ -2578,13 +2588,13 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     bound,
                     states: widen(totals.instance_limited.len()),
                 },
-                stats: totals.stats(),
+                stats: totals.stats(self.system),
             });
         }
         if let Some(counterexample) = reduced_refutation {
             return Ok(ModelCheckOutcome::Violated {
                 counterexample,
-                stats: totals.stats(),
+                stats: totals.stats(self.system),
             });
         }
         // ADR-021 RV-1: the reductions in the order symmetry, partial-order.
@@ -2605,28 +2615,28 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 cause: ReductionCause::Horizon {
                     max_depth: widen(depth),
                 },
-                stats: totals.stats(),
+                stats: totals.stats(self.system),
             }),
             (true, Some(depth)) => Ok(ModelCheckOutcome::BoundReached {
                 depth: widen(depth),
-                stats: totals.stats(),
+                stats: totals.stats(self.system),
             }),
             // ADR-021 RV-1: a reduced run that completes with no fair
             // accepting component is a reduced proof, which no certificate
             // covers.
             _ if !reductions.is_empty() => Ok(ModelCheckOutcome::HoldsReduced {
                 reductions,
-                stats: totals.stats(),
+                stats: totals.stats(self.system),
             }),
             _ => match self.component_certificate(&explored)? {
                 Ok(certificate) => Ok(ModelCheckOutcome::Holds {
                     certificate: ProofCertificate::Component(certificate),
-                    stats: totals.stats(),
+                    stats: totals.stats(self.system),
                 }),
                 Err(source) => Ok(stopped(
                     IncompleteCause::Cancelled { source },
                     None,
-                    totals.stats(),
+                    totals.stats(self.system),
                 )),
             },
         }
@@ -2652,7 +2662,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 return Ok(Err(exhausted(
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
-                    totals.stats(),
+                    totals.stats(self.system),
                 )));
             }
             Err(other) => return Err(LivenessRefusal::from(other).into()),
@@ -2753,13 +2763,16 @@ impl<'r, S: LiveSubject> Run<'r, S> {
     }
 
     /// The outcome of a product that halted before it had a graph.
+    #[implements("FR-126-AC-26")]
     fn halted(
         &self,
         product: &LassoSystem<'_, S>,
         totals: &Totals,
     ) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         match self.halt_ending(product)? {
-            Some(Ending::Stopped(cause, limit)) => Ok(stopped(cause, limit, totals.stats())),
+            Some(Ending::Stopped(cause, limit)) => {
+                Ok(stopped(cause, limit, totals.stats(self.system)))
+            }
             Some(Ending::Complete) | None => Err(fault("a-halted-start-recorded-its-halt")),
         }
     }

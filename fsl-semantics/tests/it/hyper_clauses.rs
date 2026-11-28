@@ -110,6 +110,7 @@ fn assemble_under(
     profile: &str,
     declarations: &str,
 ) -> (String, PackageDeclarations) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let mut packages = std::collections::BTreeMap::new();
     let mut selections = String::new();
     for alias in aliases {
@@ -132,7 +133,7 @@ fn assemble_under(
         ModelNormalizationLimits::default(),
     )
     .unwrap_or_else(|refusal| panic!("I1 refused: {refusal:?}"));
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-597"),
         "unit.native",
         unit.as_bytes(),

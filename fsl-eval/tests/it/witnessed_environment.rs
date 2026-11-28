@@ -159,6 +159,7 @@ const CLAUSE: &str = "post Ticked using v on M::Gauge::tick { true }";
 
 /// The unit over [`document`], declaring [`CLAUSE`].
 fn package() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(&document()).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -168,7 +169,7 @@ fn package() -> CheckedPackage {
          {CLAUSE}\n",
         package = k2::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "witnessed"),
         "witnessed.native",
         source.as_bytes(),

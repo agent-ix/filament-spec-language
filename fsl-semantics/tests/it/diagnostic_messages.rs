@@ -13,9 +13,10 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 /// Provenance: QSL-2199.
 #[test]
 fn arithmetic_type_mismatch_retains_operator_and_operand_types() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source =
         format!("{HEADER}function add using v(a: Integer, b: String): Integer pure {{ a + b }}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "diagnostic-messages"),
         "diagnostic-messages.native",
         source.as_bytes(),
@@ -58,8 +59,9 @@ fn arithmetic_type_mismatch_retains_operator_and_operand_types() {
 /// Provenance: QSL-2199.
 #[test]
 fn assembler_duplicate_case_refusal_names_its_enum() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!("{HEADER}enum Shade {{ Red, Red }}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "diagnostic-messages"),
         "diagnostic-messages.native",
         source.as_bytes(),

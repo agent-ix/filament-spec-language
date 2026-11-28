@@ -740,6 +740,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     fn source_graph() -> CheckedGraph {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let text = "language \"ix:native\" edition \"1-draft\";
             profile t = \"filament.temporal.complete/v1\";
             dimension Time; unit ms : Time = rational(1, 1);
@@ -747,6 +748,7 @@ mod tests {
             object O { w: W; d: Clock; }
             time O dense unit ms;";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "clock-table"),
             "clocks.native",
             text.as_bytes(),

@@ -546,6 +546,7 @@ const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
 /// A temporal clause `always[0,3] holds(c.level <= 9)` over an event
 /// position trace: its one atom is read from an aggregate.
 fn clause() -> CheckedTemporalClause {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -554,7 +555,7 @@ fn clause() -> CheckedTemporalClause {
          temporal C using t0 over (c: Counter) clock \"events\" on origin {{ \
          always[0,3] holds(c.level <= 9) }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -791,6 +792,7 @@ struct Observed {
 
 impl Observed {
     fn new(xs: &[i64]) -> Self {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let effective = crate::support::ids::effective_id(b"M::E");
         let declaration = ObjectTypeDeclaration::new(
             effective.clone(),
@@ -806,7 +808,7 @@ impl Observed {
         let text = "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
              function zero using v(): Integer pure { 0 }\n";
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("a", "window"),
             "window.native",
             text.as_bytes(),

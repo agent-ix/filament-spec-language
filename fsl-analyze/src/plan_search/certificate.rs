@@ -921,6 +921,7 @@ mod tests {
             function q using v(x: Integer): Integer pure { 6 mod x }\n\
             pre CanDivide using v on M::Counter::inc { q(self.value - 1) > 0 }\n";
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             SourceIdentity::new("agent-ix", "qsl3561"),
             "qsl3561.native",
             unit,
@@ -940,7 +941,11 @@ mod tests {
         )
         .expect("the model selection admits")
         .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            fsl_forms::parse_clause_text(
+                &fsl_cst::ParserContext::new(),
+                text,
+                fsl_cst::Limits::default(),
+            )
         })
         .expect("the operation clause parses");
         let declarations = fsl_semantics::check::PackageDeclarations::assemble(

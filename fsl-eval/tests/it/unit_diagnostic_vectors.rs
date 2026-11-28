@@ -63,11 +63,12 @@ fn unit_document(declarations: &str) -> String {
 }
 
 fn assemble_refusal(documents: &[(&str, &str)]) -> (Vec<String>, AssemblyRefusal) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let mut texts = Vec::with_capacity(documents.len());
     let mut units = Vec::with_capacity(documents.len());
     for (identity, declarations) in documents {
         let text = unit_document(declarations);
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("qualification", *identity),
             "unit-diagnostic.native",
             text.as_bytes(),

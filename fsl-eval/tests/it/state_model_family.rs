@@ -147,10 +147,11 @@ fn declarations_over(
     guard: bool,
     wobble: bool,
 ) -> (PackageDeclarations, EffectiveView, String) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let view = view_over(wobble);
     let selection = view.model_selection();
     let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nprofile p = \"filament.protocol.finite-global/v1\";\nmodel M = {:?};\nfunction Guard using v(): Boolean pure {{ {guard} }}\nfunction Body using v(): Boolean pure {{ true }}\n{body}\n", selection.identity);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "sm1"),
         "sm1.native",
         source.as_bytes(),
@@ -542,13 +543,14 @@ fn available_source_attribute_and_reaches_negatives_have_owned_raw_pairs_and_loc
 #[trace("TC-790", "FR-091-AC-8")]
 #[test]
 fn tc790_all_instances_missing_target_type_refuses_during_assembly() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let view = view();
     let selection = view.model_selection();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = {:?};\nfunction F using v(p: Population<M::A>[3]): Set<M::A>[0,3] pure {{ allInstances<M::Missing>(p) }}\n",
         selection.identity,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "sm1"),
         "sm1.native",
         source.as_bytes(),
@@ -1361,13 +1363,14 @@ fn population_queries_are_typed_to_the_queried_type_and_the_declared_maximum() {
 #[trace("FSpec-TC-198", "FSpec-FR-153-AC-8")]
 #[test]
 fn a_population_binding_over_a_non_object_target_refuses_type_mismatch() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let view = view();
     let selection = view.model_selection();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = {:?};\nrecord R {{ flag: Boolean; }}\nfunction F using v(p: Population<R>[3]): Boolean pure {{ true }}\n",
         selection.identity,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "sm1"),
         "sm1.native",
         source.as_bytes(),

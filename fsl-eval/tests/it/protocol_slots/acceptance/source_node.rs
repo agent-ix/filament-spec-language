@@ -9,9 +9,10 @@ use filament_semantic_value::checking::CheckMode;
 
 /// Fixture E-S, checked.
 fn source_node_fixture() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (text, document) = tc1070::source_node();
     let bytes = serde_json::to_vec(&document).expect("the document encodes");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("protocol", "acceptance-es"),
         "acceptance-es.native",
         text.as_bytes(),

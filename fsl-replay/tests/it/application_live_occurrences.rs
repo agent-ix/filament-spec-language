@@ -97,6 +97,7 @@ fn key(source: &str, name: &str) -> fsl_replay::NodeKey {
     ])
     .expect("function name is non-empty");
     call_site(
+        &fsl_cst::ParserContext::new(),
         identity(),
         fsl_replay::CallSiteUnit::new("fixture".to_owned(), PATH, source.as_bytes()),
         [],

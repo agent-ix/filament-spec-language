@@ -2062,10 +2062,12 @@ mod tests {
     }
 
     fn case_source(body: &str) -> Expression {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let text = format!(
             "language \"ix:native\" edition \"1-draft\"; profile v = \"filament.value.complete/v1\"; function f using v(x: U): Integer pure {{ {body} }}"
         );
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "case"),
             "case.native",
             text.as_bytes(),

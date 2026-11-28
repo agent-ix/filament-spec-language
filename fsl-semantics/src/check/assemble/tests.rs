@@ -57,7 +57,8 @@ fn assemble_as(
     identity: &str,
     text: &str,
 ) -> Result<PackageDeclarations, AssemblyRefusal> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new(authority, identity),
         "unit.native",
         text.as_bytes(),
@@ -2747,6 +2748,7 @@ fn dimensions_and_units_are_admitted_under_their_declared_names() {
 #[trace("TC-720", "FR-255-AC-1")]
 #[test]
 fn the_decimal_scale_bound_refuses_with_a_work_budget_limit() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let assemble_with = |scale: u64| {
         let text = text(
             PROFILE_V,
@@ -2755,7 +2757,7 @@ fn the_decimal_scale_bound_refuses_with_a_work_budget_limit() {
                  unit c : Length = decimal(1, {scale}) * m;"
             ),
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
@@ -4023,8 +4025,9 @@ fn a_unit_and_a_record_share_a_name_and_two_units_do_not() {
 #[trace("FR-091-AC-44", "TC-483", "FSpec-TC-187", "FSpec-FR-142-AC-13")]
 #[test]
 fn a_declaration_named_quantity_is_invalid_syntax() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = text(PROFILE_V, "record Quantity { x: Boolean; }");
-    let admissible = fsl_cst::parse(
+    let admissible = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),
@@ -4424,13 +4427,14 @@ fn a_union_refuses_a_repeated_member_and_an_unresolved_payload_type() {
 #[trace("FR-316-AC-4", "TC-818")]
 #[test]
 fn a_union_is_bounded_only_by_the_configured_ceilings() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let members: Vec<String> = (0..5_000).map(|member| format!("M{member}")).collect();
     let text = text(
         PROFILE_V,
         &format!("union Big {{ {} }}", members.join(", ")),
     );
     let assemble_under = |work_units: u64| {
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
@@ -4598,7 +4602,8 @@ fn parsed_unit_as(
     identity: &str,
     text: &str,
 ) -> (RawSourceRef, fsl_forms::ParsedUnit) {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new(authority, identity),
         "unit.native",
         text.as_bytes(),

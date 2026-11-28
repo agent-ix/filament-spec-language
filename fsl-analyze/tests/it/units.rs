@@ -141,8 +141,9 @@ pub(crate) fn checked_with_mode(
     text: &str,
     mode: CheckMode,
 ) -> (CheckedPackage, Vec<CheckedTemporalClause>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input([domain.document.as_slice()]).unwrap();
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "units"),
         "units.native",
         text.as_bytes(),
@@ -158,7 +159,7 @@ pub(crate) fn checked_with_mode(
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let declarations = PackageDeclarations::assemble(

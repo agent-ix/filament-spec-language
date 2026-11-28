@@ -25,6 +25,7 @@ fn replay_preserves_cancellation_at_the_first_conversion_charge() {
     let name = QualifiedName::new(vec![Identifier::new("p").expect("function name")])
         .expect("qualified function name");
     let site = fsl_replay::call_site(
+        &fsl_cst::ParserContext::new(),
         source.clone(),
         CallSiteUnit::new("fixture".to_owned(), "unit.native", SOURCE.as_bytes()),
         [],

@@ -1523,7 +1523,6 @@ fn a_fair_liveness_lasso_may_pass_through_an_instance_limited_state() {
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn liveness_refuses_before_settling_the_crossing_protocol_root() {
-    use fsl_eval::simulation::protocol::constructed_initial_states;
 
     // Keep this fixture free of equality expressions: the state limit is
     // about lazy initial protocol roots, while equality metadata is unrelated
@@ -1541,7 +1540,6 @@ fn liveness_refuses_before_settling_the_crossing_protocol_root() {
     let temporal_clock_selections = Vec::new();
     let mut limits = ModelCheckLimits::default();
     limits.limits.max_states = 1;
-    let before = constructed_initial_states();
     let outcome = check_protocol(
         ProtocolCheckRequest {
             temporal_clock_selections: &temporal_clock_selections,
@@ -1573,7 +1571,7 @@ fn liveness_refuses_before_settling_the_crossing_protocol_root() {
         ),
         "{outcome:?}"
     );
-    assert_eq!(constructed_initial_states() - before, 1);
+    assert_eq!(outcome.stats().constructed_protocol_initial_states, 1);
 }
 
 /// FR-209-AC-7 (TC-654): an infinite repeat of an enabled self-loop remains

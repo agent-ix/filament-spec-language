@@ -23,7 +23,8 @@ const RUN: &str = "attempt Tried by R on Config::ConfigVersion::attemptUpdate co
     as (tried: Config::ConfigVersion) { true };";
 
 fn parse(text: &str) -> fsl_cst::ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

@@ -111,7 +111,9 @@ fn compile(
     documents: &PackageInput,
     dependencies: &[&Dependency],
 ) -> CheckedPackage {
+    let parser_context = fsl_cst::ParserContext::new();
     let parsed = fsl_cst::parse(
+        &parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", identity),
         "composition.native",
         source.as_bytes(),

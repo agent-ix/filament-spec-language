@@ -573,6 +573,7 @@ impl World {
             model.body
         );
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("test", "fr-188"),
             "fr-188.native",
             unit.as_bytes(),
@@ -588,7 +589,11 @@ impl World {
         )
         .expect("the model selection admits")
         .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            fsl_forms::parse_clause_text(
+                &fsl_cst::ParserContext::new(),
+                text,
+                fsl_cst::Limits::default(),
+            )
         })
         .expect("the kept operation clauses parse");
         let graph = PackageDeclarations::assemble(

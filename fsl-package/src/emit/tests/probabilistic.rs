@@ -1936,11 +1936,11 @@ fn a_delay_beside_a_second_object_type_is_refused_at_the_time_source() {
 #[test]
 fn the_delay_unit_is_that_of_the_dense_source_of_the_declaring_nodes_root() {
     let (_, package) = delay_package("delay ConfigVersion::attemptUpdate ~ uniform;");
-    emit_checked(&package).expect("the package emits");
-    let nodes = crate::emit::TIMED_GRAPH
-        .with(|held| held.borrow().clone())
-        .expect("the timed nodes were written")
-        .0;
+    let emission = emit_checked(&package).expect("the package emits");
+    let package_wire = wire(&emission);
+    let nodes: Vec<filament_contract_model::CheckedSemanticNodeV2> =
+        serde_json::from_value(package_wire["semantic_graph"]["nodes"].clone())
+            .expect("typed nodes are present in the package");
     let [delay] = package.graph().probabilistic_model().delays() else {
         panic!("one checked delay");
     };

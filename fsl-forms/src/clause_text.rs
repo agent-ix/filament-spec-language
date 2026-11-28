@@ -8,10 +8,11 @@
 //! back out. S1 and S2 each run exactly as they do over a unit; nothing here
 //! reads an expression a second way.
 
-use fsl_cst::{CompleteDiagnostic, Limits};
+use fsl_cst::{CompleteDiagnostic, Limits, ParserContext};
 use fsl_foundation::SourceIdentity;
+use ix_trace_rs::implements;
 
-use crate::dispatch::{build_unit, FormsRefusal};
+use crate::dispatch::{FormsRefusal, build_unit};
 use crate::syntax::{DeclarationForm, Expression, TypeForm};
 
 /// Why a clause text did not become an [`Expression`].
@@ -30,11 +31,17 @@ pub enum ClauseTextRefusal {
 /// text is the body of a one-clause wrapper, so a text that is not exactly
 /// one expression refuses [`ClauseTextRefusal::NotOneExpression`] or the
 /// S1/S2 cause that read it.
-pub fn parse_clause_text(text: &str, limits: Limits) -> Result<Expression, ClauseTextRefusal> {
+#[implements("NFR-141-AC-10")]
+pub fn parse_clause_text(
+    context: &ParserContext,
+    text: &str,
+    limits: Limits,
+) -> Result<Expression, ClauseTextRefusal> {
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile p = \"filament.value.complete/v1\";\npre Clause using p on M::T::op {{ {text} }}\n"
     );
     let parsed = fsl_cst::parse(
+        context,
         SourceIdentity::new("clause-text", "operation-clause"),
         "clause.native",
         unit.as_bytes(),
@@ -60,11 +67,13 @@ pub fn parse_clause_text(text: &str, limits: Limits) -> Result<Expression, Claus
 /// one declaration the grammar has that carries a type, and the parameter's
 /// type is read back out, so S1 and S2 read a type exactly as they do in a
 /// unit.
-pub fn parse_type_text(text: &str) -> Result<TypeForm, ClauseTextRefusal> {
+#[implements("NFR-141-AC-10")]
+pub fn parse_type_text(context: &ParserContext, text: &str) -> Result<TypeForm, ClauseTextRefusal> {
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile p = \"filament.value.complete/v1\";\nfunction t using p(x: {text}): Boolean pure {{ true }}\n"
     );
     let parsed = fsl_cst::parse(
+        context,
         SourceIdentity::new("type-text", "type-ref"),
         "type.native",
         unit.as_bytes(),

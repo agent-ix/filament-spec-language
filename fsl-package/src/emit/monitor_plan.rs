@@ -389,9 +389,10 @@ fn emit_monitor_plan(
     limits: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let ids = &StructuralIds::default();
+    let mut probe = super::NoopEmitProbe;
     let mut nodes = base.resolved_graph().nodes.clone();
     let mut source_map = base.source_map().to_vec();
-    read_index_segments(ids, &mut nodes, &mut source_map)?;
+    read_index_segments(ids, &mut nodes, &mut source_map, &mut probe)?;
     // The inspection map is read from the structural form, before the
     // graph goes to wire form for the edits. The clause is selected in that
     // form too, by its own identity.
@@ -417,6 +418,7 @@ fn emit_monitor_plan(
         &mut [],
         &mut [],
         &ForeignNodes::default(),
+        &mut probe,
     )?;
     // The generated nodes belong to the package being compiled, which the
     // selected clause is a node of (a domain package's nodes may come first).
@@ -1467,7 +1469,8 @@ pub(super) fn finish(
         .map_err(EmitRefusal::from)
     })?;
     let retained_nodes = super::RetainedNodes::of(&semantic_graph);
-    let nodes = super::document_nodes(semantic_graph)?;
+    let mut probe = super::NoopEmitProbe;
+    let nodes = super::document_nodes(semantic_graph, &mut probe)?;
     #[cfg(test)]
     WRITTEN_NODES.with(|written| *written.borrow_mut() = nodes.clone());
     let mut rows = carry_rows(retained, changes);

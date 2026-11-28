@@ -13,8 +13,9 @@ const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
 fn parse(declarations: &str) -> (String, ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "union.native",
         text.as_bytes(),
@@ -471,6 +472,7 @@ fn deep_case_arenas_and_union_payloads_use_existing_charged_growth() {
 #[trace("TC-815", "FR-313-AC-2", "FR-257-AC-1")]
 #[test]
 fn default_frontend_limits_admit_a_thousand_nested_cases_and_charge_binder_nodes() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let depth = 1_000;
     let text = format!(
         "{HEADER}{}",
@@ -480,7 +482,7 @@ fn default_frontend_limits_admit_a_thousand_nested_cases_and_charge_binder_nodes
             "; }".repeat(depth)
         ))
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "case.native",
         text.as_bytes(),
@@ -504,6 +506,7 @@ fn default_frontend_limits_admit_a_thousand_nested_cases_and_charge_binder_nodes
 #[trace("TC-815", "FR-313-AC-2", "FR-257-AC-1")]
 #[test]
 fn wide_arm_binders_are_admitted_or_refused_by_the_existing_s1_node_budget() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let binders = (0..64)
         .map(|index| format!("x{index}"))
         .collect::<Vec<_>>()
@@ -511,7 +514,7 @@ fn wide_arm_binders_are_admitted_or_refused_by_the_existing_s1_node_budget() {
     let (text, parsed, _) = build(&body(&format!("case s {{ A({binders}): x0; }}")));
     let nodes = parsed.cst().nodes().len();
     let identity = || SourceIdentity::new("a", "u");
-    let exact = fsl_cst::parse(
+    let exact = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "union.native",
         text.as_bytes(),
@@ -521,7 +524,7 @@ fn wide_arm_binders_are_admitted_or_refused_by_the_existing_s1_node_budget() {
     assert!(exact.is_admissible(), "{:?}", exact.diagnostics());
     let forms = build_unit(&exact).expect("no extra S2 limit");
     assert_eq!(case(&function(&forms, 0).body).arms[0].binders.len(), 64);
-    let refused = fsl_cst::parse(
+    let refused = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "union.native",
         text.as_bytes(),

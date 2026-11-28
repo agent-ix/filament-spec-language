@@ -59,6 +59,7 @@ fn fixture_package(
     alignment: &str,
     body: &str,
 ) -> (String, PackageDeclarations) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = counters_document(operations, false);
     let packages = package_input([document.as_slice()]).unwrap();
     let text = format!(
@@ -70,7 +71,7 @@ fn fixture_package(
          hyper H using inf over behaviours (c: M::Counter) \
          forall trace a of M forall trace b of M {alignment} {{ {body} }}\n",
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

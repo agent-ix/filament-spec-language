@@ -35,6 +35,7 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn check(body: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let source = format!("{HEADER}{body}");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:source-probabilistic"),
         "program.native",
         source.as_bytes(),
@@ -622,6 +623,7 @@ fn check_units_named(
                 .map(|line| format!("{line}\n"))
                 .collect();
             let parsed = fsl_cst::parse(
+                &fsl_cst::ParserContext::new(),
                 fsl_foundation::SourceIdentity::new("agent-ix", *identity),
                 "program.native",
                 format!("{header}{text}").as_bytes(),

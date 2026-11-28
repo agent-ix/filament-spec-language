@@ -300,6 +300,7 @@ fn tc213_retains_exact_key_origin_map_across_order_selection_and_origin_controls
 /// uses its record and event value types. This deliberately runs the public
 /// intake -> normalization -> PackageDeclarations::assemble path.
 fn assemble_k2_unit(document: &Value, declarations: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("K2-derived fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     assert_eq!(packages.len(), 1, "one K2-derived model package");
@@ -309,7 +310,7 @@ fn assemble_k2_unit(document: &Value, declarations: &str) -> PackageDeclarations
          model M = {PACKAGE:?};\n\
          {declarations}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "tc235-assembly"),
         "tc235-assembly.native",
         source.as_bytes(),
