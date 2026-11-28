@@ -62,6 +62,12 @@ fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
     );
     assert!(parsed.is_admissible());
     assert_eq!(parsed.cst().render(), SOURCE.as_bytes());
+    for token in parsed.cst().tokens() {
+        assert_eq!(
+            token.spelling(),
+            &SOURCE.as_bytes()[token.span().start..token.span().end],
+        );
+    }
     assert_eq!(parsed.source().text(), SOURCE);
     // Distinct occurrences never collapse to one identity: nodes that share
     // one exact span (an `Expression` wrapping an `Implication` wrapping ...)
@@ -351,11 +357,17 @@ fn two_independent_syntax_errors_give_two_diagnostics() {
     );
 }
 
-#[trace("TC-2149", "FR-762-AC-2")]
+#[trace("TC-2149", "FR-762-AC-2", "FR-762-AC-3")]
 #[test]
 fn two_invalid_tokens_give_two_invalid_token_diagnostics() {
     let (text, parsed) =
         recover("record A { x: $; }\nrecord B { y: Integer; }\nrecord C { z: $; }\n");
+    for name in ["record A", "record C"] {
+        let start = byte_at(&text, name);
+        assert!(parsed.cst().nodes().iter().any(|node| {
+            node.production() == Production::Declaration && node.span().start == start
+        }));
+    }
     let first = byte_at(&text, "$");
     let second = text.rfind('$').expect("two dollars");
     let found: Vec<_> = parsed
