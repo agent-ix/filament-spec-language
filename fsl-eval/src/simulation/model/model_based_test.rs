@@ -14,7 +14,6 @@ use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::Setting;
 use fsl_semantics::check::{CallableFunction, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use ix_trace_rs::implements;
 
 use crate::simulation::order::Expanded;
 use crate::simulation::{

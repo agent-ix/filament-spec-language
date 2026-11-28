@@ -56,7 +56,6 @@ use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{CheckedActivation, CheckedProtocol};
 use fsl_semantics::family::ClaimExtent;
-use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use crate::fairness::{Constraint, Identity};

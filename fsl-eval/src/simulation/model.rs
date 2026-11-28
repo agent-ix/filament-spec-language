@@ -105,7 +105,6 @@ use fsl_semantics::model::observation::{
 };
 use fsl_semantics::model::operation::OperationDeclaration;
 use fsl_semantics::model::state::{StateField, StateModel};
-use ix_trace_rs::implements;
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;

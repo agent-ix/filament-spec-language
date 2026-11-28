@@ -425,20 +425,20 @@ impl serde::Serializer for CauseSpellingSerializer {
     type SerializeStructVariant = serde::ser::Impossible<Self::Ok, Self::Error>;
 
     reject_non_unit_variant_methods! {
-        fn serialize_bool(value: bool);
-        fn serialize_i8(value: i8);
-        fn serialize_i16(value: i16);
-        fn serialize_i32(value: i32);
-        fn serialize_i64(value: i64);
-        fn serialize_u8(value: u8);
-        fn serialize_u16(value: u16);
-        fn serialize_u32(value: u32);
-        fn serialize_u64(value: u64);
-        fn serialize_f32(value: f32);
-        fn serialize_f64(value: f64);
-        fn serialize_char(value: char);
-        fn serialize_str(value: &str);
-        fn serialize_bytes(value: &[u8]);
+        fn serialize_bool(_value: bool);
+        fn serialize_i8(_value: i8);
+        fn serialize_i16(_value: i16);
+        fn serialize_i32(_value: i32);
+        fn serialize_i64(_value: i64);
+        fn serialize_u8(_value: u8);
+        fn serialize_u16(_value: u16);
+        fn serialize_u32(_value: u32);
+        fn serialize_u64(_value: u64);
+        fn serialize_f32(_value: f32);
+        fn serialize_f64(_value: f64);
+        fn serialize_char(_value: char);
+        fn serialize_str(_value: &str);
+        fn serialize_bytes(_value: &[u8]);
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {

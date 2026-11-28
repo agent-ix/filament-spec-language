@@ -14,7 +14,6 @@ use filament_exact::{Meter, ObjectReference, Outcome, Value};
 use fsl_semantics::check::CheckedRow;
 use fsl_semantics::model::observation::AdmissionFailure;
 use fsl_semantics::model::state::{ModelState, StateField};
-use ix_trace_rs::implements;
 
 use std::collections::BTreeMap;
 
