@@ -4594,7 +4594,7 @@ fn replay_timed_paths(
                             };
                             (
                                 Some(identity.clone()),
-                                Some(transition),
+                                transition,
                                 step.draw.clone(),
                                 post,
                                 resume,
@@ -4715,7 +4715,7 @@ fn timed_step_for(
     wanted: Option<&serde_json::Value>,
 ) -> Result<
     (
-        filament_semantic_value::model_transition::ModelTransition,
+        Option<filament_semantic_value::model_transition::ModelTransition>,
         fsl_eval::simulation::model::ModelSimState,
         fsl_eval::simulation::model::ModelSimState,
     ),
@@ -4735,7 +4735,7 @@ fn timed_step_for(
         fsl_eval::simulation::model::ModelSimState,
     )>;
     type Found = (
-        filament_semantic_value::model_transition::ModelTransition,
+        Option<filament_semantic_value::model_transition::ModelTransition>,
         fsl_eval::simulation::model::ModelSimState,
         fsl_eval::simulation::model::ModelSimState,
     );
@@ -4745,6 +4745,23 @@ fn timed_step_for(
         for level in 0..CHAIN {
             let mut next = Vec::new();
             for (at, first) in frontier {
+                // A free-delay product edge may advance only the clocks. Its
+                // discrete model state is unchanged, even when an operation
+                // happens to be enabled at the resulting time.
+                if first.is_none() {
+                    let key = system
+                        .state_key(at.discrete(), fsl_foundation::IdentityLimits::default())
+                        .map_err(|error| {
+                            TimedStepFailure::Key(ProbabilityDocumentError::KeyEncoding(error))
+                        })?
+                        .0;
+                    let discrete: serde_json::Value =
+                        serde_json::from_slice(&key).map_err(|_| TimedStepFailure::Fault)?;
+                    if Some(&discrete) == wanted {
+                        let state = at.discrete().clone();
+                        return Ok(Ok((None, state.clone(), state)));
+                    }
+                }
                 let steps = timed.steps(&at).map_err(TimedStepFailure::Stopped)?;
                 for (step, post) in steps {
                     let first = if level == 0 {
@@ -4768,7 +4785,7 @@ fn timed_step_for(
                         serde_json::from_slice(&key).map_err(|_| TimedStepFailure::Fault)?;
                     if Some(&discrete) == wanted {
                         let (transition, after_first) = first.ok_or(TimedStepFailure::Fault)?;
-                        return Ok(Ok((transition, after_first, post.discrete().clone())));
+                        return Ok(Ok((Some(transition), after_first, post.discrete().clone())));
                     }
                     next.push((post, first));
                 }
