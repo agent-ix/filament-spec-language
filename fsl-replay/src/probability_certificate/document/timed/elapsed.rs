@@ -198,6 +198,7 @@ fn enumerate(
             storage,
             &mut terminals,
             &mut activated,
+            false,
         )?
     } else {
         enumerate_digital_deadline(

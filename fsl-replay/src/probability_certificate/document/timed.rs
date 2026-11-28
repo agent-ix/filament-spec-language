@@ -17,6 +17,7 @@ mod admission;
 mod chain;
 mod elapsed;
 mod region;
+mod tail;
 pub use admission::timed_certificate_route;
 
 #[implements("FR-203-AC-30", "FR-204-AC-21")]
@@ -119,7 +120,8 @@ pub(super) fn check(
     if objective.form != TimedProbabilityForm::Deadline {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    let Some((bound, watch)) = bounded_event(claim, objective.scale) else {
+    let grid = grid_scale(&timed, claim, route, objective.scale)?;
+    let Some((bound, watch)) = bounded_event(claim, grid) else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
     let optimization = match (&claim.scheduler, &bound) {
@@ -179,14 +181,15 @@ pub(super) fn check(
             binding.as_ref(),
             &watch,
             watch.horizon(),
-            objective.scale,
-            scale,
+            grid,
+            grid,
             limits,
             cancel,
             &mut meter,
             &mut storage,
             &mut BTreeMap::new(),
             &mut BTreeSet::new(),
+            matches!(&bound, Bound::AtMost(_)),
         )?,
     };
     // A workload resolves a tie by its weights and leaves the scheduler only
@@ -2446,6 +2449,7 @@ fn enumerate_region_deadline(
     storage: &mut u64,
     terminals: &mut BTreeMap<ProbabilityProductKey, (Rational, bool)>,
     activated: &mut BTreeSet<ProbabilityProductKey>,
+    tail_maximises: bool,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let (base_scale, subdivisions) = region_scale_parts(timed, claim, scale)?;
     let mut caps = Vec::with_capacity(timed.places().len());
@@ -2518,6 +2522,23 @@ fn enumerate_region_deadline(
             .get(&key)
             .cloned()
             .ok_or(ProbabilityDocumentError::Malformed)?;
+        // A tail-entry state is decided: its value is the checker's own
+        // table reading of the key (FR-196-AC-20), never a stated value.
+        if current.tail == DigitalTail::IdleEntry {
+            let value = tail_entry_value(system, watch, binding, &current, tail_maximises, cancel)?
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: Some(value),
+                    choices: Vec::new(),
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
+        }
         if let Some(value) = phase_value(&current.phase) {
             insert_checker_state(
                 key,
@@ -2708,6 +2729,44 @@ fn enumerate_region_deadline(
                 actual: edges,
             });
         }
+        // FR-196 item 1: a quiescent state of a plain deadline monitor may
+        // enter the tail, one edge of probability 1 to the decided state.
+        if timed
+            .is_quiescent(current.timed.discrete())
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+        {
+            let entry = RegionState {
+                tail: DigitalTail::IdleEntry,
+                ..current.clone()
+            };
+            if tail_entry_value(system, watch, binding, &entry, tail_maximises, cancel)?.is_some() {
+                let entry_key = region_key(
+                    system,
+                    timed,
+                    binding,
+                    &entry,
+                    &caps,
+                    base_scale,
+                    subdivisions,
+                    key_scale,
+                    deadline,
+                )?;
+                admit_region_state(
+                    entry_key.clone(),
+                    entry,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                choices.push(vec![ProbabilityEdge {
+                    target: entry_key,
+                    probability: one(),
+                }]);
+                edges = edges.saturating_add(1);
+                charge_work(meter, cancel, 1)?;
+            }
+        }
         if choices.is_empty() && current.phase == Phase::Active {
             return Err(ProbabilityDocumentError::Unsupported);
         }
@@ -2728,6 +2787,41 @@ fn enumerate_region_deadline(
         scheduler_actions: Default::default(),
         actions_by_state: None,
     })
+}
+
+/// The checker's own value of the tail-entry state of `state` (FR-196-AC-20),
+/// or `None` when the monitor has no plain-deadline tail rule (a window not
+/// opening at zero, a nested monitor, an elapsed measure).
+#[implements("FR-196-AC-20")]
+fn tail_entry_value(
+    system: &ModelSystem<'_>,
+    watch: &Watch<'_>,
+    binding: Option<&filament_exact::ObjectReference>,
+    state: &RegionState,
+    maximise: bool,
+    cancel: &Cancel,
+) -> Result<Option<bool>, ProbabilityDocumentError> {
+    use fsl_eval::probabilistic::DeadlineKind;
+    let (Watch::Bounded { predicates, .. }, Phase::Bounded(operator)) = (watch, &state.phase)
+    else {
+        return Ok(None);
+    };
+    if operator.lower != 0 {
+        return Ok(None);
+    }
+    let truths = read_truths(system, predicates, binding, state.timed.discrete(), cancel)?;
+    let body = match (operator.kind, truths.as_slice()) {
+        (DeadlineKind::Eventually | DeadlineKind::Always, [body])
+        | (DeadlineKind::Until, [_, body]) => *body,
+        _ => return Ok(None),
+    };
+    Ok(Some(tail::tail_accepts(
+        operator.kind,
+        operator.phase,
+        state.elapsed <= operator.upper,
+        body,
+        maximise,
+    )))
 }
 
 fn region_scale_parts(
@@ -2979,7 +3073,7 @@ fn region_key(
             })
             .collect(),
         claim_clocks: vec![claim_clock],
-        tail: DigitalTail::Running,
+        tail: state.tail,
         monitor: Some(match measure {
             Some((name, _)) => json!(["measure", null, name]),
             None => monitor,
@@ -4750,6 +4844,43 @@ fn clock_constraints<'a>(
     found
 }
 
+/// Whether the claim is a bounded deadline event over a clock (no elapsed
+/// measure): the one form whose document scale is the plain LCD.
+fn plain_deadline_form(claim: &CheckedProbabilisticClaim) -> bool {
+    elapsed::query(claim).is_none()
+        && matches!(
+            &claim.form,
+            fsl_semantics::check::ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula {
+                    timed_horizon: Some(_),
+                    ..
+                },
+                ..
+            }
+        )
+}
+
+/// The integer grid the checker walks: the document's `scale` refined by the
+/// checker's own region subdivisions for a plain deadline form on the region
+/// route (FR-920), the document's scale otherwise.
+fn grid_scale(
+    timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+    route: TimedProbabilityRoute,
+    document_scale: u64,
+) -> Result<u64, ProbabilityDocumentError> {
+    if route != TimedProbabilityRoute::Region || !plain_deadline_form(claim) {
+        return Ok(document_scale);
+    }
+    let subdivisions = u64::try_from(timed.places().len())
+        .ok()
+        .and_then(|clocks| clocks.checked_add(2))
+        .ok_or(ProbabilityDocumentError::Unsupported)?;
+    document_scale
+        .checked_mul(subdivisions)
+        .ok_or(ProbabilityDocumentError::Unsupported)
+}
+
 /// Recompute the canonical lattice and region refinement from the checked
 /// model. A document cannot select a coarser grid that merges strict-boundary
 /// states.
@@ -4809,7 +4940,9 @@ fn certificate_scale(
         .to_u64()
         .filter(|scale| *scale > 0)
         .ok_or(ProbabilityDocumentError::Unsupported)?;
-    let subdivisions = if route == TimedProbabilityRoute::Region {
+    // FR-920: a deadline form on the region route states the plain LCD scale;
+    // the checker refines it itself (`grid_scale`).
+    let subdivisions = if route == TimedProbabilityRoute::Region && !plain_deadline_form(claim) {
         let has_deadline = elapsed::query(claim).is_some()
             || matches!(
                 &claim.form,
@@ -4887,9 +5020,10 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     )
     .map_err(from_document)?;
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
+    let grid = grid_scale(&timed, claim, route, scale).map_err(from_document)?;
     let timed_watch = deadline_event(claim)
         .map(|(bound, predicate)| (bound, Watch::Deadline(predicate)))
-        .or_else(|| bounded_event(claim, scale));
+        .or_else(|| bounded_event(claim, grid));
     let Some((bound, watch)) = timed_watch else {
         return Err(unsupported());
     };
@@ -4900,9 +5034,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     // check does: a nested window ends past its root operator's upper bound.
     let clock_bound = match &watch {
         Watch::Bounded { .. } | Watch::Nested { .. } => watch.horizon(),
-        Watch::Deadline(_) | Watch::Elapsed(_) => {
-            time_bound(claim, scale).map_err(from_document)?
-        }
+        Watch::Deadline(_) | Watch::Elapsed(_) => time_bound(claim, grid).map_err(from_document)?,
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let mut meter = work
@@ -4920,7 +5052,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             binding.as_ref(),
             &watch,
             clock_bound,
-            scale,
+            grid,
             document_limits,
             cancel,
             &mut meter,
@@ -4934,14 +5066,15 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             binding.as_ref(),
             &watch,
             clock_bound,
-            scale,
-            scale,
+            grid,
+            grid,
             document_limits,
             cancel,
             &mut meter,
             &mut storage,
             &mut BTreeMap::new(),
             &mut BTreeSet::new(),
+            matches!(&bound, Bound::AtMost(_)),
         ),
     }
     .map_err(from_document)?;
