@@ -130,8 +130,8 @@ use fsl_replay::{
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use ix_trace_rs::implements;
-use quire_canonical::{Encode, Sink, Writer};
 use quire_canonical as canonical_api;
+use quire_canonical::{Encode, Sink, Writer};
 
 use super::ample::{Atoms, Por};
 use super::check::{

@@ -4,8 +4,8 @@
 use fsl_eval::simulation::{
     Expansion, ExpansionStop, Footprint, OfferedReductions, TransitionSystem,
 };
-use quire_canonical::{Encode, Sink, Writer};
 use quire_canonical as canonical_api;
+use quire_canonical::{Encode, Sink, Writer};
 
 /// Both components of a product state, preserved independently.
 #[derive(Clone, Debug, Eq, PartialEq)]
