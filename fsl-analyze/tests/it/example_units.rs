@@ -845,6 +845,59 @@ fn a_tp4_binding_that_reaches_the_horizon_does_not_end_the_item() {
     assert_eq!(undefined_at(counterexample).0, 1);
 }
 
+const SAFETY_UNDEFINED: &str = "always holds(6 mod (2 - c.versionNumber) >= 0)";
+
+fn safety_past_horizon(max_depth: usize, limits: ModelCheckLimits) -> Outcome {
+    let world = config_over(false, "", SAFETY_UNDEFINED, (0, 1));
+    let letters = Versions::new(&world, vec![mod_is_defined]);
+    run(&world, &letters, Some(max_depth), limits, &Cancel::new())
+}
+
+/// FR-126-AC-27 (its safety sentences): over `a` 0 and `b` 1, `always
+/// holds(mod_defined(c.versionNumber))` with `max_depth` 1 is refuted by `b`
+/// at `(0,2)`, one step from `(0,1)`, though `a` only reached the horizon;
+/// with `max_depth` 2 it is AC-11's finding for `a`.
+#[trace("TC-1085", "FR-126-AC-27")]
+#[test]
+fn a_safety_binding_that_reaches_the_horizon_does_not_hide_a_later_refutation() {
+    let outcome = safety_past_horizon(1, ModelCheckLimits::default());
+    let counterexample = violated(&outcome);
+    assert_eq!(bound(counterexample), "b", "{outcome:?}");
+    assert_eq!(
+        counterexample.prefix.iter().map(receiver).collect::<Vec<_>>(),
+        ['b']
+    );
+    assert_eq!(undefined_at(counterexample).0, 1);
+
+    let outcome = safety_past_horizon(2, ModelCheckLimits::default());
+    let counterexample = violated(&outcome);
+    assert_eq!(bound(counterexample), "a", "{outcome:?}");
+    assert_eq!(
+        counterexample.prefix.iter().map(receiver).collect::<Vec<_>>(),
+        ['a', 'a']
+    );
+    assert_eq!(undefined_at(counterexample).0, 2);
+}
+
+/// FR-126-AC-28: a run limit does not discard a refutation the run found.
+/// With `max_depth` 2 and `max_states` 3 the states `(0,1)`, `(1,1)` and
+/// `(0,2)` use the budget, so `(2,1)` is not reached and AC-27's violation
+/// bound to `b` is returned.
+#[trace("TC-1085", "FR-126-AC-28")]
+#[test]
+fn a_run_limit_does_not_discard_a_safety_refutation_the_run_found() {
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 3;
+    let outcome = safety_past_horizon(2, limits);
+    let counterexample = violated(&outcome);
+    assert_eq!(bound(counterexample), "b", "{outcome:?}");
+    assert_eq!(
+        counterexample.prefix.iter().map(receiver).collect::<Vec<_>>(),
+        ['b']
+    );
+    assert_eq!(undefined_at(counterexample).0, 1);
+}
+
 /// FR-126-AC-15: the engine decides `a` before evaluating `b`. A budget too
 /// small to finish `a` returns an incomplete result; once `a` is decided, its
 /// finding is returned and no later binding is explored.
