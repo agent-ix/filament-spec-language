@@ -317,6 +317,21 @@ pub mod test_support {
         pub structural_key_lookups: usize,
     }
 
+    /// Test-only work report for document-node operand restoration.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct DocumentNodeDiagnostics {
+        /// Linear slot visits, path inspections, and operand-row lookups.
+        pub linear_work_units: usize,
+        /// Slot visits and path allowances for repeated replacement scans.
+        pub repeated_scan_work_units: usize,
+        /// ID slots visited by one pass over document nodes.
+        pub one_pass_id_slots: usize,
+        /// Number of structural ID replacements collected.
+        pub changed_ids: usize,
+        /// Operand-row lookups performed while restoring index segments.
+        pub operand_row_lookups: usize,
+    }
+
     /// Retained-path counts for interpreting the S4 subphase timings.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct S4RetainedCounts {
@@ -370,6 +385,18 @@ pub mod test_support {
             one_pass_id_slots: diagnostics.one_pass_id_slots,
             changed_ids: diagnostics.changed_ids,
             structural_key_lookups: diagnostics.structural_key_lookups,
+        }
+    }
+
+    /// Read document-node rewrite work diagnostics for this thread.
+    pub fn document_node_diagnostics() -> DocumentNodeDiagnostics {
+        let diagnostics = crate::emit::document_node_diagnostics();
+        DocumentNodeDiagnostics {
+            linear_work_units: diagnostics.linear_work_units,
+            repeated_scan_work_units: diagnostics.repeated_scan_work_units,
+            one_pass_id_slots: diagnostics.one_pass_id_slots,
+            changed_ids: diagnostics.changed_ids,
+            operand_row_lookups: diagnostics.operand_row_lookups,
         }
     }
 

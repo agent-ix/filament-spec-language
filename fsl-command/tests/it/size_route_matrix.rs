@@ -1029,6 +1029,17 @@ fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
         write_index.changed_ids,
         write_index.structural_key_lookups,
     );
+    let document_rewrite = fsl_package::test_support::document_node_diagnostics();
+    eprintln!(
+        "QSL3570_DOCUMENT_NODE_WORK values={N} linear_work_units={} repeated_scan_work_units={} one_pass_id_slots={} changed_ids={} operand_row_lookups={} combined_linear_work_units={} combined_repeated_scan_work_units={}",
+        document_rewrite.linear_work_units,
+        document_rewrite.repeated_scan_work_units,
+        document_rewrite.one_pass_id_slots,
+        document_rewrite.changed_ids,
+        document_rewrite.operand_row_lookups,
+        write_index.linear_work_units + document_rewrite.linear_work_units,
+        write_index.repeated_scan_work_units + document_rewrite.repeated_scan_work_units,
+    );
     let retained = fsl_package::test_support::s4_phase_times();
     let retained_counts = fsl_package::test_support::s4_retained_counts();
     eprintln!(

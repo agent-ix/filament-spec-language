@@ -114,6 +114,7 @@ thread_local! {
     static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
     static S4_PHASE_TIMES: Cell<S4PhaseTimes> = const { Cell::new(S4PhaseTimes::ZERO) };
     static WRITE_INDEX_DIAGNOSTICS: Cell<WriteIndexDiagnostics> = const { Cell::new(WriteIndexDiagnostics::ZERO) };
+    static DOCUMENT_NODE_DIAGNOSTICS: Cell<DocumentNodeDiagnostics> = const { Cell::new(DocumentNodeDiagnostics::ZERO) };
     static S4_RETAINED_COUNTS: Cell<S4RetainedCounts> = const { Cell::new(S4RetainedCounts::ZERO) };
 }
 
@@ -178,6 +179,27 @@ pub(crate) struct WriteIndexDiagnostics {
     pub(crate) one_pass_id_slots: usize,
     pub(crate) changed_ids: usize,
     pub(crate) structural_key_lookups: usize,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DocumentNodeDiagnostics {
+    pub(crate) linear_work_units: usize,
+    pub(crate) repeated_scan_work_units: usize,
+    pub(crate) one_pass_id_slots: usize,
+    pub(crate) changed_ids: usize,
+    pub(crate) operand_row_lookups: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl DocumentNodeDiagnostics {
+    const ZERO: Self = Self {
+        linear_work_units: 0,
+        repeated_scan_work_units: 0,
+        one_pass_id_slots: 0,
+        changed_ids: 0,
+        operand_row_lookups: 0,
+    };
 }
 
 #[cfg(feature = "test-support")]
@@ -277,11 +299,17 @@ fn record_s4_phase(phase: S4Phase, elapsed: std::time::Duration) {
 #[cfg(feature = "test-support")]
 pub(crate) fn reset_write_index_diagnostics() {
     WRITE_INDEX_DIAGNOSTICS.with(|diagnostics| diagnostics.set(WriteIndexDiagnostics::ZERO));
+    DOCUMENT_NODE_DIAGNOSTICS.with(|diagnostics| diagnostics.set(DocumentNodeDiagnostics::ZERO));
 }
 
 #[cfg(feature = "test-support")]
 pub(crate) fn write_index_diagnostics() -> WriteIndexDiagnostics {
     WRITE_INDEX_DIAGNOSTICS.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn document_node_diagnostics() -> DocumentNodeDiagnostics {
+    DOCUMENT_NODE_DIAGNOSTICS.with(Cell::get)
 }
 
 #[cfg(feature = "test-support")]
@@ -11475,12 +11503,27 @@ pub(crate) fn document_nodes(
     mut graph: CheckedSemanticGraphV2,
 ) -> Result<Vec<CheckedSemanticNodeV2>, EmitRefusal> {
     use filament_contract_model::{CheckedNodePathSegment as Segment, CheckedOperandEntry};
+    #[cfg(feature = "test-support")]
+    let mut diagnostics = DocumentNodeDiagnostics::default();
     for (node, row) in graph.nodes.iter_mut().zip(&graph.operand_rows) {
         let mut changes = Vec::new();
         for id in reachable_ids(node) {
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(1 + id.path.len());
+            }
             let old = id.clone();
             for segment in &mut id.path {
                 if let Segment::Operand(slot) = segment {
+                    #[cfg(feature = "test-support")]
+                    {
+                        diagnostics.operand_row_lookups =
+                            diagnostics.operand_row_lookups.saturating_add(1);
+                        diagnostics.linear_work_units =
+                            diagnostics.linear_work_units.saturating_add(1);
+                    }
                     let entry = usize::try_from(*slot)
                         .ok()
                         .and_then(|slot| row.get(slot))
@@ -11498,10 +11541,50 @@ pub(crate) fn document_nodes(
                 changes.push((old, id.clone()));
             }
         }
+        #[cfg(feature = "test-support")]
+        let change_count = changes.len();
         for (old, new) in changes {
             node.replace_node_id(&old, &new);
         }
+        #[cfg(feature = "test-support")]
+        {
+            let mut node_id_slots = 0_usize;
+            let mut node_path_units = 0_usize;
+            node.map_node_ids(|id| {
+                node_id_slots = node_id_slots.saturating_add(1);
+                node_path_units = node_path_units.saturating_add(id.path.len());
+                None
+            });
+            diagnostics.one_pass_id_slots =
+                diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+            let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
+            diagnostics.linear_work_units = diagnostics
+                .linear_work_units
+                .saturating_add(one_pass_slot_work);
+            diagnostics.repeated_scan_work_units = diagnostics
+                .repeated_scan_work_units
+                .saturating_add(one_pass_slot_work.saturating_mul(change_count));
+            diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(change_count);
+        }
     }
+    #[cfg(feature = "test-support")]
+    DOCUMENT_NODE_DIAGNOSTICS.with(|held| {
+        let mut current = held.get();
+        current.linear_work_units = current
+            .linear_work_units
+            .saturating_add(diagnostics.linear_work_units);
+        current.repeated_scan_work_units = current
+            .repeated_scan_work_units
+            .saturating_add(diagnostics.repeated_scan_work_units);
+        current.one_pass_id_slots = current
+            .one_pass_id_slots
+            .saturating_add(diagnostics.one_pass_id_slots);
+        current.changed_ids = current.changed_ids.saturating_add(diagnostics.changed_ids);
+        current.operand_row_lookups = current
+            .operand_row_lookups
+            .saturating_add(diagnostics.operand_row_lookups);
+        held.set(current);
+    });
     Ok(graph.nodes)
 }
 
