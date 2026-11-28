@@ -7,7 +7,11 @@
 use std::path::Path;
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+
+#[path = "../../../tests/support/catalog_bound_mutations.rs"]
+mod catalog_bound_mutations;
+use catalog_bound_mutations::catalog_refusal_cases;
 
 const FLOOR_HALF: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
@@ -59,103 +63,6 @@ fn run(directory: &Path, request: Value) -> (u8, Value) {
 
 fn names(value: &Value, text: &str) {
     assert!(value.to_string().contains(text), "names {text}: {value}");
-}
-
-struct CatalogRefusalCase {
-    package: Value,
-    code: &'static str,
-    cause: &'static str,
-    path: String,
-}
-
-fn replace_definition_pair(value: &mut Value, authority: &str, old: &str, new: &str) -> usize {
-    match value {
-        Value::Object(object) => {
-            let matches = object.get("authority").and_then(Value::as_str) == Some(authority)
-                && object.get("identity").and_then(Value::as_str) == Some(old);
-            if matches {
-                object.insert("identity".to_owned(), new.into());
-            }
-            usize::from(matches)
-                + object
-                    .values_mut()
-                    .map(|child| replace_definition_pair(child, authority, old, new))
-                    .sum::<usize>()
-        }
-        Value::Array(values) => values
-            .iter_mut()
-            .map(|child| replace_definition_pair(child, authority, old, new))
-            .sum(),
-        _ => 0,
-    }
-}
-
-fn catalog_refusal_cases(original: &Value, index: usize) -> Vec<CatalogRefusalCase> {
-    let floor_authority = original["lock"]["definition_selections"][index]["authority"]
-        .as_str()
-        .expect("floor law authority");
-    let mut cases = Vec::new();
-    for (authority, identity, cause, row) in [
-        (
-            floor_authority,
-            "filament.value.integer-division.ceiling/v1",
-            "unsupported-selection",
-            index,
-        ),
-        ("agent-ix", "ext.retention", "unsupported-selection", index),
-        (
-            "another-authority",
-            "filament.value.integer-division.floor/v1",
-            "unsupported-selection",
-            index,
-        ),
-        (
-            floor_authority,
-            "filament.value.complete/v1",
-            "wrong-selection-role",
-            index,
-        ),
-    ] {
-        let mut package = original.clone();
-        package["lock"]["definition_selections"][index]["authority"] = authority.into();
-        package["lock"]["definition_selections"][index]["identity"] = identity.into();
-        cases.push(CatalogRefusalCase {
-            package,
-            code: "unknown_profile",
-            cause,
-            path: format!("/lock/definition_selections/{row}"),
-        });
-    }
-
-    let mut two_defects = original.clone();
-    two_defects["lock"]["definition_selections"][0]["identity"] =
-        "test:uncatalogued-first-row".into();
-    two_defects["lock"]["definition_selections"][index]["authority"] = "another-authority".into();
-    cases.push(CatalogRefusalCase {
-        package: two_defects,
-        code: "unknown_profile",
-        cause: "unsupported-selection",
-        path: "/lock/definition_selections/0".to_owned(),
-    });
-
-    let mut paired_law = original.clone();
-    paired_law["lock"]["definition_selections"][index]["identity"] =
-        "filament.value.integer-division.ceiling/v1".into();
-    let replaced = replace_definition_pair(
-        &mut paired_law,
-        floor_authority,
-        "filament.value.integer-division.floor/v1",
-        "filament.value.integer-division.ceiling/v1",
-    );
-    assert!(replaced >= 1, "operation law is paired with the lock row");
-    cases.push(CatalogRefusalCase {
-        package: paired_law,
-        code: "invalid_package",
-        cause: "operation-law-mismatch",
-        path: "/operation/laws/0/definition".to_owned(),
-    });
-
-    cases
 }
 
 /// FR-1039-AC-1, FR-100-AC-22, FR-945-AC-1: the package's recorded `floor`

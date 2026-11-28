@@ -17,9 +17,13 @@
 //! provide and are not written here.
 use std::collections::BTreeMap;
 
+#[path = "../../../tests/support/catalog_bound_mutations.rs"]
+#[allow(dead_code)]
+mod catalog_bound_mutations;
+
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageReadLimits, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageReadLimits,
+    CheckedPackageV2, read_checked_package,
 };
 use filament_exact::Cancel;
 use fsl_bench::prop::{self, near_miss, unit};
@@ -163,56 +167,9 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .expect("floor law authority")
         .to_owned();
 
-    fn replace_pair(
-        value: &mut serde_json::Value,
-        old_authority: &str,
-        old_identity: &str,
-        new_authority: &str,
-        new_identity: &str,
-    ) -> usize {
-        match value {
-            serde_json::Value::Object(object) => {
-                let matched = object.get("authority").and_then(serde_json::Value::as_str)
-                    == Some(old_authority)
-                    && object.get("identity").and_then(serde_json::Value::as_str)
-                        == Some(old_identity);
-                if matched {
-                    object.insert("authority".to_owned(), new_authority.into());
-                    object.insert("identity".to_owned(), new_identity.into());
-                }
-                usize::from(matched)
-                    + object
-                        .values_mut()
-                        .map(|child| {
-                            replace_pair(
-                                child,
-                                old_authority,
-                                old_identity,
-                                new_authority,
-                                new_identity,
-                            )
-                        })
-                        .sum::<usize>()
-            }
-            serde_json::Value::Array(values) => values
-                .iter_mut()
-                .map(|child| {
-                    replace_pair(
-                        child,
-                        old_authority,
-                        old_identity,
-                        new_authority,
-                        new_identity,
-                    )
-                })
-                .sum(),
-            _ => 0,
-        }
-    }
-
     let mut paired = original.clone();
     assert!(
-        replace_pair(
+        catalog_bound_mutations::replace_definition_pair(
             &mut paired,
             &floor_authority,
             floor_identity,
@@ -249,7 +206,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
 
     let mut unlisted_pair = original.clone();
     assert!(
-        replace_pair(
+        catalog_bound_mutations::replace_definition_pair(
             &mut unlisted_pair,
             &floor_authority,
             floor_identity,
