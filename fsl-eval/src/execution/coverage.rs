@@ -14,6 +14,7 @@ use filament_semantic_value::declaration::{CompositeShape, EqualityOperator};
 use filament_semantic_value::location::ExpressionLocation;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedGraph, CheckedNode};
+use ix_trace_rs::implements;
 
 use super::{
     BackendCoverage, CoverageOperation, CoverageOperator, CoverageValueType, EntryKind,
@@ -53,6 +54,7 @@ pub fn first_outside(
 ///
 /// # Errors
 /// Returns an internal fault if a checked operation has lost its semantic key.
+#[implements("NFR-141-AC-6")]
 pub fn first_outside_body(
     graph: &CheckedGraph,
     parameters: &[(String, ValueType)],
@@ -260,6 +262,7 @@ fn covered_named_population(node: CheckedNode<'_>) -> bool {
     matches!(node.kind(), NodeKind::NamedPopulation { members, .. } if members.len() == 1)
 }
 
+#[implements("NFR-141-AC-6")]
 fn outside_node(
     graph: &CheckedGraph,
     node: CheckedNode<'_>,
@@ -304,6 +307,7 @@ fn outside_node(
     }
 }
 
+#[implements("NFR-141-AC-6")]
 fn form_name(graph: &CheckedGraph, node: CheckedNode<'_>) -> Option<String> {
     let name = match node.kind() {
         NodeKind::Local(_) => "name",
@@ -378,6 +382,7 @@ fn variant_name<C: std::fmt::Debug>(kind: &NodeKind<C>) -> String {
         .to_ascii_lowercase()
 }
 
+#[implements("NFR-141-AC-6")]
 fn operation_of(
     graph: &CheckedGraph,
     node: CheckedNode<'_>,
