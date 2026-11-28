@@ -203,17 +203,52 @@ fn register_ab_result_path(
     let key = format!("{side}:{axis}");
     if let Some(existing) = manifest["paths"][&key].as_str() {
         if existing != result_file {
-            return Err(io::Error::other(format!(
-                "A/B session path for {key} is immutable: expected {existing}"
-            ))
-            .into());
+            if !ab_session_can_restart(&manifest)? {
+                return Err(io::Error::other(format!(
+                    "active A/B session path for {key} is immutable: expected {existing}"
+                ))
+                .into());
+            }
+            manifest["paths"] = serde_json::json!({});
         }
-    } else {
-        manifest["paths"][&key] = serde_json::Value::String(result_file.to_owned());
     }
+    manifest["paths"][&key] = serde_json::Value::String(result_file.to_owned());
     fs::create_dir_all(target)?;
     write_json_atomically(&path, &manifest)?;
     Ok(())
+}
+
+fn ab_session_can_restart(manifest: &serde_json::Value) -> Result<bool, Box<dyn Error>> {
+    let paths = manifest["paths"]
+        .as_object()
+        .ok_or_else(|| io::Error::other("A/B session manifest has no paths object"))?;
+    let mut complete = paths.len() == 2 * PROFILE_AXES.len();
+    for value in paths.values() {
+        let path = value
+            .as_str()
+            .ok_or_else(|| io::Error::other("A/B session path is not a string"))?;
+        if !Path::new(path).exists() {
+            complete = false;
+            continue;
+        }
+        let result = read_json(Path::new(path))?;
+        let Some(rounds) = result["rounds"].as_array() else {
+            complete = false;
+            continue;
+        };
+        if rounds
+            .iter()
+            .any(|round| round["status"].as_str() == Some("failed"))
+        {
+            return Ok(true);
+        }
+        complete &= rounds.len() == 5
+            && rounds.iter().enumerate().all(|(index, round)| {
+                round["round"].as_u64() == Some(u64::try_from(index + 1).unwrap_or(u64::MAX))
+                    && round["report"].is_object()
+            });
+    }
+    Ok(complete)
 }
 
 /// Persist a failed recorded round so a retry cannot erase its outcome.

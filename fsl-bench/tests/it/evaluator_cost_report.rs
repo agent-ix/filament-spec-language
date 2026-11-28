@@ -615,7 +615,7 @@ fn recorded_round_setup_writes_load_manifest_and_run_markers() {
 
 #[test]
 #[trace("NFR-141-AC-7")]
-fn failed_recorded_round_is_immutable_and_invalidates_comparison() {
+fn failed_recorded_round_is_immutable_and_allows_session_restart() {
     let target = TempTarget::new();
     let a_path = target.0.join("kernel-A.json");
     let b_path = target.0.join("kernel-B.json");
@@ -665,21 +665,34 @@ fn failed_recorded_round_is_immutable_and_invalidates_comparison() {
         "criterion exited with status 101"
     );
 
-    assert!(evaluator_cost::start_recorded_invocation(
+    let alternate_path = target.0.join("alternate-kernel-A.json");
+    let restarted = evaluator_cost::start_recorded_invocation(
         &target.0,
         "A",
         1,
         EVALUATOR_CALL_CHAIN_AXIS,
-        &target.0.join("alternate-kernel-A.json"),
+        &alternate_path,
     )
-    .is_err());
-    evaluator_cost::start_recorded_invocation(
+    .expect("an invalidated session can restart under a fresh result path");
+    assert_ne!(restarted, 0);
+    let new_marker: serde_json::Value = serde_json::from_slice(
+        &fs::read(target.0.join("evaluator-cost-recorded-round.json"))
+            .expect("new round marker exists"),
+    )
+    .expect("new round marker is JSON");
+    assert_eq!(new_marker["result_file"], alternate_path.to_str().unwrap());
+    let old_record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&a_path).expect("old failure remains persisted"))
+            .expect("old failed result remains valid JSON");
+    assert_eq!(old_record["rounds"].as_array().unwrap().len(), 1);
+    assert_eq!(old_record["rounds"][0]["status"], "failed");
+
+    assert!(evaluator_cost::start_recorded_invocation(
         &target.0,
         "A",
         1,
         EVALUATOR_CALL_CHAIN_AXIS,
         &a_path,
     )
-    .expect("the CLI can begin, but cannot replace the recorded round");
-    assert!(evaluator_cost::record_round_failure(&target.0, "retry").is_err());
+    .is_err());
 }
