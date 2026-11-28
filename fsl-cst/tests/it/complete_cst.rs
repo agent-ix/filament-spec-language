@@ -357,11 +357,17 @@ fn two_independent_syntax_errors_give_two_diagnostics() {
     );
 }
 
-#[trace("TC-2149", "FR-762-AC-2")]
+#[trace("TC-2149", "FR-762-AC-2", "FR-762-AC-3")]
 #[test]
 fn two_invalid_tokens_give_two_invalid_token_diagnostics() {
     let (text, parsed) =
         recover("record A { x: $; }\nrecord B { y: Integer; }\nrecord C { z: $; }\n");
+    for name in ["record A", "record C"] {
+        let start = byte_at(&text, name);
+        assert!(parsed.cst().nodes().iter().any(|node| {
+            node.production() == Production::Declaration && node.span().start == start
+        }));
+    }
     let first = byte_at(&text, "$");
     let second = text.rfind('$').expect("two dollars");
     let found: Vec<_> = parsed

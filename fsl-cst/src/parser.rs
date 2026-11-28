@@ -194,6 +194,12 @@ pub(super) fn parse(
         limits,
         cancel,
     );
+    let declaration_words = declaration_starts(grammar);
+    let declaration_token_starts: Vec<_> = significant
+        .iter()
+        .filter(|token| declaration_words.contains(token.spelling.as_ref()))
+        .map(|token| token.span.start)
+        .collect();
     let (matched, parse_significant, mut parser_diagnostics, parser_recoveries) =
         parse_with_declaration_recovery(
             &source,
@@ -231,15 +237,13 @@ pub(super) fn parse(
     // A declaration the recovery skipped is kept as a `Declaration` node,
     // whether or not the declarations around it matched (FR-762-AC-3, AC-9).
     {
-        let starts = declaration_starts(grammar);
         let recovered_declarations: Vec<_> = recoveries
             .iter()
             .filter(|recovery| recovery.expected == "next declaration")
             .filter(|recovery| {
-                parse_significant.iter().any(|token| {
-                    token.span.start == recovery.span.start
-                        && starts.contains(token.spelling.as_ref())
-                })
+                declaration_token_starts
+                    .binary_search(&recovery.span.start)
+                    .is_ok()
             })
             .map(|recovery| recovery.span)
             .collect();
