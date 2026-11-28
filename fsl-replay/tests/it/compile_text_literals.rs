@@ -14,7 +14,6 @@ const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
 fn compile(source: &str) -> spine::CheckedUnit {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity::new("a", "text-literals");
     let limits = SpineLimits::default();
     let cancel = filament_exact::Cancel::new();

@@ -347,6 +347,7 @@ fn package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_
         .stack_size(512 * 1024)
         .spawn(move || {
             check_probability_certificate_package(
+                &fsl_cst::ParserContext::new(),
                 ProbabilityPackageRequest {
                     package: package.as_bytes(),
                     package_name: None,
@@ -504,6 +505,7 @@ fn source_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_s
         .stack_size(512 * 1024)
         .spawn(move || {
             check_probability_certificate_source(
+                &fsl_cst::ParserContext::new(),
                 ProbabilitySourceRequest {
                     source: &source,
                     expected_source: &expected_source,

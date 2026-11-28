@@ -292,6 +292,7 @@ fn declarations(documents: &[&[u8]], text: &str) -> PackageDeclarations {
     let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input(documents.iter().copied()).unwrap();
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("agent-ix", "hyper"),
         "hyper.native",
         text.as_bytes(),

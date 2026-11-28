@@ -97,7 +97,6 @@ fn parse_unit_for_package(
     package: &str,
     declarations: &str,
 ) -> spine::ParsedUnitSource {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -259,7 +258,6 @@ fn d10(swapped: bool, split_pb1: bool, reverse: bool) -> Vec<spine::CheckedUnit>
 }
 
 fn d10_single(swapped: bool) -> spine::CheckedUnit {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("test", "d10:single");
     let lookup = "(lookup<M::ConfigVersion>(M::config_history, self) absent undefined) = self";
     let (pb1, pb2) = if swapped {
@@ -700,7 +698,6 @@ fn aggregate_resolves_a_reused_model_alias_per_source_unit() {
 #[trace("FR-480-AC-3")]
 #[test]
 fn aggregate_resolves_a_reused_import_alias_per_source_unit() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let header =
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
     let library = |identity: &str, name: &str, declaration: &str| SuppliedLibrary {

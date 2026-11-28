@@ -35,7 +35,6 @@ fn spine_run(
     text: &str,
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<Vec<u8>, Box<CompileRefusal>> {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = identity();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();

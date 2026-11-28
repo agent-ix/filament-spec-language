@@ -57,7 +57,6 @@ fn dependencies(with_library: bool) -> DependencyInput {
 
 /// The library `check` operation over `text`, under `cancel`.
 fn check(text: &str, dependencies: &DependencyInput, cancel: &Cancel) -> Checked {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = program_identity();
     let limits = SpineLimits::default();
     let parsed = spine::parse(

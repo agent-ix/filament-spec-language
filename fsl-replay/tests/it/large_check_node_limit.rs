@@ -31,7 +31,6 @@ fn assert_names_no_depth(outcome: &str) {
 #[trace("TC-758", "FR-277-AC-2")]
 #[test]
 fn a_100000_term_sum_checks_at_its_node_count_on_the_default_stack() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let sum = (1..=TERMS)
         .map(|term| term.to_string())
         .collect::<Vec<_>>()
@@ -111,7 +110,6 @@ fn a_100000_term_sum_checks_at_its_node_count_on_the_default_stack() {
 #[test]
 #[ignore = "QSL-3256: the 100,000-term package and node-key check does not complete within 20 minutes"]
 fn a_100000_term_package_and_node_keys_match_on_512kib_and_8mib_stacks() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let sum = (1..=TERMS)
         .map(|term| term.to_string())
         .collect::<Vec<_>>()

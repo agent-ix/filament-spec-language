@@ -1020,7 +1020,6 @@ fn bit_level_float_constructors_lower_to_exact_wire_literals() {
 #[trace("TC-1091", "FR-397-AC-1", "FR-397-AC-3")]
 #[test]
 fn admitted_float_arithmetic_and_rational_conversion_evaluate_through_the_source_spine() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_eval::FamilyOutcome;
     use filament_exact::{
         Cancel, IeeeValue, Integer, Meter, Outcome, Rational, Value as KernelValue,

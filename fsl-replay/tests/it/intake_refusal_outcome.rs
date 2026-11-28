@@ -13,7 +13,6 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     model M = \"acme/orders\";\n";
 
 fn check(text: &str, packages: &BTreeMap<String, Vec<u8>>) -> spine::FrontEndFailure {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("test", "refused-model");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();

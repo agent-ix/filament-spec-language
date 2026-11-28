@@ -16,8 +16,8 @@ const HEADER: &str =
 const FIXTURE: &str = include_str!("../../../tests/fixtures/spine-compile.native");
 
 fn parsed(text: &str) -> ParsedSource {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("agent-ix", "test:format-outcome"),
         "unit.native",
         text.as_bytes(),

@@ -4,8 +4,9 @@
 //! name, and a source compile refuses an import of the root's name.
 
 use filament_contract_model::{
-    encode_checked_package_v2, CheckedDependencySelection, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, NativeJoinBudget,
+    encode_checked_package_v2, CheckedDependencySelection, CheckedPackageRefusalCause,
+    CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef, CheckedPackageV2,
+    NativeJoinBudget,
 };
 use filament_exact::{NodeKey, PathSegment, ScalarLimits};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
@@ -67,6 +68,7 @@ fn package(name: &str, divisor: u32) -> DependencyArtifact {
 /// The package `name` of `source`, with its witness files.
 fn artifact_of(name: &str, source: &str) -> DependencyArtifact {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("fixture", name),
         "unit.native",
         source.as_bytes(),
@@ -466,8 +468,8 @@ fn an_unsupplied_selection_of_the_root_name_is_a_missing_selection() {
         .expect_err("an unsupplied selection refuses");
     assert_eq!(refusal.code, Code::MissingImport, "{refusal:?}");
     assert_eq!(
-        refusal.cause.as_deref(),
-        Some("missing-selection"),
+        refusal.cause,
+        Some(CheckedPackageRefusalCause::MissingSelection),
         "{refusal:?}"
     );
     assert_eq!(
@@ -550,8 +552,8 @@ fn assert_cycle(
     let refusal = outcome.expect_err(case);
     assert_eq!(refusal.code, Code::InvalidPackage, "{case}: {refusal:?}");
     assert_eq!(
-        refusal.cause.as_deref(),
-        Some("definition-cycle"),
+        refusal.cause,
+        Some(CheckedPackageRefusalCause::DefinitionCycle),
         "{case}: {refusal:?}"
     );
     assert_eq!(

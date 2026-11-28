@@ -31,7 +31,6 @@ use ix_trace_rs::trace;
 use proptest::prelude::*;
 
 fn emit(source: &str) -> Result<EmittedUnit, FrontEndFailure> {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "emit-admit");
     let limits = SpineLimits::default();
@@ -111,7 +110,6 @@ fn reread(emitted: &EmittedUnit) -> Result<Box<CheckedPackageV2>, TestCaseError>
 #[test]
 #[trace("FR-110-AC-16", "TC-3217")]
 fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction q using v(a: Int[-7,7], b: Int[1,3]): Int[-7,7] pure { a div b }\n";
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "fr-110-floor-law-reader");

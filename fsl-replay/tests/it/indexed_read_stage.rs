@@ -22,7 +22,6 @@ fn json(document: &OutcomeDocument) -> (Value, u8) {
 }
 
 fn parse_document(text: &str) -> (Value, u8) {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("agent-ix", "test:indexed-read");
     let result = spine::parse(
         &ParseRequest {
@@ -37,7 +36,6 @@ fn parse_document(text: &str) -> (Value, u8) {
 }
 
 fn check_document(text: &str) -> (Value, u8) {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("agent-ix", "test:indexed-read");
     let limits = SpineLimits::default();
     let parsed = spine::parse(

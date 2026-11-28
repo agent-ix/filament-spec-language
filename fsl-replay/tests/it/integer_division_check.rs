@@ -15,7 +15,6 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"f
 #[test]
 #[trace("TC-2197", "FR-767-AC-11")]
 fn check_operation_takes_the_supplied_law() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity::new("agent-ix", "division-check");
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
@@ -98,7 +97,6 @@ fn check_operation_takes_the_supplied_law() {
 #[test]
 #[trace("TC-2196", "FR-767-AC-8")]
 fn multi_unit_checker_takes_one_caller_selection() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
     let dependencies = DependencyInput::default();

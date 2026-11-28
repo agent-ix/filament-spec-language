@@ -91,7 +91,6 @@ fn with_spine_graph<T>(text: &str, read: impl FnOnce(&CheckedGraph) -> T) -> T {
 
 /// Run `read` over the spine's own checked package of `text`.
 fn with_spine_package<T>(text: &str, read: impl FnOnce(&fsl_package::CheckedPackage) -> T) -> T {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = unit_identity();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();

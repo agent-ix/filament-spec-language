@@ -21,7 +21,6 @@ fn refusal(failure: spine::FrontEndFailure) -> Box<CompileRefusal> {
 
 /// The unit list `units` through S1 and S3 check only.
 fn check(units: &[&str]) -> Result<spine::CheckedUnit, Box<CompileRefusal>> {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("a", "u");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -214,7 +213,6 @@ fn alias_plus_function_still_compiles() {
 #[test]
 #[trace("TC-2573", "FR-910-AC-4", "FSpec-TC-1812", "FSpec-FR-746-AC-4")]
 fn alias_only_unit_resolves_in_another_unit_and_refuses_alone() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let alias = "type Port = Integer;\n";
     let function = "function f(p: Port): Port pure { p }\n";
     let parse_unit = |identity: &str, body: &str| {

@@ -97,7 +97,6 @@ fn members(source: &str, call: &Call) -> Vec<(OccurrenceKey, usize)> {
 
 /// The checked graph's record keys in package order, read through the spine.
 fn record_keys(source: &str) -> Vec<OccurrenceKey> {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = identity();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();

@@ -188,7 +188,6 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("a", "body-failure");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();

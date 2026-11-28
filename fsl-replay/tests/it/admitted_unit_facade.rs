@@ -116,7 +116,6 @@ fn library(identity: &str, name: &str, body: &str) -> SuppliedLibrary {
 
 /// Run `read` over the spine's own checked graph of `text`.
 fn with_spine_graph<T>(text: &str, read: impl FnOnce(&CheckedGraph) -> T) -> T {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = unit_identity();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();

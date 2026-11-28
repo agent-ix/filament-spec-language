@@ -31,7 +31,6 @@ fn checked(
     limits: SpineLimits,
     libraries: Vec<SuppliedLibrary>,
 ) -> spine::CheckedUnit {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity::new("test", "unit");
     let cancel = Cancel::new();
     let parsed = spine::parse(
@@ -296,7 +295,6 @@ fn imported_predicate_reference_retains_the_exact_library_target() {
 #[trace("FR-510-AC-3", "TC-1305")]
 #[test]
 fn aggregate_units_keep_sibling_imports_and_references_out_of_each_subject() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source_a = SourceIdentity::new("test", "unit-a");
     let source_b = SourceIdentity::new("test", "unit-b");
     let unit_a = SOURCE
@@ -598,7 +596,6 @@ fn protocol(name: &str, role: &str) -> String {
 #[trace("FR-510-AC-5", "TC-1305")]
 #[test]
 fn a_refused_check_produces_no_static_subject() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bad_source = SOURCE
         .replace("function answer", "function broken")
         .replace("{ 1 }", "{ unknown }");

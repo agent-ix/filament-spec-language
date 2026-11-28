@@ -463,7 +463,6 @@ fn an_undeclared_or_unimportable_function_refuses_paired_with_the_library() {
 #[trace("TC-3210")]
 #[test]
 fn a_package_name_that_is_no_library_name_is_a_fault() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_replay::spine;
 
     let unit = unit_source("test/units", UNIT_BODY);
