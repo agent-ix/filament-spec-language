@@ -109,6 +109,10 @@ partner has failed.
   undefined evaluation of that member's component (ADR-018 UE-6): the
   counterexample is the `undefined` kind whose paths end at the member's
   tuple, with the locus `contract` naming the existential component alone.
+  When several existential partners have an undefined expression, the
+  engine reports the one whose undefined position is earliest (shortest
+  prefix first, ADR-018 UE-4), the first of them in the partner list on a
+  tie.
 - When the evaluation is on the universal side at a product state whose `X`
   is not empty, the existential variables' paths SHALL be the path of the
   first member of `X` in `X`'s sorted order, which ends at that member's

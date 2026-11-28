@@ -252,10 +252,12 @@ pub fn closed_executions(
                     .iter()
                     .find_map(crate::simulation::model::ModelFinding::undefined_contract)
                 {
-                    return Err(ClosedStop::Undefined {
-                        prefix: execution,
-                        contract,
-                    });
+                    // The shortest prefix with such a state is the first refuting
+                    // evidence (ADR-018 UE-4), not the first the depth-first walk meets.
+                    let (prefix, contract) =
+                        shortest_undefined(system, depth, skips, cancel, &execution)
+                            .unwrap_or((execution, contract));
+                    return Err(ClosedStop::Undefined { prefix, contract });
                 }
                 if expansion
                     .findings
@@ -303,6 +305,75 @@ pub fn closed_executions(
         }
     }
     Ok(complete)
+}
+
+/// The shortest execution of `system` whose last state has an undefined contract
+/// conjunction and that is shorter than `found`, each level in the order of
+/// the transition and state keys; the first of its length from the first
+/// initial state that has one. `None` when `found` is the shortest, or when a
+/// state cannot be expanded or encoded (the depth-first walk reports that).
+fn shortest_undefined(
+    system: &ModelSystem<'_>,
+    depth: usize,
+    skips: &BTreeSet<String>,
+    cancel: &Cancel,
+    found: &ClosedExecution,
+) -> Option<(ClosedExecution, crate::simulation::model::UndefinedContract)> {
+    let mut level: Vec<ClosedExecution> = system
+        .initial()
+        .into_iter()
+        .enumerate()
+        .map(|(initial, state)| ClosedExecution {
+            initial,
+            states: vec![state],
+            steps: Vec::new(),
+        })
+        .collect();
+    while !level.is_empty() && level.first()?.steps.len() < found.steps.len() {
+        let mut next_level = Vec::new();
+        for execution in level {
+            if cancel.poll() {
+                return None;
+            }
+            if execution.visible_steps() >= depth {
+                continue;
+            }
+            let expansion = system.successors(execution.states.last()?).ok()?;
+            if let Some(contract) = expansion
+                .findings
+                .iter()
+                .find_map(crate::simulation::model::ModelFinding::undefined_contract)
+            {
+                return Some((execution, contract));
+            }
+            let mut keyed = Vec::with_capacity(expansion.successors.len());
+            for (transition, next) in expansion.successors {
+                let (key, post_state) = system
+                    .state_key(&next, fsl_foundation::IdentityLimits::default())
+                    .ok()?;
+                let order = system.transition_key(&transition).ok()?;
+                keyed.push(((order, key), transition, next, post_state));
+            }
+            keyed.sort_by(|left, right| left.0.cmp(&right.0));
+            for (_, transition, next, post_state) in keyed {
+                let mut states = execution.states.clone();
+                states.push(next);
+                let mut steps = execution.steps.clone();
+                steps.push(ClosedStep {
+                    skipped: skips.contains(transition.operation()),
+                    transition,
+                    post_state,
+                });
+                next_level.push(ClosedExecution {
+                    initial: execution.initial,
+                    states,
+                    steps,
+                });
+            }
+        }
+        level = next_level;
+    }
+    None
 }
 
 /// What reading a tuple of closed executions settles (FR-173 "Event-position
@@ -660,6 +731,8 @@ pub enum PartnerSearch {
 /// Search the product of `existentials`, one list of closed executions per
 /// existential variable in quantifier order, for a partner of `universal`,
 /// one execution per universal variable. At most `limit` existential tuples.
+/// When partners have an expression with no value, the one whose position is
+/// earliest is reported, the first in list order on a tie (ADR-018 UE-4).
 pub fn search_partner(
     inputs: &ClosedInputs<'_>,
     universal: &[&ClosedExecution],
@@ -677,6 +750,9 @@ pub fn search_partner(
         return PartnerSearch::TooMany { limit };
     }
     let mut position = 0_u64;
+    // The earliest undefined partner so far; a shorter one replaces it, a tie
+    // keeps the first in list order (ADR-018 UE-4: shortest prefix first).
+    let mut earliest: Option<(Box<ClosedUndefined>, Vec<usize>)> = None;
     for picked in Tuples::over(lens) {
         if inputs.cancel.poll() {
             return PartnerSearch::Cancelled;
@@ -688,23 +764,35 @@ pub fn search_partner(
                 None => return PartnerSearch::Stopped(closed_fault("an-index-is-in-its-list")),
             }
         }
-        match judge_closed_tuple(inputs, &tuple) {
+        let verdict = judge_closed_tuple(inputs, &tuple);
+        if let Some((best, _)) = &earliest {
+            // An undefined partner refutes whatever the rest holds; only a
+            // shorter one changes which is reported.
+            if let ClosedVerdict::Undefined(found) = verdict {
+                if found.position < best.position {
+                    earliest = Some((found, picked));
+                }
+            }
+            continue;
+        }
+        match verdict {
             ClosedVerdict::Holds => return PartnerSearch::Witnessed,
             ClosedVerdict::UniversalUnmatched => return PartnerSearch::UniversalUnmatched,
             ClosedVerdict::ExistentialUnmatched => {}
             ClosedVerdict::Violated { at } => position = position.max(at),
-            ClosedVerdict::Undefined(found) => {
-                return PartnerSearch::Undefined {
-                    found,
-                    existentials: picked,
-                };
-            }
+            ClosedVerdict::Undefined(found) => earliest = Some((found, picked)),
             stopped @ (ClosedVerdict::MatchUndetermined
             | ClosedVerdict::Incomplete(_)
             | ClosedVerdict::Fault(_)) => return PartnerSearch::Stopped(stopped),
         }
     }
-    PartnerSearch::Exhausted { position }
+    match earliest {
+        Some((found, existentials)) => PartnerSearch::Undefined {
+            found,
+            existentials,
+        },
+        None => PartnerSearch::Exhausted { position },
+    }
 }
 
 /// What reading a tuple of closed executions, or a joint prefix of them, for
