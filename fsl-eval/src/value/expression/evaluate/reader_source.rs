@@ -8,8 +8,8 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_foundation::source::provenance::OccurrenceKey;
 
 use super::node_source::{Callee, NodeChildren, NodeSource};
-use ix_trace_rs::implements;
 use crate::simulation::model::BodyReads;
+use ix_trace_rs::implements;
 
 /// One node handle in the package-owned admitted projection.
 #[derive(Clone, Copy)]

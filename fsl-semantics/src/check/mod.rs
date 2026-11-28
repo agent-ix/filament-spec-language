@@ -497,10 +497,10 @@ pub use family::fixtures::{
 };
 pub use ir::{
     CheckedBody, CheckedChildren, CheckedNode, EqualityConversionEdgeIdentity,
-    EqualityDimensionIdentity, NodeChildIds,
-    EqualityDimensionRole, EqualityDimensionTermIdentity, EqualityOperandTypeFact,
-    EqualityOperandTypeIdentity, EqualityProducerData, EqualityProducerIdentity,
-    EqualityUnitIdentityFact, EqualityUnitOperandRole, EqualityUnitTypeFact, Node, NodeId, Slot,
+    EqualityDimensionIdentity, EqualityDimensionRole, EqualityDimensionTermIdentity,
+    EqualityOperandTypeFact, EqualityOperandTypeIdentity, EqualityProducerData,
+    EqualityProducerIdentity, EqualityUnitIdentityFact, EqualityUnitOperandRole,
+    EqualityUnitTypeFact, Node, NodeChildIds, NodeId, Slot,
 };
 
 pub(crate) use assemble::dense_model_data_environment;

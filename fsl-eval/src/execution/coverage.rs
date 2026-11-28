@@ -351,7 +351,7 @@ fn form_name(graph: &CheckedGraph, node: CheckedNode<'_>) -> Option<String> {
         }
         NodeKind::Attribute { .. } | NodeKind::Navigate { .. } => "deref",
         NodeKind::Field { .. } => {
-            let record = node.children().first().is_some_and(|operand| {
+            let record = node.children().next().is_some_and(|operand| {
                 matches!(
                     coverage_type(graph, operand.value_type()),
                     CoverageValueType::Record

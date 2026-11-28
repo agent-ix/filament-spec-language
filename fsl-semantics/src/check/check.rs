@@ -6986,6 +6986,7 @@ impl Typer<'_> {
 
 /// Whether a well-typed step is in the FR-145 set-and-bag catalog: arithmetic
 /// and Boolean operators, or scalar min/max over an ordered accumulator.
+#[implements("NFR-141-AC-6")]
 fn catalogued_step(
     body: &BodyBuilder,
     step: &Node,

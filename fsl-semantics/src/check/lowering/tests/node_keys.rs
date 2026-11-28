@@ -69,8 +69,12 @@ fn repeated_record_operands_keep_identity_when_reordered() {
 fn children(node: CheckedNode<'_>) -> [CheckedNode<'_>; 2] {
     let mut children = node.children();
     [
-        children.next().expect("a binary operation has a left child"),
-        children.next().expect("a binary operation has a right child"),
+        children
+            .next()
+            .expect("a binary operation has a left child"),
+        children
+            .next()
+            .expect("a binary operation has a right child"),
     ]
 }
 

@@ -6,8 +6,8 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use ix_trace_rs::implements;
 use fsl_semantics::check::{CheckedChildren, CheckedGraph, CheckedNode, NodeChildIds, NodeId};
+use ix_trace_rs::implements;
 
 /// A handle to one checked node, from which its operands and the bodies of
 /// the functions it calls are reached.

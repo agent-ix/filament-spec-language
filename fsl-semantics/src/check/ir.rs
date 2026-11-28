@@ -905,6 +905,7 @@ impl<'a, C: Copy> NodeChildIds<'a, C> {
         }
     }
 
+    #[implements("NFR-141-AC-6")]
     fn with_children(prefix: [Option<C>; 3], tail: NodeChildTail<'a, C>) -> Self {
         let prefix_len = prefix.iter().flatten().count();
         let remaining = prefix_len + tail.len();
@@ -990,6 +991,7 @@ impl<'a, C: Copy> NodeChildTail<'a, C> {
 impl<C: Copy> Iterator for NodeChildTail<'_, C> {
     type Item = C;
 
+    #[implements("NFR-141-AC-6")]
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Empty => None,
@@ -998,7 +1000,7 @@ impl<C: Copy> Iterator for NodeChildTail<'_, C> {
                 match slots.next()? {
                     RecordSlot::Present(child) => {
                         *remaining -= 1;
-                    return Some(*child);
+                        return Some(*child);
                     }
                     RecordSlot::Absent | RecordSlot::Null => {}
                 }
@@ -1014,6 +1016,7 @@ impl<C: Copy> Iterator for NodeChildTail<'_, C> {
 }
 
 impl<C: Copy> DoubleEndedIterator for NodeChildTail<'_, C> {
+    #[implements("NFR-141-AC-6")]
     fn next_back(&mut self) -> Option<Self::Item> {
         match self {
             Self::Empty => None,
@@ -1550,6 +1553,7 @@ pub(crate) fn scalar_conversion_target<'t>(
     (target != operand).then_some(target)
 }
 
+#[implements("NFR-141-AC-6")]
 fn try_for_each_node_child<E>(
     kind: &NodeKind<NodeId>,
     child: &mut impl FnMut(NodeId) -> Result<(), E>,

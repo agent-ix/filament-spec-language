@@ -632,10 +632,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
             .any(|(parameter, value_type)| parameter == "by" && value_type == &p));
         if !name.starts_with("Quantifier") {
             assert!(
-                clause
-                    .body()
-                    .children()
-                    .any(|node| node.value_type() == &p),
+                clause.body().children().any(|node| node.value_type() == &p),
                 "{name} has an operand typed P"
             );
         }
@@ -777,10 +774,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         .children()
         .collect::<Vec<_>>();
     let after_let_comparison = after_let[1].children().collect::<Vec<_>>();
-    assert!(matches!(
-        after_let_comparison[0].kind(),
-        NodeKind::Local(2)
-    ));
+    assert!(matches!(after_let_comparison[0].kind(), NodeKind::Local(2)));
     assert_eq!(
         after_let_comparison[0].value_type(),
         &p,
