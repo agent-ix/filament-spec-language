@@ -145,9 +145,10 @@ fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
     assert_eq!(actual.stats().product_edges, 0);
     assert_eq!(actual.stats().stutter_edges, 0);
 
-    // FR-126 "Bindings and ranking": the three `Counter` bindings share the
-    // run's `max_states` and `product_states` is the sum over them, so a
-    // budget of one stops the run on the state limit.
+    // FR-126 "TP-4 items" (arch Q1): the three `Counter` bindings share the
+    // run's `max_states`, so a budget of one stops the run at the second
+    // binding; the first binding is not proved (its own constraint boundary),
+    // so the item reports that binding's outcome, not the stop.
     let stopped = world
         .run(
             Some(1),
@@ -165,15 +166,12 @@ fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
         .expect("the run stops rather than refuses");
     assert_eq!(
         stopped,
-        ModelCheckOutcome::Stopped {
-            cause: IncompleteCause::ResourceExhausted,
-            limit: Some(ReachedLimit {
-                limit: ModelCheckLimit::MaxStates,
-                value: 1,
-            }),
+        ModelCheckOutcome::Reduction {
+            cause: ReductionCause::ConstraintReached { boundary_states: 1 },
             stats: stopped.stats(),
         }
     );
+    assert_eq!(stopped.stats().product_states, 1);
 }
 
 #[trace("FR-158-AC-1", "FR-158-AC-3")]

@@ -813,6 +813,38 @@ fn the_first_binding_wins_over_a_later_shallower_finding() {
     }
 }
 
+/// FR-126-AC-27 (its TP-4 sentence, FR-126 "TP-4 items": "decide the next
+/// binding"), FSpec FR-361-AC-10: binding `a`, whose version is at most 1 to
+/// depth 1, only reaches the horizon, and binding `b` reads version 2 at
+/// `(0,2)`, one step from the initial `(0,1)`. The item is refuted by `b`:
+/// prefix `(0,1) -upd(b)-> (0,2)`, undefined at position 1, though `a` is
+/// first in the universe order and ended at the bound.
+#[trace("TC-1085", "FR-126-AC-27", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
+#[test]
+fn a_tp4_binding_that_reaches_the_horizon_does_not_end_the_item() {
+    const CLAIM: &str = "always eventually holds(6 mod (2 - c.versionNumber) >= 0)";
+    let world = config_over(false, "", CLAIM, (0, 1));
+    let letters = Versions::new(&world, vec![mod_is_defined]);
+    let outcome = run(
+        &world,
+        &letters,
+        Some(1),
+        ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    let counterexample = violated(&outcome);
+    assert_eq!(bound(counterexample), "b", "{outcome:?}");
+    assert_eq!(
+        counterexample
+            .prefix
+            .iter()
+            .map(receiver)
+            .collect::<Vec<_>>(),
+        ['b']
+    );
+    assert_eq!(undefined_at(counterexample).0, 1);
+}
+
 /// FR-126-AC-15: the engine decides `a` before evaluating `b`. A budget too
 /// small to finish `a` returns an incomplete result; once `a` is decided, its
 /// finding is returned and no later binding is explored.

@@ -104,8 +104,8 @@ pub struct InstanceGroup {
   one object parameter, whose instances (FR-125's admitted keys) include keys
   of a class, the pre-check SHALL partition those instances into orbits of `G`
   (each class's admitted keys are one orbit; each fixed admitted key is its
-  own), check one instance per orbit, bound to the orbit's least key, and run
-  that instance under the stabiliser of the bound key: `G` with the bound key
+  own), check one instance per orbit, bound to the orbit's first key in
+  FR-125's canonical instance order, and run that instance under the stabiliser of the bound key: `G` with the bound key
   removed from its class. An excluded key SHALL be in no orbit and give no
   instance. Closed initial states admit all of a class's keys or none of them.
   A class reduced to one key by the removal SHALL drop out of the group. Every

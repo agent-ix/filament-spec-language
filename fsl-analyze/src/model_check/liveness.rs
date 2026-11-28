@@ -23,16 +23,18 @@
 //! Bindings are decided in FR-125's canonical instance order. For each
 //! binding, the first phase and model-only pass settle its canonical
 //! breadth-first finding; if neither finds a violation, the second phase
-//! settles that binding's canonical lasso. The engine proceeds to the next
-//! binding only after the current one is decided to hold, over its full or
-//! reduced product, and so decides every binding before any proof. Findings
-//! and lassos from different bindings are never ranked against one another.
-//!
-//! Known deviation from FR-126 (QSL-3472): a horizon, a bound, a state
-//! constraint or an ignored fairness constraint ends the loop early. FR-126
-//! requires the next binding to be decided after one ends undecided, at a
-//! bound or at a constraint; until it is, a later binding's refutation can be
-//! missed and the run settles as a non-proof.
+//! settles that binding's canonical lasso. Each binding settles on its own
+//! (`decide_binding`) and the one fold of `fsl-replay` (`InstanceFold`) picks
+//! the item's outcome: the first refuted binding refutes the item and ends
+//! the loop; a binding that ends undecided, at a horizon, at a bound, at a
+//! state constraint or on a per-binding limit (`max_candidates`,
+//! `max_automaton_states`) is not proved and the next binding is decided; a
+//! run-level end (`max_states`, `max_transitions`, the meter,
+//! `analysis.retained_bytes`, cancellation: `instance_end`) ends the loop and
+//! reports the first not-proved binding, or itself when none or when it is a
+//! cancellation (FR-126 "TP-4 items", FSpec FR-361). A proof needs every
+//! binding proved. Findings and lassos from different bindings are never
+//! ranked against one another.
 //!
 //! Each binding's second phase decomposes its retained graph into strongly
 //! connected components in
@@ -93,6 +95,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Charge, ChargePoint, Meter, ScalarLimits};
@@ -125,10 +128,11 @@ use fsl_foundation::budget::{Budget, BudgetStop};
 use fsl_foundation::{IdentityLimits, Setting};
 use fsl_replay::{
     undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
-    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
-    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
-    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    Combined, CounterexampleKind, IncompleteCause, Instance, InstanceBound, InstanceFold,
+    InstanceVerdict, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember, MemoryCause,
+    ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate, Proviso,
+    ReachedLimit, ReductionCause, RunStats, Step, StepSite, TemporalCounterexample, UndecidedCause,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use ix_trace_rs::implements;
@@ -146,6 +150,7 @@ use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainConfig,
     RetainHooks, RetainedEdge, RetainedGraph,
 };
+use super::instance_end::{instance_end, End};
 use super::product::{ProductKey, ProductTransition};
 use super::quotient::{
     Analysis as QuotientAnalysis, Analyzer, LoopEdge, Quotient, QuotientConstraint, QuotientEdge,
@@ -867,6 +872,41 @@ fn exhausted<T: SubjectTransition>(
     )
 }
 
+/// One binding's verdict: its outcome is `None` only for a proof, which the
+/// fold settles from the explored products.
+type Verdict<T> = InstanceVerdict<Option<ModelCheckOutcome<T>>>;
+
+/// The verdict of a stop: a run-level end ends the run, any other stop only
+/// the binding (FR-126 "TP-4 items").
+fn stop_verdict<T: SubjectTransition>(
+    cause: IncompleteCause,
+    limit: Option<ReachedLimit>,
+) -> Verdict<T> {
+    let end = instance_end(&cause, limit.as_ref());
+    let outcome = Some(stopped(cause, limit, RunStats::default()));
+    match end {
+        End::Run { cancel } => InstanceVerdict::RunStop { outcome, cancel },
+        End::Instance => InstanceVerdict::NotProved(outcome),
+    }
+}
+
+/// The verdict of a first-phase or model-only finding.
+fn hit_verdict<T: SubjectTransition>(hit: FirstHit<T>) -> Verdict<T> {
+    match hit {
+        FirstHit::Violated(counterexample) => {
+            InstanceVerdict::Refuted(Some(ModelCheckOutcome::Violated {
+                counterexample,
+                stats: RunStats::default(),
+            }))
+        }
+        FirstHit::Undecided => InstanceVerdict::NotProved(Some(ModelCheckOutcome::Undecided {
+            cause: UndecidedCause::UndecidedSuccessor,
+            stats: RunStats::default(),
+        })),
+        FirstHit::Stopped(cause, limit) => stop_verdict(cause, limit),
+    }
+}
+
 /// The counts of the products explored so far.
 #[derive(Clone, Debug, Default)]
 struct Totals {
@@ -881,6 +921,9 @@ struct Totals {
     /// Distinct protocol states where an enabled activation was left
     /// unexpanded by `max_live_instances` (ADR-027 AE-4).
     instance_limited: BTreeSet<StateKey>,
+    /// Distinct model states where a send was cut by the channel bound, over
+    /// every binding (`message_bound_limited`).
+    message_limited: BTreeSet<StateKey>,
 }
 
 impl Totals {
@@ -908,7 +951,7 @@ impl Totals {
             automaton_states: self.automaton_states,
             depth: self.depth,
             bound_limited: 0,
-            message_bound_limited: 0,
+            message_bound_limited: widen(self.message_limited.len()),
             instance_limited: widen(self.instance_limited.len()),
         }
     }
@@ -2409,208 +2452,269 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         self.diagnostic_fairness.unwrap_or(self.fairness)
     }
 
-    /// Decide the bindings in canonical order and settle the run.
+    /// Decide the bindings in canonical order and settle the run: each
+    /// binding settles on its own, and the one fold of FR-126 "TP-4 items"
+    /// ends the loop and picks the item's outcome.
     #[implements(
         "FR-126-AC-14",
         "FR-126-AC-15",
+        "FR-126-AC-27",
         "FR-156-AC-1",
         "FR-160-AC-6",
         "FR-161-AC-5"
     )]
     fn decide(&self, mut totals: Totals) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
+        let count = NonZeroUsize::new(self.bindings.len())
+            .ok_or_else(|| fault("a-liveness-run-has-a-binding"))?;
+        let mut fold = InstanceFold::new(count);
         let mut explored = Vec::with_capacity(self.bindings.len());
-        let mut reduced_refutation: Option<Box<TemporalCounterexample<Tr<S>>>> = None;
-        let mut cut = false;
-        let mut ignored_fairness_lasso = false;
         for binding in self.bindings {
-            let mut run = match self.explore(binding, &mut totals)? {
-                Ok(run) => run,
-                Err(outcome) => return Ok(outcome),
-            };
-            let live = self.first_phase(&run)?;
-            if let Ending::Stopped(cause, limit) = &run.ending {
-                // A stopped binding can still settle its own canonical
-                // finding, but cannot be used to rank or cap another binding.
-                let canonical = live.as_ref().is_some_and(|(depth, _)| {
-                    run.graph.states().iter().all(|state| {
-                        state.state.depth >= *depth
-                            || state.findings.iter().any(|finding| {
-                                matches!(
-                                    finding,
-                                    Finding::Enabled(_)
-                                        | Finding::ConstraintBoundary
-                                        | Finding::ConstraintUndefined(_)
-                                )
-                            })
-                    })
-                });
-                match live {
-                    Some((depth, hit)) if canonical => {
-                        // The binding's model-only pass has not run: a dead
-                        // root below the finding may hold a shallower one.
-                        let dead = self.dead_phase(&run, Some(depth), &mut totals)?;
-                        if let Some(Ending::Stopped(cause, limit)) = dead.stopped {
-                            return Ok(stopped(cause, limit, totals.stats()));
-                        }
-                        let hit = match dead.hit {
-                            Some((dead_depth, dead_hit)) if dead_depth < depth => dead_hit,
-                            _ => hit,
-                        };
-                        return Ok(hit.outcome(totals.stats()));
-                    }
-                    _ => return Ok(stopped(cause.clone(), *limit, totals.stats())),
-                }
-            }
-            let dead =
-                self.dead_phase(&run, live.as_ref().map(|(depth, _)| *depth), &mut totals)?;
-            run.dead_cut = dead.cut;
-            if let Some(Ending::Stopped(cause, limit)) = dead.stopped {
-                // The pass did not finish, so a shallower finding may be
-                // hidden: the stop is the answer.
-                return Ok(stopped(cause, limit, totals.stats()));
-            }
-            match (live, dead.hit) {
-                (Some((live_depth, _)), Some((dead_depth, hit))) if dead_depth < live_depth => {
-                    return Ok(hit.outcome(totals.stats()));
-                }
-                (Some((_, hit)), _) => return Ok(hit.outcome(totals.stats())),
-                (None, Some((_, hit))) => return Ok(hit.outcome(totals.stats())),
-                (None, None) => {}
-            }
-            cut |= run.dead_cut
-                || run
-                    .graph
-                    .states()
-                    .iter()
-                    .any(|state| state.findings.contains(&Finding::HorizonCut));
-            match self.second_phase(&run)? {
-                Second::Lasso(counterexample) => {
-                    if run.binding.applied.is_none() {
-                        return Ok(ModelCheckOutcome::Violated {
-                            counterexample,
-                            stats: totals.stats(),
-                        });
-                    }
-                    if reduced_refutation.is_none() {
-                        reduced_refutation = Some(counterexample);
-                    }
-                    // Each reduced binding has its own product. Keep the
-                    // first lasso, then charge its concrete steps before the
-                    // next binding uses the shared transition budget.
-                    self.charge_lifted(&mut totals);
-                    explored.push(run);
-                    continue;
-                }
-                Second::IgnoringConstraints => ignored_fairness_lasso = true,
-                Second::Cancelled(source) => {
-                    return Ok(stopped(
-                        IncompleteCause::Cancelled { source },
-                        None,
-                        totals.stats(),
-                    ));
-                }
-                Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
-                Second::NoneFair => {}
-            }
-            // A reduction never ends the loop: each binding, or each orbit
-            // under symmetry, is its own product and must be decided. The
-            // other stops below are a known deviation from FR-126 (QSL-3472).
-            let binding_decided = !run.dead_cut
-                && !run.graph.states().iter().any(|state| {
-                    state.findings.iter().any(|finding| {
-                        matches!(
-                            finding,
-                            Finding::HorizonCut
-                                | Finding::BoundLimited
-                                | Finding::MessagesBoundLimited
-                                | Finding::InstanceBoundLimited
-                        )
-                    })
-                })
-                && self.dead_limited.borrow().is_empty()
-                && self.dead_message_limited.borrow().is_empty()
-                && totals.instance_limited.is_empty()
-                && !ignored_fairness_lasso;
-            explored.push(run);
-            if !binding_decided {
+            let verdict = self.decide_binding(binding, &mut totals, &mut explored)?;
+            if fold.push(verdict) == Step::Stop {
                 break;
             }
         }
-        // ADR-025 MB-4: a bound-limited state settles before a counterexample
-        // or a proof (see the module docs for why a counterexample too).
-        let mut limited = self.dead_limited.borrow().clone();
-        for run in &explored {
-            for state in run.graph.states() {
-                if state.findings.contains(&Finding::BoundLimited) {
-                    limited.insert(self.state_key(&state.state.model)?);
+        let combined = fold
+            .finish()
+            .map_err(|_| fault("every-binding-was-decided"))?;
+        self.settle(combined, &explored, totals)
+    }
+
+    /// One binding's verdict (FR-126 "TP-4 items"): a refutation, a proof, a
+    /// stop that ends only this binding, or a run-level end.
+    fn decide_binding(
+        &self,
+        binding: &'r Binding,
+        totals: &mut Totals,
+        explored: &mut Vec<Explored<'r, S>>,
+    ) -> Result<Verdict<Tr<S>>, ModelCheckRefusal> {
+        // The model-only passes' sets are this binding's own.
+        self.dead_limited.take();
+        self.dead_message_limited.take();
+        self.dead_constrained.take();
+        let mut run = match self.explore(binding, totals)? {
+            Ok(run) => run,
+            Err(ModelCheckOutcome::Stopped { cause, limit, .. }) => {
+                return Ok(stop_verdict(cause, limit));
+            }
+            Err(_) => return Err(fault("an-unexplored-binding-ends-stopped")),
+        };
+        let live = self.first_phase(&run)?;
+        if let Ending::Stopped(cause, limit) = &run.ending {
+            // A stopped binding can still settle its own canonical
+            // finding, but cannot be used to rank or cap another binding.
+            let canonical = live.as_ref().is_some_and(|(depth, _)| {
+                run.graph.states().iter().all(|state| {
+                    state.state.depth >= *depth
+                        || state.findings.iter().any(|finding| {
+                            matches!(
+                                finding,
+                                Finding::Enabled(_)
+                                    | Finding::ConstraintBoundary
+                                    | Finding::ConstraintUndefined(_)
+                            )
+                        })
+                })
+            });
+            return match live {
+                Some((depth, hit)) if canonical => {
+                    // The binding's model-only pass has not run: a dead
+                    // root below the finding may hold a shallower one.
+                    let dead = self.dead_phase(&run, Some(depth), totals)?;
+                    if let Some(Ending::Stopped(cause, limit)) = dead.stopped {
+                        return Ok(stop_verdict(cause, limit));
+                    }
+                    let hit = match dead.hit {
+                        Some((dead_depth, dead_hit)) if dead_depth < depth => dead_hit,
+                        _ => hit,
+                    };
+                    Ok(hit_verdict(hit))
+                }
+                _ => Ok(stop_verdict(cause.clone(), *limit)),
+            };
+        }
+        let dead = self.dead_phase(&run, live.as_ref().map(|(depth, _)| *depth), totals)?;
+        run.dead_cut = dead.cut;
+        if let Some(Ending::Stopped(cause, limit)) = dead.stopped {
+            // The pass did not finish, so a shallower finding may be
+            // hidden: the stop is the answer.
+            return Ok(stop_verdict(cause, limit));
+        }
+        match (live, dead.hit) {
+            (Some((live_depth, _)), Some((dead_depth, hit))) if dead_depth < live_depth => {
+                return Ok(hit_verdict(hit));
+            }
+            (Some((_, hit)), _) => return Ok(hit_verdict(hit)),
+            (None, Some((_, hit))) => return Ok(hit_verdict(hit)),
+            (None, None) => {}
+        }
+        let horizon = run.dead_cut
+            || run
+                .graph
+                .states()
+                .iter()
+                .any(|state| state.findings.contains(&Finding::HorizonCut));
+        let mut reduced_refutation = None;
+        let mut ignored_fairness_lasso = false;
+        match self.second_phase(&run)? {
+            Second::Lasso(counterexample) => {
+                if run.binding.applied.is_none() {
+                    return Ok(InstanceVerdict::Refuted(Some(
+                        ModelCheckOutcome::Violated {
+                            counterexample,
+                            stats: RunStats::default(),
+                        },
+                    )));
+                }
+                // The reduced binding's own states may still settle it
+                // first (ADR-025 MB-4); charge the concrete steps of its
+                // lasso before the next binding uses the shared budget.
+                reduced_refutation = Some(counterexample);
+                self.charge_lifted(totals);
+            }
+            Second::IgnoringConstraints => ignored_fairness_lasso = true,
+            Second::Cancelled(source) => {
+                return Ok(stop_verdict(IncompleteCause::Cancelled { source }, None));
+            }
+            Second::Stopped(cause, limit) => return Ok(stop_verdict(cause, limit)),
+            Second::NoneFair => {}
+        }
+        let chain = self.binding_chain(&run, ignored_fairness_lasso, totals)?;
+        explored.push(run);
+        Ok(if let Some(outcome) = chain {
+            InstanceVerdict::NotProved(Some(outcome))
+        } else if let Some(counterexample) = reduced_refutation {
+            InstanceVerdict::Refuted(Some(ModelCheckOutcome::Violated {
+                counterexample,
+                stats: RunStats::default(),
+            }))
+        } else {
+            match (horizon, self.request.max_depth) {
+                // ADR-021 RV-5: a reduced graph does not keep short
+                // counterexamples short, so a partial-order run that
+                // completes to the horizon proves no bound.
+                (true, Some(depth)) if self.request.partial_order => {
+                    InstanceVerdict::NotProved(Some(ModelCheckOutcome::Reduction {
+                        cause: ReductionCause::Horizon {
+                            max_depth: widen(depth),
+                        },
+                        stats: RunStats::default(),
+                    }))
+                }
+                (true, Some(depth)) => {
+                    InstanceVerdict::NotProved(Some(ModelCheckOutcome::BoundReached {
+                        depth: widen(depth),
+                        stats: RunStats::default(),
+                    }))
+                }
+                _ => InstanceVerdict::Proved(None),
+            }
+        })
+    }
+
+    /// ADR-025 MB-4 within one binding: a constraint boundary, a memory or
+    /// channel bound, an ignored fairness lasso or the instance bound that
+    /// this binding's own states reached settles the binding before a
+    /// reduced lasso or a proof (FR-126 "TP-4 items").
+    fn binding_chain(
+        &self,
+        run: &Explored<'_, S>,
+        ignored_fairness_lasso: bool,
+        totals: &mut Totals,
+    ) -> Result<Option<ModelCheckOutcome<Tr<S>>>, ModelCheckRefusal> {
+        let mut limited = self.dead_limited.take();
+        let mut message_limited = self.dead_message_limited.take();
+        let mut constrained = self.dead_constrained.take();
+        let mut instance_limited = BTreeSet::new();
+        for state in run.graph.states() {
+            for (finding, set) in [
+                (&Finding::BoundLimited, &mut limited),
+                (&Finding::MessagesBoundLimited, &mut message_limited),
+                (&Finding::ConstraintBoundary, &mut constrained),
+                (&Finding::InstanceBoundLimited, &mut instance_limited),
+            ] {
+                if state.findings.contains(finding) {
+                    set.insert(self.state_key(&state.state.model)?);
                 }
             }
         }
-        let mut message_limited: BTreeSet<StateKey> = explored
-            .iter()
-            .flat_map(|run| run.graph.states())
-            .filter(|state| state.findings.contains(&Finding::MessagesBoundLimited))
-            .map(|state| self.state_key(&state.state.model))
-            .collect::<Result<_, _>>()?;
-        message_limited.extend(self.dead_message_limited.borrow().iter().cloned());
-        let mut constrained = self.dead_constrained.borrow().clone();
-        for run in &explored {
-            for state in run.graph.states() {
-                if state.findings.contains(&Finding::ConstraintBoundary) {
-                    constrained.insert(self.state_key(&state.state.model)?);
-                }
-            }
-        }
-        let mut stats = totals.stats();
-        stats.message_bound_limited = widen(message_limited.len());
-        // FR-158 (ADR-025 MB-4, ADR-027 AE-4): a run that found no violation
-        // and stored a boundary state settles `ConstraintReached` first,
-        // never a proof.
+        totals
+            .message_limited
+            .extend(message_limited.iter().cloned());
+        let stats = RunStats::default();
+        // FR-158 (ADR-025 MB-4, ADR-027 AE-4): a binding that found no
+        // violation and stored a boundary state settles `ConstraintReached`
+        // first, never a proof.
         if !constrained.is_empty() {
-            return Ok(ModelCheckOutcome::Reduction {
+            return Ok(Some(ModelCheckOutcome::Reduction {
                 cause: ReductionCause::ConstraintReached {
                     boundary_states: widen(constrained.len()),
                 },
                 stats,
-            });
+            }));
         }
         if let (Some(bound), false) = (self.memory_bound, limited.is_empty()) {
-            return Ok(ModelCheckOutcome::Memory {
+            return Ok(Some(ModelCheckOutcome::Memory {
                 cause: MemoryCause::BoundReached {
                     bound,
                     states: widen(limited.len()),
                 },
                 stats,
-            });
+            }));
         }
         if let (Some(bound), false) = (self.message_bound, message_limited.is_empty()) {
-            return Ok(ModelCheckOutcome::Memory {
+            return Ok(Some(ModelCheckOutcome::Memory {
                 cause: MemoryCause::ChannelBoundReached {
                     bound,
                     states: widen(message_limited.len()),
                 },
                 stats,
-            });
+            }));
         }
         if ignored_fairness_lasso {
-            return Ok(ModelCheckOutcome::RefutedIgnoringConstraints { stats });
+            return Ok(Some(ModelCheckOutcome::RefutedIgnoringConstraints {
+                stats,
+            }));
         }
-        if let (Some(bound), false) = (self.instance_bound, totals.instance_limited.is_empty()) {
-            return Ok(ModelCheckOutcome::Undecided {
+        if let (Some(bound), false) = (self.instance_bound, instance_limited.is_empty()) {
+            return Ok(Some(ModelCheckOutcome::Undecided {
                 cause: UndecidedCause::InstanceBoundReached {
                     bound,
-                    states: widen(totals.instance_limited.len()),
+                    states: widen(instance_limited.len()),
                 },
-                stats: totals.stats(),
-            });
+                stats,
+            }));
         }
-        if let Some(counterexample) = reduced_refutation {
-            return Ok(ModelCheckOutcome::Violated {
-                counterexample,
-                stats: totals.stats(),
-            });
-        }
-        // ADR-021 RV-1: the reductions in the order symmetry, partial-order.
+        Ok(None)
+    }
+
+    /// The item's outcome from the fold: the reported binding's own outcome
+    /// with the run's totals, or, when every binding is proved, the proof.
+    fn settle(
+        &self,
+        combined: Combined<Option<ModelCheckOutcome<Tr<S>>>>,
+        explored: &[Explored<'r, S>],
+        totals: Totals,
+    ) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
+        let stats = totals.stats();
+        let (Combined::Refuted { outcome, .. }
+        | Combined::Stopped { outcome, .. }
+        | Combined::NotProved { outcome, .. }) = combined
+        else {
+            return self.proof(explored, stats);
+        };
+        outcome
+            .map(|outcome| outcome.with_stats(stats))
+            .ok_or_else(|| fault("a-settled-binding-has-an-outcome"))
+    }
+
+    /// Every binding is proved: the reductions in the order symmetry,
+    /// partial-order (ADR-021 RV-1), else the component certificate.
+    fn proof(
+        &self,
+        explored: &[Explored<'r, S>],
+        stats: RunStats,
+    ) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         let mut reductions: Vec<AppliedReduction> = explored
             .iter()
             .filter_map(|run| run.binding.applied.clone())
@@ -2620,39 +2724,18 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 proviso: Proviso::BreadthFirstRevisit,
             });
         }
-        match (cut, self.request.max_depth) {
-            // ADR-021 RV-5: a reduced graph does not keep short
-            // counterexamples short, so a partial-order run that completes
-            // to the horizon proves no bound.
-            (true, Some(depth)) if self.request.partial_order => Ok(ModelCheckOutcome::Reduction {
-                cause: ReductionCause::Horizon {
-                    max_depth: widen(depth),
-                },
-                stats: totals.stats(),
-            }),
-            (true, Some(depth)) => Ok(ModelCheckOutcome::BoundReached {
-                depth: widen(depth),
-                stats: totals.stats(),
-            }),
-            // ADR-021 RV-1: a reduced run that completes with no fair
-            // accepting component is a reduced proof, which no certificate
-            // covers.
-            _ if !reductions.is_empty() => Ok(ModelCheckOutcome::HoldsReduced {
-                reductions,
-                stats: totals.stats(),
-            }),
-            _ => match self.component_certificate(&explored)? {
-                Ok(certificate) => Ok(ModelCheckOutcome::Holds {
-                    certificate: ProofCertificate::Component(certificate),
-                    stats: totals.stats(),
-                }),
-                Err(source) => Ok(stopped(
-                    IncompleteCause::Cancelled { source },
-                    None,
-                    totals.stats(),
-                )),
-            },
+        // ADR-021 RV-1: a reduced run that completes with no fair accepting
+        // component is a reduced proof, which no certificate covers.
+        if !reductions.is_empty() {
+            return Ok(ModelCheckOutcome::HoldsReduced { reductions, stats });
         }
+        Ok(match self.component_certificate(explored)? {
+            Ok(certificate) => ModelCheckOutcome::Holds {
+                certificate: ProofCertificate::Component(certificate),
+                stats,
+            },
+            Err(source) => stopped(IncompleteCause::Cancelled { source }, None, stats),
+        })
     }
 
     /// Explore `binding`'s product, through the request's horizon.

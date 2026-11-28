@@ -5,7 +5,6 @@
 use fsl_replay::{IncompleteCause, ModelCheckLimit, ReachedLimit};
 
 /// What a stop ends.
-#[allow(dead_code)] // read by the liveness and digital folds
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum End {
     /// The whole run: no later instance is decided. `cancel` is set for a
@@ -23,7 +22,6 @@ pub(crate) enum End {
 /// cancellation (Q1, Q2); `max_clocks` is a property of the subject, the same
 /// for every instance, so it ends the run too. Every other stop, including an
 /// expansion stop that names no limit, ends its instance only (Q3).
-#[allow(dead_code)] // read by the liveness and digital folds
 pub(crate) fn instance_end(cause: &IncompleteCause, limit: Option<&ReachedLimit>) -> End {
     if matches!(cause, IncompleteCause::Cancelled { .. }) {
         return End::Run { cancel: true };

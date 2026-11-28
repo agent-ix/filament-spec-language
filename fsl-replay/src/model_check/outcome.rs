@@ -260,4 +260,23 @@ impl<T: SubjectTransition> ModelCheckOutcome<T> {
             | Self::Stopped { stats, .. } => *stats,
         }
     }
+
+    /// The same outcome carrying `stats`: a binding's outcome is settled
+    /// before the run's totals are known.
+    #[must_use]
+    pub fn with_stats(mut self, stats: RunStats) -> Self {
+        match &mut self {
+            Self::Holds { stats: slot, .. }
+            | Self::HoldsReduced { stats: slot, .. }
+            | Self::Reduction { stats: slot, .. }
+            | Self::Memory { stats: slot, .. }
+            | Self::RecoveryView { stats: slot, .. }
+            | Self::Violated { stats: slot, .. }
+            | Self::RefutedIgnoringConstraints { stats: slot }
+            | Self::BoundReached { stats: slot, .. }
+            | Self::Undecided { stats: slot, .. }
+            | Self::Stopped { stats: slot, .. } => *slot = stats,
+        }
+        self
+    }
 }

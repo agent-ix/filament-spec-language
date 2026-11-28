@@ -367,7 +367,8 @@ pub struct InstanceGroup {
 
 /// FR-151 "Instances": partition `bindings` into orbits of `group` (each
 /// class is one orbit; each other key its own), one instance per orbit,
-/// bound to the orbit's least key and run under its stabiliser. With no
+/// bound to the orbit's first key in the instance order and run under its
+/// stabiliser. With no
 /// binding (the deadlock-freedom item) the one instance runs under `group`.
 #[implements("FR-151-AC-5")]
 pub fn instance_groups(
@@ -397,9 +398,13 @@ pub fn instance_groups(
                 .iter()
                 .any(|other| other.population == binding.population && other.key == *key)
         });
-        let Some(least) = orbit.first().cloned() else {
+        if orbit.is_empty() {
             continue;
-        };
+        }
+        // The orbit's first member in the canonical instance order: the
+        // first refuted instance of the item is then the one that is bound
+        // (FSpec FR-361 "Instancing").
+        let least = binding.key.clone();
         for key in &orbit {
             if let Some(member) = bindings
                 .iter()

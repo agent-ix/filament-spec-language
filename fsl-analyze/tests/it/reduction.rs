@@ -558,6 +558,36 @@ fn a_full_class_admits_with_its_generators_and_one_instance() {
     ));
 }
 
+/// FR-151-AC-5 with FSpec FR-361-AC-10 (arch Q9): the instance an orbit is
+/// run for is its first member in the canonical instance order, so a
+/// refutation is bound to the first refuted instance in that order. Over the
+/// universe list `[c, b, a]`, the orbit `[a, b, c]` is bound to `c`, not to
+/// its least key `a`.
+#[trace("TC-567", "FR-151-AC-5", "FSpec-FR-361-AC-10")]
+#[test]
+fn an_orbit_is_bound_to_its_first_member_in_instance_order() {
+    let world = cycle(true, &[[0, 0, 0]], &[infinite("always holds(x.v <= 2)")]);
+    let system = world.system();
+    let declared = symmetry(&[&["a", "b", "c"]]);
+    let group = admit(&system, &declared.symmetry).expect("the declaration admits");
+    let mut bindings = system
+        .instances(&world.clauses[0].over().1)
+        .expect("the clause has instances");
+    bindings.reverse();
+    let instances = instance_groups(Some(&bindings), &group);
+    let [instance] = instances.as_slice() else {
+        panic!("one orbit: {}", instances.len());
+    };
+    assert_eq!(
+        instance
+            .representative
+            .as_ref()
+            .map(|binding| binding.key.as_str()),
+        Some("c")
+    );
+    assert_eq!(instance.orbit, keys(&["a", "b", "c"]));
+}
+
 /// FR-151-AC-2: each malformed declaration refuses `invalid_runtime_input`/
 /// `invalid-value` before any state is expanded, naming the unannotated
 /// population, the key `d` outside the universe, the key `b` in two
