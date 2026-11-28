@@ -296,9 +296,9 @@ fn low_budget_expected_reward_bounds_are_accepted_by_the_separate_checker() {
     }
 }
 
-/// FR-1042-AC-19: an omitted undecided successor uses the lower bound zero;
-/// the full upper counterpart still names every product state.
-#[trace("TC-3212", "FR-1042-AC-19")]
+/// FR-201-AC-6 / FR-1042-AC-19: an omitted undecided successor uses the lower
+/// bound zero; the full upper counterpart still names every product state.
+#[trace("TC-3212", "TC-1197", "FR-1042-AC-19", "FR-201-AC-6")]
 #[test]
 fn subset_reward_lower_and_full_upper_are_accepted_by_the_separate_checker() {
     let source = claim(
@@ -387,9 +387,9 @@ fn subset_reward_lower_and_full_upper_are_accepted_by_the_separate_checker() {
     assert_eq!(output["at"]["member"], "ranking", "{output}");
 }
 
-/// Expected-reward lower bounds need no progress ranking, while a supplied
-/// ranking is outside FR-1042's exact member contract.
-#[trace("TC-3212", "FR-1042-AC-19")]
+/// FR-201-AC-6 / FR-1042-AC-19: expected-reward lower bounds need no progress
+/// ranking, while a supplied ranking is outside FR-1042's exact member contract.
+#[trace("TC-3212", "TC-1197", "FR-1042-AC-19", "FR-201-AC-6")]
 #[test]
 fn whole_expected_reward_lower_omits_and_rejects_ranking() {
     let source = claim(
@@ -969,10 +969,10 @@ fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_w
     }
 }
 
-/// FR-1042-AC-19 under a workload, over the cyclic chain base: the omitted
-/// retry `r` is the only successor of `s`. The `lower` ranks the states it
-/// names, so `r` has no rank row, and its progress goes through `r`.
-#[trace("TC-3212", "FR-1042-AC-19")]
+/// FR-201-AC-6 / FR-1042-AC-19 under a workload, over the cyclic chain base:
+/// the omitted retry `r` is the only successor of `s`; this expected-reward
+/// lower bound does not carry a progress ranking.
+#[trace("TC-3212", "TC-1197", "FR-1042-AC-19", "FR-201-AC-6")]
 #[test]
 fn a_subset_cyclic_reward_lower_omits_the_only_successor_of_the_initial_state() {
     let source = claim(
@@ -1018,10 +1018,6 @@ fn a_subset_cyclic_reward_lower_omits_the_only_successor_of_the_initial_state() 
         "objective": {"profile": objective, "base": base["objective"]},
         "kind": "lower",
         "values": values,
-        "ranking": rows
-            .iter()
-            .filter(|row| row["state"] == initial || row["state"] == target)
-            .collect::<Vec<_>>(),
     });
     let mut request = exact.clone();
     request["certificate"] = json!(serde_json::to_string(&lower).unwrap());
