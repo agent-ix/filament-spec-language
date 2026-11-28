@@ -1378,7 +1378,6 @@ mod tests {
             document_bytes: 7,
             objects: 2,
             values: 3,
-            ..Default::default()
         };
         let document = item_document(&fsl_replay::spine::ItemRunOutcome::Settled(false), &usage)
             .expect("document");
