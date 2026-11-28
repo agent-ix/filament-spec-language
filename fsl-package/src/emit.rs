@@ -11473,13 +11473,12 @@ pub fn write_operand_slots(
                 let slot = slots.get(&entry).ok_or(EmitRefusal::SourceMapInvariant)?;
                 *segment = Segment::Operand(*slot);
             }
-            if old != new {
-                if changes
+            if old != new
+                && changes
                     .insert(old, new.clone())
                     .is_some_and(|previous| previous != new)
-                {
-                    return Err(EmitRefusal::SourceMapInvariant);
-                }
+            {
+                return Err(EmitRefusal::SourceMapInvariant);
             }
         }
         #[cfg(test)]
