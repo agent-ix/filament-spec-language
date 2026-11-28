@@ -114,7 +114,11 @@ partner has failed.
   prefix first, ADR-018 UE-4), the first of them in the partner list on a
   tie. Every partner is read: a holding partner listed before or after an
   undefined one does not witness, and the verdict does not depend on the
-  order of the partners.
+  order of the partners. A partner whose reading was refused or incomplete
+  ranks by the joint position where it stopped, as "Ranking findings"
+  states: one that stopped at a position before the earliest undefined
+  partner's leaves the tuple `Undecided`, and at the same position the
+  undefined partner comes first.
 - When the evaluation is on the universal side at a product state whose `X`
   is not empty, the existential variables' paths SHALL be the path of the
   first member of `X` in `X`'s sorted order, which ends at that member's
