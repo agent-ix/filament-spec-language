@@ -289,9 +289,17 @@ pub mod test_support {
     }
 
     /// Read-index rewrite units: ID-slot visits, full path-length inspection
-    /// allowances, and structural-key lookups.
+    /// allowances, structural-key lookups, and slots scanned by each repeated
+    /// replacement in the test-support reference path.
     pub fn read_index_rewrite_work_units() -> usize {
         crate::emit::read_index_rewrite_work_units()
+    }
+
+    /// Run a closure with the historical per-ID replacement path enabled.
+    /// The path exists only to prove the focused work counter detects the
+    /// repeated node-ID slot scans that the bulk rewrite avoids.
+    pub fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
+        crate::emit::with_repeated_read_index_rewrite(f)
     }
 }
 

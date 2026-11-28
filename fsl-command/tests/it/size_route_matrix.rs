@@ -943,7 +943,10 @@ fn compile_has_bounded_operand_rewrite_candidates_at_ten_thousand() {
 }
 
 /// The inverse checked-package index rewrite uses bounded work for an ordered
-/// 12,000-value collection, counting slot visits, path segments and lookups.
+/// 12,000-value collection. The counter records ID-slot visits, path
+/// inspections, structural lookups, and slots scanned by repeated replacement.
+/// The test-support reference path proves repeated replacements exceed the
+/// same bound.
 #[trace("TC-3242", "FR-869-AC-10")]
 #[test]
 fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
@@ -987,15 +990,37 @@ fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
         ..RequestOverrides::default()
     };
 
+    const MAX_WORK_UNITS: usize = N * 48;
+    let (repeated_work, repeated_package_bytes) =
+        fsl_package::test_support::with_repeated_read_index_rewrite(|| {
+            fsl_package::test_support::reset_read_index_rewrite_work_units();
+            let outcome = command::compile_outcome_with_limits_and_overrides(
+                &path,
+                RunLimits::default(),
+                &overrides,
+            )
+            .expect("the 12,000-value sequence compiles with repeated reference rewrites");
+            assert!(!outcome.package_bytes().is_empty());
+            (
+                fsl_package::test_support::read_index_rewrite_work_units(),
+                outcome.package_bytes().to_vec(),
+            )
+        });
+    assert!(
+        repeated_work > MAX_WORK_UNITS,
+        "repeated read-index replacement used only {repeated_work} instrumented work units; expected it to exceed {MAX_WORK_UNITS}"
+    );
+
     fsl_package::test_support::reset_read_index_rewrite_work_units();
     let outcome =
         command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
             .expect("the 12,000-value sequence compiles with the raised independent limits");
     assert!(!outcome.package_bytes().is_empty());
+    assert_eq!(outcome.package_bytes(), repeated_package_bytes);
 
     let work_units = fsl_package::test_support::read_index_rewrite_work_units();
     assert!(
-        work_units <= 12_000 * 48,
+        work_units <= MAX_WORK_UNITS,
         "12,000-value read-index rewrite used {work_units} work units; expected at most 48 per value"
     );
 }

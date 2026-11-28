@@ -17,7 +17,7 @@ use std::{
 #[cfg(test)]
 use std::cell::Cell;
 #[cfg(feature = "test-support")]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
@@ -110,6 +110,8 @@ pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
 static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "test-support")]
 static READ_INDEX_REWRITE_WORK_UNITS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "test-support")]
+static USE_REPEATED_READ_INDEX_REWRITE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "test-support")]
 pub(crate) fn reset_node_id_rewrite_slot_visits() {
@@ -129,6 +131,20 @@ pub(crate) fn reset_read_index_rewrite_work_units() {
 #[cfg(feature = "test-support")]
 pub(crate) fn read_index_rewrite_work_units() -> usize {
     READ_INDEX_REWRITE_WORK_UNITS.load(Ordering::Relaxed)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            USE_REPEATED_READ_INDEX_REWRITE.store(self.0, Ordering::Relaxed);
+        }
+    }
+
+    let previous = USE_REPEATED_READ_INDEX_REWRITE.swap(true, Ordering::Relaxed);
+    let _restore = Restore(previous);
+    f()
 }
 
 /// The diagnostics catalog the package's (empty) diagnostics are qualified
@@ -11099,7 +11115,7 @@ fn environment_ids<'a>(
 ///
 /// Returns the canonical output-limit failure or an identity invariant refusal.
 /// Earlier nodes may already be rewritten on failure; discard that conversion.
-#[implements("FSpec-FR-322-AC-280")]
+#[implements("FSpec-FR-322-AC-280", "FR-869-AC-10")]
 pub fn write_operand_slots(
     nodes: &mut [CheckedSemanticNodeV2],
     limits: EmitLimits,
@@ -11448,6 +11464,27 @@ fn read_index_segments(
             .map_err(|_| EmitRefusal::SourceMapInvariant)
     };
     for node in nodes.iter_mut() {
+        #[cfg(feature = "test-support")]
+        if USE_REPEATED_READ_INDEX_REWRITE.load(Ordering::Relaxed) {
+            let mut changes = Vec::new();
+            for id in reachable_ids(node) {
+                READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + id.path.len(), Ordering::Relaxed);
+                if holds_segment(id, is_index) {
+                    changes.push((id.clone(), structural(id)?));
+                }
+            }
+            for (old, new) in changes {
+                // `replace_node_id` scans the node's ID slots for each old
+                // ID. Count those visits with the same traversal the bulk
+                // rewrite uses, then account for the replacement scan.
+                node.map_node_ids(|_| {
+                    READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1, Ordering::Relaxed);
+                    None
+                });
+                node.replace_node_id(&old, &new);
+            }
+            continue;
+        }
         let mut invalid_index = false;
         node.map_node_ids(|id| {
             #[cfg(feature = "test-support")]
