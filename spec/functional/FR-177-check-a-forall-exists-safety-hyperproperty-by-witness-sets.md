@@ -163,6 +163,12 @@ Findings are ranked within one instance only.
   conjunction that leaves a member's steps unknown, which SHALL come before
   an empty `X`, since a refused `μ_E` may have dropped members from the `X`
   that then empties.
+- A refused or incomplete `match` at a joint step SHALL NOT hide an atom of
+  the body that has no value at an earlier position: that atom is the
+  finding. A stop of the body's evaluation (its meter ran out) whose position
+  the evaluator does not report SHALL rank at position 0, so that it leaves
+  the instance `Undecided` and is never overturned into a refutation by an
+  undefined evaluation at a later position.
 - At one position and rank the first in FR-101's breadth-first discovery
   order of product states SHALL win, and within a state the first finding its
   expansion recorded.
@@ -237,6 +243,7 @@ Findings are ranked within one instance only.
 | FR-177-AC-11 | Each instance is decided on its own findings, and the item takes the first refuted instance in order. With two instances, `v` first and `w`: when both end at the undefined `μ_E` of AC-5 at position 1, the run returns `v`'s counterexample. When `v` is violated at position 0 by an empty `X` and `w` has an atom with no value at position 0, the run returns `v`'s `WitnessExhausted` counterexample, and a `max_states` under which a run of `v` alone returns `Violated` returns `v`'s `Violated` for both. When `v` is violated at position 1 and `w` at position 0, the run returns `v`'s counterexample at position 1. When `v`'s `X_0` has a member, `w`'s `X_0` is empty with a fair universal cycle and `max_witness_set` is 0, so that `v` stops on `MaxWitnessSet`, the run returns `w`'s `Violated`, not `v`'s `Stopped`. | Test (TC-602) |
 | FR-177-AC-12 | `Opaque` over the secure vault from the one initial state `(0, 0)`, where both variables share the secret so `X_0` is empty, with a `μ_U` conjunct that has no value on every joint step, is refused with `HyperRefusal::NoPartnerPath` and returns no outcome. With a second instance whose empty `X` is at the same position as the refusal: when the refusing instance is first in order, the refusal ends the item; when the other instance is first, the item returns its `Violated`. | Test (TC-602) |
 | FR-177-AC-13 | Over the closed event-position form `forall` `exists`, one existential partner of a universal tuple holds and another has an atom with no value at position 1: the tuple refutes with the undefined atom at position 1 whether the holding partner is listed before or after the undefined one, and no holding partner witnesses it. | Test (TC-2243) |
+| FR-177-AC-14 | Over the closed event-position form `forall` `exists`, one existential partner is refused at joint 1 and another has an atom with no value at position 2: the tuple settles `Undecided(MatchUndetermined)` at position 1 whether the refused partner is listed before or after the undefined one, and does not refute. A refused partner and an undefined partner at the same position settle on the undefined partner (refuted). With two stopped partners the one at the least position settles. A body atom with no value at position 0 and a `match` refused at joint 1 settle on the undefined atom at position 0. A body whose evaluation meter runs out at an unreported position ranks at position 0 and settles `Undecided` against an undefined partner at position 2. | Test (TC-2243) |
 
 ## Dependencies
 
