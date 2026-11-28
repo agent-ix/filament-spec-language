@@ -3835,9 +3835,11 @@ mod tests {
     #[test]
     fn every_declarative_compound_is_one_budgeted_cst_leaf() {
         let compounds = complete_compound_spellings(&complete_v1());
+        let context = ParserContext::new();
         assert!(!compounds.is_empty());
         for compound in compounds {
             let parsed = parse(
+                &context,
                 SourceIdentity {
                     authority: "test".into(),
                     identity: "test:compound-authority".into(),
@@ -3854,6 +3856,7 @@ mod tests {
             assert_eq!(parsed.cst().tokens()[0].spelling(), compound.as_bytes());
 
             let refusal = parse(
+                &context,
                 SourceIdentity {
                     authority: "test".into(),
                     identity: "test:compound-authority".into(),
@@ -3875,6 +3878,7 @@ mod tests {
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1")]
     #[test]
     fn every_declarative_reserved_word_is_refused_as_an_identifier() {
+        let context = ParserContext::new();
         let prefix = concat!(
             "language \"ix:native\" edition \"1-draft\";\n",
             "profile Complete = \"filament.value.complete/v1\";\n",
@@ -3883,6 +3887,7 @@ mod tests {
         for word in complete_reserved_words(&complete_v1()) {
             let text = format!("{prefix}{word} {{ datum: Integer; }}");
             let parsed = parse(
+                &context,
                 SourceIdentity {
                     authority: "test".into(),
                     identity: "test:reserved-word-authority".into(),
