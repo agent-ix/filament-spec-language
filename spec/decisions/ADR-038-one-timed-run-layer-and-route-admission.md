@@ -135,13 +135,22 @@ and every other measure); an unweighted fraction over a time window in every
 class; and, on EN-1, `always possible`, `unique path` and every claim FR-243
 declines.
 
+**Workload-resolved infinite mean time.** The `+infinity` result for a timed
+workload `MeanTime` lower bound is admitted only when it is delay-independent
+and a timed-product certificate lets FR-921 independently re-derive it. The
+checker derives the workload product and target nonreachability itself; it
+does not trust a producer refusal or a shared derivation routine. This covers
+`ClosesBeforeFiring` and `ManyFreeEnabled` when the target is unreachable under
+every scheduler-chosen free delay. Other free-delay races whose finite value
+depends on the chosen delay remain unsupported and are not stochastic
+(FR-203-AC-17). For every-scheduler claims, the workload product is an MDP:
+each scheduler chooses free delays and EN-5 computes the minimum and maximum.
+
 **One case this table does not decide.** A workload race in which a
 scheduler-chosen delay competes with another delay turns on the strict
 comparison "this delay less than that one", so it is not a closed automaton
 edge and no row above is shown to cover it. Against a given delay the subject
-is outside both classes and is read over regions (the `Overtake` vector). Among
-free delays only, the workload rule is held by a separate ruling; until it is
-made the route stays as FR-204 states.
+is outside both classes and is read over regions (the `Overtake` vector).
 
 **Region measures with no route.** A `weighted by delay` measure turns on
 exact delays that a region key does not hold. Outside class `given` no route
