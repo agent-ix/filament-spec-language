@@ -4221,18 +4221,21 @@ fn digital_workload_choices(
                 charge_work(meter, run.cancel, 1)?;
 
                 let mut position = positions.len();
-                loop {
-                    if position == 0 {
-                        return Ok((choices, scheduler_actions));
-                    }
+                let mut advanced = false;
+                while position > 0 {
                     position -= 1;
                     positions[position] += 1;
                     if positions[position] < free_windows[position].delays.len() {
+                        advanced = true;
                         break;
                     }
                     positions[position] = 0;
                 }
+                if !advanced {
+                    break;
+                }
             }
+            return Ok((choices, scheduler_actions));
         }
         let time_choices = digital_time_choices(
             run.system,
