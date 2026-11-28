@@ -1969,6 +1969,39 @@ fn a_clock_owner_with_no_universe_requires_a_bound() {
         over_no_universe("timed-no-universe-clocked", &locking_document(), LOCKING),
         requires_bound_on_all_four()
     );
+/// TC-2290: EN-1's digital-clock route agrees with the zone route on a true
+/// bounded eventual-always claim after the two-step subject reaches phase 2.
+#[test]
+fn digital_clocks_prove_a_true_always_inside_eventually() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let body = format!(
+        "{DENSE}\
+         pre First using v on M::Call::first {{ self.phase = 0 and self.x >= 1 ms }}\n\
+         post Firsted using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Second using v on M::Call::second {{ self.phase = 1 and self.x >= 2 ms }}\n\
+         post Seconded using v on M::Call::second {{ self.phase = 2 }}\n\
+         time invariant FirstDeadline when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n\
+         time invariant SecondDeadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         temporal TwoStep using tt over (c: M::Call) clock \"model-time\" on origin {{\
+             eventually[0 ms, 4 ms] always[0 ms, 1 ms] holds(c.phase = 2) }}\n"
+    );
+    let unit = unit_text(PACKAGE, crate::zone_search::TIMED, &body);
+    let domain = document(&["x"], &[("first", &["phase", "x"]), ("second", &["phase"])]);
+    let ws = Workspace::new("digital-clocks-eventually-always");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &domain,
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "TwoStep"},
+            {"claim": "TwoStep", "options": {"method": "digital-clocks"}}]}),
+    ));
+    let item = run.item(1);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.item(0));
+    assert_eq!(run.exit, 0, "{}", run.document());
 }
 
 /// FR-239-AC-10 and FR-243-AC-8: a false initial position refutes the claim
