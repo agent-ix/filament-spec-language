@@ -931,6 +931,12 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         at: usize,
     ) -> Result<Result<Vec<usize>, UndefinedAt>, Halt> {
         let vertex = product.vertices[at].clone();
+        let delay = self
+            .timed()
+            .tick_period()
+            .cloned()
+            .unwrap_or_else(|| Rational::from_integer(Integer::one()));
+        let clocks = Self::capped(&vertex.clocks.delayed(&delay), &self.automaton_cap);
         let letter = match self.reading(
             instance,
             automaton,
@@ -955,12 +961,12 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             }
         };
         let mut created = Vec::new();
-        for (q, clocks) in self.reads(automaton, universal, vertex.q, letter, &vertex.clocks)? {
+        for (q, clocks) in self.reads(automaton, universal, vertex.q, letter, &clocks)? {
             let next = DVertex {
                 q,
                 clocks,
                 positioned: true,
-                divergent: false,
+                divergent: true,
                 tail: true,
                 initial: None,
                 ..vertex.clone()
