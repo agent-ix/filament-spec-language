@@ -81,6 +81,9 @@ pub enum NativeRunResultError {
     /// The report's progress ledger has no document form.
     #[error("cannot write the progress ledger: {0}")]
     Ledger(#[from] super::clause::LedgerReadError),
+    /// An item refusal names a code the catalog does not define.
+    #[error("unknown catalog code `{0}`")]
+    UnknownCatalogCode(String),
     /// The typed report could not be represented as JSON.
     #[error("cannot serialize clause-run result: {0}")]
     Json(#[from] serde_json::Error),
@@ -2871,10 +2874,9 @@ pub enum ItemRunOutcome {
     /// The invariant was evaluated: `true` holds, `false` is violated.
     Settled(bool),
     /// The item was refused or incomplete at admission, with its catalog
-    /// `code`, `cause` and text `fields`.
+    /// `code`, `cause` and text `fields`. The category is the catalog's for
+    /// `code`, never a caller's choice.
     Unadmitted {
-        /// `incomplete` when true, `refusal` when false.
-        incomplete: bool,
         /// The catalog code.
         code: String,
         /// The catalog cause.
@@ -2926,19 +2928,19 @@ pub fn item_run_result_value(
             )
         }
         ItemRunOutcome::Unadmitted {
-            incomplete,
             code,
             cause,
             fields,
         } => {
-            let mut disposition = Disposition::new(
-                super::ClauseRunStage::Admit,
-                if *incomplete {
-                    Category::Incomplete
-                } else {
-                    Category::Refusal
-                },
+            if fsl_foundation::diagnostic::catalog_category(code).is_none() {
+                return Err(NativeRunResultError::UnknownCatalogCode(code.clone()));
+            }
+            let category = Code::from_code(code).map_or(
+                filament_semantic_value::catalog::Category::Refusal,
+                Code::category,
             );
+            let mut disposition =
+                Disposition::new(super::ClauseRunStage::Admit, Category::of(category));
             disposition.refusal =
                 Some(RefusalRecord::new(code, Some(cause)).fields(fields.clone()));
             (
@@ -3068,6 +3070,7 @@ fn verdict_basis(report: &ClauseRunReport) -> bool {
     }
 }
 
+#[implements("FR-267-AC-1")]
 fn write_document(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,

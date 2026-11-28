@@ -944,14 +944,13 @@ fn value_invariant_items(
             Ok((values, exit))
         }
         Err(fsl_replay::spine::ValueInvariantsBatchFailure::Admission(failure)) => {
-            let (incomplete, exit, record) = match failure {
-                AdmissionFailure::Refused(record) => (false, 20, record),
-                AdmissionFailure::Incomplete(record) => (true, 22, record),
+            let (exit, record) = match failure {
+                AdmissionFailure::Refused(record) => (20, record),
+                AdmissionFailure::Incomplete(record) => (22, record),
                 AdmissionFailure::Fault(_) => return Err(RunCause::ItemsFault),
             };
             let result = item_document(
                 &fsl_replay::spine::ItemRunOutcome::Unadmitted {
-                    incomplete,
                     code: record.catalog.code().to_owned(),
                     cause: record.catalog.cause().to_owned(),
                     fields: record.fields,
@@ -1188,7 +1187,6 @@ fn refused(member: &str, reason: impl Into<String>) -> RunCause {
 fn population_refusal(population: &str) -> Result<Value> {
     item_document(
         &fsl_replay::spine::ItemRunOutcome::Unadmitted {
-            incomplete: false,
             code: "invalid_runtime_input".to_owned(),
             cause: "wrong-role-mapping".to_owned(),
             fields: std::collections::BTreeMap::from([("population", population.to_owned())]),

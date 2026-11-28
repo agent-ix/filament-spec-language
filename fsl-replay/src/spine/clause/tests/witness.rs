@@ -904,6 +904,43 @@ fn native_result_two_refuses_null_for_each_absent_optional_member() {
     }
 }
 
+/// FR-267-AC-8, FSpec FR-352: an item admission refusal takes its category
+/// from its catalog code, so a caller cannot write a document the strict
+/// reader refuses, and a code the catalog does not define is not written.
+#[trace("FR-267-AC-8")]
+#[test]
+fn item_run_result_category_follows_the_catalog_code() {
+    let usage = fsl_semantics::model::observation::AdmissionUsage::default();
+    for (code, cause, expected) in [
+        ("invalid_runtime_input", "wrong-role-mapping", "refusal"),
+        ("incomplete_population", "incomplete-scope", "incomplete"),
+    ] {
+        let outcome = crate::spine::ItemRunOutcome::Unadmitted {
+            code: code.to_owned(),
+            cause: cause.to_owned(),
+            fields: std::collections::BTreeMap::new(),
+        };
+        let value = crate::spine::item_run_result_value(&outcome, &usage).unwrap();
+        assert_eq!(value["disposition"]["category"], expected, "{code}");
+        let bytes = fsl_foundation::canonical_json::encode(&value).unwrap();
+        let crate::spine::NativeRunResult::Clause(read) =
+            crate::spine::read_native_run_result(&bytes).unwrap()
+        else {
+            panic!("expected a clause record");
+        };
+        assert_eq!((read.stage(), read.category()), ("admit", expected));
+    }
+    let unknown = crate::spine::ItemRunOutcome::Unadmitted {
+        code: "not_a_catalog_code".to_owned(),
+        cause: "x".to_owned(),
+        fields: std::collections::BTreeMap::new(),
+    };
+    assert!(matches!(
+        crate::spine::item_run_result_value(&unknown, &usage),
+        Err(crate::spine::NativeRunResultError::UnknownCatalogCode(code)) if code == "not_a_catalog_code"
+    ));
+}
+
 /// FR-109-AC-1: the Boolean completion must agree with both truth and its
 /// success or violation category.
 #[trace("TC-742", "FR-267-AC-9")]
