@@ -1591,6 +1591,7 @@ pub(super) fn same_action(left: &ProductAction, right: &ProductAction) -> bool {
         (ProductAction::TerminalStutter, ProductAction::TerminalStutter)
         | (ProductAction::UnitDelay, ProductAction::UnitDelay)
         | (ProductAction::EnterIdleDelay, ProductAction::EnterIdleDelay)
+        | (ProductAction::EnterIdleTail, ProductAction::EnterIdleTail)
         | (ProductAction::IdleDelay, ProductAction::IdleDelay)
         | (ProductAction::IdleObserve, ProductAction::IdleObserve) => true,
         (

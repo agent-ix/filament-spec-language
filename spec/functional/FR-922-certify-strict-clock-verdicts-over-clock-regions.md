@@ -84,25 +84,6 @@ unsound, and the checker rejects a certificate that states it.
   states paired with corners, each delay edge carrying the exact elapsed time
   between corners, whose minimum and maximum are the dense infimum and
   supremum.
-- Interim, until the symbolic region MDP of ADR-038 RL-3 replaces it
-  (QSL-3495): a claim whose only reason for the region route is a strict
-  constraint (`Region(Strict)` in the route admission table) SHALL be decided
-  by the existing grid walk, and its verdict is only as sound as the dense
-  oracle rows that pin it. Those rows are the strict `two_clocks` rows
-  `row_3444_two_clock_regions_minimum_routes`,
-  `row_3444_two_clock_regions_maximum_routes`,
-  `row_3444_two_clock_regions_bounded_minimum_routes` and
-  `row_3444_two_clock_regions_bounded_maximum_routes` (FR-922-AC-4 subject A)
-  and the strict time-lock row `row_3468_time_lock_strict_routes` with its
-  closed twin `row_3468_time_lock_closed_early_routes` (a locked run is read
-  as FSpec FR-416 "How claims read a time-lock" states, ADR-038 RL-7). The
-  closed twin `row_3468_time_lock_closed_later_routes` waits on the region
-  MDP (QSL-3495) and is ignored until then; its live companion
-  `row_3468_time_lock_closed_later_settles_incomplete` pins the interim
-  outcome. The interim's stated limit: the grid walk is not checked against
-  the dense oracle for a claim outside these rows, and a wrong verdict there
-  is a defect of the interim, closed by the region MDP of QSL-3495 (After
-  alpha).
 - EN-5 SHALL build a region product only within three limits, each a setting
   of FR-255: `exact_prob.max_clocks` (the model clocks plus the claim clock,
   default 10 clocks), `exact_prob.max_clock_scale` (the plain LCD scale of the
@@ -122,7 +103,7 @@ unsound, and the checker rejects a certificate that states it.
 | FR-922-AC-1 | `Retx` with the guard `self.x > 1 ms` over every scheduler: `Deadline` at 0.99 settles `proved`, `ExactValue{99/100}`, with a `region` document the checker accepts; `Max` (`probability <= 0.999`) settles `proved`, `ExactValue{999/1000}`, with a `region` document the checker accepts. | Test (TC-2491) |
 | FR-922-AC-2 | AC-1's `Deadline` document with `route` set to `"digital"` is refused `ObjectiveMismatch`; the `Max` `exact` certificate with every value replaced by the corresponding value of the `>= 1 ms` guard's digital product, initial value `9999/10000`, is rejected `InequalityFails`, and the tampered item settles `inconclusive`, `CertificateRejected`. | Test (TC-2491) |
 | FR-922-AC-3 | `MeanTime` with the guard `self.x > 1 ms` settles its maximum `20/9 ms` with a `boundary-region` document the checker accepts; the minimum is the infimum `10/9 ms`. | Test (TC-2491) |
-| FR-922-AC-4 | Interim, until the symbolic region MDP of ADR-038 RL-3 replaces the grid walk (QSL-3495): RL-3 gives a grid walk no exactness, and this criterion claims none; it pins that the walk does not step over a region on the subjects below, whose stated values are derived by hand for dense time. Subject A: clocks `x` and `y`; `first` is guarded `self.phase = 0 and self.x > 0 ms and self.x < 1 ms`, sets `phase` 1 and resets `x`; `third` is guarded `self.phase = 1 and self.x < 1 ms and self.y > 1 ms` and sets `late`; `y <= 3 ms` while `phase < 2`. Over every scheduler `eventually[0 ms, 4 ms] holds(late)` has maximum 1 (`first` at 0.5 ms, `third` at 1.2 ms) and minimum 0 (`third` never taken): `probability <= 0.999`, `probability <= 0.5` and `probability >= 0.001` each settle `refuted`. Subject B: `first` is guarded `self.x > 0 ms`, `third` as before, with `y < 1 ms` while `phase = 0` and `x < 1 ms` while `phase = 1`, so time diverges only through `third`: `probability >= 0.5` settles `proved`, `ExactValue{1}`. Subject C is B with `x <= 1 ms` in the guard of `third` and in the invariant, with the same result. | Test (TC-2491) |
+| FR-922-AC-4 | On the subjects below the region MDP states the dense values, derived by hand for dense time and not by any grid. Subject A: clocks `x` and `y`; `first` is guarded `self.phase = 0 and self.x > 0 ms and self.x < 1 ms`, sets `phase` 1 and resets `x`; `third` is guarded `self.phase = 1 and self.x < 1 ms and self.y > 1 ms` and sets `late`; `y <= 3 ms` while `phase < 2`. Over every scheduler `eventually[0 ms, 4 ms] holds(late)` has maximum 1 (`first` at 0.5 ms, `third` at 1.2 ms) and minimum 0 (`third` never taken): `probability <= 0.999`, `probability <= 0.5` and `probability >= 0.001` each settle `refuted`. Subject B: `first` is guarded `self.x > 0 ms`, `third` as before, with `y < 1 ms` while `phase = 0` and `x < 1 ms` while `phase = 1`, so time diverges only through `third`: `probability >= 0.5` settles `proved`, `ExactValue{1}`. Subject C is B with `x <= 1 ms` in the guard of `third` and in the invariant, with the same result. | Test (TC-2491) |
 | FR-922-AC-5 | With subject B's expected elapsed time (infimum 1 ms, supremum 2 ms, neither attained): "at most 2 ms", "less than 2 ms", "at least 1 ms" and "greater than 1 ms" settle `proved`; "at least 2 ms", "greater than 2 ms", "at most 1 ms" and "less than 1 ms" settle `refuted`. | Test (TC-2491) |
 | FR-922-AC-6 | A refutation of an expected-elapsed claim carries a finite chain with exact rational delays and probabilities and its value; the checker accepts it only if its own recomputation of that value violates the claim. | Test (TC-2491) |
 | FR-922-AC-7 | The checker recomputes the value of a refuting chain from the replayed chain alone; a chain whose stated value differs from the recomputed one, whose branch probabilities do not sum to 1, or whose stated state differs from the replayed state is refused. | Test (TC-2491) |

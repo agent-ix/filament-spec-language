@@ -487,6 +487,9 @@ pub enum ProductAction {
     /// A positive delay committing a quiescent running state to TS-5's idle
     /// tail (FR-196 `EnterIdleDelay`).
     EnterIdleDelay,
+    /// A region product's quiescent state entering its decided tail-entry
+    /// state (FR-196 `EnterIdleTail`).
+    EnterIdleTail,
     /// A positive delay already in the idle tail (FR-196 `IdleDelay`).
     IdleDelay,
     /// The idle tail's clock-valued observation, which advances no clock

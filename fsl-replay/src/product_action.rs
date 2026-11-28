@@ -5,7 +5,7 @@
 //!
 //! [`ProductAction`] is the closed body form: `["identity",schedule]`,
 //! `["post-state",product_key]`, `["terminal-stutter"]`, `["delay"]`,
-//! `["enter-idle-delay"]`, `["idle-delay"]`, `["idle-observe"]`,
+//! `["enter-idle-delay"]`, `["enter-idle-tail"]`, `["idle-delay"]`, `["idle-observe"]`,
 //! `["workload-resolve",schedule,delay]` and
 //! `["free-delays",[[given,free],...]]`, written and read as RFC 8785 JCS
 //! octets through `quire-canonical`. Parsing is syntactic only: it checks the
@@ -248,6 +248,9 @@ pub enum ProductAction {
     UnitDelay,
     /// `["enter-idle-delay"]`.
     EnterIdleDelay,
+    /// `["enter-idle-tail"]`: a region product's quiescent state enters its
+    /// decided tail-entry state (FR-196 item 1).
+    EnterIdleTail,
     /// `["idle-delay"]`.
     IdleDelay,
     /// `["idle-observe"]`.
@@ -315,6 +318,7 @@ impl ProductAction {
             Self::TerminalStutter => View::Tag("terminal-stutter"),
             Self::UnitDelay => View::Tag("delay"),
             Self::EnterIdleDelay => View::Tag("enter-idle-delay"),
+            Self::EnterIdleTail => View::Tag("enter-idle-tail"),
             Self::IdleDelay => View::Tag("idle-delay"),
             Self::IdleObserve => View::Tag("idle-observe"),
             Self::WorkloadResolve { schedule, delay } => View::Resolve(schedule, *delay),
@@ -352,6 +356,7 @@ impl ProductAction {
             ("terminal-stutter", []) => Self::TerminalStutter,
             ("delay", []) => Self::UnitDelay,
             ("enter-idle-delay", []) => Self::EnterIdleDelay,
+            ("enter-idle-tail", []) => Self::EnterIdleTail,
             ("idle-delay", []) => Self::IdleDelay,
             ("idle-observe", []) => Self::IdleObserve,
             ("workload-resolve", [schedule, delay]) => Self::WorkloadResolve {
@@ -781,6 +786,7 @@ mod tests {
             r#"["terminal-stutter"]"#.to_owned(),
             r#"["delay"]"#.to_owned(),
             r#"["enter-idle-delay"]"#.to_owned(),
+            r#"["enter-idle-tail"]"#.to_owned(),
             r#"["idle-delay"]"#.to_owned(),
             r#"["idle-observe"]"#.to_owned(),
             format!(r#"["workload-resolve",{B},"0"]"#),

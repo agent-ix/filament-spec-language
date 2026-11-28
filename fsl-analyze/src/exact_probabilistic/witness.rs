@@ -1145,6 +1145,7 @@ fn resolves(scope: WitnessScope, action: &ProductAction) -> bool {
         WitnessScope::Workload => match action {
             ProductAction::UnitDelay
             | ProductAction::EnterIdleDelay
+            | ProductAction::EnterIdleTail
             | ProductAction::IdleDelay
             | ProductAction::IdleObserve
             | ProductAction::WorkloadResolve { .. }

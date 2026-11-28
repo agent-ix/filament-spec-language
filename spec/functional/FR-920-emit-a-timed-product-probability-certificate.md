@@ -116,6 +116,13 @@ would have refused the certificate before reading a value.
   `policy` names a state's move to its tail-entry state by the action body
   `["enter-idle-tail"]` (FR-196 `ProductAction::EnterIdleTail`), never a
   stutter time.
+- For a `deadline` form on the region route, the `scale` of the model
+  member SHALL be FR-204's plain least common denominator of the model's and
+  the claim's constants, with no further subdivision, and the key SHALL
+  carry its tail-entry rows as a bounded-window document does: the region
+  key with `tail` `"idle-entry"`, valued from the key alone by FR-196's
+  plain-deadline tail rule, and the `["enter-idle-tail"]` action body. The
+  checker computes the tail value itself.
 - For `expected-elapsed` on the region route, the key SHALL be the region key
   with the model member's tag `"boundary-region"` and a trailing `corner`, one
   canonical integer string per clock entry in entry order, then the deadline

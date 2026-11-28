@@ -201,6 +201,9 @@ pub enum DigitalTail {
     IdleReady,
     /// A selected idle tail after a positive delay.
     IdleDelayed,
+    /// A tail-entry state of a region product (FR-196 "Idle tail"): decided,
+    /// valued from its key alone, with no successor.
+    IdleEntry,
 }
 
 impl DigitalTail {
@@ -209,6 +212,7 @@ impl DigitalTail {
             Self::Running => "running",
             Self::IdleReady => "idle-ready",
             Self::IdleDelayed => "idle-delayed",
+            Self::IdleEntry => "idle-entry",
         }
     }
 }

@@ -1110,6 +1110,7 @@ fn same_mean_time_choice(
         | (ProductAction::TerminalStutter, ProductAction::TerminalStutter)
         | (ProductAction::UnitDelay, ProductAction::UnitDelay)
         | (ProductAction::EnterIdleDelay, ProductAction::EnterIdleDelay)
+        | (ProductAction::EnterIdleTail, ProductAction::EnterIdleTail)
         | (ProductAction::IdleDelay, ProductAction::IdleDelay)
         | (ProductAction::IdleObserve, ProductAction::IdleObserve) => true,
         (
@@ -4024,6 +4025,7 @@ fn replay_produced_witness(
                             | fsl_replay::ProductAction::TerminalStutter
                             | fsl_replay::ProductAction::UnitDelay
                             | fsl_replay::ProductAction::EnterIdleDelay
+                            | fsl_replay::ProductAction::EnterIdleTail
                             | fsl_replay::ProductAction::IdleDelay
                             | fsl_replay::ProductAction::IdleObserve
                     ) {
@@ -4335,6 +4337,7 @@ fn canonical_action(
         AnalyzerAction::TerminalStutter => fsl_replay::ProductAction::TerminalStutter,
         AnalyzerAction::UnitDelay => fsl_replay::ProductAction::UnitDelay,
         AnalyzerAction::EnterIdleDelay => fsl_replay::ProductAction::EnterIdleDelay,
+        AnalyzerAction::EnterIdleTail => fsl_replay::ProductAction::EnterIdleTail,
         AnalyzerAction::IdleDelay => fsl_replay::ProductAction::IdleDelay,
         AnalyzerAction::IdleObserve => fsl_replay::ProductAction::IdleObserve,
         AnalyzerAction::WorkloadResolve { identity, delay } => {

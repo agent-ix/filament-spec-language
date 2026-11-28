@@ -388,7 +388,7 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
     }
     matches!(
         parts[6].node(),
-        Node::String("running" | "idle-ready" | "idle-delayed")
+        Node::String("running" | "idle-ready" | "idle-delayed" | "idle-entry")
     )
 }
 
