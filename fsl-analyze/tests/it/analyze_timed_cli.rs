@@ -1987,7 +1987,10 @@ fn digital_clocks_prove_a_true_always_inside_eventually() {
              eventually[0 ms, 4 ms] always[0 ms, 1 ms] holds(c.phase = 2) }}\n"
     );
     let unit = unit_text(PACKAGE, crate::zone_search::TIMED, &body);
-    let domain = document(&["x"], &[("first", &["phase", "x"]), ("second", &["phase"])]);
+    let domain = document(
+        &["x"],
+        &[("first", &["phase", "x"]), ("second", &["phase"])],
+    );
     let ws = Workspace::new("digital-clocks-eventually-always");
     let run = analyze(&request_over(
         &ws,
