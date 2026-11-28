@@ -4517,10 +4517,7 @@ impl<O> Checker<'_, '_, O> {
                 for (place, reset) in step.resets() {
                     if invariants.iter().any(|invariant| {
                         invariant.place() == *place
-                            && matches!(
-                                invariant.op(),
-                                ClockOp::Less | ClockOp::LessOrEqual
-                            )
+                            && matches!(invariant.op(), ClockOp::Less | ClockOp::LessOrEqual)
                             && invariant.bound() > reset
                     }) {
                         return Ok(true);
