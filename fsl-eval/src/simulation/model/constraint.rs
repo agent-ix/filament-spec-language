@@ -82,9 +82,10 @@ impl ModelSystem<'_> {
             let observations = invariant_observations(&walk, clause, row);
             let evaluation = self
                 .evaluator()
-                .evaluate_clause(
+                .evaluate_clause_with_types(
                     &clause.qualified,
                     &observations,
+                    self.types,
                     &mut self.evaluation_meter(),
                 )
                 .map_err(|_| stop(BROKEN))?;

@@ -80,18 +80,49 @@ pub enum CheckedStatePredicate {
     Package(PackagePredicate),
 }
 
-/// A written predicate of a package-route claim: the `expression` node that
-/// holds it and the number of evaluation slots its reader projection takes,
-/// the `over` parameter first. The package route evaluates it through the
-/// model-check evaluator port, keyed by the claim's occurrence and the
-/// predicate's role, never through a checked body.
+/// A predicate expression projected from an admitted package, its number of
+/// evaluation slots, and the package parameter nodes that bind those slots.
+/// The package route evaluates it through the model-check evaluator port,
+/// never through a source-checked body.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackagePredicate {
     node: NodeKey,
     slots: usize,
+    binders: Vec<NodeKey>,
+    state_clause_owner: Option<(String, usize)>,
+    type_declaration_owner: Option<String>,
 }
 
 impl PackagePredicate {
+    /// An admitted package expression and its evaluation-slot count.
+    pub fn new(node: NodeKey, slots: usize) -> Self {
+        Self {
+            node,
+            slots,
+            binders: Vec::new(),
+            state_clause_owner: None,
+            type_declaration_owner: None,
+        }
+    }
+
+    /// An admitted package expression with its ordered parameter nodes.
+    pub fn with_binders(mut self, binders: Vec<NodeKey>) -> Self {
+        self.binders = binders;
+        self
+    }
+
+    /// Use the admitted state-clause site when projecting this package body.
+    pub fn with_state_clause_owner(mut self, clause: String, index: usize) -> Self {
+        self.state_clause_owner = Some((clause, index));
+        self
+    }
+
+    /// Use a named type-declaration site when projecting this package body.
+    pub fn with_type_declaration_owner(mut self, name: String) -> Self {
+        self.type_declaration_owner = Some(name);
+        self
+    }
+
     /// The predicate's `expression` node.
     pub fn node(&self) -> &NodeKey {
         &self.node
@@ -100,6 +131,23 @@ impl PackagePredicate {
     /// The number of evaluation slots of the predicate's projection.
     pub fn slots(&self) -> usize {
         self.slots
+    }
+
+    /// The ordered package parameter nodes used by this expression.
+    pub fn binders(&self) -> &[NodeKey] {
+        &self.binders
+    }
+
+    /// The state-clause projection site, when this is an operation predicate.
+    pub fn state_clause_owner(&self) -> Option<(&str, usize)> {
+        self.state_clause_owner
+            .as_ref()
+            .map(|(clause, index)| (clause.as_str(), *index))
+    }
+
+    /// The type-declaration projection site, when this body belongs to one.
+    pub fn type_declaration_owner(&self) -> Option<&str> {
+        self.type_declaration_owner.as_deref()
     }
 }
 
@@ -154,6 +202,12 @@ pub trait StatePredicate {
     /// package. Such a predicate is evaluated by its admitted package node,
     /// never by a source-checked body.
     fn package_claim(&self) -> Option<&OccurrenceKey> {
+        None
+    }
+
+    /// The package expression when this predicate is a timed-model predicate
+    /// projected from admitted package nodes.
+    fn package_expression(&self) -> Option<&PackagePredicate> {
         None
     }
 
@@ -810,6 +864,10 @@ pub enum PackageStatePredicate {
         node: NodeKey,
         /// The evaluation slots, the `over` parameter first.
         slots: usize,
+        /// The package parameter nodes binding those slots.
+        binders: Vec<NodeKey>,
+        /// The type-declaration site used to project the expression.
+        owner: String,
     },
     /// The Boolean `true` literal node: the constant predicate.
     ConstantTrue {
@@ -827,10 +885,17 @@ impl PackageStatePredicate {
 
     fn checked(&self) -> CheckedStatePredicate {
         match self {
-            Self::Written { node, slots, .. } => CheckedStatePredicate::Package(PackagePredicate {
-                node: node.clone(),
-                slots: *slots,
-            }),
+            Self::Written {
+                node,
+                slots,
+                binders,
+                owner,
+                ..
+            } => CheckedStatePredicate::Package(
+                PackagePredicate::new(node.clone(), *slots)
+                    .with_binders(binders.clone())
+                    .with_type_declaration_owner(owner.clone()),
+            ),
             Self::ConstantTrue { .. } => CheckedStatePredicate::ConstantTrue,
         }
     }

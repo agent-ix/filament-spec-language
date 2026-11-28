@@ -67,6 +67,17 @@ pub(crate) trait ClauseHost {
         observations: &AdmittedObservations,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure>;
+
+    /// The clause evaluated against the selected model system's types.
+    fn clause_with_types(
+        &self,
+        name: &QualifiedName,
+        observations: &AdmittedObservations,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure> {
+        self.clause(name, observations, meter)
+    }
 }
 
 impl ClauseHost for CheckedPackage {
@@ -123,6 +134,7 @@ fn verdict(evaluation: &ClauseEvaluation) -> Verdict {
 fn run_group<H: ClauseHost + ?Sized>(
     package: &H,
     group: &[(&QualifiedName, &AdmittedObservations)],
+    types: Option<&filament_semantic_value::declaration::TypeEnvironment>,
     fresh_meter: &mut dyn FnMut() -> Meter,
     short_circuit: bool,
     results: &mut Vec<ClauseSetEntry>,
@@ -130,7 +142,10 @@ fn run_group<H: ClauseHost + ?Sized>(
 ) -> Result<bool, CallFailure> {
     for (name, observations) in group {
         let mut meter = fresh_meter();
-        let evaluation = package.clause(name, observations, &mut meter)?;
+        let evaluation = match types {
+            Some(types) => package.clause_with_types(name, observations, types, &mut meter)?,
+            None => package.clause(name, observations, &mut meter)?,
+        };
         let verdict = verdict(&evaluation);
         results.push(ClauseSetEntry {
             name: (*name).clone(),
@@ -187,6 +202,15 @@ pub(crate) fn evaluate_with_meter_factory<H: ClauseHost + ?Sized>(
     clauses: &[(QualifiedName, &AdmittedObservations)],
     fresh_meter: &mut dyn FnMut() -> Meter,
 ) -> Result<ClauseSetEvaluation, CallFailure> {
+    evaluate_with_meter_factory_and_types(package, clauses, None, fresh_meter)
+}
+
+pub(crate) fn evaluate_with_meter_factory_and_types<H: ClauseHost + ?Sized>(
+    package: &H,
+    clauses: &[(QualifiedName, &AdmittedObservations)],
+    types: Option<&filament_semantic_value::declaration::TypeEnvironment>,
+    fresh_meter: &mut dyn FnMut() -> Meter,
+) -> Result<ClauseSetEvaluation, CallFailure> {
     // Refuse a bad set whole, before any clause is evaluated.
     let mut named = BTreeSet::new();
     for (name, _) in clauses {
@@ -215,6 +239,7 @@ pub(crate) fn evaluate_with_meter_factory<H: ClauseHost + ?Sized>(
         run_group(
             package,
             group,
+            types,
             fresh_meter,
             short_circuit,
             &mut results,

@@ -314,8 +314,9 @@ impl Walk<'_, '_> {
                 .filter(|clause| select(clause.identity.clone()))
                 .collect()
         };
+        let preconditions: Vec<_> = pick(&clauses.preconditions);
         Selected {
-            preconditions: pick(&clauses.preconditions),
+            preconditions,
             postconditions: pick(&clauses.postconditions),
             operation_preconditions: Vec::new(),
             operation_postconditions: Vec::new(),

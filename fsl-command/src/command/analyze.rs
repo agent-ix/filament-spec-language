@@ -611,6 +611,15 @@ fn package_input_refusal(
             ),
             locus: None,
         },
+        PendingPackageForm::MultipleTimedPreconditions { node, count } => {
+            RunCause::AnalyzeNotYetImplemented {
+                member: "package",
+                detail: format!(
+                    ": timed operation at {node:?} has {count} matching preconditions"
+                ),
+                locus: None,
+            }
+        }
         refusal @ (PendingPackageForm::ProbabilisticNodes(_)
         | PendingPackageForm::Probabilistic(_)
         | PendingPackageForm::SourceModel(_)) => RunCause::AnalyzePackage {

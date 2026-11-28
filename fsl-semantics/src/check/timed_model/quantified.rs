@@ -311,20 +311,20 @@ pub(super) fn invariant_bound(
         .ok_or_else(|| timed(located.outside(quantifier.body)))?;
     Ok((
         binding.clone(),
-        ClockConstraint {
-            parameter: None,
+        ClockConstraint::from_parts(
             clock,
-            via: Vec::new(),
-            slots: vec![SlotRef::Family],
-            binding: Some(binding),
-            op: if form.strict {
+            Vec::new(),
+            vec![SlotRef::Family],
+            Some(binding),
+            if form.strict {
                 ClockOp::Less
             } else {
                 ClockOp::LessOrEqual
             },
-            bound: clocks.quantity(&form.bound).map_err(timed)?,
-            span: form.span,
-        },
+            clocks.quantity(&form.bound).map_err(timed)?,
+            form.span,
+            None,
+        ),
     ))
 }
 
@@ -486,15 +486,17 @@ fn slot(
                 return Err(timed(TemporalCause::ClockComparison { span }));
             }
             let bound = located.constant(constant, clocks).map_err(timed)?;
-            let constraint = |op: ClockOp| ClockConstraint {
-                parameter: None,
-                clock,
-                via: Vec::new(),
-                slots: vec![binding.slot],
-                binding: Some(binding.clone()),
-                op,
-                bound: bound.clone(),
-                span,
+            let constraint = |op: ClockOp| {
+                ClockConstraint::from_parts(
+                    clock,
+                    Vec::new(),
+                    vec![binding.slot],
+                    Some(binding.clone()),
+                    op,
+                    bound.clone(),
+                    span,
+                    None,
+                )
             };
             Ok((
                 vec![(Vec::new(), vec![constraint(op)])],

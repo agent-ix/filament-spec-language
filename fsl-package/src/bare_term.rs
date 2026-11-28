@@ -1074,6 +1074,9 @@ fn anchor_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedTer
 pub struct BareStateClause {
     observation: fsl_semantics::model::clause_observation::Observation,
     parameters: Vec<(String, usize)>,
+    owner_index: usize,
+    expression: NodeKey,
+    binders: Vec<NodeKey>,
     projection: ReaderProtocolProjection,
 }
 
@@ -1094,6 +1097,21 @@ impl BareStateClause {
     /// The clause body's evaluator nodes.
     pub fn projection(&self) -> &ReaderProtocolProjection {
         &self.projection
+    }
+
+    /// The admitted expression node at the root of this state clause body.
+    pub fn expression(&self) -> &NodeKey {
+        &self.expression
+    }
+
+    /// The state clause's binders in declaration order, with `self` first.
+    pub fn binders(&self) -> &[NodeKey] {
+        &self.binders
+    }
+
+    /// The source-order index used by the reader's state-clause projection.
+    pub fn owner_index(&self) -> usize {
+        self.owner_index
     }
 }
 
@@ -1223,6 +1241,9 @@ impl<'p> BarePackage<'p> {
         Ok(BareStateClause {
             observation,
             parameters,
+            owner_index: index,
+            expression: root_key,
+            binders: keys,
             projection,
         })
     }

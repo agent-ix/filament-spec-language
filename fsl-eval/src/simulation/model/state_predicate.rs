@@ -162,14 +162,17 @@ impl ModelSystem<'_> {
                         &mut meter,
                     )
                 }
-                (None, Some(occurrence)) => self.evaluator().evaluate_state_graph_predicate(
-                    occurrence,
-                    *role,
-                    &walk.observation.environment,
-                    bound,
-                    Vec::new(),
-                    &mut meter,
-                ),
+                (None, Some(occurrence)) => {
+                    self.evaluator().evaluate_state_graph_predicate_with_types(
+                        occurrence,
+                        *role,
+                        self.input().types,
+                        &walk.observation.environment,
+                        bound,
+                        Vec::new(),
+                        &mut meter,
+                    )
+                }
                 (None, None) => return Err(stop(BROKEN)),
             }
             .map_err(|_| stop(BROKEN))?;
@@ -241,7 +244,9 @@ impl ModelSystem<'_> {
             if let Some(cancel) = cancel {
                 meter = meter.with_cancel(cancel.clone());
             }
-            let evaluation = if let Some(package) = self.source_package() {
+            let evaluation = if let Some(package) =
+                self.source_package().filter(|_| predicate.body().is_some())
+            {
                 evaluate_state_predicate_with_reference_bindings(
                     package,
                     *predicate,
@@ -263,8 +268,9 @@ impl ModelSystem<'_> {
                     .map_err(|_| stop(BROKEN))?
             } else {
                 self.evaluator()
-                    .evaluate_state_predicate(
+                    .evaluate_state_predicate_with_types(
                         *predicate,
+                        self.input().types,
                         &walk.observation.environment,
                         bound,
                         further.clone(),

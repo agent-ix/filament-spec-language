@@ -555,7 +555,12 @@ impl Lowering<'_> {
         predicate: &CheckedTimedPredicate,
         site: &Location,
     ) -> Result<NodeKey, SemanticCheckRefusal> {
-        let body = predicate.checked_body();
+        let Some(body) = predicate.checked_body() else {
+            return Err(super::union_fault(
+                site,
+                "source-timed-predicate-has-checked-body",
+            ));
+        };
         let mut scope = Vec::new();
         for (slot, (name, value_type)) in predicate.parameters().iter().enumerate() {
             if !body.reads_local(slot) {
@@ -1081,10 +1086,12 @@ impl Lowering<'_> {
             let mut conjuncts =
                 self.self_presences(clocks, alternative.presences(), context.clone(), site)?;
             let data = alternative.predicate();
-            let trivial = matches!(
-                data.checked_body().root().kind(),
-                NodeKind::Literal(CheckedLiteral(Value::Boolean(true)))
-            );
+            let trivial = data.checked_body().is_some_and(|body| {
+                matches!(
+                    body.root().kind(),
+                    NodeKind::Literal(CheckedLiteral(Value::Boolean(true)))
+                )
+            });
             if conjuncts.is_empty() || !trivial {
                 conjuncts.push(self.timed_predicate(data, site)?);
             }

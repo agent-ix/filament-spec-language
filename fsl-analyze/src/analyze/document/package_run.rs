@@ -1234,6 +1234,9 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
         PendingPackageForm::Form { .. } => {
             Some("the package holds a form its model-check input does not read yet".to_owned())
         }
+        PendingPackageForm::MultipleTimedPreconditions { node, count } => Some(format!(
+            "the timed operation at {node:?} has {count} matching preconditions"
+        )),
         PendingPackageForm::SourceModel(fault) => Some(fault.to_string()),
         PendingPackageForm::Probabilistic(_) => Some(
             "the package's random parameters and workloads do not rebuild against its model"
@@ -4051,6 +4054,7 @@ fn input_refusal(refusal: PendingPackageForm) -> PackageRunError {
         | PendingPackageForm::ProbabilisticNodes(_)
         | PendingPackageForm::Probabilistic(_)
         | PendingPackageForm::Reward(_)
+        | PendingPackageForm::MultipleTimedPreconditions { .. }
         // Only `source_object_probabilistic_model` reads the source-object
         // rows, so `of` never gives this one.
         | PendingPackageForm::SourceModel(_)) => PackageRunError::Input(refusal),

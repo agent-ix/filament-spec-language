@@ -461,7 +461,8 @@ impl CheckedTimedModel {
             })
             .cloned()
             .collect::<Vec<_>>();
-        Self::from_nodes(&nodes)
+        let models = Self::from_nodes(&nodes)?;
+        Ok(models)
     }
 
     /// Reconstruct typed models from generated wire nodes in this crate's

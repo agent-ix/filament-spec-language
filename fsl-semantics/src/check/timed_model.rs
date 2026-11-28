@@ -51,7 +51,7 @@ use super::ir::{CheckedBody, CheckedNode};
 use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
 use super::refusal::TimedConstruct;
 use super::refusal::{
-    CheckCause, ExcludedClauseForm, SemanticCheckRefusal, TemporalCause, TimedOmission,
+    CheckCause, ExcludedClauseForm, KeyFault, SemanticCheckRefusal, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
@@ -64,6 +64,18 @@ use super::time_units::{TimeScale, TimeUnits};
 use crate::family::CheckContext;
 use crate::value::member::AcceptedPoint;
 
+fn package_builder_invariant(
+    location: &filament_semantic_value::location::ExpressionLocation,
+    invariant: &'static str,
+) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
+        location: location.clone(),
+        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+            filament_semantic_value::catalog::InternalFault::new("S3", invariant),
+        )))),
+    }
+}
+
 mod collection_write;
 mod quantified;
 mod reading;
@@ -75,6 +87,11 @@ pub(crate) use reading::site as clock_reading_site;
 pub struct ClockId(usize);
 
 impl ClockId {
+    /// The clock field's position in a normalized timed-model table.
+    pub const fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
     /// The field's position in [`TimedModel::clocks`].
     pub const fn index(self) -> usize {
         self.0
@@ -268,6 +285,31 @@ pub struct ClockConstraint {
 }
 
 impl ClockConstraint {
+    /// Construct a normalized clock constraint shared by source and package
+    /// timed-model inputs.
+    #[implements("FR-940-AC-39")]
+    pub fn from_parts(
+        clock: ClockId,
+        via: Vec<PlaceStep>,
+        slots: Vec<SlotRef>,
+        binding: Option<ElementBinding>,
+        op: ClockOp,
+        bound: Rational,
+        span: Span,
+        parameter: Option<usize>,
+    ) -> Self {
+        Self {
+            clock,
+            via,
+            slots,
+            binding,
+            op,
+            bound,
+            span,
+            parameter,
+        }
+    }
+
     /// The position of the operation's `Clock` parameter this constrains,
     /// when it reads one: the place an instance binds the parameter to,
     /// when that place is a place of [`Self::clock`].
@@ -322,16 +364,36 @@ impl ClockConstraint {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedTimedPredicate {
     parameters: Vec<(String, ValueType)>,
-    body: CheckedBody,
+    body: Option<CheckedBody>,
+    package: Option<super::PackagePredicate>,
+    package_reads_self: bool,
     slots: usize,
     /// Each slot's binder name, for the parameter nodes lowering writes.
     slot_names: Vec<String>,
 }
 
 impl CheckedTimedPredicate {
+    /// A timed predicate backed by an admitted package expression.
+    #[implements("FR-940-AC-39")]
+    pub fn from_package(
+        parameters: Vec<(String, ValueType)>,
+        package: super::PackagePredicate,
+        reads_self: bool,
+    ) -> Self {
+        let slot_names = parameters.iter().map(|(name, _)| name.clone()).collect();
+        Self {
+            parameters,
+            slots: package.slots(),
+            body: None,
+            package: Some(package),
+            package_reads_self: reads_self,
+            slot_names,
+        }
+    }
+
     /// The checked body.
-    pub(crate) fn checked_body(&self) -> &CheckedBody {
-        &self.body
+    pub(crate) fn checked_body(&self) -> Option<&CheckedBody> {
+        self.body.as_ref()
     }
 
     /// Each slot's binder name.
@@ -343,7 +405,9 @@ impl CheckedTimedPredicate {
     /// is evaluated once at a state and not once for each object (FR-230
     /// "Time invariants and urgency").
     pub fn reads_self(&self) -> bool {
-        self.body.reads_local(0)
+        self.body
+            .as_ref()
+            .map_or(self.package_reads_self, |body| body.reads_local(0))
     }
 
     /// The slots the body is checked over, in order: `self`, then the
@@ -355,7 +419,11 @@ impl CheckedTimedPredicate {
 
 impl StatePredicate for CheckedTimedPredicate {
     fn body(&self) -> Option<CheckedNode<'_>> {
-        Some(self.body.root())
+        self.body.as_ref().map(CheckedBody::root)
+    }
+
+    fn package_expression(&self) -> Option<&super::PackagePredicate> {
+        self.package.as_ref()
     }
 
     fn slots(&self) -> usize {
@@ -470,6 +538,35 @@ impl ClockGuard {
 }
 
 impl ConvexPart {
+    /// Construct one normalized guard part shared by source and package
+    /// timed-model inputs.
+    #[allow(clippy::too_many_arguments)]
+    #[implements("FR-940-AC-39")]
+    pub fn from_parts(
+        data: Option<CheckedTimedPredicate>,
+        presences: Vec<(ClockId, bool)>,
+        element_presences: Vec<(ClockId, ElementBinding, bool)>,
+        elements: Vec<ElementBinding>,
+        binders: Vec<ElementBinding>,
+        empty_collection_branch: bool,
+        clocks: Vec<ClockConstraint>,
+        families: Vec<QuantifiedFamily>,
+    ) -> Option<Self> {
+        if empty_collection_branch && families.is_empty() {
+            return None;
+        }
+        Some(Self {
+            data,
+            presences,
+            element_presences,
+            elements,
+            binders,
+            empty_collection_branch,
+            clocks,
+            families,
+        })
+    }
+
     /// The part's data predicate; `None` when the part reads no data.
     pub fn data(&self) -> Option<&CheckedTimedPredicate> {
         self.data.as_ref()
@@ -534,6 +631,32 @@ pub struct ClockGuard {
 }
 
 impl ClockGuard {
+    /// Construct one normalized operation guard shared by source and package
+    /// timed-model inputs.
+    #[implements("FR-940-AC-39")]
+    pub fn from_parts(
+        clause: String,
+        operation: ClauseOperation,
+        parts: Vec<ConvexPart>,
+        index: usize,
+        context: EffectiveId,
+        span: Span,
+        point: Option<AcceptedPoint>,
+    ) -> Option<Self> {
+        if parts.is_empty() {
+            return None;
+        }
+        Some(Self {
+            clause,
+            operation,
+            parts,
+            index,
+            context,
+            span,
+            point,
+        })
+    }
+
     /// The precondition's declared name.
     pub fn clause(&self) -> &str {
         &self.clause
@@ -624,6 +747,27 @@ impl SlotSelection {
 }
 
 impl ClockReset {
+    /// Construct one normalized reset shared by source and package timed
+    /// model inputs.
+    #[implements("FR-940-AC-39")]
+    pub fn from_parts(
+        clock: ClockId,
+        value: Rational,
+        span: Span,
+        selection: Option<SlotSelection>,
+        parameter: Option<usize>,
+        slots: Vec<u64>,
+    ) -> Self {
+        Self {
+            clock,
+            value,
+            span,
+            selection,
+            parameter,
+            slots,
+        }
+    }
+
     /// The position of the operation's `Clock` parameter this resets, when
     /// it resets one: the place an instance binds the parameter to, when
     /// that place is a place of [`Self::clock`].
@@ -717,6 +861,41 @@ pub struct ClockResets {
 }
 
 impl ClockResets {
+    /// Construct one normalized postcondition reset table shared by source
+    /// and package timed-model inputs.
+    #[allow(clippy::too_many_arguments)]
+    #[implements("FR-940-AC-39")]
+    pub fn from_parts(
+        clause: String,
+        operation: ClauseOperation,
+        resets: Vec<ClockReset>,
+        writes: Vec<CollectionWrite>,
+        drops: Vec<ClockId>,
+        drop_spans: Vec<Span>,
+        requires: Vec<(ClockId, bool)>,
+        index: usize,
+        context: EffectiveId,
+        span: Span,
+        point: Option<AcceptedPoint>,
+    ) -> Option<Self> {
+        if drop_spans.len() != drops.len() {
+            return None;
+        }
+        Some(Self {
+            clause,
+            operation,
+            resets,
+            writes,
+            drops,
+            drop_spans,
+            requires,
+            index,
+            context,
+            span,
+            point,
+        })
+    }
+
     /// The postcondition's declared name.
     pub fn clause(&self) -> &str {
         &self.clause
@@ -914,6 +1093,16 @@ pub struct StateAlternative {
 }
 
 impl StateAlternative {
+    /// Construct a normalized predicate alternative shared by source and
+    /// package timed-model inputs.
+    #[implements("FR-940-AC-39")]
+    pub fn from_parts(presences: Vec<(ClockId, bool)>, predicate: CheckedTimedPredicate) -> Self {
+        Self {
+            presences,
+            predicate,
+        }
+    }
+
     /// Each `Option<Clock>` place of `self` whose presence the alternative
     /// requires, and whether present.
     pub fn presences(&self) -> &[(ClockId, bool)] {
@@ -927,6 +1116,32 @@ impl StateAlternative {
 }
 
 impl TimeInvariant {
+    /// Construct one normalized time invariant shared by source and package
+    /// timed-model inputs.
+    #[implements("FR-940-AC-39")]
+    pub fn from_parts(
+        name: String,
+        context: EffectiveId,
+        alternatives: Vec<StateAlternative>,
+        bounds: Vec<ClockConstraint>,
+        binders: Vec<ElementBinding>,
+        span: Span,
+        from_bound: bool,
+    ) -> Option<Self> {
+        if alternatives.is_empty() || bounds.is_empty() {
+            return None;
+        }
+        Some(Self {
+            name,
+            context,
+            alternatives,
+            bounds,
+            binders,
+            span,
+            from_bound,
+        })
+    }
+
     /// The declared name.
     pub fn name(&self) -> &str {
         &self.name
@@ -1065,7 +1280,7 @@ pub struct GuardNodes {
     /// The point-qualified `operation_anchor` of a point-bound guard (FSpec
     /// FR-342-AC-13), its final `point_anchor` binding.
     pub point_anchor: Option<NodeKey>,
-    /// The guarding precondition's declaration span.
+    /// The guarding preconditions' declaration span.
     pub span: Span,
     /// The parts, in the precondition's disjunctive-form order.
     pub parts: Vec<PartNodes>,
@@ -1342,7 +1557,7 @@ pub(crate) fn guard_part_site(model: &str, guard: usize, part: usize) -> String 
 /// alternative `alternative` of the time invariant at `invariant` among the
 /// invariants of the timed model `model`. Spaced, so it names no declared
 /// type.
-pub(crate) fn invariant_site(model: &str, invariant: usize, alternative: usize) -> String {
+pub fn invariant_site(model: &str, invariant: usize, alternative: usize) -> String {
     format!("timed {model} invariant {invariant} {alternative}")
 }
 
@@ -1481,6 +1696,65 @@ impl TimedModel {
             return None;
         }
         self.place_nodes = nodes;
+        Some(self)
+    }
+
+    /// Attach normalized timed clauses reconstructed from an admitted
+    /// package. Every clock reference must point into this model's clock
+    /// table; incomplete clause tables are rejected as a whole.
+    #[implements("FR-940-AC-39")]
+    pub fn with_package_clauses(
+        mut self,
+        guards: Vec<ClockGuard>,
+        resets: Vec<ClockResets>,
+        invariants: Vec<TimeInvariant>,
+    ) -> Option<Self> {
+        let clock_count = self.clocks.len();
+        let valid_constraint = |constraint: &ClockConstraint| {
+            constraint.clock.index() < clock_count
+                && (!constraint.slots.is_empty() || constraint.binding.is_none())
+        };
+        if guards.iter().any(|guard| {
+            guard.parts.is_empty()
+                || guard.parts.iter().any(|part| {
+                    part.clocks
+                        .iter()
+                        .any(|constraint| !valid_constraint(constraint))
+                        || part
+                            .presences
+                            .iter()
+                            .any(|(clock, _)| clock.index() >= clock_count)
+                        || part
+                            .element_presences
+                            .iter()
+                            .any(|(clock, _, _)| clock.index() >= clock_count)
+                })
+        }) || resets.iter().any(|table| {
+            table.drops.iter().any(|clock| clock.index() >= clock_count)
+                || table
+                    .requires
+                    .iter()
+                    .any(|(clock, _)| clock.index() >= clock_count)
+                || table
+                    .resets
+                    .iter()
+                    .any(|reset| reset.clock.index() >= clock_count)
+        }) || invariants.iter().any(|invariant| {
+            invariant.alternatives.iter().any(|alternative| {
+                alternative
+                    .presences
+                    .iter()
+                    .any(|(clock, _)| clock.index() >= clock_count)
+            }) || invariant
+                .bounds
+                .iter()
+                .any(|bound| !valid_constraint(bound))
+        }) {
+            return None;
+        }
+        self.guards = guards;
+        self.resets = resets;
+        self.invariants = invariants;
         Some(self)
     }
 
@@ -4561,20 +4835,20 @@ fn time_invariant(
                             .unwrap_or(bound.span),
                     })
                     .map_err(timed)?;
-                bounds.push(ClockConstraint {
-                    parameter: None,
+                bounds.push(ClockConstraint::from_parts(
                     clock,
-                    via: Vec::new(),
-                    slots: Vec::new(),
-                    binding: None,
-                    op: if bound.strict {
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    if bound.strict {
                         ClockOp::Less
                     } else {
                         ClockOp::LessOrEqual
                     },
-                    bound: clocks.quantity(&bound.bound).map_err(timed)?,
-                    span: bound.span,
-                });
+                    clocks.quantity(&bound.bound).map_err(timed)?,
+                    bound.span,
+                    None,
+                ));
             }
             fsl_forms::TimeInvariantBoundForm::Quantified(bound) => {
                 if bound.quantifier == fsl_forms::QuantifierKind::Exists {
@@ -4728,16 +5002,16 @@ fn clock_bounds(
             by_owner
                 .entry(field.owner.clone())
                 .or_default()
-                .push(ClockConstraint {
-                    parameter: None,
-                    clock: ClockId(index),
-                    via: Vec::new(),
+                .push(ClockConstraint::from_parts(
+                    ClockId(index),
+                    Vec::new(),
                     slots,
-                    binding: None,
-                    op: ClockOp::LessOrEqual,
-                    bound: bound.value.clone(),
+                    None,
+                    ClockOp::LessOrEqual,
+                    bound.value.clone(),
                     span,
-                });
+                    None,
+                ));
         }
         for (owner, bounds) in by_owner {
             let population =
@@ -5492,7 +5766,9 @@ fn typed_in(
     Ok((
         CheckedTimedPredicate {
             parameters: typed.parameters,
-            body: typed.body,
+            body: Some(typed.body),
+            package: None,
+            package_reads_self: false,
             slots: typed.slots,
             slot_names: typed.slot_names,
         },
@@ -5544,10 +5820,10 @@ fn typed_alternative_in(
         Some(named.clone()),
     )?;
     *nodes_used = (*nodes_used).max(used);
-    Ok(StateAlternative {
-        presences: alternative.presences,
+    Ok(StateAlternative::from_parts(
+        alternative.presences,
         predicate,
-    })
+    ))
 }
 
 fn state_view<'v>(
@@ -5656,19 +5932,24 @@ fn check_part(
             Ok(QuantifiedFamily { path, each, parts })
         })
         .collect::<Result<Vec<_>, SemanticCheckRefusal>>()?;
-    Ok(ConvexPart {
+    ConvexPart::from_parts(
         data,
-        presences: part.presences,
-        element_presences: part.element_presences,
-        elements: part
-            .elements
+        part.presences,
+        part.element_presences,
+        part.elements
             .into_iter()
             .map(|(binding, _)| binding)
             .collect(),
-        binders: clock_binders,
-        empty_collection_branch: part.empty_collection_branch,
-        clocks: part.clocks,
+        clock_binders,
+        part.empty_collection_branch,
+        part.clocks,
         families,
+    )
+    .ok_or_else(|| {
+        package_builder_invariant(
+            declarations.location,
+            "checked-timed-guard-part-has-normalized-bindings",
+        )
     })
 }
 
@@ -5726,15 +6007,23 @@ pub(crate) fn check(
                     &mut nodes_used,
                 )?);
             }
-            guards.push(ClockGuard {
-                clause: clause.name.clone(),
-                operation: operation.clone(),
-                parts: checked,
-                index,
-                context: clause.context.clone(),
-                span: clause.spans.declaration,
-                point: clause.execution_point.clone(),
-            });
+            guards.push(
+                ClockGuard::from_parts(
+                    clause.name.clone(),
+                    operation.clone(),
+                    checked,
+                    index,
+                    clause.context.clone(),
+                    clause.spans.declaration,
+                    clause.execution_point.clone(),
+                )
+                .ok_or_else(|| {
+                    package_builder_invariant(
+                        checking.declarations.location,
+                        "checked-timed-guard-has-parts",
+                    )
+                })?,
+            );
         }
         let mut invariants = Vec::with_capacity(draft.invariants.len());
         for invariant in draft.invariants {
@@ -5785,15 +6074,23 @@ pub(crate) fn check(
             let Some(context) = context else {
                 continue;
             };
-            invariants.push(TimeInvariant {
-                name: invariant.name,
-                context,
-                alternatives,
-                bounds: invariant.bounds,
-                binders: invariant.binders,
-                span: invariant.span,
-                from_bound: invariant.from_bound,
-            });
+            invariants.push(
+                TimeInvariant::from_parts(
+                    invariant.name,
+                    context,
+                    alternatives,
+                    invariant.bounds,
+                    invariant.binders,
+                    invariant.span,
+                    invariant.from_bound,
+                )
+                .ok_or_else(|| {
+                    package_builder_invariant(
+                        checking.declarations.location,
+                        "checked-time-invariant-has-alternatives-and-bounds",
+                    )
+                })?,
+            );
         }
         let mut urgency = Vec::with_capacity(draft.urgency.len());
         let mut urgency_predicates = Vec::with_capacity(draft.urgency.len());
@@ -5937,44 +6234,61 @@ pub(crate) fn check(
                         })
                     }
                 };
-                checked.push(ClockReset {
-                    clock: reset.clock,
-                    value: reset.value,
-                    span: reset.span,
+                checked.push(ClockReset::from_parts(
+                    reset.clock,
+                    reset.value,
+                    reset.span,
                     selection,
-                    parameter: reset.parameter,
-                    slots: reset.slots.iter().map(|slot| slot.value).collect(),
-                });
+                    reset.parameter,
+                    reset.slots.iter().map(|slot| slot.value).collect(),
+                ));
             }
-            resets.push(ClockResets {
-                clause: written.clause,
-                index: written.index,
-                context: written.context,
-                span: written.span,
-                point: written.point,
-                operation: written.operation,
-                resets: checked,
-                writes: written.writes,
-                drops: written.drops,
-                drop_spans: written.drop_spans,
-                requires: written.requires,
-            });
+            resets.push(
+                ClockResets::from_parts(
+                    written.clause,
+                    written.operation,
+                    checked,
+                    written.writes,
+                    written.drops,
+                    written.drop_spans,
+                    written.requires,
+                    written.index,
+                    written.context,
+                    written.span,
+                    written.point,
+                )
+                .ok_or_else(|| {
+                    package_builder_invariant(
+                        checking.declarations.location,
+                        "checked-clock-reset-table-has-drop-spans",
+                    )
+                })?,
+            );
         }
-        models.push(TimedModel {
+        let model = TimedModel {
             model: draft.model,
             model_node: draft.model_node,
             clocks: draft.clocks,
             clock_parameters: draft.clock_parameters,
             dimensions: draft.dimensions,
-            guards,
-            resets,
-            invariants,
+            guards: Vec::new(),
+            resets: Vec::new(),
+            invariants: Vec::new(),
             urgency,
             urgency_predicates,
             sites,
             clause_nodes: None,
             place_nodes: Vec::new(),
-        });
+        };
+        let model = model
+            .with_package_clauses(guards, resets, invariants)
+            .ok_or_else(|| {
+                package_builder_invariant(
+                    checking.declarations.location,
+                    "checked-timed-model-clauses-reference-admitted-clock-places",
+                )
+            })?;
+        models.push(model);
     }
     Ok((models, nodes_used))
 }

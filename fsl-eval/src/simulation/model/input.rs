@@ -399,6 +399,15 @@ pub enum PendingPackageForm {
         /// The first node of that form, in the package's node order.
         node: CheckedNodeId,
     },
+    /// The timed model joins an operation to multiple precondition clauses,
+    /// a package form the dense timed reader does not support.
+    #[error("the timed model has multiple matching preconditions at {node:?} ({count})")]
+    MultipleTimedPreconditions {
+        /// The operation anchor whose precondition join was ambiguous.
+        node: CheckedNodeId,
+        /// Number of matching precondition clauses.
+        count: usize,
+    },
     /// The package's declarations could not be read from its nodes and
     /// identity rows.
     #[error("the package's declarations are not readable: {0:?}")]
@@ -738,9 +747,14 @@ impl<'p> PackageModelInput<'p> {
         } else {
             package
                 .direct_dense_tables(&model)
-                .map_err(|node| PendingPackageForm::Form {
-                    form: UnreadModelForm::TimedModel,
-                    node,
+                .map_err(|failure| match failure {
+                    fsl_package::BareTimedModelFailure::Unread(node) => PendingPackageForm::Form {
+                        form: UnreadModelForm::TimedModel,
+                        node,
+                    },
+                    fsl_package::BareTimedModelFailure::MultiplePreconditions { node, count } => {
+                        PendingPackageForm::MultipleTimedPreconditions { node, count }
+                    }
                 })?
         };
         world
@@ -1184,6 +1198,17 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure>;
 
+    /// Evaluate a state clause against the model system's admitted types.
+    fn evaluate_clause_with_types(
+        &self,
+        clause: &QualifiedName,
+        observations: &AdmittedObservations,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure> {
+        self.evaluate_clause(clause, observations, meter)
+    }
+
     /// FR-107 "Clause sets": the state clauses of one invocation, object or
     /// state, each with an ordinary fresh meter supplied by the owning run.
     ///
@@ -1195,6 +1220,16 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         clauses: &[(QualifiedName, &AdmittedObservations)],
         fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure>;
+
+    /// Evaluate a clause set against the model system's admitted types.
+    fn evaluate_clause_set_with_types(
+        &self,
+        clauses: &[(QualifiedName, &AdmittedObservations)],
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
+        fresh_meter: &mut dyn FnMut() -> Meter,
+    ) -> Result<ClauseSetEvaluation, CallFailure> {
+        self.evaluate_clause_set(clauses, fresh_meter)
+    }
 
     /// FR-940: the `holds` atom `atom` of a temporal clause, keyed by the
     /// clause node and the atom's formula position, over `objects`. Both
@@ -1399,6 +1434,21 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
 
+    /// Evaluate a state predicate against the model system's admitted types.
+    /// Package implementations may need model declarations absent from their
+    /// standalone package world.
+    fn evaluate_state_predicate_with_types(
+        &self,
+        predicate: &dyn StatePredicate,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        self.evaluate_state_predicate(predicate, current, over, further, meter)
+    }
+
     /// [`crate::value::evaluate_state_predicate_at_absent_key`].
     ///
     /// # Errors
@@ -1434,6 +1484,21 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
 
+    /// Evaluate a state-graph predicate against the model system's admitted
+    /// types, including declarations supplied by selected domain packages.
+    fn evaluate_state_graph_predicate_with_types(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        self.evaluate_state_graph_predicate(claim, role, current, over, further, meter)
+    }
+
     /// FR-156, FR-940 "Package form of a state-graph claim": the symbolic
     /// locations the predicate of `role` of the claim at `claim` reads, as the
     /// partial-order reduction takes them; none for the constant `true`.
@@ -1465,6 +1530,20 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         binding: String,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
+
+    /// Absent-key counterpart of [`Self::evaluate_state_graph_predicate_with_types`].
+    fn evaluate_state_graph_predicate_at_absent_key_with_types(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        _types: &filament_semantic_value::declaration::TypeEnvironment,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        self.evaluate_state_graph_predicate_at_absent_key(claim, role, current, key, binding, meter)
+    }
 
     /// [`crate::value::evaluate_activation_guard`].
     ///
@@ -2513,6 +2592,33 @@ impl ModelEvaluator for BarePackage<'_> {
         CheckedPackageEvaluation::evaluate_clause(self, clause, observations, meter)
     }
 
+    #[implements("FR-940-AC-39")]
+    fn evaluate_clause_with_types(
+        &self,
+        clause: &QualifiedName,
+        observations: &AdmittedObservations,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure> {
+        crate::value::evaluate_bare_state_clause_with_types(
+            self,
+            clause,
+            observations,
+            types,
+            meter,
+        )
+    }
+
+    #[implements("FR-940-AC-39")]
+    fn evaluate_clause_set_with_types(
+        &self,
+        clauses: &[(QualifiedName, &AdmittedObservations)],
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        fresh_meter: &mut dyn FnMut() -> Meter,
+    ) -> Result<ClauseSetEvaluation, CallFailure> {
+        crate::value::evaluate_clause_set_with_types(self, clauses, Some(types), fresh_meter)
+    }
+
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
@@ -2742,15 +2848,88 @@ impl ModelEvaluator for BarePackage<'_> {
         )
     }
 
+    #[implements("FR-940-AC-39")]
     fn evaluate_state_predicate(
         &self,
-        _predicate: &dyn StatePredicate,
-        _current: &ObjectEnvironment,
-        _over: Option<ObjectReference>,
-        _further: Vec<Value>,
-        _meter: &mut Meter,
+        predicate: &dyn StatePredicate,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
-        Err(SOURCE_FORM)
+        let world = self
+            .world()
+            .map_err(|_| InternalFault::new("FR-940", "timed-predicate-world-is-admitted"))?;
+        self.evaluate_state_predicate_with_types(
+            predicate,
+            world.types(),
+            current,
+            over,
+            further,
+            meter,
+        )
+    }
+
+    #[implements("FR-940-AC-39")]
+    fn evaluate_state_predicate_with_types(
+        &self,
+        predicate: &dyn StatePredicate,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        let expression = predicate
+            .package_expression()
+            .ok_or_else(|| InternalFault::new("FR-940", "package-timed-predicate-is-present"))?;
+        let projected = self
+            .project_timed_predicate(expression)
+            .map_err(|_| InternalFault::new("FR-940", "timed-predicate-projection-is-admitted"))?;
+        let world = self
+            .world()
+            .map_err(|_| InternalFault::new("FR-940", "timed-predicate-world-is-admitted"))?;
+        if projected.projection().has_unrepresented_types(types) {
+            return Err(InternalFault::new(
+                "FR-940",
+                "timed-predicate-types-have-runtime-representations",
+            ));
+        }
+        let mut bindings = vec![None; projected.projection().frame_slots()];
+        let values = over
+            .map(Value::Reference)
+            .into_iter()
+            .chain(further)
+            .collect::<Vec<_>>();
+        if values.len() != projected.parameters().len() {
+            return Err(InternalFault::new(
+                "FR-940",
+                "timed-predicate-binding-count-matches-package-slots",
+            ));
+        }
+        for ((_, slot), value) in projected.parameters().iter().zip(values) {
+            let Some(target) = bindings.get_mut(*slot) else {
+                return Err(InternalFault::new(
+                    "FR-940",
+                    "timed-predicate-binder-slot-is-in-projection",
+                ));
+            };
+            *target = Some(value);
+        }
+        let bindings = bindings
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                InternalFault::new("FR-940", "timed-predicate-projection-has-contiguous-slots")
+            })?;
+        crate::value::evaluate_bare_refinement_row_with_types(
+            &world,
+            types,
+            projected.projection(),
+            current,
+            bindings,
+            meter,
+        )
     }
 
     fn evaluate_state_predicate_at_absent_key(
@@ -2795,12 +2974,37 @@ impl ModelEvaluator for BarePackage<'_> {
         further: Vec<Value>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
+        let world = self
+            .world()
+            .map_err(|_| InternalFault::new("FR-940", "state-graph-predicate-world"))?;
+        self.evaluate_state_graph_predicate_with_types(
+            claim,
+            role,
+            world.types(),
+            current,
+            over,
+            further,
+            meter,
+        )
+    }
+
+    #[implements("FR-940-AC-39")]
+    fn evaluate_state_graph_predicate_with_types(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        current: &ObjectEnvironment,
+        over: Option<ObjectReference>,
+        further: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
         let over = over.map_or(
             crate::value::StateGraphOver::None,
             crate::value::StateGraphOver::Bound,
         );
         crate::value::evaluate_bare_state_graph_predicate(
-            self, claim, role, current, over, further, meter,
+            self, types, claim, role, current, over, further, meter,
         )
     }
 
@@ -2813,8 +3017,33 @@ impl ModelEvaluator for BarePackage<'_> {
         binding: String,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
+        let world = self
+            .world()
+            .map_err(|_| InternalFault::new("FR-940", "state-graph-predicate-world"))?;
+        self.evaluate_state_graph_predicate_at_absent_key_with_types(
+            claim,
+            role,
+            world.types(),
+            current,
+            key,
+            binding,
+            meter,
+        )
+    }
+
+    fn evaluate_state_graph_predicate_at_absent_key_with_types(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+        current: &ObjectEnvironment,
+        key: ObjectReference,
+        binding: String,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
         crate::value::evaluate_bare_state_graph_predicate(
             self,
+            types,
             claim,
             role,
             current,
