@@ -145,41 +145,106 @@ pub(crate) fn rejection_rule(
     }
 }
 
-fn two_clock_world(bound: &str) -> World {
+/// QSL-3444's model: `first` is guarded by `x in (0, 1) ms` and resets `x`;
+/// `third` sets `late` when `x < 1 ms and y > third_floor`; `y <= 3 ms` is
+/// an invariant. The claim is `probability <= 1/2` of `late` within 4 ms over
+/// every scheduler.
+fn two_clock_world(third_floor: &str) -> World {
     let body = format!(
         "{}pre First using v on M::Call::first {{ self.x > 0 ms and self.x < 1 ms }}\n\
          post FirstDone using v on M::Call::first {{ self.x = 0 ms }}\n\
-         pre Third using v on M::Call::third {{ self.x < 1 ms and self.y > 1 ms }}\n\
+         pre Third using v on M::Call::third {{ self.x < 1 ms and self.y > {third_floor} }}\n\
          post ThirdDone using v on M::Call::third {{ self.late = true }}\n\
          time invariant Cap when {{ true }} {{ self.y <= 3 ms }}\n\
          probabilistic Max using ev on M over (c: M::Call) under every scheduler on origin \
-         {{ probability {bound} [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n",
+         {{ probability <= 0.5 [ eventually[0 ms, 4 ms] holds(c.late) ] }}\n",
         timed_world::DENSE,
     );
     timed_world::world(
-        &timed_world::document(
-            &["x", "y"],
-            &[("first", &["x"]), ("third", &["late"])],
-        ),
+        &timed_world::document(&["x", "y"], &[("first", &["x"]), ("third", &["late"])]),
         PROFILES,
         &body,
     )
 }
 
+/// FR-1051-AC-17, seed QSL-3444 (R-18, region): the claim
+/// `probability <= 1/2` of `eventually[0 ms, 4 ms] holds(c.late)` over every
+/// scheduler is false, because `first` at 1/2 ms and `third` at 6/5 ms meet
+/// both strict guards, which gives value 1. The reference fires that witness
+/// here, and analysis does not settle the
+/// claim `proved`. The checker half of the seed is the ignored test below.
 #[test]
-fn explore_3444() {
-    let truth = two_clock_world("<= 1");
+fn seed_qsl_3444_the_reference_fires_the_strict_witness_and_analysis_does_not_prove_the_claim() {
+    let falsity = two_clock_world("1 ms");
+    let timed = &falsity.package.graph().timed_models()[0];
+    let start = fsl_definitional_reference::ReferenceClockState::new(
+        timed,
+        vec![rational(0, 1), rational(0, 1)],
+    )
+    .expect("both clocks start at zero");
+    let after_first = start
+        .fire(timed, &rational(1, 2), "first")
+        .expect("the reference fires first")
+        .expect("first is enabled at 1/2 ms");
+    // Hand derivation: x was reset at t = 1/2, so at t = 6/5 x = 7/10 < 1 and
+    // y = 6/5 > 1, and 6/5 <= 3 meets the invariant: third is enabled.
+    let after_third = after_first
+        .fire(timed, &rational(7, 10), "third")
+        .expect("the reference fires third")
+        .expect("third is enabled 7/10 ms later");
+    assert_eq!(after_third.values(), &[rational(7, 10), rational(6, 5)]);
+    assert!(!is_proved(&settle(&falsity, "Max")), "value 1 exceeds 1/2");
+}
+
+/// FR-1051-AC-17, seed QSL-3444, the checker half. Expected: the package
+/// entry rejects a self-consistent value-0 certificate of the falsity world's
+/// graph with a semantic rule. It is ignored because no self-consistent
+/// certificate of that graph can be built yet: the checker compares the
+/// certificate's `targets` with the target keys of its own graph before it
+/// reads a value (`document/timed.rs`, `replay_targets != document.targets`),
+/// so the proof of any other model ends in `ObjectiveMismatch`, a document
+/// refusal that AC-16 does not accept, and the producer reaches its
+/// certificate step only for a claim that holds. Needed: a producer hook that
+/// writes the certificate of the falsity world's own graph (its keys and
+/// targets) so a test can set the values to 0.
+#[test]
+#[ignore = "QSL-3550: no certificate of the falsity world's own graph can be built; see the doc comment"]
+fn seed_qsl_3444_a_certificate_of_maximum_zero_is_rejected_for_the_strict_two_clock_claim() {
+    let falsity = two_clock_world("1 ms");
+    let truth = two_clock_world("3 ms");
     let record = settle(&truth, "Max");
-    eprintln!("TRUE-CLAIM settle: {:?}", record.terminal().map(|t| t.value().clone()));
-    let bytes = record
+    assert!(
+        is_proved(&record),
+        "a model whose third cannot fire has maximum 0"
+    );
+    let proof = record
         .terminal()
         .and_then(|terminal| terminal.exact_certificate_document())
-        .expect("a proof")
+        .expect("the proof of the maximum-zero model has a certificate")
         .to_vec();
-    eprintln!("TRUE-DOC {}", String::from_utf8_lossy(&bytes));
-    let falsity = two_clock_world("<= 0.999");
-    let record = settle(&falsity, "Max");
-    eprintln!("FALSE-CLAIM settle: {:?}", record.terminal().map(|t| t.value().clone()));
-    eprintln!("CHECK-TRUE {:?}", package_check(&truth, "Max", &bytes));
-    eprintln!("CHECK-FALSE-WITH-TRUE-DOC {:?}", package_check(&falsity, "Max", &bytes));
+    // Self-consistent for the falsity world's claim: only the claim identity
+    // is retargeted, as a forger would, so the checker reaches its rules.
+    let mut candidate =
+        fsl_replay::read_probability_certificate(&proof, document_limits(), &Cancel::new())
+            .expect("the proof is a canonical certificate document");
+    candidate.identity = fsl_replay::probabilistic_claim_identity(
+        falsity
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim("Max")
+            .expect("the claim checks"),
+    )
+    .expect("the claim has an identity");
+    let forged =
+        fsl_replay::write_probability_certificate(&candidate, document_limits(), &Cancel::new())
+            .expect("the retargeted certificate is well formed");
+    assert!(matches!(
+        package_check(&truth, "Max", &proof),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+    assert_eq!(
+        rejection_rule(package_check(&falsity, "Max", &forged)),
+        ProbabilityCertificateRule::Malformed,
+    );
 }
