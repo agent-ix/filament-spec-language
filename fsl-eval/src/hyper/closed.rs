@@ -323,7 +323,7 @@ pub fn closed_executions(
 /// [`ClosedStop::Executions`] when the search expands more than `limit`
 /// states (each is charged as the walk charges an execution), and the walk's
 /// own stops for a state it cannot expand or encode or a cancelled run.
-fn shortest_undefined(
+pub fn shortest_undefined(
     system: &ModelSystem<'_>,
     depth: usize,
     limit: usize,

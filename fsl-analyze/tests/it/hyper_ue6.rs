@@ -837,3 +837,49 @@ fn a_holding_partner_before_an_undefined_one_does_not_witness() {
 fn a_holding_partner_after_an_undefined_one_does_not_witness() {
     assert_eq!(partner_search(false), (0, 1));
 }
+
+/// ADR-018 UE-4 and FR-177: the search for the shortest undefined prefix is
+/// charged one unit of the request's state limit for each state it expands,
+/// from its own count, and a search that passes the limit refuses with the
+/// limit stop rather than report the walk's longer prefix. Over the vault
+/// from `(0, 0)`, `step(0)` returns to the initial state and `step(1)` reaches
+/// `l = 1`, where the guard has no value: the search expands the initial state
+/// and the `l = 1` state, two states, and finds the one-step prefix `[1]`
+/// that is shorter than the walk's three-step prefix `[0, 0, 1]`.
+#[trace("TC-2243", "FR-177-AC-13")]
+#[test]
+fn the_shortest_undefined_search_is_charged_to_the_limit() {
+    use fsl_eval::hyper::{shortest_undefined, ClosedStop};
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        &universal(
+            "ep",
+            "",
+            "eventually [0, 3] holds(quotient(1 - v.l @ a) < 0)",
+        ),
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let system = systems[0];
+    let walked = walk(system, &[0, 0]);
+    let mut longer = walked.clone();
+    let reached = walk(system, &[1]);
+    longer.states.push(reached.states[1].clone());
+    longer.steps.push(reached.steps[0].clone());
+    let skips = std::collections::BTreeSet::new();
+    let cancel = Cancel::new();
+    match shortest_undefined(system, 3, 1, &skips, &cancel, &longer) {
+        Err(ClosedStop::Executions { limit }) => assert_eq!(limit, 1),
+        other => panic!(
+            "expected the limit stop, got {:?}",
+            other.map(|found| found.map(|f| f.0))
+        ),
+    }
+    let found = shortest_undefined(system, 3, 2, &skips, &cancel, &longer)
+        .expect("within the limit")
+        .expect("a shorter prefix exists");
+    assert_eq!(found.0.steps.len(), 1);
+}

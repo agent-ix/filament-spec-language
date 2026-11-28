@@ -34,6 +34,8 @@ mod witness;
 
 pub use crate::simulation::model::CheckedHyperLetters;
 pub use checked::CheckedStepMatch;
+#[cfg(feature = "test-support")]
+pub use closed::shortest_undefined;
 pub use closed::{
     closed_executions, closed_found_state_key, closed_state_key, horizon, judge_closed_tuple,
     match_closed_step, read_closed_undefined, search_partner, ClosedExecution, ClosedInputs,
