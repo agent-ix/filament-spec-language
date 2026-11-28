@@ -76,6 +76,17 @@ pub enum CrossCheckRefusal {
     NoTableRow,
 }
 
+/// A cross-check [`TerminalRecord::with_cross_check`] refused, with the
+/// record it was offered beside, unchanged.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{refusal}")]
+pub struct CrossCheckRefused {
+    /// Why the cross-check could not be settled.
+    pub refusal: CrossCheckRefusal,
+    /// The record as it was before the refusal.
+    pub record: TerminalRecord,
+}
+
 fn tool_name<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let tool = String::deserialize(deserializer)?;
     if tool.is_empty() {
@@ -145,11 +156,22 @@ impl TerminalRecord {
     ///
     /// # Errors
     ///
-    /// [`CrossCheckRefusal`] for an unnamed tool, for a verdict beside a
+    /// [`CrossCheckRefused`] for an unnamed tool, for a verdict beside a
     /// proof FSpec FR-331 gives no `cross_check`, and for a verdict beside a
-    /// result the table has no row for.
+    /// result the table has no row for. It returns the record unchanged:
+    /// FSpec FR-331 gives each item exactly one terminal record, so a
+    /// refused cross-check never costs the settlement.
     #[implements("FR-290-AC-16")]
-    pub fn with_cross_check(mut self, run: CrossCheckRun) -> Result<Self, CrossCheckRefusal> {
+    pub fn with_cross_check(self, run: CrossCheckRun) -> Result<Self, Box<CrossCheckRefused>> {
+        self.clone().settle_beside(run).map_err(|refusal| {
+            Box::new(CrossCheckRefused {
+                refusal,
+                record: self,
+            })
+        })
+    }
+
+    fn settle_beside(mut self, run: CrossCheckRun) -> Result<Self, CrossCheckRefusal> {
         let (CrossCheckRun::Ran(CrossCheck { tool, .. }) | CrossCheckRun::Absent { tool }) = &run;
         if tool.is_empty() {
             return Err(CrossCheckRefusal::EmptyTool);

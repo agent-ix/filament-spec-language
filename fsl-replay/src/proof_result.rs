@@ -46,7 +46,8 @@ mod plugin_read;
 mod plugin_replay;
 mod tool_failure;
 pub use cross_check::{
-    CrossCheck, CrossCheckRefusal, CrossCheckRun, CrossCheckVerdict, RecordedWarning,
+    CrossCheck, CrossCheckRefusal, CrossCheckRefused, CrossCheckRun, CrossCheckVerdict,
+    RecordedWarning,
 };
 pub use plugin::{read_plugin_cause_kind, FslOnlyCause, PluginResultRefusal, ValueFault};
 pub(crate) use plugin_read::{child, first_undefined, name_order};

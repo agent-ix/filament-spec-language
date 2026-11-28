@@ -1039,9 +1039,6 @@ mod tp4 {
         );
     }
 
-    /// FR-127-AC-14: absence of an SMT certificate performs no checker work
-    /// and remains an uncertified proof, even with zero checker budgets.
-    #[trace("TC-1199", "FR-127-AC-14")]
     /// FR-290-AC-16: the SMT settlement of an accepted bounded certificate,
     /// the same proof without it, a reproduced counterexample and an
     /// inconclusive cvc5 run, each beside every cross-check verdict and
@@ -1304,24 +1301,42 @@ mod tp4 {
         };
         let tested = TerminalRecord::tested(index, BackendId::new("cvc5"));
         assert_eq!(
-            tested.clone().with_cross_check(z3("z3")),
+            tested.clone().with_cross_check(z3("z3")).map_err(|e| e.refusal),
             Err(CrossCheckRefusal::NoTableRow)
         );
         assert_eq!(
-            tested.clone().with_cross_check(z3("")),
+            tested.clone().with_cross_check(z3("")).map_err(|e| e.refusal),
             Err(CrossCheckRefusal::EmptyTool)
         );
         assert_eq!(
-            tested.with_cross_check(CrossCheckRun::Absent {
-                tool: String::new()
-            }),
+            tested
+                .clone()
+                .with_cross_check(CrossCheckRun::Absent {
+                    tool: String::new()
+                })
+                .map_err(|e| e.refusal),
             Err(CrossCheckRefusal::EmptyTool)
         );
         let checks_proof = TerminalRecord::proved(index, BackendId::new("kani"), 1);
         assert_eq!(
-            checks_proof.with_cross_check(z3("z3")),
+            checks_proof
+                .clone()
+                .with_cross_check(z3("z3"))
+                .map_err(|e| e.refusal),
             Err(CrossCheckRefusal::NotAnSmtProof)
         );
+        // FR-290-AC-16, FSpec FR-331: a refused cross-check keeps the item's
+        // one terminal record, unchanged.
+        let refused = checks_proof
+            .clone()
+            .with_cross_check(z3("z3"))
+            .expect_err("a proof FR-331 gives no cross_check refuses one");
+        assert_eq!(refused.record, checks_proof);
+        let refused = tested
+            .clone()
+            .with_cross_check(z3("z3"))
+            .expect_err("no table row");
+        assert_eq!(refused.record, tested);
 
         for cause in [
             json!({"kind": "solver-inconclusive", "tool": "z3", "primary": "proved", "cross_check": "refuted"}),
@@ -1358,6 +1373,9 @@ mod tp4 {
         }
     }
 
+    /// FR-127-AC-14: absence of an SMT certificate performs no checker work
+    /// and remains an uncertified proof, even with zero checker budgets.
+    #[trace("TC-1199", "FR-127-AC-14")]
     #[test]
     fn temporal_smt_without_certificate_is_uncertified_without_checking() {
         let world = tp2_world();
