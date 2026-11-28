@@ -230,6 +230,56 @@ not caught by mutation; the false-claim corpus is the evidence against them.
   of the protocol assumption witness the replay checks) and `UndefinedCause`
   (a member of the contract counterexample the replay checks).
 
+### Route parity and admission
+
+- Each rule a checker applies to a claim, subject or witness SHALL be one
+  checker-side function, and every route that serves the rule SHALL call that
+  function: the source route and the package (byte) route of a check entry
+  do not each carry a copy of a rule. A rule that one route applies and its
+  sibling route omits is a defect of the sibling, not a difference between
+  routes (the QSL-3414, QSL-2834 and QSL-3429 stage-limit class).
+- A route admits a claim or subject form only when the theorem the route's
+  checker rests on covers it. The checker SHALL derive that admission from
+  the theorem's conditions, on the checker side, from the checked package
+  and claim alone. The admission data of B-10 records the result for the
+  trusted base; it is not a second place the rule is written.
+- A refusal that only the producer applies before it writes a certificate
+  (for example `digital_closed_refusal` in `fsl-analyze` state-graph
+  analysis, a second copy of the checker's closed-subject rule) is not an
+  admission rule. It SHALL be one checker-side function that the producer
+  calls and the checker applies, so the producer's refusal and the checker's
+  rejection cannot differ. The function names a refused form; it derives no
+  certificate member, so the one-type rule above does not forbid the producer
+  calling it.
+- One admission decision differs between the spec and main: FR-243-AC-6
+  declines `always possible` and `unique path` under `digital-clocks`, and
+  the producer decides them. Arch ruled (2026-11-26) that the spec stands and
+  the producer declines. The change belongs to the timed consolidation
+  (cons-timed, with the admission table of QSL-3494), not to QSL-3499; this
+  requirement records the ruling and its owner and carries no part of it.
+
+### Removal order and call-site counts
+
+- QSL-3501 is the umbrella for the exception rows. Each row group (S, P and
+  O) SHALL have its own removal ticket and a named owner, filed under
+  QSL-3501; a row group with no owned ticket is a defect of this requirement.
+- The must-fix commits of QSL-3499 (QSL-3503, QSL-3506, QSL-3550, QSL-3551)
+  remove no row through QSL-3501. QSL-3551 and QSL-3625 take the `dyn RefinementRead`
+  and `dyn RefinementWorld` request fields out of `check_simulation_certificate`
+  and add the claim's refinement name; O-9 otherwise stays as written, for
+  the model evaluator. `RefinementCheckRequest`, the
+  producer's request, keeps both `dyn` types; it is not a checker request. The first QSL-3501 group is the EN-5
+  rows: S-1 (the shared EN-1 product of ADR-028 CE-7), P-1 to P-5, O-1 and
+  O-7; it is a later commit of the block or a stacked follow-on and does not
+  hold the must-fix commits. Every other S, P and O row is removed later,
+  each group by its own dated ticket. S-2 is removed by QSL-3324, outside
+  the block.
+- The check's data SHALL record, for each exception entry, the number of
+  call sites it covers, and the check SHALL fail, naming the entry, when a
+  count rises. A count that falls is updated in the same change; an entry
+  whose count reaches zero is stale (AC-7). The recorded sharing therefore
+  only shrinks. The implementation is a later commit of the block.
+
 ### Recorded exceptions
 
 The sharing below exists on main and violates the rules above. Each row is
@@ -238,9 +288,11 @@ each entry naming the row. The change that removes a sharing SHALL delete
 the row's entries, and the row when none is left, in the same change. No
 other exception is allowed.
 
-The check's data records items, not calling files. A new caller of an item a
-row already records passes the check; the review of the change that adds the
-caller is what refuses it.
+The check's data records items and, for each entry, a call-site count (see
+"Removal order and call-site counts"), not calling files. Until the count is
+implemented, a new caller of an item a row already records passes the check
+and the review of the change that adds the caller refuses it; from then on a
+new caller raises the count and fails the check.
 
 | ID | Rule broken | Code it concerns | Sharing | Removed by |
 | --- | --- | --- | --- | --- |
@@ -280,7 +332,7 @@ caller is what refuses it.
 | O-6 | Producer object | `contract_check.rs` | The operation-contract replay reads the `ModelSystem` the producer opened through `self` | QSL-3501 |
 | O-7 | Producer object | `probability_certificate/document.rs`, `probability_certificate/document/mdp.rs`, `probability_certificate/document/long_run.rs`, `probability_certificate/witness.rs` | The test-support `*_observing` entries take the caller's `observe` closure, which receives each checker phase and returns nothing | QSL-3501 |
 | O-8 | Producer object | `certificate/zone_certificate.rs` | `check_zone_certificate` and `check_free_delay_zone_certificate` take the producer's `item_of` closure, which maps the certificate's obligation to the item identity the FR-245 identity check compares | QSL-3501 |
-| O-9 | Producer object | `certificate/closure.rs`, `certificate/product.rs`, `certificate/simulation.rs`, `certificate/smt.rs`, `certificate/state_graph.rs`, `certificate/zone_certificate.rs` | The zone, explicit state-graph, closure, SCC-components, protocol-closure, product-closure, SMT proof, refinement SMT proof and simulation checkers take the producer's model evaluator in the request's subject and evaluate the model's values with it | QSL-3501 |
+| O-9 | Producer object | `certificate/closure.rs`, `certificate/product.rs`, `certificate/simulation.rs`, `certificate/smt.rs`, `certificate/state_graph.rs`, `certificate/zone_certificate.rs` | The zone, explicit state-graph, closure, SCC-components, protocol-closure, product-closure, SMT proof, refinement SMT proof and simulation checkers take the producer's model evaluator in the request's subject and evaluate the model's values with it; `check_simulation_certificate` takes no refinement object: it opens the refinement and both subjects from the checked package (source and package route), serves the abstract model of the declaring package only (a dependency abstract package, ADR-020 RM-1, is not served, so such a refinement does not open and no certificate of it is accepted), and refuses a certificate that does not name the refinement of the claim it settles (FR-149-AC-12) | QSL-3501 |
 
 ### Routes
 
@@ -451,17 +503,34 @@ part of the fragment:
 | FR-1051-AC-17 | The corpus holds the six seeds of the seed table, each on its route with the model and witness given there; for each, the reference computes false, the check entry rejects the self-consistent certificate with the semantic rule its corpus entry states, and analysis does not settle `proved`. | Test |
 | FR-1051-AC-18 | The reference crate's manifest has no direct dependency on a workspace crate other than `fsl-package`, `fsl-semantics` and `fsl-foundation`, and is a dev-dependency only; the arch-lint check fails on a reference fixture that names `fsl_eval::simulation::model::ModelSystem` or an `fsl-eval` path to a `RewardEvaluator` implementation. | Test |
 | FR-1051-AC-19 | The reference refuses, naming the construct, a corpus model with an unbounded integer field, a guard that is a disjunction, a non-literal probability weight, a clock compared with a non-integer constant, or a hybrid mode with a non-constant rate, and a quantile claim over some scheduler; it returns no truth value for it. On a two-step MDP where the optimal choice at the first state depends on the steps left, its value for a horizon-bounded some-scheduler reachability claim equals the hand-derived optimum. | Test |
+| FR-1051-AC-20 | For each rule that has a source route and a package route, one checker-side function implements the rule and both routes call it. Over fixture crates, the arch-lint check fails, naming the rule and both sites, when the two routes of a check entry each define or inline the rule, and a request that violates the rule is rejected by the source route and by the package route with the same rule. | Test |
+| FR-1051-AC-21 | A route admits a form only when the checker derives the admission from the theorem's conditions: for each admission rule, a request outside the theorem is rejected by the check entry with the rule's name, and a request inside it is accepted, on both routes, with expected values written by hand. | Test |
+| FR-1051-AC-22 | `digital_closed_refusal` and the checker's closed-subject rule are one checker-side function that the producer calls and the checker applies: over fixture crates, the check fails, naming the function and both sites, when the producer defines its own refusal of a form that a checker rule also refuses. The FR-243-AC-6 declining of `always possible` and `unique path` under `digital-clocks` is carried by the timed consolidation (cons-timed), not by this criterion. | Test |
+| FR-1051-AC-23 | The arch-lint check's data records a call-site count for each exception entry; the check fails, naming the entry and both counts, when the number of call sites on the repository exceeds the recorded count, and fails as stale when an entry's count is zero. | Test |
 
 ## Status
 
-AC-1 to AC-10 and AC-15 are met by `tools/arch-lint` (`trusted-base`); AC-11
-to AC-14 and AC-16 to AC-19 are PLANNED. The exception rows record the sharing
-on origin/main as of this requirement. The
-restructuring that removes S-1 and S-3 to S-14, P-1 to P-14 and O-1 to O-9
-(QSL-3501), the separate timed monitor that removes S-2 (QSL-3324), the
-shared admission data of B-10 (QSL-3494, after FSL PR #4042), the mutation
-harness (QSL-3505) and the definitional reference with its corpus (QSL-3500)
-are not yet built.
+AC-1 to AC-10 and AC-15 are met by `tools/arch-lint` (`trusted-base`). AC-11
+to AC-14 and AC-16 to AC-19 were PLANNED when this requirement was written;
+the definitional reference (AC-18, AC-19), the certificate mutation harness
+(AC-11 to AC-14) and the first corpus (AC-16, AC-17) merged with PR #4054
+(QSL-3500, QSL-3505). That change covers the routes marked covered in the
+Routes table; the routes marked "not yet" still carry hand-derived truth in
+the corpus, and the five timed, region and hyper reference procedures with
+their seeds and AC-16 route coverage are QSL-3550, a later commit of the
+block. AC-20 to AC-23 are PLANNED: route parity and admission (this block),
+and the call-site count of the exception rows (a later commit of the block).
+
+The exception rows record the sharing on origin/main as of this requirement.
+The restructuring that removes S-1 and S-3 to S-14, P-1 to P-14 and O-1 to O-9
+(QSL-3501, in row groups; see "Removal order and call-site counts"), the
+separate timed monitor that removes S-2 (QSL-3324), the shared admission data
+of B-10 (QSL-3494, after FSL PR #4042) are not yet
+built; the simulation checker's `dyn` refinement request fields are already
+removed (QSL-3551 for the source route, QSL-3625 for the package route). The corpus holds six seeds; seeds QSL-3324 and QSL-3445 commit after
+the producer fixes they need (S-2 and QSL-3445), or land as expected-fail
+with the ticket named, and QSL-3468 has no seed unless one is added (the
+reason is recorded in QSL-3550).
 
 ## Dependencies
 
