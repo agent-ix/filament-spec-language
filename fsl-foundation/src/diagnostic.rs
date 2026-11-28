@@ -770,12 +770,15 @@ pub fn category_of(code: &CatalogCode) -> Option<Category> {
 /// [`Code::is_unsupported`] names (`unsupported_construct`,
 /// `unsupported_projection`, `unknown_required_feature`,
 /// `unimplemented_capability`), which the refusal-record map files under
-/// `Refusal` or not at all, is `Unsupported` (exit 21), as [`Code::category`]
-/// gives them. Use it wherever the category feeds an exit; [`category_of`]
-/// stays the ADR-013 O-17 record map.
+/// `Refusal` or not at all, is `Unsupported` (exit 21), and that
+/// `resource_exhausted`, which it also files under `Refusal`, is `Incomplete`
+/// (exit 22): a reached limit or budget is incomplete under FR-285. Both are
+/// as [`Code::category`] gives them. Use it wherever the category feeds an
+/// exit; [`category_of`] stays the ADR-013 O-17 record map.
 pub fn exit_category_of(code: &CatalogCode) -> Option<Category> {
     match Code::from_code(code.code()) {
         Some(known) if known.is_unsupported() => Some(Category::Unsupported),
+        Some(Code::ResourceExhausted) => Some(Category::Incomplete),
         _ => category_of(code),
     }
 }
@@ -1158,6 +1161,9 @@ mod foundation_tests {
         assert_eq!(exit_category_of(&ill_typed), Some(Category::Refusal));
         let cancelled = CatalogCode::new("cancelled", "x");
         assert_eq!(exit_category_of(&cancelled), Some(Category::Incomplete));
+        let exhausted = CatalogCode::new("resource_exhausted", "insufficient-next-charge");
+        assert_eq!(category_of(&exhausted), Some(Category::Refusal));
+        assert_eq!(exit_category_of(&exhausted), Some(Category::Incomplete));
         assert_eq!(
             exit_category_of(&CatalogCode::new("not_a_catalog_code", "x")),
             None

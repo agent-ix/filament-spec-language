@@ -328,6 +328,7 @@ fn a_package_that_arrives_only_as_a_handoff_reaches_realizability() {
             request(&handoff, &snapshots, initial),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let settlement = records[0]
         .protocol_analysis

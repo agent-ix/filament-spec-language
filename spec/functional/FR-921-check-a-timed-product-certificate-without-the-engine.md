@@ -48,8 +48,9 @@ certificate `InequalityFails` at the first such state; the item settles
 
 ## Outputs
 
-- `ExactProbabilityCertificateCheck` (`Accepted`, `Rejected`,
-  `NoInitialState` or `NoInstance`) or a `ProbabilityDocumentError` refusal.
+- `ExactProbabilityCertificateCheck` (`Accepted`, `AcceptedInfinite`,
+  `Rejected`, `NoInitialState` or `NoInstance`) or a
+  `ProbabilityDocumentError` refusal.
 
 ## Behavior
 
@@ -106,12 +107,42 @@ value, ADR-038 RL-7):
    rejects the document;
 8. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
 
+### Infinite expected time
+
+For an `expected-elapsed` document the checker SHALL compute, on its own
+rebuilt product and with its own graph code, the states from which some policy
+reaches a target with probability one: the greatest set whose members reach a
+target through choices that never leave the set. A quiescent state (FR-231:
+no time invariant and not urgent) keeps the steps enabled at it, which the
+checker derives for it as for any state; only a state with no enabled step is
+dead, and no target is reached from it. When the initial state
+is outside that set, the least expected time is `+infinity` (ADR-028 CE-3).
+The checker SHALL then accept the document as `AcceptedInfinite` only for a
+`>=` bound with no `values` row and no `ranking` row, rejecting it
+`ThresholdMissed` for a `<=` bound and `Malformed` when it has a row. When the
+initial state is in the set under every scheduler, the expected time is finite
+and the conditions above apply, so a document without rows is rejected
+`Malformed`; a rebuilt product that then holds a quiescent state is refused as
+unsupported.
+
+Under a workload the checker SHALL certify only an infinite expected time. It
+computes the set first over the every-scheduler product: the workload is one
+of those schedulers, so an initial state outside the set proves the infinity,
+and the document's `targets` SHALL be among that product's targets. Otherwise,
+on the digital route, it builds its own workload product of the unbounded
+`until` (FR-204's race and weight rules), whose `targets` the document's SHALL
+equal, and computes the set over that product; an initial state in the set
+rejects the document `Malformed`. It refuses as unsupported a claim with a
+fairness set, a region-route workload product, and a predicate that holds at a
+position inside a step but not at its end.
+
 ### Not trusted
 
 The stated `route`, `unit`, `scale` and `form` SHALL only be compared; a
 difference refuses `ObjectiveMismatch` before any value is read. Every
 reachable state of the rebuilt product SHALL have a row in an `exact` or
-`upper` document; a missing row, or a row for a key the rebuilt product does
+`upper` document, except a document of an infinite expected time ("Infinite
+expected time"), which has none; a missing row, or a row for a key the rebuilt product does
 not reach, rejects `Malformed` at `values`. A key with a wrong cap, clock
 set, unit or scale rejects `Malformed` at `values`. No transition, race,
 component, time-lock or phase is read from the document, because it has none
@@ -132,6 +163,8 @@ threshold; the first failure or instancing outcome is the result.
 | FR-921-AC-3 | The same document with one reachable row removed, or with one added row for a key the product does not reach, is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-4 | `fsl-probability-check`, a separate process with no `fsl-analyze` linkage, accepts the documents of FR-922-AC-1, FR-923-AC-1, FR-924-AC-1 and FR-877-AC-1 from their bytes and the byte provision, and rejects each with one value altered. | Test (TC-2495) |
 | FR-921-AC-5 | For each row of the route admission table and each entry of the locked-run value mapping, EN-5 and the checker each give the route or value the test states by hand, none derived from the shared declaration. | Test (TC-2490) |
+| FR-921-AC-6 | FR-920-AC-5's document with one value row added, or with one ranking row added, is rejected `Malformed`; the document of the proved claim `expected elapsed until holds(c.late) >= 1 ms`, whose least expected time is `10/9 ms`, with its `values` and `ranking` emptied is rejected `Malformed`. | Test (TC-2490) |
+| FR-921-AC-7 | Under a workload, FR-204-AC-24's delay-independent infinite expected-time documents are accepted `AcceptedInfinite` only when the checker independently rebuilds the workload product and proves the target unreachable for every scheduler-chosen free delay, including `ClosesBeforeFiring` and `ManyFreeEnabled`; a false-infinity document for a workload that can reach the target is rejected `Malformed`, and a value row added to a value-free infinity document is rejected. | Test (TC-2490) |
 
 ## Dependencies
 

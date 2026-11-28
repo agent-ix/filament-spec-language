@@ -307,7 +307,6 @@ impl RewardEvaluator for ReferenceRewardEvaluator {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::TinyMdp;

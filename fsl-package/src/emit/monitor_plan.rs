@@ -1367,7 +1367,7 @@ pub(super) fn finish(
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
-    let (requirement_rows, path_condition_frames, renumbered) =
+    let (requirement_rows, path_condition_frames, renumbered, synthetics) =
         super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
@@ -1393,7 +1393,11 @@ pub(super) fn finish(
         for (old, new) in changes {
             super::replace_term_data_node(data, old, new);
         }
-        super::value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+        super::value_validity_requirements::ordinals::relabel_term_data(
+            &renumbered,
+            &synthetics,
+            data,
+        );
     }
     let operation_bodies = base.operation_body_rows().map(|rows| {
         let mut rows = rows.to_vec();
@@ -1465,6 +1469,13 @@ pub(super) fn finish(
     #[cfg(test)]
     WRITTEN_NODES.with(|written| *written.borrow_mut() = nodes.clone());
     let mut rows = carry_rows(retained, changes);
+    super::value_validity_requirements::ordinals::relabel_equality_rows(
+        &mut rows.equality_producer_identity_rows,
+        &mut rows.equality_fact_witness_rows,
+        &renumbered,
+        &synthetics,
+        &source_map,
+    );
     follow_final_bindings(&mut rows.selected_source_record_rows, &nodes)?;
     follow_final_positions(&mut rows.selected_source_tuple_rows, &nodes)?;
     follow_final_collections(&mut rows.selected_source_collection_rows, &nodes)?;

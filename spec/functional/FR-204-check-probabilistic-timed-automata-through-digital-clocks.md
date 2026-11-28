@@ -97,10 +97,15 @@ unsupported cause `DelayDistribution{operation}`.
   `unsupported`. A subject with some delays given and others not is not
   admitted to the digital MDP: its post-draw race is the one stated below, the
   integer-unit rows below are no basis for a verdict, and the item is decided
-  over the region MDP; AC-6 to AC-12 are pending that route (ADR-038). A
-  workload race among two or more identities with free
-  delays only keeps the route this requirement states below, pending the ruling
-  on that rule (ADR-038).
+  over the region MDP; AC-6 to AC-12 use the region route (ADR-038). A
+  workload-resolved `MeanTime` lower bound whose value is delay-independent
+  `+infinity` may settle `proved` only when its timed-product certificate
+  independently re-derives that infinity (FR-921). This includes a free-delay
+  window that closes before firing (`ClosesBeforeFiring`) and multiple enabled
+  free delays (`ManyFreeEnabled`) only when the target is unreachable under
+  every scheduler-chosen free delay. A finite workload value that depends on
+  the selected free delay remains unsupported, not stochastic
+  (`FR-203-AC-17`).
 - **Pending target times.** For some admitted forms the number of pending
   target times the claim's monitor keeps can grow without bound on the region
   MDP (an interval operator nested under another, read at arbitrarily many
@@ -296,6 +301,39 @@ unsupported cause `DelayDistribution{operation}`.
   and actual authored fairness are checked separately from objective
   absorption. No unqualified deterministic-memoryless attainment, finite
   waiting bound or new fairness premise decides elapsed expectations.
+- An `expected elapsed until holds(B)` claim with a `>=` bound whose exact
+  minimum at the initial state is `+infinity` SHALL settle `proved` only
+  after FR-921's checker rederives that infinity from the item's certificate
+  (ADR-028 SP-5, SP-6, CE-5; FR-920: no timed proof is emitted
+  `uncertified`). EN-5 SHALL retain FR-920's `timed-product/v1` document of an
+  infinite expected time, and the accepted record is
+  `Proved{basis: Exhaustive, certification: Certified}` carrying that
+  document, with no infinite `ExactValue` and no fabricated finite exact
+  value. A document the checker rejects settles `inconclusive`,
+  `CertificateRejected{rule, at}`.
+- Under a workload, a `>=` claim whose exact minimum at the initial state is
+  delay-independent `+infinity` SHALL settle the same way, on FR-920's
+  document of an infinite expected time with `optimization` `workload`.
+  FR-921's checker rederives the infinity from its own workload graph; the
+  producer's refusal or derivation is not shared with the checker. The
+  `ClosesBeforeFiring` and `ManyFreeEnabled` shapes are admitted only when the
+  target is unreachable under every scheduler-chosen free delay. A finite
+  value that changes with that delay remains unsupported, not stochastic
+  (FR-203-AC-17).
+- Under every scheduler, EN-5 treats scheduler-chosen free delays as MDP
+  choices and computes the minimum and maximum. Either extremum is `+infinity`
+  only when every scheduler choice in that extremum makes the target
+  unreachable; such an infinity requires the same independent checker proof.
+- While EN-5 has no checker for a finite expected elapsed time under a
+  workload on a timed subject, or for a workload whose infinity the checker's
+  graphs cannot rebuild, such an item SHALL settle `unsupported` with
+  `unsupported_construct`/`not-yet-implemented`, as FR-203-AC-22 settles a
+  claim form EN-5 cannot yet decide, whatever value the engine's solve would
+  give; it never settles `proved`. The cases whose infinity is not rebuilt are
+  those where some scheduler reaches the target almost surely and the claim
+  takes the region route or FR-921 refuses the workload state. This is what
+  the product does while a case is undecided, not a replacement for
+  Admission's rule that the case is decided.
 
 ## Acceptance Criteria
 
@@ -324,8 +362,8 @@ unsupported cause `DelayDistribution{operation}`.
 | FR-204-AC-21 | Over the timed `Retx` subject of AC-1, under the timed profile EN-5 runs every bounded-window formula that FR-186 admits and retains a monitor for every bounded operator occurrence, including nested occurrences and their nonzero lower bounds. Representative admitted formulas are `eventually[1 ms, 4 ms] holds(m.delivered)`, `always[0 ms, 4 ms] holds(m.delivered)`, `holds(not m.delivered) until[1 ms, 4 ms] holds(m.delivered)`, nested `eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(m.delivered)`, and nested `always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(m.delivered)`. Every value is the FSpec FR-416 pointwise value over every scheduler, derived in "Worked example: pointwise values" below. The first and third forms each have minimum `99/100` and maximum `9999/10000` and settle `proved` at threshold `0.99`; the `always` form has value `0` and settles `proved` for `probability <= 0.01`; the nested `eventually`-then-`always` form has minimum `99999/100000` and maximum `1` and settles `proved` at threshold `0.99`; the nested `always`-then-`eventually` form has minimum `0` and maximum `99/100`, settles `refuted` at `probability >= 0.99` on the minimum and `proved` at `probability <= 0.99` on the maximum, and does not settle `unsupported` or `not-yet-implemented`. Over the model `Step` of that example, where a delay without a step is not a position, `probability <= 0.01 [eventually[1 ms, 2 ms] holds(not c.late)]`, `probability >= 0.99 [always[1 ms, 2 ms] holds(c.late)]` (vacuous) and `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)]` settle `proved` with values `0`, `1` and `0`, and with `step`'s delay drawn by `delay M::Call::step ~ discrete { 3 ms: 1 };` `probability <= 0.01 [always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(c.late)]` settles `proved` with value `0`; on each of these items the certificate checker of FR-921 accepts the producer's certificate. Each of these forms is decided over the region MDP (Admission "Route"). Rejection: for the `Step` claim `always[0 ms, 0 ms] eventually[2 ms, 2 ms] holds(not c.late)`, the producer's accepted `exact` `timed-product/v1` document with only the initial product key's value changed to `1` (the value a reading of the state at the 2 ms instant gives: `late` is false then), is rejected `InequalityFails` at the initial product key, and the tampered item settles `inconclusive`, `CertificateRejected`. Every bounded-window formula admitted for the timed profile is decided by EN-5 and does not settle `unsupported` or `not-yet-implemented` (FR-186, FR-204). The timed profile refuses `probability >= 0.99 [eventually holds(m.delivered)]` as `unsupported_construct`/`expression-form` at `eventually`, and refuses both `probability >= 0.99 [eventually[1 ms, *] holds(m.delivered)]` and `probability >= 0.99 [always[0 ms, 4 ms] eventually[2 ms, *] holds(m.delivered)]` as `unsupported_construct`/`expression-form` at the unbounded interval, before EN-5 is called (FR-186). | Test |
 | FR-204-AC-22 | For FR-196's cap-2 no-operation oracle from AC-2, the every-scheduler claim `expected elapsed until holds(B) <= 3 ms` is `refuted` only after FR-202 replays FR-201-AC-81's finite Lower document (initial bound 5 ms, the same exact initial value as AC-2); the result carries the replayed witness and no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
 | FR-204-AC-23 | For AC-22's claim, a supplied finite Lower document with `ranking` omitted settles `inconclusive` with cause `CertificateRejected{Malformed, CertificateMember("ranking")}`; the infinite engine start value alone does not settle `refuted` and emits no `ExactValue`. | Test (TC-639) |
-| FR-204-AC-24 | On a timed `Retx` subject with an admitted workload `One` and claim `expected elapsed until holds(false) >= 3 ms`, the exact engine's `+infinity` minimum is accepted as a proof of the lower bound; the result settles `proved` and carries no infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
-| FR-204-AC-25 | On timed `Retx` with claim `expected elapsed until holds(false) >= 3 ms` under every scheduler, because every admitted scheduler has nonreachability value `+infinity`, the result settles `proved` without an infinite `ExactValue` or fabricated finite exact value. | Test (TC-639) |
+| FR-204-AC-24 | On timed `Retx` with a workload-resolved `MeanTime` lower bound and delay-independent value `+infinity`, the item settles `proved`, basis `exhaustive`, certification `certified`, retaining an FR-920 document with `optimization: workload` that FR-921 independently accepts. Cover a free-delay window that closes before firing (`ClosesBeforeFiring`) and multiple enabled free delays (`ManyFreeEnabled`) where the target is unreachable for every scheduler-chosen delay. A false hand-valued infinity is rejected. A finite value that changes with the selected free delay remains unsupported, not stochastic (FR-203-AC-17). | Test (TC-639) |
+| FR-204-AC-25 | On timed `Retx` with `expected elapsed until holds(false) >= 3 ms` under every scheduler, scheduler-chosen free delays are MDP choices and both extrema are computed. If every choice makes the target unreachable, the relevant extremum is `+infinity`; the item settles `proved`, certified with an independently re-derived certificate and no infinite `ExactValue` or fabricated finite value. A row added to the value-free infinite document is rejected. | Test (TC-639) |
 | FR-204-AC-26 | A bounded-window form other than a deadline event is decided over the region MDP even when every constraint is closed, with dense values derived in "Worked example: pointwise values" (items 6 and 7). Over the closed model `Gap` of that example, over every scheduler, `always[1 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`: `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}` and `probability >= 0.5` settles `refuted` on the minimum `ExactValue{0}`, never `proved` on the digital MDP's maximum `0`, and the item's certificate document has `route: "region"`. Over `Retx` of AC-1, `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` has minimum `0` and maximum `1`, so `probability <= 0.95` does not settle `proved`, which the digital MDP's maximum `9/10` would give: it settles `refuted` on the maximum `ExactValue{1}`. | Test (TC-639) |
 
 The Chain check also asserts that the six firing orders listed in the worked

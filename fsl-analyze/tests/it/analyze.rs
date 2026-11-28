@@ -83,6 +83,7 @@ fn a_broken_item_settles_refuted_and_its_counterexample_replays() {
         &en1(),
         vec![derived_deadlock(case.model_item())],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     let terminal = record.terminal().expect("a terminal record");
@@ -136,6 +137,7 @@ fn three_items_give_three_records_the_first_unsupported_naming_its_kind() {
             .expect("a clause run"),
         ],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(
         records.iter().map(|r| r.request_index).collect::<Vec<_>>(),
@@ -265,6 +267,7 @@ fn analyze_refuses_an_undeclared_population_before_running_items() {
             source.as_bytes(),
         ),
         items,
+        certification: Default::default(),
     };
 
     let result = analyze_request(
@@ -299,6 +302,7 @@ fn a_rejected_certificate_is_inconclusive_and_an_accepted_one_certified() {
             &en1(),
             vec![model_item(index(0), item).expect("a clause run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         ))
     };
     let accepted = run(
@@ -354,6 +358,7 @@ fn a_proof_with_no_core_checker_settles_proved_uncertified_naming_its_engine() {
             &en1(),
             vec![model_item(index(0), item).expect("a clause run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         ))
     };
     let reduced = run(true);
@@ -396,6 +401,7 @@ fn a_counterexample_settles_refuted_only_when_replay_reproduces_it() {
             &en1(),
             vec![derived_deadlock(item)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )))
     };
 
@@ -432,6 +438,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
         )
         .expect("a clause run")],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(
         value(&record),
@@ -454,6 +461,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
         )
         .expect("a clause run")],
         &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(
         value(&records[0]),
@@ -535,6 +543,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
         &en1(),
         vec![derived_deadlock(item)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     record
@@ -597,6 +606,7 @@ fn an_undefined_step_evaluation_settles_refuted_with_its_successor_and_transitio
         &en1(),
         vec![derived_deadlock(case.model_item())],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     let counterexample = record
@@ -750,6 +760,7 @@ fn run_provider(
         &Engines::fsl().expect("they register"),
         limits,
         cancel,
+        Default::default(),
     )
     .records
 }
@@ -830,6 +841,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
             binding: world.binding(),
             provision: world.provision.clone(),
             items: vec![routed_service_item(&world)],
+            certification: Default::default(),
         },
         &engines,
         &limits,
@@ -847,6 +859,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
         &engines,
         &limits,
         &Cancel::new(),
+        Default::default(),
     )
     .records
     .remove(0);
@@ -897,6 +910,7 @@ fn provider_entry_settles_an_incomplete_binding_per_item() {
         &Engines::fsl().expect("they register"),
         &limits,
         &Cancel::new(),
+        Default::default(),
     )
     .records;
 
@@ -962,6 +976,7 @@ fn provider_entry_refuses_undeclared_population_before_running_items_in_input_or
             ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
         },
         &cancel,
+        Default::default(),
     )
     .records;
 
@@ -1016,6 +1031,7 @@ fn provider_entry_settles_a_zero_millisecond_deadline_as_incomplete() {
             ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
         },
         &cancel,
+        Default::default(),
     )
     .records;
 
@@ -1251,6 +1267,7 @@ fn analyze_joins_required_items_to_the_aggregate() {
                 binding: world.binding(),
                 provision: world.provision.clone(),
                 items,
+                certification: Default::default(),
             },
             engines,
             &limits,
