@@ -11514,6 +11514,7 @@ fn operand_entries(
 }
 
 /// Retain document-held IDs for producer joins and subsequent rewrites.
+#[implements("FR-869-AC-11")]
 pub(crate) fn document_nodes(
     mut graph: CheckedSemanticGraphV2,
 ) -> Result<Vec<CheckedSemanticNodeV2>, EmitRefusal> {
@@ -11556,44 +11557,64 @@ pub(crate) fn document_nodes(
                 changes.push((old, id.clone()));
             }
         }
+        let mut changes_by_id = BTreeMap::new();
+        for (old, new) in &changes {
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(1 + old.path.len());
+            }
+            if changes_by_id
+                .insert(old.clone(), new.clone())
+                .is_some_and(|previous| previous != *new)
+            {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+        }
         #[cfg(feature = "test-support")]
         let change_count = changes.len();
         #[cfg(feature = "test-support")]
         let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
         #[cfg(feature = "test-support")]
+        let mut node_id_slots = 0_usize;
+        #[cfg(feature = "test-support")]
+        let mut node_path_units = 0_usize;
+        #[cfg(feature = "test-support")]
         if repeated_reference {
             for (old, new) in changes {
                 node.replace_node_id(&old, &new);
             }
-        } else {
-            // Keep the old path for the red regression; the one-pass path is
-            // added as the production fix after the counter test lands.
-            for (old, new) in changes {
-                node.replace_node_id(&old, &new);
-            }
-        }
-        #[cfg(not(feature = "test-support"))]
-        for (old, new) in changes {
-            node.replace_node_id(&old, &new);
-        }
-        #[cfg(feature = "test-support")]
-        {
-            let mut node_id_slots = 0_usize;
-            let mut node_path_units = 0_usize;
             node.map_node_ids(|id| {
                 node_id_slots = node_id_slots.saturating_add(1);
                 node_path_units = node_path_units.saturating_add(id.path.len());
                 None
             });
+        } else {
+            node.map_node_ids(|id| {
+                #[cfg(feature = "test-support")]
+                {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    node_path_units = node_path_units.saturating_add(id.path.len());
+                }
+                changes_by_id.get(id).cloned()
+            });
+        }
+        #[cfg(not(feature = "test-support"))]
+        node.map_node_ids(|id| changes_by_id.get(id).cloned());
+        #[cfg(feature = "test-support")]
+        {
             diagnostics.one_pass_id_slots =
                 diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
             let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
             diagnostics.linear_work_units = diagnostics
                 .linear_work_units
                 .saturating_add(one_pass_slot_work);
-            diagnostics.repeated_scan_work_units = diagnostics
-                .repeated_scan_work_units
-                .saturating_add(one_pass_slot_work.saturating_mul(change_count));
+            if repeated_reference {
+                diagnostics.repeated_scan_work_units = diagnostics
+                    .repeated_scan_work_units
+                    .saturating_add(one_pass_slot_work.saturating_mul(change_count));
+            }
             diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(change_count);
         }
     }
@@ -11729,11 +11750,12 @@ impl ForeignNodes {
 ///
 /// Linear in the package: each node's key is rebuilt once, sharing the key
 /// of every operand allocation ([`StructuralKeys`]), and each id a node
-/// reaches ([`reachable_ids`]) is rewritten in place. No two ids are
-/// compared: comparing two ids that share a deep operand chain costs the
-/// chain's depth.
+/// reaches ([`reachable_ids`]) is rewritten in place. Other node-held IDs are
+/// substituted by one pass over the typed node. No two ids are compared:
+/// comparing two ids that share a deep operand chain costs the chain's depth.
 ///
 /// [`StructuralKeys`]: fsl_semantics::check::wire_id::StructuralKeys
+#[implements("FR-869-AC-11")]
 fn write_index_segments(
     ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
@@ -11827,6 +11849,21 @@ fn write_index_segments(
                 *id = new;
             }
         }
+        let mut changes_by_id = BTreeMap::new();
+        for (old, new) in &changes {
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(1 + old.path.len());
+            }
+            if changes_by_id
+                .insert(old.clone(), new.clone())
+                .is_some_and(|previous| previous != *new)
+            {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+        }
         // IR's own substitution reaches the ids held where this emitter
         // cannot (an operation's closed record and views, a nominal or
         // refinement body). Every id it can reach already holds index
@@ -11834,39 +11871,44 @@ fn write_index_segments(
         #[cfg(feature = "test-support")]
         let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
         #[cfg(feature = "test-support")]
+        let mut node_id_slots = 0_usize;
+        #[cfg(feature = "test-support")]
+        let mut node_path_units = 0_usize;
+        #[cfg(feature = "test-support")]
         if repeated_reference {
             for (old, new) in &changes {
                 node.replace_node_id(old, new);
             }
-        } else {
-            // Keep the old path for the red regression; the one-pass path is
-            // added as the production fix after the counter test lands.
-            for (old, new) in &changes {
-                node.replace_node_id(old, new);
-            }
-        }
-        #[cfg(not(feature = "test-support"))]
-        for (old, new) in &changes {
-            node.replace_node_id(old, new);
-        }
-        #[cfg(feature = "test-support")]
-        {
-            let mut node_id_slots = 0_usize;
-            let mut node_path_units = 0_usize;
             node.map_node_ids(|id| {
                 node_id_slots = node_id_slots.saturating_add(1);
                 node_path_units = node_path_units.saturating_add(id.path.len());
                 None
             });
+        } else {
+            node.map_node_ids(|id| {
+                #[cfg(feature = "test-support")]
+                {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    node_path_units = node_path_units.saturating_add(id.path.len());
+                }
+                changes_by_id.get(id).cloned()
+            });
+        }
+        #[cfg(not(feature = "test-support"))]
+        node.map_node_ids(|id| changes_by_id.get(id).cloned());
+        #[cfg(feature = "test-support")]
+        {
             diagnostics.one_pass_id_slots =
                 diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
             let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
             diagnostics.linear_work_units = diagnostics
                 .linear_work_units
                 .saturating_add(one_pass_slot_work);
-            diagnostics.repeated_scan_work_units = diagnostics
-                .repeated_scan_work_units
-                .saturating_add(one_pass_slot_work.saturating_mul(changes.len()));
+            if repeated_reference {
+                diagnostics.repeated_scan_work_units = diagnostics
+                    .repeated_scan_work_units
+                    .saturating_add(one_pass_slot_work.saturating_mul(changes.len()));
+            }
             diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changes.len());
         }
         graph_wire.insert(key.clone(), node.node_id.clone());
