@@ -422,6 +422,11 @@ impl DefinitionCatalog {
     pub fn definition(&self, identity: &str) -> Option<&Definition> {
         self.definitions.get(identity).map(Arc::as_ref)
     }
+
+    /// Every known definition, in identity order.
+    pub fn iter(&self) -> impl Iterator<Item = &Definition> {
+        self.definitions.values().map(Arc::as_ref)
+    }
 }
 
 /// One exact atomic capability spelling.

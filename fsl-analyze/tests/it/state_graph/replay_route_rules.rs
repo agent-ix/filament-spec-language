@@ -191,6 +191,7 @@ fn from_package(
             dependencies: &[],
             identities: &identities,
             equality: Some(&equality),
+            definition_catalog: None,
         },
         &subject,
         ReplayLimits::default(),

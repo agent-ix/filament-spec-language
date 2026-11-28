@@ -4,17 +4,17 @@
 //! reader with the request's supplied domain package documents as evidence,
 //! with no fallback to source compilation.
 
-use ix_trace_rs::implements;
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageRefusal, CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2,
+    read_checked_package, read_checked_package_with_catalog, CheckedArtifactRef,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageRefusal,
+    CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::value::DefinitionRole;
+use ix_trace_rs::implements;
 
 use crate::checked_v2::{ImportViewRefusal, V2ReadLimits, V2ReadRefusal};
 
@@ -57,6 +57,38 @@ pub fn admit_checked_package(
     limits: V2ReadLimits,
 ) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
     admit_checked_package_with_dependencies(bytes, documents, &BTreeMap::new(), limits)
+}
+
+/// Admit a checked package against the caller's extension catalog as well as
+/// the supplied domain-package evidence.
+#[implements("FR-110-AC-16")]
+pub fn admit_checked_package_with_catalog(
+    bytes: &[u8],
+    documents: &BTreeMap<String, Vec<u8>>,
+    extensions: &fsl_semantics::library::bundle::DefinitionCatalog,
+    limits: V2ReadLimits,
+) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
+    let evidence = checked_package_evidence(documents, &BTreeMap::new())?;
+    let catalog = checked_package_definition_catalog(extensions);
+    match read_checked_package_with_catalog(bytes, limits.for_ir(), &evidence, &catalog) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => {
+            if let Some(refusal) = crate::bare_synthesis::plan_candidate_refusal(&package) {
+                return Err(of_reader_refusal(&refusal));
+            }
+            Ok(*package)
+        }
+        CheckedPackageDispatchResult::Refused(mut refusal) => {
+            crate::bare_synthesis::locate_plan_candidate_refusal(bytes, &mut refusal);
+            Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes)))
+        }
+        CheckedPackageDispatchResult::Incomplete(incomplete) => {
+            Err(reader_ceiling_refusal(incomplete))
+        }
+        CheckedPackageDispatchResult::CatalogUnavailable(_) => Err(unavailable_catalog_refusal()),
+        CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
+            Err(host_allocation_failed(failure))
+        }
+    }
 }
 
 /// Admit a package with authenticated direct library artifacts. The strict
@@ -214,6 +246,110 @@ pub fn admit_checked_package_with_evidence(
     }
 }
 
+/// Strict admission against invocation-owned evidence and an extension
+/// catalog, charging the catalog fallback to the same caller-owned budget.
+#[implements("FR-110-AC-16")]
+pub fn admit_checked_package_with_evidence_and_catalog(
+    bytes: &[u8],
+    evidence: &CheckedPackageEvidence,
+    extensions: &fsl_semantics::library::bundle::DefinitionCatalog,
+    limits: V2ReadLimits,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+) -> Result<CheckedPackageV2, PackageAdmissionRefusal> {
+    use filament_contract_model::CheckedPackageBudgetedDispatchResult as Read;
+    let denial = |limit, actual, pointer| PackageAdmissionRefusal {
+        limit: Some(Box::new(fsl_foundation::diagnostic::LimitExceeded::new(
+            fsl_foundation::Setting::I2WorkUnits,
+            limit,
+            actual,
+        ))),
+        code: Code::StageLimitExceeded,
+        cause: Some("insufficient-next-charge".to_owned()),
+        pointer,
+        identity: None,
+        host_allocation_failure: None,
+    };
+    let catalog = checked_package_definition_catalog(extensions);
+    match filament_contract_model::read_checked_package_with_catalog_and_budget(
+        bytes,
+        limits.for_ir(),
+        evidence,
+        &catalog,
+        budget,
+    ) {
+        Read::AdmittedV2(package) => {
+            if let Some(refusal) = crate::bare_synthesis::plan_candidate_refusal(&package) {
+                return Err(of_reader_refusal(&refusal));
+            }
+            Ok(*package)
+        }
+        Read::Refused(mut refusal) => {
+            crate::bare_synthesis::locate_plan_candidate_refusal(bytes, &mut refusal);
+            Err(of_reader_refusal(&refusal).naming_identity_in(Some(bytes)))
+        }
+        Read::BudgetIncomplete(incomplete) => Err(denial(
+            incomplete.limit,
+            u128::from(incomplete.consumed),
+            incomplete.path.map(|path| path.as_str().to_owned()),
+        )),
+        Read::Exhausted(exhausted) => Err(denial(
+            exhausted.configured_bound,
+            u128::from(budget.consumed().work).saturating_add(exhausted.denied.amount),
+            None,
+        )),
+        Read::Incomplete(incomplete) => Err(reader_ceiling_refusal(incomplete)),
+        Read::CatalogUnavailable(_) => Err(unavailable_catalog_refusal()),
+        Read::HostAllocationFailed(failure) => Err(host_allocation_failed(failure)),
+    }
+}
+
+#[implements("FR-110-AC-16")]
+fn checked_package_definition_catalog(
+    extensions: &fsl_semantics::library::bundle::DefinitionCatalog,
+) -> filament_contract_model::DefinitionCatalog {
+    let mut catalog = filament_contract_model::DefinitionCatalog::new();
+    // These built-in selections are already classified by FSL's header and
+    // qualification rules. Keep them out of IR's unknown/profile law check;
+    // operation-specific value laws are admitted from the checked graph.
+    for layer in fsl_semantics::value::layer::HeaderLayer::ALL {
+        catalog.insert_selection(CheckedArtifactRef {
+            authority: "agent-ix".into(),
+            identity: layer.identity().into(),
+        });
+    }
+    for role in fsl_semantics::value::always_roles()
+        .into_iter()
+        .chain([DefinitionRole::TextProfile, DefinitionRole::IeeeProfile])
+    {
+        catalog.insert_selection(CheckedArtifactRef {
+            authority: "agent-ix".into(),
+            identity: role.identity().into(),
+        });
+    }
+    for definition in extensions.iter() {
+        if !definition.is_extension() {
+            continue;
+        }
+        let reference = CheckedArtifactRef {
+            authority: definition.exact().authority().into(),
+            identity: definition.exact().identity().into(),
+        };
+        catalog.insert_extension(reference);
+    }
+    catalog
+}
+
+fn unavailable_catalog_refusal() -> PackageAdmissionRefusal {
+    PackageAdmissionRefusal {
+        limit: None,
+        code: Code::InvalidPackage,
+        cause: None,
+        pointer: None,
+        identity: None,
+        host_allocation_failure: None,
+    }
+}
+
 /// Own the invocation's domain documents once and supply authenticated library
 /// values by shared ownership. Additional admitted libraries can be inserted
 /// through IR's existing evidence API before subsequent reads.
@@ -280,6 +416,8 @@ fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal
             .is_some_and(|pointer| pointer.starts_with("/claim_names/"));
     let code = if refusal.code == CheckedPackageRefusalCode::MissingImport {
         Code::MissingImport
+    } else if refusal.code == CheckedPackageRefusalCode::UnknownProfile {
+        Code::UnknownProfile
     } else if ambiguous_claim {
         Code::AmbiguousDeclaration
     } else {

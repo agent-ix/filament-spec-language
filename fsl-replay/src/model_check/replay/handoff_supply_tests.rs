@@ -160,6 +160,7 @@ fn admit(
         dependencies,
         identities: &root.identity_bytes,
         equality: Some(&root.equality_bytes),
+        definition_catalog: None,
     }
     .admit_package(
         &root.bytes,
@@ -172,6 +173,67 @@ fn admit(
 
 fn wire(artifact: &DependencyArtifact) -> Value {
     serde_json::from_slice(&artifact.bytes).expect("the library wire")
+}
+
+/// FR-110-AC-16: the replay package route preserves a catalog-bound lock-row
+/// refusal instead of collapsing it to a malformed-package result.
+#[trace("FR-110-AC-16", "TC-3217")]
+#[test]
+fn replay_handoff_applies_the_supplied_definition_catalog() {
+    let root = artifact(
+        "root",
+        "profile d = \"filament.value.integer-division.floor/v1\";\n\
+         function q using v(a: Int[-7,7], b: Int[1,3]): Int[-7,7] pure { a div b }\n",
+    );
+    let catalog = fsl_semantics::library::bundle::DefinitionCatalog::default();
+    HandoffSupply {
+        dependencies: &[],
+        identities: &root.identity_bytes,
+        equality: Some(&root.equality_bytes),
+        definition_catalog: Some(&catalog),
+    }
+    .admit_package(
+        &root.bytes,
+        &Default::default(),
+        read_limits(),
+        &mut join_budget(),
+    )
+    .expect("unchanged floor package admits on the replay route");
+    let mut package = wire(&root);
+    let selections = package["lock"]["definition_selections"]
+        .as_array_mut()
+        .expect("definition selections");
+    let (index, row) = selections
+        .iter_mut()
+        .enumerate()
+        .find(|(_, row)| {
+            row["identity"] == fsl_semantics::value::DefinitionRole::IntegerDivisionFloor.identity()
+        })
+        .expect("floor law row");
+    row["identity"] = "filament.value.integer-division.ceiling/v1".into();
+    let bytes = serde_json::to_vec(&package).expect("serialize lock-row mutation");
+    let refusal = HandoffSupply {
+        dependencies: &[],
+        identities: &root.identity_bytes,
+        equality: Some(&root.equality_bytes),
+        definition_catalog: Some(&catalog),
+    }
+    .admit_package(
+        &bytes,
+        &Default::default(),
+        read_limits(),
+        &mut join_budget(),
+    )
+    .expect_err("uncatalogued law row must be refused before replay");
+    let ReplayRefusal::CatalogPackage(refusal) = refusal else {
+        panic!("catalog refusal was collapsed: {refusal:?}");
+    };
+    assert_eq!(refusal.code, Code::UnknownProfile);
+    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
+    assert_eq!(
+        refusal.pointer.as_deref(),
+        Some(format!("/lock/definition_selections/{index}").as_str())
+    );
 }
 
 /// Handoff admission refuses a second artifact under one library identity by

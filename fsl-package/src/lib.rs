@@ -547,9 +547,10 @@ mod package_admission;
 pub use dependency_artifact::DependencyArtifact;
 #[cfg(feature = "std")]
 pub use package_admission::{
-    admit_checked_package, admit_checked_package_with_budget,
+    admit_checked_package, admit_checked_package_with_budget, admit_checked_package_with_catalog,
     admit_checked_package_with_dependencies, admit_checked_package_with_evidence,
-    checked_package_evidence, PackageAdmissionRefusal,
+    admit_checked_package_with_evidence_and_catalog, checked_package_evidence,
+    PackageAdmissionRefusal,
 };
 #[cfg(feature = "std")]
 mod native_join_failure;

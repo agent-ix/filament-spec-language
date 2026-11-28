@@ -798,6 +798,7 @@ fn replay_both(
             dependencies: &[],
             identities: &identities,
             equality: Some(&equality),
+            definition_catalog: None,
         },
         &trace,
         &envelope,

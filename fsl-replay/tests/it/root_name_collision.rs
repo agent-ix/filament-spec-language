@@ -270,6 +270,7 @@ fn replay(root: &DependencyArtifact, dependencies: &[DependencyArtifact]) -> Rep
             dependencies,
             identities: &root.identity_bytes,
             equality: Some(&root.equality_bytes),
+            definition_catalog: None,
         },
         &subject,
         ReplayLimits::default(),

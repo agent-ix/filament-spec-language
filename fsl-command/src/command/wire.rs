@@ -714,6 +714,9 @@ pub(super) struct AnalyzeRequest {
     pub clocks: fsl_replay::spine::RequestClocks,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// FR-660: request supplied extension definitions.
+    #[serde(default, deserialize_with = "extensions")]
+    pub extensions: Vec<Extension>,
     #[serde(default, deserialize_with = "present_json_value")]
     pub refinement_internals: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present_json_value")]

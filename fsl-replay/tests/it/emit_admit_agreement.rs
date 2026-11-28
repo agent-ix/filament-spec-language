@@ -275,6 +275,26 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         refusal.cause,
         Some(filament_contract_model::CheckedPackageRefusalCause::OperationLawMismatch)
     );
+    let catalog_refusal = fsl_package::admit_checked_package_with_catalog(
+        &unlisted_bytes,
+        &BTreeMap::new(),
+        &fsl_semantics::library::bundle::DefinitionCatalog::default(),
+        fsl_package::V2ReadLimits::bounded(u64::MAX),
+    )
+    .expect_err("paired uncatalogued law mutation must retain its operation-law refusal");
+    assert_eq!(catalog_refusal.code, fsl_foundation::Code::InvalidPackage);
+    assert_eq!(
+        catalog_refusal.cause.as_deref(),
+        Some("operation-law-mismatch")
+    );
+    assert!(
+        catalog_refusal
+            .pointer
+            .as_deref()
+            .is_some_and(|path| path.ends_with("/operation/laws/0/definition")),
+        "{}",
+        catalog_refusal.pointer.as_deref().unwrap_or("<no pointer>")
+    );
 
     let mut lock_only = original;
     let row = lock_only["lock"]["definition_selections"]
@@ -297,6 +317,106 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
     assert_eq!(
         refusal.cause,
         Some(filament_contract_model::CheckedPackageRefusalCause::OperationLawUnselected)
+    );
+}
+
+/// FR-110-AC-16: a catalog-bound package read locates an unknown law at its lock row.
+#[test]
+#[trace("FR-110-AC-16", "TC-3217")]
+fn catalog_bound_package_reader_rejects_unknown_law_at_lock_row() {
+    const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nprofile d = \"filament.value.integer-division.floor/v1\";\nfunction q using v(a: Int[-7,7], b: Int[1,3]): Int[-7,7] pure { a div b }\n";
+    let emitted = emit(SOURCE).expect("emit floor law package");
+    fsl_package::admit_checked_package_with_catalog(
+        emitted.package().bytes(),
+        &BTreeMap::new(),
+        &fsl_semantics::library::bundle::DefinitionCatalog::default(),
+        fsl_package::V2ReadLimits::bounded(u64::MAX),
+    )
+    .expect("the unchanged floor package remains admitted");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(emitted.package().bytes()).expect("package JSON");
+    let selections = value["lock"]["definition_selections"]
+        .as_array_mut()
+        .expect("definition selections");
+    let (index, row) = selections
+        .iter_mut()
+        .enumerate()
+        .find(|(_, row)| {
+            row["identity"] == fsl_replay::DefinitionRole::IntegerDivisionFloor.identity()
+        })
+        .expect("floor law row");
+    row["identity"] = "filament.value.integer-division.ceiling/v1".into();
+    let bytes = serde_json::to_vec(&value).expect("serialize lock-only mutation");
+    let refusal = fsl_package::admit_checked_package_with_catalog(
+        &bytes,
+        &BTreeMap::new(),
+        &fsl_semantics::library::bundle::DefinitionCatalog::default(),
+        fsl_package::V2ReadLimits::bounded(u64::MAX),
+    )
+    .expect_err("unknown law must be refused by the catalog-bound reader");
+    assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
+    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
+    assert_eq!(
+        refusal.pointer.as_deref(),
+        Some(format!("/lock/definition_selections/{index}").as_str())
+    );
+
+    let mut two_defects = value.clone();
+    assert_ne!(index, 0, "the floor law follows the header selections");
+    two_defects["lock"]["definition_selections"][0]["identity"] =
+        "test:uncatalogued-first-row".into();
+    two_defects["lock"]["definition_selections"][index]["authority"] = "another-authority".into();
+    let bytes = serde_json::to_vec(&two_defects).expect("serialize two defects");
+    let refusal = fsl_package::admit_checked_package_with_catalog(
+        &bytes,
+        &BTreeMap::new(),
+        &fsl_semantics::library::bundle::DefinitionCatalog::default(),
+        fsl_package::V2ReadLimits::bounded(u64::MAX),
+    )
+    .expect_err("the first bad definition row must win");
+    assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
+    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
+    assert_eq!(
+        refusal.pointer.as_deref(),
+        Some("/lock/definition_selections/0")
+    );
+
+    let mut wrong_authority = value.clone();
+    wrong_authority["lock"]["definition_selections"][index]["authority"] =
+        "another-authority".into();
+    let bytes = serde_json::to_vec(&wrong_authority).expect("serialize authority mutation");
+    let refusal = fsl_package::admit_checked_package_with_catalog(
+        &bytes,
+        &BTreeMap::new(),
+        &fsl_semantics::library::bundle::DefinitionCatalog::default(),
+        fsl_package::V2ReadLimits::bounded(u64::MAX),
+    )
+    .expect_err("unknown law authority must be refused");
+    assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
+    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
+    assert_eq!(
+        refusal.pointer.as_deref(),
+        Some(format!("/lock/definition_selections/{index}").as_str())
+    );
+
+    let mut wrong_role = value;
+    wrong_role["lock"]["definition_selections"][index]["identity"] =
+        fsl_semantics::value::layer::HeaderLayer::ValueComplete
+            .identity()
+            .into();
+    let bytes = serde_json::to_vec(&wrong_role).expect("serialize layer-role mutation");
+    let refusal = fsl_package::admit_checked_package_with_catalog(
+        &bytes,
+        &BTreeMap::new(),
+        &fsl_semantics::library::bundle::DefinitionCatalog::default(),
+        fsl_package::V2ReadLimits::bounded(u64::MAX),
+    )
+    .expect_err("layer identity in a law row must be refused");
+    assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
+    assert_eq!(refusal.cause.as_deref(), Some("wrong-selection-role"));
+    assert_eq!(
+        refusal.pointer.as_deref(),
+        Some(format!("/lock/definition_selections/{index}").as_str())
     );
 }
 
@@ -427,7 +547,14 @@ fn corrupted_package_is_refused() {
             CheckedPackageDispatchResult::AdmittedV2(package) => {
                 if format!("{package:?}") == original {
                     same += 1;
-                    eprintln!("admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}", bytes[at] as char, corrupt[at] as char, String::from_utf8_lossy(&bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]));
+                    eprintln!(
+                        "admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}",
+                        bytes[at] as char,
+                        corrupt[at] as char,
+                        String::from_utf8_lossy(
+                            &bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]
+                        )
+                    );
                 } else {
                     different.push((at, corrupt));
                 }

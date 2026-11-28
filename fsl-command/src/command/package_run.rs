@@ -15,6 +15,7 @@ use ix_trace_rs::implements;
 use std::path::Path;
 
 use fsl_replay::CertificationPolicy;
+use ix_trace_rs::implements;
 
 use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
@@ -33,6 +34,7 @@ pub struct PreparedPackageRun {
     identities: Option<fsl_package::ReadIdentityRows>,
     equality: Option<fsl_package::ReadEqualityRows>,
     budget: filament_contract_model::NativeJoinBudget,
+    definition_catalog: fsl_semantics::library::bundle::DefinitionCatalog,
     packages: fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     work: Work,
@@ -97,6 +99,7 @@ pub(super) struct AdmittedPackage {
     pub(super) identities: Option<fsl_package::ReadIdentityRows>,
     pub(super) equality: Option<fsl_package::ReadEqualityRows>,
     pub(super) budget: filament_contract_model::NativeJoinBudget,
+    pub(super) definition_catalog: fsl_semantics::library::bundle::DefinitionCatalog,
     pub(super) packages: fsl_semantics::model::intake::PackageInput,
     pub(super) model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
     pub(super) relationship_navigation: Option<std::collections::BTreeSet<String>>,
@@ -322,6 +325,7 @@ pub(super) fn prepare(
         identities: admitted.identities,
         equality: admitted.equality,
         budget: admitted.budget,
+        definition_catalog: admitted.definition_catalog,
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Call(Box::new(spine_call), requirements),
@@ -496,6 +500,7 @@ fn prepare_clause(
         identities: admitted.identities,
         equality: admitted.equality,
         budget: admitted.budget,
+        definition_catalog: admitted.definition_catalog,
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Clause(Box::new(work)),
@@ -662,6 +667,7 @@ fn prepare_lowering(
         identities: admitted.identities,
         equality: admitted.equality,
         budget: admitted.budget,
+        definition_catalog: admitted.definition_catalog,
         packages: admitted.packages,
         model_limits: admitted.model_limits,
         work: Work::Lowering(Box::new(LoweringWork {
@@ -739,6 +745,7 @@ pub(super) fn admit(
 /// [`admit`] reading the observation files `files` beside the package, as the
 /// source route reads the observations of a `clause` request: each file once,
 /// counted against the same selected-file and byte ceilings.
+#[implements("FR-110-AC-16")]
 pub(super) fn admit_files(
     directory: &Path,
     request: &wire::Request,
@@ -798,7 +805,7 @@ pub(super) fn admit_files(
             },
             models: request.models.len(),
             observations: files.len() + request.sources.as_ref().map_or(0, Vec::len),
-            extensions: 0,
+            extensions: request.extensions.len(),
         },
         dependent_bytes,
     )?;
@@ -826,17 +833,28 @@ pub(super) fn admit_files(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let supplied = super::package_input_from_selected_models(intake.parser_context(), &request.models, &documents).map_err(
-        |cause| match cause {
-            RunCause::ClauseRequest { member, reason } => invalid(&member, reason),
-            cause => cause,
-        },
-    )?;
+    let definition_catalog = super::extension_catalog(&request.extensions, &mut intake)?;
+    let supplied = super::package_input_from_selected_models(
+        intake.parser_context(),
+        &request.models,
+        &documents,
+    )
+    .map_err(|cause| match cause {
+        RunCause::ClauseRequest { member, reason } => invalid(&member, reason),
+        cause => cause,
+    })?;
     let limits = stage.imports;
     let (admitted, identities, equality, budget, dependencies) = match &handoff {
         Selected::Directory(handoff) => {
-            let loaded = super::handoff::admit(&mut intake, handoff, bytes, &supplied, limits)
-                .map_err(super::handoff::AdmissionFailure::for_run)?;
+            let loaded = super::handoff::admit(
+                &mut intake,
+                handoff,
+                bytes,
+                &supplied,
+                &definition_catalog,
+                limits,
+            )
+            .map_err(super::handoff::AdmissionFailure::for_run)?;
             (
                 loaded.package,
                 Some(loaded.identities),
@@ -846,8 +864,13 @@ pub(super) fn admit_files(
             )
         }
         Selected::File(_) => {
-            let admitted = fsl_package::admit_checked_package(&bytes, &supplied, limits)
-                .map_err(package_refusal)?;
+            let admitted = fsl_package::admit_checked_package_with_catalog(
+                &bytes,
+                &supplied,
+                &definition_catalog,
+                limits,
+            )
+            .map_err(package_refusal)?;
             for (index, identity) in supplied.keys().enumerate() {
                 if !admitted
                     .selected_model_packages()
@@ -906,6 +929,7 @@ pub(super) fn admit_files(
         identities,
         equality,
         budget,
+        definition_catalog,
         packages: supplied,
         model_limits: stage.model,
         relationship_navigation,
@@ -1033,6 +1057,7 @@ pub(super) fn execute_with_settle(
     execute_inner(prepared, Some(settle))
 }
 
+#[implements("FR-110-AC-16")]
 #[ix_trace_rs::string_edge]
 fn execute_inner(
     prepared: PreparedPackageRun,
@@ -1044,6 +1069,7 @@ fn execute_inner(
         identities,
         equality,
         mut budget,
+        definition_catalog,
         dependencies,
         packages,
         model_limits,
@@ -1291,6 +1317,7 @@ fn execute_inner(
             certification,
             limits: item_limits,
             budget,
+            definition_catalog: &definition_catalog,
         })?)
     } else {
         None
@@ -1317,6 +1344,7 @@ struct ValueCall<'a> {
     certification: CertificationPolicy,
     limits: fsl_analyze::analyze::AnalyzeLimits,
     budget: filament_contract_model::NativeJoinBudget,
+    definition_catalog: &'a fsl_semantics::library::bundle::DefinitionCatalog,
 }
 
 fn settle_value_call(
@@ -1332,6 +1360,7 @@ fn settle_value_call(
         certification,
         limits,
         budget,
+        definition_catalog,
     }: ValueCall<'_>,
 ) -> Result<fsl_analyze::analyze::document::SettledRun> {
     use fsl_analyze::analyze::document::{CallItem, ItemSelection, PackageRun, SubjectSelection};
@@ -1417,6 +1446,7 @@ fn settle_value_call(
                 dependencies,
                 identities: &identity_bytes,
                 equality: None,
+                definition_catalog: Some(definition_catalog),
             },
             binding: subject.binding(packages, &documents),
             subject,

@@ -436,6 +436,7 @@ fn package_composition_cause(
 /// its admitted package, read through `AnalysisView`, never compiling
 /// source, with the caller's `negotiate` under `cancel` and its deadline.
 /// Each item reads the admitted package form its engine family supports.
+#[implements("FR-110-AC-16")]
 fn run_package(
     selection: PackageSelection,
     negotiate: &dyn Negotiate,
@@ -457,6 +458,7 @@ fn run_package(
         identities,
         equality,
         mut budget,
+        definition_catalog,
         supplied,
         package_bytes,
         identity_bytes,
@@ -500,6 +502,7 @@ fn run_package(
             dependencies: &dependencies,
             identities: &identity_bytes,
             equality: equality_bytes.as_deref(),
+            definition_catalog: Some(&definition_catalog),
         },
         subject,
         binding,
@@ -855,6 +858,7 @@ mod package_intake_tests {
 
 /// The request's inputs and the intake that read them, which still charges
 /// the libraries and domain packages compilation reads.
+#[implements("FR-110-AC-16")]
 fn read<'d>(
     directory: &'d Path,
     bytes: &[u8],
@@ -894,7 +898,7 @@ fn read<'d>(
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
             observations: request.documents.len(),
-            extensions: 0,
+            extensions: request.extensions.len(),
         },
         dependent_bytes,
     )?;
@@ -914,7 +918,7 @@ fn read<'d>(
         },
         refinement_internals: request.refinement_internals,
         libraries: Some(request.libraries),
-        extensions: Vec::new(),
+        extensions: request.extensions,
         clocks: (!request.clocks.is_empty()).then_some(request.clocks),
         output: None,
         handoff: None,
@@ -1314,6 +1318,7 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
 /// before any item resolves when a compile member sits beside it, the reader
 /// refuses the bytes, a recorded domain package is not supplied, or a
 /// supplied one is not recorded.
+#[implements("FR-110-AC-16")]
 #[ix_trace_rs::string_edge]
 fn admit_package<'d>(
     directory: &'d Path,
@@ -1353,7 +1358,7 @@ fn admit_package<'d>(
             programs: 2,
             models: request.models.len(),
             observations: request.documents.len(),
-            extensions: 0,
+            extensions: request.extensions.len(),
         },
         dependent_bytes,
     )?;
@@ -1394,11 +1399,13 @@ fn admit_package<'d>(
         }
         cause => cause,
     })?;
+    let definition_catalog = super::extension_catalog(&request.extensions, &mut intake)?;
     let loaded = super::handoff::admit(
         &mut intake,
         &handoff,
         bytes,
         &supplied,
+        &definition_catalog,
         caller.spine().imports,
     )
     .map_err(super::handoff::AdmissionFailure::for_analyze)?;
@@ -1408,6 +1415,7 @@ fn admit_package<'d>(
             identities: loaded.identities,
             equality: loaded.equality,
             budget: loaded.budget,
+            definition_catalog,
             supplied,
             package_bytes: loaded.bytes,
             identity_bytes: loaded.identity_bytes,
@@ -1429,6 +1437,7 @@ struct AdmittedHandoff {
     identities: fsl_package::ReadIdentityRows,
     equality: Option<fsl_package::ReadEqualityRows>,
     budget: filament_contract_model::NativeJoinBudget,
+    definition_catalog: fsl_semantics::library::bundle::DefinitionCatalog,
     /// The request's domain packages, bound to the package's model
     /// selections.
     supplied: fsl_semantics::model::intake::PackageInput,

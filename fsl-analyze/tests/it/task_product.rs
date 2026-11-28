@@ -1626,6 +1626,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet_on_both_route
                 dependencies: &[],
                 identities: &identities,
                 equality: Some(&equality),
+                definition_catalog: None,
             },
             &subject,
             &envelope,

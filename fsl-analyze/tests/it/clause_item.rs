@@ -571,6 +571,7 @@ fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation(
             dependencies: &[],
             identities: &identity_bytes,
             equality: Some(&equality_bytes),
+            definition_catalog: None,
         },
         world.binding(&["c"]),
         AnalyzeLimits::published(DeadlineSupply::Unbounded),
@@ -641,6 +642,7 @@ fn over_package_route(
             dependencies: &[],
             identities: &identity_bytes,
             equality: Some(&equality_bytes),
+            definition_catalog: None,
         },
     );
 }

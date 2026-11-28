@@ -125,6 +125,202 @@ fn a_package_only_call_runs_under_the_recorded_law_without_source() {
     names(&value, "program");
 }
 
+/// FR-110-AC-16: analyze package admission uses the request catalog when it
+/// validates the handoff package's lock selections.
+#[test]
+#[trace("FR-110-AC-16", "TC-3217")]
+fn package_analyze_rejects_an_unknown_law_at_its_lock_row() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    let path = directory.path().join("handoff/checked-package.json");
+    let mut package: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let original = package.clone();
+    let selections = package["lock"]["definition_selections"]
+        .as_array_mut()
+        .expect("definition selections");
+    let (index, row) = selections
+        .iter_mut()
+        .enumerate()
+        .find(|(_, row)| {
+            row["identity"] == fsl_replay::DefinitionRole::IntegerDivisionFloor.identity()
+        })
+        .expect("floor law row");
+    row["identity"] = "filament.value.integer-division.ceiling/v1".into();
+    std::fs::write(&path, serde_json::to_vec(&package).unwrap()).unwrap();
+    let request_path = directory.path().join("analyze.json");
+    std::fs::write(
+        &request_path,
+        serde_json::to_vec(&json!({"format": "native-analyze/1", "request": {
+            "models": [], "documents": [], "package": {"directory": "handoff"},
+            "items": []
+        }}))
+        .unwrap(),
+    )
+    .unwrap();
+
+    std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+    fsl_command::command::analyze(
+        &request_path,
+        &crate::negotiation::Fr290,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("unchanged floor package admits on the analyze route");
+    std::fs::write(&path, serde_json::to_vec(&package).unwrap()).unwrap();
+
+    let error = fsl_command::command::analyze(
+        &request_path,
+        &crate::negotiation::Fr290,
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("unknown package law must be refused before item settlement");
+    assert_eq!(error.category().exit_code(), 20);
+    let refusal = error.value().expect("a refusal document");
+    assert_eq!(refusal["code"], "unknown_profile", "{refusal}");
+    assert_eq!(refusal["cause"], "unsupported-selection", "{refusal}");
+    assert_eq!(
+        refusal["details"]["path"],
+        format!("/lock/definition_selections/{index}"),
+        "{refusal}"
+    );
+    for (mutated, expected_cause) in [
+        (
+            {
+                let mut package = original.clone();
+                package["lock"]["definition_selections"][index]["authority"] =
+                    "another-authority".into();
+                package
+            },
+            "unsupported-selection",
+        ),
+        (
+            {
+                let mut package = original;
+                package["lock"]["definition_selections"][index]["identity"] =
+                    fsl_semantics::value::layer::HeaderLayer::ValueComplete
+                        .identity()
+                        .into();
+                package
+            },
+            "wrong-selection-role",
+        ),
+    ] {
+        std::fs::write(&path, serde_json::to_vec(&mutated).unwrap()).unwrap();
+        let error = fsl_command::command::analyze(
+            &request_path,
+            &crate::negotiation::Fr290,
+            &filament_exact::Cancel::new(),
+        )
+        .expect_err("mutated law row must be refused before item settlement");
+        assert_eq!(error.category().exit_code(), 20);
+        let refusal = error.value().expect("a refusal document");
+        assert_eq!(refusal["code"], "unknown_profile", "{refusal}");
+        assert_eq!(refusal["cause"], expected_cause, "{refusal}");
+        assert_eq!(
+            refusal["details"]["path"],
+            format!("/lock/definition_selections/{index}"),
+            "{refusal}"
+        );
+    }
+}
+
+/// FR-110-AC-16: file and handoff package execution use the supplied
+/// definition catalog when validating the lock, preserving the offending row.
+#[test]
+#[trace("FR-110-AC-16", "TC-3217")]
+fn package_run_rejects_an_unknown_law_at_its_lock_row() {
+    let directory = tempfile::tempdir().unwrap();
+    compile(directory.path(), FLOOR_HALF);
+    let path = directory.path().join("package.json");
+    let mut package: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let original = package.clone();
+    let selections = package["lock"]["definition_selections"]
+        .as_array_mut()
+        .expect("definition selections");
+    let (index, row) = selections
+        .iter_mut()
+        .enumerate()
+        .find(|(_, row)| {
+            row["identity"] == fsl_replay::DefinitionRole::IntegerDivisionFloor.identity()
+        })
+        .expect("floor law row");
+    row["identity"] = "filament.value.integer-division.ceiling/v1".into();
+    let mutated = serde_json::to_vec(&package).unwrap();
+    std::fs::write(&path, &mutated).unwrap();
+    std::fs::write(
+        directory.path().join("handoff/checked-package.json"),
+        &mutated,
+    )
+    .unwrap();
+
+    for (package, path_prefix) in [
+        (json!({"file": "package.json"}), "/request/package"),
+        (json!({"directory": "handoff"}), ""),
+    ] {
+        let (exit, refusal) = run(
+            directory.path(),
+            json!({"models": [], "package": package,
+                "call": {"function": "half", "arguments": []}}),
+        );
+        assert_eq!(exit, 20, "{refusal}");
+        assert_eq!(refusal["code"], "unknown_profile", "{refusal}");
+        assert_eq!(refusal["cause"], "unsupported-selection", "{refusal}");
+        assert_eq!(
+            refusal["details"]["path"],
+            format!("{path_prefix}/lock/definition_selections/{index}"),
+            "{refusal}"
+        );
+    }
+
+    for (mutated, expected_cause) in [
+        (
+            {
+                let mut package = original.clone();
+                package["lock"]["definition_selections"][index]["authority"] =
+                    "another-authority".into();
+                package
+            },
+            "unsupported-selection",
+        ),
+        (
+            {
+                let mut package = original;
+                package["lock"]["definition_selections"][index]["identity"] =
+                    fsl_semantics::value::layer::HeaderLayer::ValueComplete
+                        .identity()
+                        .into();
+                package
+            },
+            "wrong-selection-role",
+        ),
+    ] {
+        let bytes = serde_json::to_vec(&mutated).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        std::fs::write(
+            directory.path().join("handoff/checked-package.json"),
+            &bytes,
+        )
+        .unwrap();
+        for (package, path_prefix) in [
+            (json!({"file": "package.json"}), "/request/package"),
+            (json!({"directory": "handoff"}), ""),
+        ] {
+            let (exit, refusal) = run(
+                directory.path(),
+                json!({"models": [], "package": package,
+                    "call": {"function": "half", "arguments": []}}),
+            );
+            assert_eq!(exit, 20, "{refusal}");
+            assert_eq!(refusal["code"], "unknown_profile", "{refusal}");
+            assert_eq!(refusal["cause"], expected_cause, "{refusal}");
+            assert_eq!(
+                refusal["details"]["path"],
+                format!("{path_prefix}/lock/definition_selections/{index}"),
+                "{refusal}"
+            );
+        }
+    }
+}
+
 /// FR-1039: native-run's multi-selection wrapper executes each package call
 /// from the checked artifact after the source used to produce it is removed.
 #[test]

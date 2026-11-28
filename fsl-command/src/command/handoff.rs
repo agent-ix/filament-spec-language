@@ -5,6 +5,7 @@ use ix_trace_rs::implements;
 
 use super::{dependency_manifest::Manifest, Intake, Result, RunCause};
 use filament_contract_model::CheckedPackageV2;
+use ix_trace_rs::implements;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Component, Path},
@@ -273,11 +274,13 @@ fn member<'document>(
         .map(|(_, value)| value)
 }
 
+#[implements("FR-110-AC-16")]
 pub(super) fn admit(
     intake: &mut Intake<'_>,
     directory: &str,
     bytes: Vec<u8>,
     supplied: &fsl_semantics::model::intake::PackageInput,
+    definition_catalog: &fsl_semantics::library::bundle::DefinitionCatalog,
     limits: fsl_package::V2ReadLimits,
 ) -> std::result::Result<Admitted, AdmissionFailure> {
     let manifest_bytes = read_file(intake, directory, "dependencies.json", true)?;
@@ -426,9 +429,10 @@ pub(super) fn admit(
             continue;
         };
         let file = format!("{}/checked-package.json", package.directory);
-        let read = fsl_package::admit_checked_package_with_evidence(
+        let read = fsl_package::admit_checked_package_with_evidence_and_catalog(
             &package.bytes,
             &evidence,
+            definition_catalog,
             limits,
             &mut budget,
         )
@@ -472,9 +476,14 @@ pub(super) fn admit(
             equality,
         });
     }
-    let package =
-        fsl_package::admit_checked_package_with_evidence(&bytes, &evidence, limits, &mut budget)
-            .map_err(|error| package_failure("checked-package.json", error))?;
+    let package = fsl_package::admit_checked_package_with_evidence_and_catalog(
+        &bytes,
+        &evidence,
+        definition_catalog,
+        limits,
+        &mut budget,
+    )
+    .map_err(|error| package_failure("checked-package.json", error))?;
     let mut reachable = BTreeSet::new();
     let mut selected: Vec<_> = package.direct_dependencies().collect();
     while let Some(dependency) = selected.pop() {
@@ -624,7 +633,15 @@ mod tests {
         .expect("the fixture fits its intake allowance");
         let bytes = read_file(&mut intake, "handoff", "checked-package.json", false)
             .expect("the root fixture exists");
-        let mut loaded = admit(&mut intake, "handoff", bytes, &BTreeMap::new(), limits).expect(
+        let mut loaded = admit(
+            &mut intake,
+            "handoff",
+            bytes,
+            &BTreeMap::new(),
+            &fsl_semantics::library::bundle::DefinitionCatalog::default(),
+            limits,
+        )
+        .expect(
             "the one-short completed-pass bound still admits all strict reads and witness files",
         );
         let view = fsl_package::BarePackage::new(&loaded.package)

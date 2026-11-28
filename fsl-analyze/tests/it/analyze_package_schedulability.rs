@@ -361,6 +361,7 @@ fn package_release_backing_admits_task_product_candidates() {
                 dependencies: &[],
                 identities: &identity_bytes,
                 equality: Some(&equality_bytes),
+                definition_catalog: None,
             },
             subject: fsl_analyze::analyze::document::SubjectSelection::default(),
             binding,

@@ -3841,6 +3841,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::SourceCount(_)
         | ReplayRefusal::PackageSources(_)
         | ReplayRefusal::PackageRead(_)
+        | ReplayRefusal::CatalogPackage(_)
         | ReplayRefusal::DependencySources { .. }
         | ReplayRefusal::DependencySelections(_)
         | ReplayRefusal::DependencyInput(_)

@@ -615,6 +615,7 @@ fn settle_package_run_inner(
                             dependencies: component.admitted_before,
                             identities: &component.artifact.identity_bytes,
                             equality: Some(&component.artifact.equality_bytes),
+                            definition_catalog: supply.definition_catalog,
                         },
                         binding: &binding,
                         limits,

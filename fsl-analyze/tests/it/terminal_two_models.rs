@@ -311,6 +311,7 @@ impl Handoff {
             dependencies: &[],
             identities: &self.identity_bytes,
             equality: Some(&self.equality_bytes),
+            definition_catalog: None,
         }
     }
 }

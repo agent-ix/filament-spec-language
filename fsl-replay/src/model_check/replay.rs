@@ -897,6 +897,8 @@ pub struct HandoffSupply<'s> {
     pub identities: &'s [u8],
     /// The bytes of `equality.json`, when present.
     pub equality: Option<&'s [u8]>,
+    /// Request-owned definition catalog used for strict package admission.
+    pub definition_catalog: Option<&'s fsl_semantics::library::bundle::DefinitionCatalog>,
 }
 
 impl HandoffSupply<'_> {
@@ -913,13 +915,19 @@ impl HandoffSupply<'_> {
         ),
         ReplayRefusal,
     > {
+        let definition_catalog = self.definition_catalog;
         self.admit_package_with_reader(
             bytes,
             documents,
             limits,
             budget,
-            |bytes, evidence, limits, budget| {
-                fsl_package::admit_checked_package_with_evidence(bytes, evidence, limits, budget)
+            move |bytes, evidence, limits, budget| match definition_catalog {
+                Some(catalog) => fsl_package::admit_checked_package_with_evidence_and_catalog(
+                    bytes, evidence, catalog, limits, budget,
+                ),
+                None => fsl_package::admit_checked_package_with_evidence(
+                    bytes, evidence, limits, budget,
+                ),
             },
         )
     }
@@ -1000,6 +1008,7 @@ impl HandoffSupply<'_> {
     }
 }
 
+#[implements("FR-110-AC-16")]
 fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> ReplayRefusal {
     if let Some(failure) = refusal.host_allocation_failure {
         return ReplayRefusal::HostAllocationFailed(*failure);
@@ -1009,7 +1018,7 @@ fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> Re
             refusal: Box::new(crate::spine::CompileRefusal::Limit(*limit)),
             pointer: refusal.pointer,
         },
-        None => ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed),
+        None => ReplayRefusal::CatalogPackage(refusal),
     }
 }
 
@@ -1099,6 +1108,7 @@ mod host_allocation_admission_tests {
             dependencies: &[],
             identities: &[],
             equality: None,
+            definition_catalog: None,
         };
         let mut budget = filament_contract_model::NativeJoinBudget::new(100, 100);
         let refusal = supply

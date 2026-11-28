@@ -200,6 +200,10 @@ pub enum ReplayRefusal {
     /// not allocate (`resource_exhausted`).
     #[error("the package bytes cannot be read: {0}")]
     PackageRead(PackageReadRefusal),
+    /// The catalog-bound package reader refused a lock selection and its
+    /// typed cause or pointer must survive replay's package route.
+    #[error("catalog-bound package admission refused: {0:?}")]
+    CatalogPackage(fsl_package::PackageAdmissionRefusal),
     /// A package reader admitted storage that the host allocator could not
     /// provide; the package was not judged.
     #[error(
@@ -684,6 +688,7 @@ impl ReplayRefusal {
             Self::PackageSources(_) => Code::InvalidPackage,
             Self::PackageRead(PackageReadRefusal::Malformed) => Code::InvalidPackage,
             Self::PackageRead(PackageReadRefusal::Allocation) => Code::ResourceExhausted,
+            Self::CatalogPackage(refusal) => refusal.code,
             Self::HostAllocationFailed(_) => Code::RuntimeInvariant,
             Self::DependencySources { .. } => Code::InvalidPackage,
             Self::InvalidPackageName(_) => Code::InvalidRequest,
@@ -793,6 +798,7 @@ impl ReplayRefusal {
             Self::DependencySelections(_) => Some("invalid-value"),
             Self::PackageSources(_) => Some("invalid-value"),
             Self::PackageRead(_) | Self::HostAllocationFailed(_) => None,
+            Self::CatalogPackage(refusal) => refusal.cause.as_deref(),
             Self::DependencySources { .. } => Some("invalid-value"),
             Self::DependencyInput(refusal) => refusal.cause(),
             Self::UnknownFunction { .. }
@@ -930,6 +936,10 @@ impl ReplayRefusal {
             }),
             Self::ObservedTemporalInput { pointer, .. } => Some(Cow::Borrowed(pointer)),
             Self::PackageSources(_) => Some(Cow::Borrowed("/package/lock/sources")),
+            Self::CatalogPackage(refusal) => refusal
+                .pointer
+                .as_deref()
+                .map(|pointer| Cow::Owned(pointer.to_owned())),
             Self::DependencySelections(_) => Some(Cow::Borrowed("/dependencies")),
             Self::DependencySources { index, .. } => {
                 Some(Cow::Owned(format!("/dependencies/{index}/sources")))
