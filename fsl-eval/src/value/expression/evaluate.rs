@@ -38,6 +38,7 @@ use filament_eval::{
     SessionLimits, StateModelUndefined,
 };
 use filament_exact::NodeKey;
+use filament_exact::PathSegmentView;
 use filament_exact::{
     admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
     QuantityResultInterval,
@@ -88,6 +89,51 @@ use fsl_semantics::model::population::PopulationBinding;
 use fsl_semantics::value::divide as integer_divide;
 use fsl_semantics::value::model_query::{evaluate_all_instances, evaluate_lookup, ModelQueryHalt};
 use ix_trace_rs::implements;
+
+/// Find an admitted object without invoking recursive ordering of its
+/// structural universe identity on the evaluator's bounded stack.
+#[implements("FR-106-AC-12")]
+fn admitted_reference<'a>(
+    environment: &'a ObjectEnvironment,
+    requested: &ObjectReference,
+) -> Option<&'a ObjectReference> {
+    environment
+        .references()
+        .iter()
+        .find(|candidate| same_object_reference(candidate, requested))
+}
+
+#[implements("FR-106-AC-12")]
+fn same_object_reference(left: &ObjectReference, right: &ObjectReference) -> bool {
+    left.object_type() == right.object_type()
+        && left.object().as_str() == right.object().as_str()
+        && same_node_key(left.universe().root_type(), right.universe().root_type())
+}
+
+#[implements("FR-106-AC-12")]
+fn same_node_key(left: &NodeKey, right: &NodeKey) -> bool {
+    let mut pending = vec![(left.view(), right.view())];
+    while let Some((left, right)) = pending.pop() {
+        if left.package() != right.package() || left.ordinal() != right.ordinal() {
+            return false;
+        }
+        let mut left_path = left.path();
+        let mut right_path = right.path();
+        loop {
+            match (left_path.next(), right_path.next()) {
+                (None, None) => break,
+                (Some(PathSegmentView::Text(left)), Some(PathSegmentView::Text(right)))
+                    if left == right => {}
+                (Some(PathSegmentView::Node(left)), Some(PathSegmentView::Node(right))) => {
+                    pending.push((left, right));
+                }
+                _ => return false,
+            }
+        }
+    }
+    true
+}
+
 use node_source::NodeSource;
 pub(crate) use world::World;
 
@@ -5245,7 +5291,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         };
         // An admitted reference whose object is absent has no value to read;
         // the population correspondence distinguishes absence from a bad layout.
-        if !objects.objects().contains(reference) {
+        let admitted_reference = admitted_reference(objects, reference);
+        let is_admitted = admitted_reference.is_some()
+            || (objects.references().is_empty() && objects.objects().contains(reference));
+        if !is_admitted {
             let binding = objects
                 .population_completeness()
                 .keys()
@@ -5270,7 +5319,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     key: render_identity(reference.object().as_str().as_bytes()),
                 },
             ))));
-        }
+        };
+        let admitted_reference = admitted_reference.unwrap_or(reference);
         let declared = types
             .attributes(reference.object_type().clone())
             .ok_or_else(refuse)?;
@@ -5280,7 +5330,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .ok_or_else(|| invariant("attribute-slot-unresolved"))?;
         let slot = objects
             .objects()
-            .attribute(types, reference, field)
+            .attribute(types, admitted_reference, field)
             .ok_or_else(refuse)?;
         let witnesses: Vec<&OutOfRange> = objects.witnesses(types, reference, field).collect();
         match slot_admission::admits_slot(
