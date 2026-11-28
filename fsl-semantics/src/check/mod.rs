@@ -496,7 +496,8 @@ pub use family::fixtures::{
     root_location, scope_with, SCALAR_LIMITS_UNLIMITED,
 };
 pub use ir::{
-    CheckedBody, CheckedNode, EqualityConversionEdgeIdentity, EqualityDimensionIdentity,
+    CheckedBody, CheckedChildren, CheckedNode, EqualityConversionEdgeIdentity,
+    EqualityDimensionIdentity, NodeChildIds,
     EqualityDimensionRole, EqualityDimensionTermIdentity, EqualityOperandTypeFact,
     EqualityOperandTypeIdentity, EqualityProducerData, EqualityProducerIdentity,
     EqualityUnitIdentityFact, EqualityUnitOperandRole, EqualityUnitTypeFact, Node, NodeId, Slot,

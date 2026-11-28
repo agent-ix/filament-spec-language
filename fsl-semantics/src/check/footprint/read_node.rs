@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::location::ExpressionLocation as Location;
+use ix_trace_rs::implements;
 
 use super::{
     constraint_reads_of, descendants, BodyScope, Derivation, DerivationClause, FootprintObject,
@@ -28,6 +29,8 @@ pub trait ReadNode<'a>: Copy + 'a {
     type Child: Copy + 'a;
     /// How a literal node holds its value.
     type Literal: 'a;
+    /// The allocation-free child iterator for this node.
+    type Children: DoubleEndedIterator<Item = Self> + ExactSizeIterator;
 
     /// What the node computes.
     fn kind(self) -> &'a NodeKind<Self::Child, Self::Literal>;
@@ -42,7 +45,8 @@ pub trait ReadNode<'a>: Copy + 'a {
     fn location(self) -> Option<&'a Location>;
 
     /// The node's direct operands in evaluation order.
-    fn children(self) -> Vec<Self>;
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children;
 
     /// The body of function `function` that a call at this node calls: out
     /// of `graph` for a checked body, out of the projection for a package
@@ -53,6 +57,7 @@ pub trait ReadNode<'a>: Copy + 'a {
 impl<'a> ReadNode<'a> for CheckedNode<'a> {
     type Child = super::super::ir::NodeId;
     type Literal = filament_checked::node::CheckedLiteral;
+    type Children = super::super::ir::CheckedChildren<'a>;
 
     fn kind(self) -> &'a NodeKind<Self::Child, Self::Literal> {
         CheckedNode::kind(self)
@@ -70,7 +75,8 @@ impl<'a> ReadNode<'a> for CheckedNode<'a> {
         Some(CheckedNode::location(self))
     }
 
-    fn children(self) -> Vec<Self> {
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children {
         CheckedNode::children(self)
     }
 

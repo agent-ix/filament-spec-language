@@ -1656,9 +1656,10 @@ fn an_atom_lowers_to_a_condition_over_per_trace_parameter_slots() {
     let NodeKind::Equality(..) = first_condition.kind() else {
         panic!("an equality, not {:?}", first_condition.kind());
     };
-    let [left, right] = first_condition.children()[..] else {
-        panic!("two operands");
-    };
+    let mut children = first_condition.children();
+    let left = children.next().expect("the equality has a left operand");
+    let right = children.next().expect("the equality has a right operand");
+    assert!(children.next().is_none(), "the equality has two operands");
     assert_eq!(
         std::mem::discriminant(left.kind()),
         std::mem::discriminant(right.kind())

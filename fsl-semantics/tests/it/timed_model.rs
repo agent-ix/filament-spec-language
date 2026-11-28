@@ -1125,7 +1125,7 @@ fn clock_typed_declarations_raise_no_refusal_of_their_own() {
 /// `node`, a data predicate, written out: each attribute by name, each
 /// connective, comparison and arithmetic operator by its variant.
 pub(super) fn shown(node: CheckedNode<'_>) -> String {
-    let children = node.children();
+    let children = node.children().collect::<Vec<_>>();
     let child = |index: usize| children.get(index).copied().map_or_else(String::new, shown);
     match node.kind() {
         NodeKind::Not(_) => format!("not {}", child(0)),

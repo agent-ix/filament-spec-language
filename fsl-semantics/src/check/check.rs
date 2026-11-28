@@ -7074,7 +7074,7 @@ fn catalogued_step(
         ) -> ControlFlow<(), ()> {
             match self.body.get(id) {
                 Some(node) if !(self.is_accumulator)(node) => {
-                    children.extend(super::ir::node_children(&node.kind));
+                    children.extend(super::ir::NodeChildIds::new(&node.kind));
                     ControlFlow::Continue(())
                 }
                 _ => ControlFlow::Break(()),

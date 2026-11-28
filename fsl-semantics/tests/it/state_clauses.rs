@@ -112,7 +112,7 @@ fn descendants(
     root: fsl_semantics::check::CheckedNode<'_>,
 ) -> Vec<fsl_semantics::check::CheckedNode<'_>> {
     let mut all = vec![root];
-    let mut stack = root.children();
+    let mut stack = root.children().collect::<Vec<_>>();
     while let Some(node) = stack.pop() {
         all.push(node);
         stack.extend(node.children());

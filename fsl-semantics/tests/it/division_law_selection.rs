@@ -337,7 +337,7 @@ fn a_mod_node_is_typed_by_its_divisor_interval() {
             .expect("the function is checked")
             .body;
         let body_type = body.value_type();
-        let children = body.children();
+        let children = body.children().collect::<Vec<_>>();
         let [modulo] = children.as_slice() else {
             panic!("the bounded consumer wraps its checked mod node: {source}");
         };
@@ -473,7 +473,7 @@ fn modulo_uses_literal_and_derived_operand_ranges() {
         .function_state(0)
         .expect("the function is checked")
         .body;
-    let children = literal_body.children();
+    let children = literal_body.children().collect::<Vec<_>>();
     let [literal_mod] = children.as_slice() else {
         panic!("the bounded consumer wraps its checked literal mod node");
     };

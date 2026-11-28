@@ -2,7 +2,9 @@
 //! The typed, name-resolved expression tree that checking produces and the
 //! evaluator runs.
 
-use filament_checked::node::{Arithmetic, AuthoredBound, CheckedLiteral, NodeKind, RecordSlot};
+use filament_checked::node::{
+    Arithmetic, AuthoredBound, CaseArm, CheckedLiteral, NodeKind, RecordSlot,
+};
 use filament_exact::EffectiveId;
 use filament_exact::{CollectionKind, Integer, IntegerInterval, NodeKey};
 use filament_exact::{Value, ValueType};
@@ -11,6 +13,7 @@ use filament_semantic_value::declaration::{EqualityOperator, EqualitySchedule};
 use filament_semantic_value::enumeration::EnumMemberIndex;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::quantity::UnitTable;
+use ix_trace_rs::implements;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::fmt;
@@ -697,6 +700,342 @@ pub struct CheckedNode<'a> {
     id: NodeId,
 }
 
+/// An allocation-free, double-ended iterator over a checked node's operands.
+pub struct CheckedChildren<'a> {
+    body: &'a CheckedBody,
+    ids: NodeChildIds<'a, NodeId>,
+}
+
+impl<'a> Iterator for CheckedChildren<'a> {
+    type Item = CheckedNode<'a>;
+
+    #[implements("NFR-141-AC-6")]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ids.next().map(|id| self.body.node(id))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.ids.size_hint()
+    }
+}
+
+impl DoubleEndedIterator for CheckedChildren<'_> {
+    #[implements("NFR-141-AC-6")]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.ids.next_back().map(|id| self.body.node(id))
+    }
+}
+
+impl ExactSizeIterator for CheckedChildren<'_> {}
+
+impl std::iter::FusedIterator for CheckedChildren<'_> {}
+
+/// Allocation-free operand identifiers for a checked node kind.
+pub struct NodeChildIds<'a, C> {
+    prefix: std::array::IntoIter<Option<C>, 3>,
+    tail: NodeChildTail<'a, C>,
+    remaining: usize,
+}
+
+impl<'a, C: Copy> NodeChildIds<'a, C> {
+    /// Iterate the direct operands of `kind` in evaluation order.
+    #[implements("NFR-141-AC-6")]
+    pub fn new<L>(kind: &'a NodeKind<C, L>) -> Self {
+        use NodeKind::*;
+
+        match kind {
+            Literal(_)
+            | ReferenceLiteral { .. }
+            | Local(_)
+            | ProtocolReference { .. }
+            | PopulationObjects { .. }
+            | NamedPopulation { .. } => Self::with_children([None; 3], NodeChildTail::Empty),
+            Seq {
+                low, high, body, ..
+            } => Self::with_children([Some(*low), Some(*high), Some(*body)], NodeChildTail::Empty),
+            Coerce(operand, _)
+            | Negate(operand)
+            | QuantityNegate(operand)
+            | Not(operand)
+            | Field { operand, .. }
+            | Attribute {
+                reference: operand, ..
+            }
+            | History {
+                reference: operand, ..
+            }
+            | Navigate {
+                reference: operand, ..
+            }
+            | Present(operand)
+            | PlacePresence {
+                reference: operand, ..
+            }
+            | SlotPresence {
+                reference: operand, ..
+            }
+            | Value(operand)
+            | OptionSome(operand)
+            | ConvertCollection { operand, .. }
+            | ConvertScalar(_, operand)
+            | ConvertText(_, operand)
+            | IeeeToRational(operand, _)
+            | RationalNegate(operand, _)
+            | DecimalNegate(operand, _)
+            | ConvertDecimal(operand, _)
+            | Flatten(operand)
+            | Size(operand)
+            | BytesLength(operand)
+            | DropFirst(operand)
+            | Pre(operand)
+            | TupleProject { operand, .. }
+            | IeeeSquareRoot(_, operand) => {
+                Self::with_children([Some(*operand), None, None], NodeChildTail::Empty)
+            }
+            PlaceReference {
+                reference, slots, ..
+            } => Self::with_children([Some(*reference), None, None], NodeChildTail::nodes(slots)),
+            Let { value, body, .. } => {
+                Self::with_children([Some(*value), Some(*body), None], NodeChildTail::Empty)
+            }
+            If {
+                condition,
+                then,
+                otherwise,
+            } => Self::with_children(
+                [Some(*condition), Some(*then), Some(*otherwise)],
+                NodeChildTail::Empty,
+            ),
+            Arithmetic(_, left, right)
+            | IntegerDivision { left, right, .. }
+            | Divide { left, right, .. }
+            | Rational { left, right, .. }
+            | Decimal { left, right, .. }
+            | Ieee(_, _, left, right)
+            | Quantity(_, left, right)
+            | QuantityScale {
+                quantity: left,
+                factor: right,
+            }
+            | QuantityScaleDiv {
+                quantity: left,
+                factor: right,
+            }
+            | Index {
+                collection: left,
+                index: right,
+                ..
+            }
+            | QuantityPower(left, right)
+            | Order(_, _, left, right)
+            | Equality(_, _, left, right)
+            | IeeeNumericEquality(left, right)
+            | IeeeTotalOrder(_, left, right)
+            | IeeeBitIdentical(left, right)
+            | BytesConcat(left, right)
+            | Connective(_, _, left, right)
+            | Contains(left, right)
+            | RemoveOne(left, right)
+            | Reaches {
+                source: left,
+                target: right,
+                ..
+            }
+            | ReachesEnd {
+                source: left,
+                target: right,
+                ..
+            } => Self::with_children([Some(*left), Some(*right), None], NodeChildTail::Empty),
+            IeeeFloat32Fma(_, first, second, third) | IeeeFloat64Fma(_, first, second, third) => {
+                Self::with_children(
+                    [Some(*first), Some(*second), Some(*third)],
+                    NodeChildTail::Empty,
+                )
+            }
+            Call { arguments, .. }
+            | ImportedCall { arguments, .. }
+            | Tuple { arguments, .. }
+            | UnionValue { arguments, .. }
+            | Collection {
+                elements: arguments,
+                ..
+            } => Self::with_children([None; 3], NodeChildTail::nodes(arguments)),
+            Record { slots, .. } => {
+                Self::with_children([None; 3], NodeChildTail::record_slots(slots))
+            }
+            Query { source, body, .. } => {
+                Self::with_children([Some(*source), Some(*body), None], NodeChildTail::Empty)
+            }
+            Fold {
+                source,
+                step,
+                identity,
+                ..
+            } => Self::with_children(
+                [Some(*source), *identity, Some(*step)],
+                NodeChildTail::Empty,
+            ),
+            AllInstances { population } => {
+                Self::with_children([Some(*population), None, None], NodeChildTail::Empty)
+            }
+            Case {
+                scrutinee, arms, ..
+            } => Self::with_children(
+                [Some(*scrutinee), None, None],
+                NodeChildTail::case_arms(arms),
+            ),
+            Lookup {
+                population,
+                reference,
+                ..
+            } => Self::with_children(
+                [Some(*population), Some(*reference), None],
+                NodeChildTail::Empty,
+            ),
+            Dispatch {
+                receiver,
+                arguments,
+                ..
+            } => Self::with_children(
+                [Some(*receiver), None, None],
+                NodeChildTail::nodes(arguments),
+            ),
+            #[cfg(seam_probe)]
+            __SeamProbe => unreachable!("never constructed outside the probe build"),
+        }
+    }
+
+    fn with_children(prefix: [Option<C>; 3], tail: NodeChildTail<'a, C>) -> Self {
+        let prefix_len = prefix.iter().flatten().count();
+        let remaining = prefix_len + tail.len();
+        Self {
+            prefix: prefix.into_iter(),
+            tail,
+            remaining,
+        }
+    }
+}
+
+impl<C: Copy> Iterator for NodeChildIds<'_, C> {
+    type Item = C;
+
+    #[implements("NFR-141-AC-6")]
+    fn next(&mut self) -> Option<Self::Item> {
+        for child in self.prefix.by_ref().flatten() {
+            self.remaining -= 1;
+            return Some(child);
+        }
+        self.tail.next().inspect(|_| self.remaining -= 1)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<C: Copy> DoubleEndedIterator for NodeChildIds<'_, C> {
+    #[implements("NFR-141-AC-6")]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.tail
+            .next_back()
+            .or_else(|| self.prefix.by_ref().rev().flatten().next())
+            .inspect(|_| self.remaining -= 1)
+    }
+}
+
+impl<C: Copy> ExactSizeIterator for NodeChildIds<'_, C> {}
+
+impl<C: Copy> std::iter::FusedIterator for NodeChildIds<'_, C> {}
+
+enum NodeChildTail<'a, C> {
+    Empty,
+    Nodes(std::slice::Iter<'a, C>),
+    RecordSlots {
+        slots: std::slice::Iter<'a, RecordSlot<C>>,
+        remaining: usize,
+    },
+    CaseArms(std::slice::Iter<'a, CaseArm<C>>),
+}
+
+impl<'a, C: Copy> NodeChildTail<'a, C> {
+    fn nodes(children: &'a [C]) -> Self {
+        Self::Nodes(children.iter())
+    }
+
+    fn record_slots(slots: &'a [RecordSlot<C>]) -> Self {
+        let remaining = slots
+            .iter()
+            .filter(|slot| matches!(slot, RecordSlot::Present(_)))
+            .count();
+        Self::RecordSlots {
+            slots: slots.iter(),
+            remaining,
+        }
+    }
+
+    fn case_arms(arms: &'a [CaseArm<C>]) -> Self {
+        Self::CaseArms(arms.iter())
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::Nodes(children) => children.len(),
+            Self::RecordSlots { remaining, .. } => *remaining,
+            Self::CaseArms(arms) => arms.len(),
+        }
+    }
+}
+
+impl<C: Copy> Iterator for NodeChildTail<'_, C> {
+    type Item = C;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Empty => None,
+            Self::Nodes(children) => children.next().copied(),
+            Self::RecordSlots { slots, remaining } => loop {
+                match slots.next()? {
+                    RecordSlot::Present(child) => {
+                        *remaining -= 1;
+                    return Some(*child);
+                    }
+                    RecordSlot::Absent | RecordSlot::Null => {}
+                }
+            },
+            Self::CaseArms(arms) => arms.next().map(|arm| arm.body),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.len();
+        (remaining, Some(remaining))
+    }
+}
+
+impl<C: Copy> DoubleEndedIterator for NodeChildTail<'_, C> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Empty => None,
+            Self::Nodes(children) => children.next_back().copied(),
+            Self::RecordSlots { slots, remaining } => loop {
+                match slots.next_back()? {
+                    RecordSlot::Present(child) => {
+                        *remaining -= 1;
+                        return Some(*child);
+                    }
+                    RecordSlot::Absent | RecordSlot::Null => {}
+                }
+            },
+            Self::CaseArms(arms) => arms.next_back().map(|arm| arm.body),
+        }
+    }
+}
+
+impl<C: Copy> ExactSizeIterator for NodeChildTail<'_, C> {}
+
+impl<C: Copy> std::iter::FusedIterator for NodeChildTail<'_, C> {}
+
 impl<'a> CheckedNode<'a> {
     /// The node itself.
     fn node(self) -> &'a Node {
@@ -772,11 +1111,12 @@ impl<'a> CheckedNode<'a> {
     }
 
     /// Direct operands in evaluation order.
-    pub fn children(self) -> Vec<CheckedNode<'a>> {
-        node_children(self.kind())
-            .into_iter()
-            .map(|id| self.at(id))
-            .collect()
+    #[implements("NFR-141-AC-6")]
+    pub fn children(self) -> CheckedChildren<'a> {
+        CheckedChildren {
+            body: self.body,
+            ids: NodeChildIds::new(self.kind()),
+        }
     }
 
     /// Visit direct operands in evaluation order without allocating a list.
@@ -1210,177 +1550,14 @@ pub(crate) fn scalar_conversion_target<'t>(
     (target != operand).then_some(target)
 }
 
-pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
-    let mut children = Vec::new();
-    let result = try_for_each_node_child(kind, &mut |child| {
-        children.push(child);
-        Ok::<(), std::convert::Infallible>(())
-    });
-    match result {
-        Ok(()) => children,
-        Err(never) => match never {},
-    }
-}
-
 fn try_for_each_node_child<E>(
     kind: &NodeKind<NodeId>,
     child: &mut impl FnMut(NodeId) -> Result<(), E>,
 ) -> Result<(), E> {
-    match kind {
-        NodeKind::Literal(_)
-        | NodeKind::ReferenceLiteral { .. }
-        | NodeKind::Local(_)
-        | NodeKind::ProtocolReference { .. }
-        | NodeKind::PopulationObjects { .. }
-        | NodeKind::NamedPopulation { .. } => Ok(()),
-        NodeKind::Seq {
-            low, high, body, ..
-        } => [*low, *high, *body].into_iter().try_for_each(child),
-        NodeKind::Coerce(operand, _)
-        | NodeKind::Negate(operand)
-        | NodeKind::QuantityNegate(operand)
-        | NodeKind::Not(operand)
-        | NodeKind::Field { operand, .. }
-        | NodeKind::Attribute {
-            reference: operand, ..
-        }
-        | NodeKind::History {
-            reference: operand, ..
-        }
-        | NodeKind::Navigate {
-            reference: operand, ..
-        }
-        | NodeKind::Present(operand)
-        | NodeKind::PlacePresence {
-            reference: operand, ..
-        }
-        | NodeKind::SlotPresence {
-            reference: operand, ..
-        }
-        | NodeKind::Value(operand)
-        | NodeKind::OptionSome(operand)
-        | NodeKind::ConvertCollection { operand, .. }
-        | NodeKind::ConvertScalar(_, operand)
-        | NodeKind::ConvertText(_, operand)
-        | NodeKind::IeeeToRational(operand, _)
-        | NodeKind::RationalNegate(operand, _)
-        | NodeKind::DecimalNegate(operand, _)
-        | NodeKind::ConvertDecimal(operand, _)
-        | NodeKind::Flatten(operand)
-        | NodeKind::Size(operand)
-        | NodeKind::BytesLength(operand)
-        | NodeKind::DropFirst(operand)
-        | NodeKind::Pre(operand) => [*operand].into_iter().try_for_each(child),
-        NodeKind::PlaceReference {
-            reference, slots, ..
-        } => {
-            child(*reference)?;
-            slots.iter().copied().try_for_each(child)
-        }
-        NodeKind::Let { value, body, .. } => [*value, *body].into_iter().try_for_each(child),
-        NodeKind::If {
-            condition,
-            then,
-            otherwise,
-        } => [*condition, *then, *otherwise]
-            .into_iter()
-            .try_for_each(child),
-        NodeKind::Arithmetic(_, left, right)
-        | NodeKind::IntegerDivision { left, right, .. }
-        | NodeKind::Divide { left, right, .. }
-        | NodeKind::Rational { left, right, .. }
-        | NodeKind::Decimal { left, right, .. }
-        | NodeKind::Ieee(_, _, left, right)
-        | NodeKind::Quantity(_, left, right)
-        | NodeKind::QuantityScale {
-            quantity: left,
-            factor: right,
-        }
-        | NodeKind::QuantityScaleDiv {
-            quantity: left,
-            factor: right,
-        }
-        | NodeKind::Index {
-            collection: left,
-            index: right,
-            ..
-        }
-        | NodeKind::QuantityPower(left, right)
-        | NodeKind::Order(_, _, left, right)
-        | NodeKind::Equality(_, _, left, right)
-        | NodeKind::IeeeNumericEquality(left, right)
-        | NodeKind::IeeeTotalOrder(_, left, right)
-        | NodeKind::IeeeBitIdentical(left, right)
-        | NodeKind::BytesConcat(left, right)
-        | NodeKind::Connective(_, _, left, right)
-        | NodeKind::Contains(left, right)
-        | NodeKind::RemoveOne(left, right)
-        | NodeKind::Reaches {
-            source: left,
-            target: right,
-            ..
-        }
-        | NodeKind::ReachesEnd {
-            source: left,
-            target: right,
-            ..
-        } => [*left, *right].into_iter().try_for_each(child),
-        NodeKind::TupleProject { operand, .. } => [*operand].into_iter().try_for_each(child),
-        NodeKind::IeeeSquareRoot(_, operand) => [*operand].into_iter().try_for_each(child),
-        NodeKind::IeeeFloat32Fma(_, first, second, third)
-        | NodeKind::IeeeFloat64Fma(_, first, second, third) => {
-            [*first, *second, *third].into_iter().try_for_each(child)
-        }
-        NodeKind::Call { arguments, .. }
-        | NodeKind::ImportedCall { arguments, .. }
-        | NodeKind::Tuple { arguments, .. }
-        | NodeKind::UnionValue { arguments, .. } => arguments.iter().copied().try_for_each(child),
-        NodeKind::Record { slots, .. } => slots
-            .iter()
-            .filter_map(|slot| match slot {
-                RecordSlot::<NodeId>::Present(node) => Some(*node),
-                RecordSlot::<NodeId>::Absent | RecordSlot::<NodeId>::Null => None,
-            })
-            .try_for_each(child),
-        NodeKind::Collection { elements, .. } => elements.iter().copied().try_for_each(child),
-        NodeKind::Query { source, body, .. } => [*source, *body].into_iter().try_for_each(child),
-        NodeKind::Fold {
-            source,
-            step,
-            identity,
-            ..
-        } => {
-            child(*source)?;
-            if let Some(identity) = identity {
-                child(*identity)?;
-            }
-            child(*step)
-        }
-        NodeKind::AllInstances { population } => [*population].into_iter().try_for_each(child),
-        NodeKind::Case {
-            scrutinee, arms, ..
-        } => std::iter::once(*scrutinee)
-            .chain(arms.iter().map(|arm| arm.body))
-            .try_for_each(child),
-        NodeKind::Lookup {
-            population,
-            reference,
-            ..
-        } => [*population, *reference].into_iter().try_for_each(child),
-        NodeKind::Dispatch {
-            receiver,
-            arguments,
-            ..
-        } => {
-            child(*receiver)?;
-            arguments.iter().copied().try_for_each(child)
-        }
-        // Not the S3 seam (`Machine::apply`'s own doc, `fsl-eval`): this
-        // is `NodeKind`'s own module, so its match gets an unconditional
-        // probe arm rather than being left to break.
-        #[cfg(seam_probe)]
-        NodeKind::__SeamProbe => unreachable!("never constructed outside the probe build"),
+    for node in NodeChildIds::new(kind) {
+        child(node)?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1455,7 +1632,7 @@ mod tests {
     }
 
     /// A clock-place reference traverses its owner before each slot selector.
-    #[trace("TC-685")]
+    #[trace("TC-685", "NFR-141-AC-6")]
     #[test]
     fn place_reference_children_visit_owner_then_selectors_in_order() {
         let place = NodeKey::new(
@@ -1470,7 +1647,10 @@ mod tests {
             slots: vec![NodeId(3), NodeId(2)],
         };
 
-        assert_eq!(node_children(&kind), [NodeId(8), NodeId(3), NodeId(2)]);
+        assert_eq!(
+            NodeChildIds::new(&kind).collect::<Vec<_>>(),
+            [NodeId(8), NodeId(3), NodeId(2)]
+        );
         let mut visited = Vec::new();
         let result = try_for_each_node_child(&kind, &mut |child| {
             visited.push(child);
@@ -1506,6 +1686,26 @@ mod tests {
         assert_eq!(children.len(), 1);
         assert_eq!(children.next().expect("one direct operand").id(), child);
         assert!(children.next().is_none());
+    }
+
+    /// Child traversal preserves evaluation order when callers walk from
+    /// either end, without materializing an intermediate child list.
+    #[trace("NFR-141-AC-6")]
+    #[test]
+    fn child_ids_support_mixed_front_and_back_iteration() {
+        let kind: NodeKind<NodeId> = NodeKind::If {
+            condition: NodeId(8),
+            then: NodeId(3),
+            otherwise: NodeId(2),
+        };
+        let mut children = NodeChildIds::new(&kind);
+
+        assert_eq!(children.len(), 3);
+        assert_eq!(children.next(), Some(NodeId(8)));
+        assert_eq!(children.next_back(), Some(NodeId(2)));
+        assert_eq!(children.len(), 1);
+        assert_eq!(children.next(), Some(NodeId(3)));
+        assert_eq!(children.next_back(), None);
     }
 
     /// FR-258 behaviour 2: a 100,000-deep checked body clones, compares

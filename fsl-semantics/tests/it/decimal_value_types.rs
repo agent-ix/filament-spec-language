@@ -635,7 +635,6 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
                 clause
                     .body()
                     .children()
-                    .iter()
                     .any(|node| node.value_type() == &p),
                 "{name} has an operand typed P"
             );
@@ -648,7 +647,11 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         .find(|(parameter, _)| parameter == "by")
         .expect("the inherited Gauge::adjust operation retains its by parameter");
     assert_eq!(inherited_by.1, p);
-    let gauge_read = gauge.body().children()[0];
+    let gauge_read = gauge
+        .body()
+        .children()
+        .next()
+        .expect("the gauge read has an operand");
     assert!(matches!(gauge_read.kind(), NodeKind::Local(1)));
     assert_eq!(
         gauge_read.value_type(),
@@ -660,8 +663,20 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         checked.graph.state_clause("S2").unwrap().body().id(),
         "qualified and bare `step` resolve to the same checked node"
     );
-    let qualified_step = checked.graph.state_clause("S1").unwrap().body().children();
-    let bare_step = checked.graph.state_clause("S2").unwrap().body().children();
+    let qualified_step = checked
+        .graph
+        .state_clause("S1")
+        .unwrap()
+        .body()
+        .children()
+        .collect::<Vec<_>>();
+    let bare_step = checked
+        .graph
+        .state_clause("S2")
+        .unwrap()
+        .body()
+        .children()
+        .collect::<Vec<_>>();
     assert_eq!(qualified_step[0].id(), bare_step[0].id());
 
     // `self` takes slot 0 and a postcondition's `result` slot 1, ahead of
@@ -726,9 +741,10 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         .state_clause("LetStep")
         .unwrap()
         .body()
-        .children();
+        .children()
+        .collect::<Vec<_>>();
     assert!(matches!(let_children[0].kind(), NodeKind::Local(1)));
-    let let_comparison = let_children[1].children();
+    let let_comparison = let_children[1].children().collect::<Vec<_>>();
     assert!(
         matches!(let_comparison[0].kind(), NodeKind::Local(2)),
         "qualified step node: {:?}",
@@ -758,9 +774,13 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         .state_clause("AfterLet")
         .unwrap()
         .body()
-        .children();
-    let after_let_comparison = after_let[1].children();
-    assert!(matches!(after_let_comparison[0].kind(), NodeKind::Local(2)));
+        .children()
+        .collect::<Vec<_>>();
+    let after_let_comparison = after_let[1].children().collect::<Vec<_>>();
+    assert!(matches!(
+        after_let_comparison[0].kind(),
+        NodeKind::Local(2)
+    ));
     assert_eq!(
         after_let_comparison[0].value_type(),
         &p,
@@ -871,7 +891,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         .parameters()
         .iter()
         .any(|(name, ty)| name == "by" && ty == &p));
-    let dial_operands = dial_clause.body().children();
+    let dial_operands = dial_clause.body().children().collect::<Vec<_>>();
     assert!(matches!(dial_operands[0].kind(), NodeKind::Local(1)));
     assert_eq!(dial_operands[0].value_type(), &p);
     assert_eq!(dial_operands[1].value_type(), &p);

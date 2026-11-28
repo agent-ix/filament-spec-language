@@ -6,7 +6,8 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_semantics::check::{CheckedGraph, CheckedNode, NodeId};
+use ix_trace_rs::implements;
+use fsl_semantics::check::{CheckedChildren, CheckedGraph, CheckedNode, NodeChildIds, NodeId};
 
 /// A handle to one checked node, from which its operands and the bodies of
 /// the functions it calls are reached.
@@ -27,6 +28,9 @@ pub(crate) trait NodeSource<'a>: Copy + 'a {
     /// `NodeRead` operation. The machine reads it only through
     /// [`NodeSource::literal`].
     type Literal: 'a;
+
+    /// Allocation-free direct operands in evaluation order.
+    type Children: DoubleEndedIterator<Item = Self> + ExactSizeIterator;
 
     /// What the node computes, borrowed from the source for `'a`.
     fn kind(self) -> &'a NodeKind<Self::Child, Self::Literal>;
@@ -53,7 +57,8 @@ pub(crate) trait NodeSource<'a>: Copy + 'a {
     fn occurrence(self) -> Option<OccurrenceKey>;
 
     /// Direct operands in evaluation order.
-    fn children(self) -> Vec<Self>;
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children;
 
     /// Function `function` of `graph`, the package a call at this node
     /// evaluates against: a `NodeKind::Call` index, an imported library's
@@ -66,6 +71,46 @@ pub(crate) trait NodeSource<'a>: Copy + 'a {
     /// table and ignores `graph`.
     fn callee(self, graph: Option<&'a CheckedGraph>, function: usize) -> Option<Callee<'a, Self>>;
 }
+
+/// Maps an allocation-free child-id iterator back to its source's node handles.
+pub(crate) struct NodeChildren<'a, N: NodeSource<'a>> {
+    parent: N,
+    ids: NodeChildIds<'a, N::Child>,
+}
+
+impl<'a, N: NodeSource<'a>> NodeChildren<'a, N> {
+    #[implements("NFR-141-AC-6")]
+    pub(crate) fn new(parent: N) -> Self {
+        Self {
+            parent,
+            ids: NodeChildIds::new(parent.kind()),
+        }
+    }
+}
+
+impl<'a, N: NodeSource<'a>> Iterator for NodeChildren<'a, N> {
+    type Item = N;
+
+    #[implements("NFR-141-AC-6")]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ids.next().map(|child| self.parent.at(child))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.ids.size_hint()
+    }
+}
+
+impl<'a, N: NodeSource<'a>> DoubleEndedIterator for NodeChildren<'a, N> {
+    #[implements("NFR-141-AC-6")]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.ids.next_back().map(|child| self.parent.at(child))
+    }
+}
+
+impl<'a, N: NodeSource<'a>> ExactSizeIterator for NodeChildren<'a, N> {}
+
+impl<'a, N: NodeSource<'a>> std::iter::FusedIterator for NodeChildren<'a, N> {}
 
 /// A called function's body, as a node of the caller's source.
 pub(crate) struct Callee<'a, N> {
@@ -80,6 +125,7 @@ pub(crate) struct Callee<'a, N> {
 impl<'a> NodeSource<'a> for CheckedNode<'a> {
     type Child = NodeId;
     type Literal = CheckedLiteral;
+    type Children = CheckedChildren<'a>;
 
     fn kind(self) -> &'a NodeKind<NodeId> {
         CheckedNode::kind(self)
@@ -105,7 +151,8 @@ impl<'a> NodeSource<'a> for CheckedNode<'a> {
         None
     }
 
-    fn children(self) -> Vec<Self> {
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children {
         CheckedNode::children(self)
     }
 

@@ -1628,7 +1628,13 @@ fn run_three_sum(source: ValueType, values: &[i64]) -> SumRun {
         outcome: evaluation.outcome,
         location: evaluation.location,
         sum: checked.root().location().clone(),
-        summand: checked.root().children()[1].location().clone(),
+        summand: checked
+            .root()
+            .children()
+            .nth(1)
+            .expect("the sum has a summand child")
+            .location()
+            .clone(),
         charges: crate::support::admitted_charge_points(&meter),
     }
 }

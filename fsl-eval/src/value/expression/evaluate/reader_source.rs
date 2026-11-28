@@ -7,7 +7,8 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 
 use fsl_foundation::source::provenance::OccurrenceKey;
 
-use super::node_source::{Callee, NodeSource};
+use super::node_source::{Callee, NodeChildren, NodeSource};
+use ix_trace_rs::implements;
 use crate::simulation::model::BodyReads;
 
 /// One node handle in the package-owned admitted projection.
@@ -29,6 +30,7 @@ impl<'arena> ReaderNode<'arena> {
 impl<'arena> NodeSource<'arena> for ReaderNode<'arena> {
     type Child = usize;
     type Literal = CheckedLiteral;
+    type Children = NodeChildren<'arena, Self>;
 
     fn kind(self) -> &'arena NodeKind<Self::Child, Self::Literal> {
         self.projection
@@ -61,17 +63,9 @@ impl<'arena> NodeSource<'arena> for ReaderNode<'arena> {
         self.projection.occurrence(self.index).cloned()
     }
 
-    fn children(self) -> Vec<Self> {
-        self.projection
-            .children(self.index)
-            .expect("projection node index is valid")
-            .iter()
-            .copied()
-            .map(|index| Self {
-                projection: self.projection,
-                index,
-            })
-            .collect()
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children {
+        NodeChildren::new(self)
     }
 
     fn callee(
@@ -92,6 +86,8 @@ impl<'arena> NodeSource<'arena> for ReaderNode<'arena> {
 }
 
 impl<'arena> fsl_semantics::check::footprint::AtomNode<'arena> for ReaderNode<'arena> {
+    type Children = NodeChildren<'arena, Self>;
+
     fn form(self) -> fsl_semantics::check::footprint::AtomForm<'arena, Self> {
         fsl_semantics::check::footprint::atom_form(
             NodeSource::kind(self),
@@ -101,7 +97,8 @@ impl<'arena> fsl_semantics::check::footprint::AtomNode<'arena> for ReaderNode<'a
         )
     }
 
-    fn children(self) -> Vec<Self> {
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children {
         NodeSource::children(self)
     }
 }
@@ -109,6 +106,7 @@ impl<'arena> fsl_semantics::check::footprint::AtomNode<'arena> for ReaderNode<'a
 impl<'arena> fsl_semantics::check::footprint::ReadNode<'arena> for ReaderNode<'arena> {
     type Child = usize;
     type Literal = CheckedLiteral;
+    type Children = NodeChildren<'arena, Self>;
 
     fn kind(self) -> &'arena NodeKind<Self::Child, Self::Literal> {
         NodeSource::kind(self)
@@ -126,7 +124,8 @@ impl<'arena> fsl_semantics::check::footprint::ReadNode<'arena> for ReaderNode<'a
         NodeSource::location(self)
     }
 
-    fn children(self) -> Vec<Self> {
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children {
         NodeSource::children(self)
     }
 

@@ -315,7 +315,7 @@ pub(crate) fn check_declarations(
 
 pub(crate) fn descendants(root: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {
     let mut all = vec![root];
-    let mut pending = root.children();
+    let mut pending = root.children().collect::<Vec<_>>();
     while let Some(node) = pending.pop() {
         all.push(node);
         pending.extend(node.children());

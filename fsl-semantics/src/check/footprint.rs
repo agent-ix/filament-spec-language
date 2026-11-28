@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::location::ExpressionLocation as Location;
+use ix_trace_rs::implements;
 
 use crate::check::observation::Observations;
 use crate::check::{CheckedGraph, CheckedNode, CheckedStateClause};
@@ -1327,13 +1328,19 @@ pub enum AtomForm<'a, N> {
 
 /// A node of an expression tree an atom footprint is derived from.
 pub trait AtomNode<'a>: Copy {
+    /// The allocation-free child iterator for this node.
+    type Children: DoubleEndedIterator<Item = Self> + ExactSizeIterator;
+
     /// What the node reads.
     fn form(self) -> AtomForm<'a, Self>;
     /// The node's operands.
-    fn children(self) -> Vec<Self>;
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children;
 }
 
 impl<'a> AtomNode<'a> for CheckedNode<'a> {
+    type Children = super::ir::CheckedChildren<'a>;
+
     fn form(self) -> AtomForm<'a, Self> {
         atom_form(
             self.kind(),
@@ -1343,11 +1350,9 @@ impl<'a> AtomNode<'a> for CheckedNode<'a> {
         )
     }
 
-    fn children(self) -> Vec<Self> {
-        super::ir::node_children(self.kind())
-            .into_iter()
-            .map(|id| self.at(id))
-            .collect()
+    #[implements("NFR-141-AC-6")]
+    fn children(self) -> Self::Children {
+        CheckedNode::children(self)
     }
 }
 
