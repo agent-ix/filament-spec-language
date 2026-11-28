@@ -1728,6 +1728,54 @@ fn conformance_refuses_conflicting_identity() {
     check_conformance(&[CONFLICT]);
 }
 
+/// FR-125-AC-13, AC-23: a finite-replay item over two initial records of one
+/// key with different types is refused `conflicting-identity` (FR-315 row 7),
+/// the way the conformance item is, and is no fault of the system. The item
+/// admits and reads the supplied trace first, so nothing earlier refuses.
+#[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
+#[test]
+fn finite_replay_refuses_conflicting_identity() {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let case = CONFLICT;
+    let unit = unit_text_with_profiles(
+        PACKAGE,
+        "profile pp = \"filament.protocol.finite-global/v1\";\n",
+        "record Ack { ok: Boolean; }\n\
+         protocol Flow using pp over (k: M::Animal) on origin {\n\
+         role Buyer on M::Other;\nrole Seller on M::Other;\n\
+         channel Order from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n\
+         run sequence Main {\n\
+         send Placed via Order as (placed: Ack) { true };\n\
+         receive Got via Order of Placed as (got: Ack) { true };\n\
+         }\n\
+         finish Done2 as (zz: Boolean) { true };\n}\n",
+    );
+    let trace = json!({"format": "filament.protocol-trace/v1",
+        "identity": {"authority": "test", "identity": "t0"}, "prefix": []});
+    let ws = Workspace::new(&format!(
+        "object-sets-replay-{}",
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let path = request_over(
+        &ws,
+        &unit,
+        &case.model(),
+        &[
+            case.snapshot("s0", &case.held()),
+            case.universe_snapshot(),
+            trace.to_string().into_bytes(),
+        ],
+        json!({"items": [{"claim": "Flow", "kind": "finite-replay",
+            "trace": {"authority": "test", "identity": "t0"}}],
+            "subject": {
+                "initial_states": [{"authority": "test", "identity": "s0"}],
+                "universes": [{"authority": "test", "identity": "u0"}],
+                "proof_bounds": []}}),
+    );
+    let document = analyze(&path).document();
+    assert_clean(judge(&case, 0, &document, 0).into_iter().collect());
+}
+
 #[trace("TC-520", "FR-125-AC-13", "FR-125-AC-23")]
 #[test]
 fn conformance_names_a_missing_universe_before_a_conflict() {
