@@ -79,7 +79,8 @@ fn compile_with(unit: &str, documents: &[Value]) -> Result<CheckedPackage, Failu
         .collect();
     let packages =
         fsl_semantics::model::intake::package_input(bytes.iter().map(Vec::as_slice)).unwrap();
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:guarantee"),
         "program.native",
         unit.as_bytes(),

@@ -152,7 +152,8 @@ fn a_channel_emits_only_its_declared_connection_reference() {
         run sequence Main { }\n\
         finish Closed as (closed: Boolean) { true };\n\
         }";
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:protocol-connection"),
         "protocol.native",
         text.as_bytes(),
@@ -1148,7 +1149,8 @@ fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
         related by Owns (done, input) { true }; }\n\
         finish End as (outcome: Boolean) { true };\n\
         }";
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:related-by-package"),
         "protocol.native",
         source.as_bytes(),

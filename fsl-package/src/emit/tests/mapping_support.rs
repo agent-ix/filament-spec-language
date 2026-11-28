@@ -773,7 +773,8 @@ fn a_profile_outside_the_admitted_identities_is_refused_at_check() {
             identity,
             &declared("Due", "always holds(c.versionNumber = 1)"),
         );
-        let parsed = fsl_cst::parse(&qsl3309_parser_context,
+        let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:profile"),
             "program.native",
             source.as_bytes(),
@@ -794,7 +795,8 @@ fn a_profile_outside_the_admitted_identities_is_refused_at_check() {
             identity,
             &declared("Due", "always holds(c.versionNumber = 1)"),
         );
-        let parsed = fsl_cst::parse(&qsl3309_parser_context,
+        let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:profile"),
             "program.native",
             source.as_bytes(),

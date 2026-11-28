@@ -3,7 +3,7 @@
 //! refusal, never as a fault of a later step.
 
 use super::*;
-use crate::package_admission::cause_spelling;
+use crate::package_admission::{cause_spelling, CauseSpellingSerializer};
 use crate::PackageAdmissionRefusal;
 
 /// The emission of a package with one function, one member of whose wire

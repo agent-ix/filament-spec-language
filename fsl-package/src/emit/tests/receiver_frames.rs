@@ -821,7 +821,8 @@ fn the_two_scopes_of_one_field_differ_in_the_node_and_both_at_once_refuse_at_int
         "modifies": [value], "modifies_receiver": [value], "creates": [], "deletes": [],
     });
     let UnitParts { unit, packages, .. } = unit_of(&["own"], &[("own", both)]);
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:tc-573"),
         "program.native",
         unit.as_bytes(),

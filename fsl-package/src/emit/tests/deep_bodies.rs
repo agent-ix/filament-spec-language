@@ -367,7 +367,8 @@ fn deep_declarations(source: &str) -> PackageDeclarations {
     limits.source_bytes = limits.source_bytes.max(bytes);
     limits.tokens = limits.tokens.max(bytes);
     limits.nodes = limits.nodes.max(bytes.saturating_mul(16));
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),
@@ -686,7 +687,8 @@ fn and_chain(levels: usize) -> Option<PackageDeclarations> {
         "a and (".repeat(levels),
         ")".repeat(levels),
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

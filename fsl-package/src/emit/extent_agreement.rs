@@ -32,12 +32,12 @@
 //! outside that agreement: only its own extent is asserted.
 
 use filament_contract_model::{
-    CheckedNodeId, CheckedNodeTag, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageReadLimits, CheckedPackageV2, CompleteLoweringProfileV2,
-    CompleteLoweringRecordV2, read_checked_package,
+    read_checked_package, CheckedNodeId, CheckedNodeTag, CheckedPackageDispatchResult,
+    CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageV2, CompleteLoweringProfileV2,
+    CompleteLoweringRecordV2,
 };
 use filament_semantic_value::checking::CheckMode;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use filament_exact::{
     CardinalityBound, CollectionKind, CollectionType, Integer, IntegerInterval, NodeKey,
@@ -49,12 +49,12 @@ use filament_semantic_value::declaration::{
 };
 use fsl_foundation::bound::DomainKind;
 use fsl_semantics::check::PackageDeclarations;
-use fsl_semantics::family::{ClaimExtent, classify_extent};
+use fsl_semantics::family::{classify_extent, ClaimExtent};
 use ix_trace_rs::trace;
 
 use super::tests::source_metre_units;
 use super::tests::{nodes, source, whole_unit, wire};
-use super::{CheckedPackage, Emission, OmittedNode, emit_checked, emit_package};
+use super::{emit_checked, emit_package, CheckedPackage, Emission, OmittedNode};
 
 const LIMIT: u64 = 1_000;
 
@@ -420,7 +420,7 @@ fn velocity_units() -> (
     std::collections::BTreeMap<&'static str, NodeKey>,
 ) {
     use fsl_semantics::value::{
-        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
+        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
     };
     let owner = json!({"kind": "source", "authority": "a", "identity": "u", "package_name": "pkg"});
     let mut keys = std::collections::BTreeMap::new();
@@ -579,7 +579,7 @@ fn tc_440_quantity_extent_agrees_with_ir_requires_bound() {
 fn tc_440_compound_quantity_requires_a_bound_at_its_structural_id() {
     use filament_semantic_value::quantity::{QuantityUnit, UnitTable};
     use fsl_semantics::value::{
-        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
+        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
     };
 
     let owner = json!({"kind":"source","authority":"a","identity":"u","package_name":"pkg"});

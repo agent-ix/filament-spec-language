@@ -10,7 +10,7 @@ use filament_contract_model::{
 use filament_exact::{EnumShape, NodeKey, NodeKeyView, NodePathIter, PathSegmentView, VariantId};
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex};
 
-use crate::{NativeRowError, native_row};
+use crate::{native_row, NativeRowError};
 
 /// The authenticated row family at a catalog construction refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -827,12 +827,10 @@ mod tests {
         }
         for row in &sources {
             for member in &row.members {
-                assert!(
-                    catalog
-                        .enum_members()
-                        .resolve(member.variant.clone())
-                        .is_some()
-                );
+                assert!(catalog
+                    .enum_members()
+                    .resolve(member.variant.clone())
+                    .is_some());
                 assert!(matches!(
                     catalog
                         .classify_variant(&member.variant, &mut budget)
@@ -1141,14 +1139,12 @@ mod tests {
         assert_eq!(error.locus(), Some(locus(7, "source_enum_nested_identity")));
         assert_eq!(budget.consumed().storage, 0);
         let mut exact = NativeJoinBudget::new(u64::MAX, 2);
-        assert!(
-            node_equal(
-                &key,
-                &key,
-                &mut exact,
-                locus(7, "source_enum_nested_identity")
-            )
-            .unwrap()
-        );
+        assert!(node_equal(
+            &key,
+            &key,
+            &mut exact,
+            locus(7, "source_enum_nested_identity")
+        )
+        .unwrap());
     }
 }

@@ -28,7 +28,7 @@ use fsl_semantics::check::{
 };
 use ix_trace_rs::implements;
 
-use super::{EmitRefusal, checked_occurrence};
+use super::{checked_occurrence, EmitRefusal};
 
 /// The largest integer a JSON number carries exactly.
 pub(super) const MAX_SAFE: u64 = 9_007_199_254_740_991;
@@ -579,7 +579,7 @@ mod tests {
     use super::*;
     use filament_exact::PathSegment;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_semantics::check::{PackageDeclarations, test_support::ZeroRewardEvaluator};
+    use fsl_semantics::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
     use ix_trace_rs::trace;
 
     /// A count's retained collection has query and equality operands at

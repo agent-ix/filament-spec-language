@@ -1944,7 +1944,8 @@ fn import_protocol_dependency(
     let dependency_models =
         fsl_semantics::model::intake::package_input(dependency_documents.iter().map(Vec::as_slice))
             .expect("dependency model package");
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:protocol-dependency"),
         "dependency.native",
         dependency_unit.as_bytes(),
@@ -1990,7 +1991,8 @@ fn import_protocol_dependency(
     )
     .expect("dependency import view is admitted");
 
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:root"),
         "program.native",
         unit.as_bytes(),
@@ -2416,7 +2418,8 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
          model C = \"example/refinement-abstract\";\n\
          refinement R using inf abstract Spec::Twice concrete C {{}}\n"
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:wrong-owner"),
         "wrong-owner.native",
         wrong_owner.as_bytes(),
@@ -2463,7 +2466,8 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
 
     for absent in ["Thrice", "Counter", "LocalTwice"] {
         let missing_clause = unit.replace("Spec::Twice", &format!("Spec::{absent}"));
-        let parsed = fsl_cst::parse(&qsl3309_parser_context,
+        let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", format!("test:missing-{absent}")),
             "missing.native",
             missing_clause.as_bytes(),
@@ -2543,7 +2547,8 @@ fn assert_dependency_node_rows_check_the_receiver() {
     let dependency_models =
         fsl_semantics::model::intake::package_input([dependency_model.as_slice()])
             .expect("dependency model package");
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:dep-protocol"),
         "dependency.native",
         dependency_unit.as_bytes(),
@@ -2599,7 +2604,8 @@ fn assert_dependency_node_rows_check_the_receiver() {
         )
     };
     let check = |source: &str| {
-        let parsed = fsl_cst::parse(&qsl3309_parser_context,
+        let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:root"),
             "root.native",
             source.as_bytes(),

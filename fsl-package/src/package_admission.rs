@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use filament_contract_model::{
-    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageRefusal,
-    CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2, read_checked_package,
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
+    CheckedPackageRefusal, CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::value::DefinitionRole;
@@ -401,7 +401,7 @@ impl PackageAdmissionRefusal {
 }
 
 #[implements("FR-110-AC-16")]
-struct CauseSpellingSerializer;
+pub(crate) struct CauseSpellingSerializer;
 
 macro_rules! reject_non_unit_variant_methods {
     ($(fn $name:ident($($argument:ident: $kind:ty),*);)+) => {
@@ -488,10 +488,7 @@ impl serde::Serializer for CauseSpellingSerializer {
         Err(serde::ser::Error::custom("expected a unit variant"))
     }
 
-    fn serialize_seq(
-        self,
-        _len: Option<usize>,
-    ) -> Result<Self::SerializeSeq, Self::Error> {
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         Err(serde::ser::Error::custom("expected a unit variant"))
     }
 

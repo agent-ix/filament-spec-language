@@ -14,7 +14,8 @@ fn coll_cart_shared_application_emits_with_nine_function_owners_and_source_rows(
     let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity =
         fsl_foundation::SourceIdentity::new("example", "example:shop/values/collections/coll-cart");
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         identity.clone(),
         "../../../rules/values/collections/coll-cart.fsl",
         COLL_CART.as_bytes(),
@@ -159,7 +160,8 @@ fn recursive_drop_first_measure_and_body_emit_with_owner_grouped_ordinals() {
 profile v = "filament.value.complete/v1";
 function tally using v(s: Sequence<Int[0, 9]>): Integer pure decreases(size(s)) { if size(s) > 0 then 1 + tally(dropFirst(s)) else 0 }
 function example using v(): Boolean pure { let q: Sequence<Int[0, 9]> = sequence[7, 8, 7] in tally(q) = 3 }"#;
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         identity.clone(),
         "../rules/recursion-size-measure-dropfirst-with-fact.fsl",
         source.as_bytes(),

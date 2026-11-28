@@ -838,7 +838,8 @@ fn an_execution_point_on_a_clause_of_the_operation_gives_no_transition() {
         ),
     ] {
         let (unit, packages) = unit(&clauses, true);
-        let parsed = fsl_cst::parse(&qsl3309_parser_context,
+        let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:tc-1271"),
             "program.native",
             unit.as_bytes(),

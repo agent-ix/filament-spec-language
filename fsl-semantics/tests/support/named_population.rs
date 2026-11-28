@@ -228,7 +228,8 @@ pub fn check_with_profiles(
          model M = \"{PACKAGE}\";\n\
          {declarations}\n",
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-1076"),
         "tc-1076.native",
         text.as_bytes(),

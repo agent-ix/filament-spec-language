@@ -163,7 +163,8 @@ fn source_package_for_debug(body: &str) -> CheckedPackage {
          profile v = \"filament.value.complete/v1\";\n\
          function f using v(a: Boolean, x: Integer): Integer pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),

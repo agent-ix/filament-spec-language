@@ -53,7 +53,8 @@ fn checked_unit(source: &str) -> CheckedPackage {
         nodes: source.len().saturating_mul(16),
         ..fsl_cst::Limits::default()
     };
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "nested-not.native"),
         "nested-not.native",
         source.as_bytes(),

@@ -94,7 +94,8 @@ pub(super) fn compile(declarations: &str) -> (Emission, Value) {
 fn compile_checked(declarations: &str) -> (Emission, Value, Checked) {
     let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = format!("{HEADER}{declarations}");
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "example"),
         "program.native",
         unit.as_bytes(),

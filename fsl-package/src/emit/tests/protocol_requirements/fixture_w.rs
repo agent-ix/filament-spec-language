@@ -420,7 +420,8 @@ fn tc134_attempt_bounds_and_provenance_mutations_are_checked() {
          profile v = \"filament.model.complete/v1\";\n{PROFILES_W}\
          model M = \"acme/orders\";\n{overflow}\n"
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "tc134-overflow"),
         "tc134.native",
         overflow_unit.as_bytes(),

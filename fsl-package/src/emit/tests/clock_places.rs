@@ -1471,7 +1471,8 @@ pub(super) fn assemble_units_with_models(
     let units: Vec<_> = units
         .iter()
         .map(|(identity, text)| {
-            let parsed = fsl_cst::parse(&qsl3309_parser_context,
+            let parsed = fsl_cst::parse(
+                &qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("agent-ix", *identity),
                 "program.native",
                 text.as_bytes(),

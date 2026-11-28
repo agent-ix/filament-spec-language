@@ -101,7 +101,8 @@ fn fixture_s_m_emits_the_selected_and_source_object_routes() {
            finish Done as (d: Boolean) {{ true }};\n\
          }}\n"
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:s-m"),
         "program.native",
         text.as_bytes(),
@@ -1204,7 +1205,8 @@ fn fixture_d_emission_has_no_source_object_operations() {
     let text = format!(
         "{HEADER}model M = \"test/orders\";\nfunction f using P (x: Boolean): Boolean pure {{ x }}\n"
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:d"),
         "program.native",
         text.as_bytes(),
@@ -1310,7 +1312,8 @@ fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
 fn source_object_node_identity_differs_from_selected_model_node_identity() {
     let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let emit_with_model = |text: String| {
-        let parsed = fsl_cst::parse(&qsl3309_parser_context,
+        let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:s-m-identity"),
             "program.native",
             text.as_bytes(),

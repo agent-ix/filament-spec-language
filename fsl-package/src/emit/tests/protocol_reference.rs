@@ -145,7 +145,8 @@ fn a_later_attempt_protocol_lowers_after_an_earlier_refusal() {
          profile p = \"{PROTOCOL_PROFILE}\";\n\
          model Config = \"example/config-version\";\n{broken}{later}"
     );
-    let parsed = fsl_cst::parse(&qsl3309_parser_context,
+    let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-1497"),
         "program.native",
         source.as_bytes(),
