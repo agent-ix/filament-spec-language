@@ -218,6 +218,11 @@ fn assert_command_replay(wire: ReplayRequestWire) {
     .expect("in-process result is JSON");
     assert_eq!(expected["settlement"], "reproduced-without-witness");
 
+    let actual = command_replay_with_exact_input_bound(&wire);
+    assert_eq!(actual, expected);
+}
+
+fn command_replay_with_exact_input_bound(wire: &ReplayRequestWire) -> Value {
     let envelope = request_file_value(&wire);
     let bytes = serde_json::to_vec(&envelope).expect("request envelope serializes");
     let directory = tempfile::tempdir().expect("replay workspace");
@@ -248,7 +253,7 @@ fn assert_command_replay(wire: ReplayRequestWire) {
     let result = command::replay_with_limits(&request_path, run_limits, &caller)
         .expect("command::run admits the exact replay-input byte count");
     assert_eq!(result.exit_code, 0);
-    assert_eq!(result.value.as_value()["results"][0], expected);
+    let row = result.value.as_value()["results"][0].clone();
 
     assert!(caller.set_bound(Setting::ReplayInputBytes, (exact_input_bytes - 1) as u64));
     let refusal = command::replay_with_limits(&request_path, run_limits, &caller)
@@ -260,6 +265,7 @@ fn assert_command_replay(wire: ReplayRequestWire) {
         "{detail}"
     );
     assert!(detail.contains(&exact_input_bytes.to_string()), "{detail}");
+    row
 }
 
 fn model_function(model_identity: Option<&str>, expression: &str, result_type: &str) -> String {
@@ -366,8 +372,8 @@ fn command_replays_both_thousand_link_variants() {
     }
 }
 
-/// FR-862-AC-8: the 100,000-value replay preserves result parity and applies
-/// the independent exact/one-under replay.input_bytes boundary.
+/// FR-862-AC-8: the 100,000-value replay returns its named semantic result
+/// and applies the independent exact/one-under replay.input_bytes boundary.
 #[trace("TC-3242", "FR-862-AC-8")]
 #[test]
 fn command_replays_one_hundred_thousand_ordered_values() {
@@ -378,11 +384,15 @@ fn command_replays_one_hundred_thousand_ordered_values() {
         .join(",");
     let source = model_function(
         None,
-        &format!("sequence[{values}]"),
-        &format!("Sequence<Integer>[0, {COUNT}]"),
+        &format!("size(sequence[{values}]) = {COUNT}"),
+        "Boolean",
     );
     let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
     limits.intake = limits.intake.with_sequence_maximum(COUNT as u32);
     let (package, site) = package_bytes(&source, &empty_packages(), limits);
-    assert_command_replay(request_wire(&package, &source, &site));
+    let result = command_replay_with_exact_input_bound(&request_wire(&package, &source, &site));
+    assert_eq!(result["arm"], "input");
+    assert_eq!(result["settlement"], "reproduced-without-witness");
+    assert_eq!(result["category"], "success");
+    assert_eq!(result["value"], true);
 }
