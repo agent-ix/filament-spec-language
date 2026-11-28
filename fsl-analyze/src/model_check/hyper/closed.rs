@@ -355,7 +355,11 @@ impl Run<'_, '_> {
                     )));
                 }
                 Ok(MatchReading::Refused { .. }) => {
-                    return Ok(ConstraintReading::Stopped(ClosedVerdict::MatchUndetermined));
+                    return Ok(ConstraintReading::Stopped(
+                        ClosedVerdict::MatchUndetermined {
+                            position: widen(position),
+                        },
+                    ));
                 }
                 Ok(MatchReading::Fault(internal)) => {
                     return Err(ModelCheckRefusal::Fault(internal))
@@ -465,13 +469,15 @@ impl Run<'_, '_> {
         totals: &Totals,
     ) -> Result<Reading, ModelCheckRefusal> {
         match verdict {
-            ClosedVerdict::MatchUndetermined => Ok(Reading::Ended(HyperOutcome::Undecided {
-                cause: UndecidedCause::MatchUndetermined,
-                stats: totals.stats(),
-            })),
+            ClosedVerdict::MatchUndetermined { .. } => {
+                Ok(Reading::Ended(HyperOutcome::Undecided {
+                    cause: UndecidedCause::MatchUndetermined,
+                    stats: totals.stats(),
+                }))
+            }
             // The callers that hold the tuple build the refutation.
             ClosedVerdict::Undefined(_) => Err(fault("an-undefined-reading-is-a-refutation")),
-            ClosedVerdict::Incomplete(counter) => {
+            ClosedVerdict::Incomplete { limit: counter, .. } => {
                 if self.cancel.poll() {
                     return self.cancelled(totals).map(Reading::Ended);
                 }

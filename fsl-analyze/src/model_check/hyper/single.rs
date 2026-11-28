@@ -1565,7 +1565,7 @@ fn decide_closed(
                     }
                     // A reading that stopped settles no witness: the search is
                     // incomplete, never a trap.
-                    ClosedVerdict::Incomplete(counter) => {
+                    ClosedVerdict::Incomplete { limit: counter, .. } => {
                         stopped = Some(match cancelled(cancel) {
                             Some(halt) => halt.end(),
                             None => RunEnd::Stopped {
@@ -1578,7 +1578,7 @@ fn decide_closed(
                         });
                         break 'initials;
                     }
-                    ClosedVerdict::MatchUndetermined => {
+                    ClosedVerdict::MatchUndetermined { .. } => {
                         stopped = Some(RunEnd::Stopped {
                             cause: IncompleteCause::ResourceExhausted,
                             limit: None,
