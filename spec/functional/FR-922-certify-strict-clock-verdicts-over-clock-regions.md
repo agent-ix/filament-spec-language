@@ -59,8 +59,27 @@ unsound, and the checker rejects a certificate that states it.
   diagonal-free constraint exactly, and a reset SHALL set the clock's integer
   part to the scaled reset value and its fraction to `"0"`.
 - An infimum or supremum that no dense scheduler attains (a delay "just
-  after 1 ms") SHALL be stated as the value the region MDP attains; the
-  verdict compares that value with the threshold as FR-203 does.
+  after 1 ms") SHALL be certified as an unattained bound: the certificate
+  states the value and `attained: false`. FR-203's comparison of a value with a
+  threshold applies, with the strictness decided by attainment: an attained
+  value `v` meets `<= c`, `< c`, `>= c` and `> c` as FR-203 compares `v` with
+  `c`; an unattained supremum `S` meets "at most S" and "less than S" and fails
+  "at least S" and "greater than S"; an unattained infimum `I` meets "at least
+  I" and "greater than I" and fails "at most I" and "less than I". A
+  refutation at or beyond the bound carries any concrete run; a refutation
+  strictly inside `(I, S)` carries a concrete run whose recomputed value
+  crosses the threshold.
+- A refutation of an expected-elapsed claim SHALL carry a finite induced
+  Markov chain: states with exact rational clock valuations, for each state
+  its chosen exact rational delay and its branches (target state, exact
+  rational probability), and the claimed value of the initial state. The
+  checker SHALL rebuild the chain through the timed system's own delay, guard
+  and reset semantics, require each stated target to equal the recomputed one,
+  solve the chain's expected elapsed time itself in exact rationals, and
+  compare the solved value with the threshold under the claim's strictness. A
+  chain with one branch of probability 1 per state and no cycle is the path
+  case. A chain beyond a limit settles `incomplete` through `LimitReached`
+  naming the setting.
 - Expected-elapsed forms SHALL use boundary-region keys: the region MDP's
   states paired with corners, each delay edge carrying the exact elapsed time
   between corners, whose minimum and maximum are the dense infimum and
@@ -104,6 +123,9 @@ unsound, and the checker rejects a certificate that states it.
 | FR-922-AC-2 | AC-1's `Deadline` document with `route` set to `"digital"` is refused `ObjectiveMismatch`; the `Max` `exact` certificate with every value replaced by the corresponding value of the `>= 1 ms` guard's digital product, initial value `9999/10000`, is rejected `InequalityFails`, and the tampered item settles `inconclusive`, `CertificateRejected`. | Test (TC-2491) |
 | FR-922-AC-3 | `MeanTime` with the guard `self.x > 1 ms` settles its maximum `20/9 ms` with a `boundary-region` document the checker accepts; the minimum is the infimum `10/9 ms`. | Test (TC-2491) |
 | FR-922-AC-4 | Interim, until the symbolic region MDP of ADR-038 RL-3 replaces the grid walk (QSL-3495): RL-3 gives a grid walk no exactness, and this criterion claims none; it pins that the walk does not step over a region on the subjects below, whose stated values are derived by hand for dense time. Subject A: clocks `x` and `y`; `first` is guarded `self.phase = 0 and self.x > 0 ms and self.x < 1 ms`, sets `phase` 1 and resets `x`; `third` is guarded `self.phase = 1 and self.x < 1 ms and self.y > 1 ms` and sets `late`; `y <= 3 ms` while `phase < 2`. Over every scheduler `eventually[0 ms, 4 ms] holds(late)` has maximum 1 (`first` at 0.5 ms, `third` at 1.2 ms) and minimum 0 (`third` never taken): `probability <= 0.999`, `probability <= 0.5` and `probability >= 0.001` each settle `refuted`. Subject B: `first` is guarded `self.x > 0 ms`, `third` as before, with `y < 1 ms` while `phase = 0` and `x < 1 ms` while `phase = 1`, so time diverges only through `third`: `probability >= 0.5` settles `proved`, `ExactValue{1}`. Subject C is B with `x <= 1 ms` in the guard of `third` and in the invariant, with the same result. | Test (TC-2491) |
+| FR-922-AC-5 | With subject B's expected elapsed time (infimum 1 ms, supremum 2 ms, neither attained): "at most 2 ms", "less than 2 ms", "at least 1 ms" and "greater than 1 ms" settle `proved`; "at least 2 ms", "greater than 2 ms", "at most 1 ms" and "less than 1 ms" settle `refuted`. | Test (TC-2491) |
+| FR-922-AC-6 | A refutation of an expected-elapsed claim carries a finite chain with exact rational delays and probabilities and its value; the checker accepts it only if its own recomputation of that value violates the claim. | Test (TC-2491) |
+| FR-922-AC-7 | The checker recomputes the value of a refuting chain from the replayed chain alone; a chain whose stated value differs from the recomputed one, whose branch probabilities do not sum to 1, or whose stated state differs from the replayed state is refused. | Test (TC-2491) |
 | FR-922-AC-8 | `Retx` with the guard `self.x > 1 ms` and `exact_prob.max_clocks` below its clock count settles `incomplete`, `LimitReached` naming `exact_prob.max_clocks` and its bound; with the bound equal to its clock count the claim builds and settles as in AC-1. The same holds for `exact_prob.max_clock_scale` against the plain LCD scale and `exact_prob.max_clock_cap` against the largest constraint constant. | Test (TC-2491) |
 
 ## Dependencies
