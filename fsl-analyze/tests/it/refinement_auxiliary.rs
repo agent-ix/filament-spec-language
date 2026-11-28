@@ -73,9 +73,7 @@ fn replay(
 
 fn settle(world: &World<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {
     let certified = SimulationCertificateRequest {
-        refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
-        abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
     settle_refinement_safety(
@@ -401,9 +399,7 @@ fn a_certificate_position_carries_its_history() {
         panic!("the refinement holds");
     };
     let request = SimulationCertificateRequest {
-        refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
-        abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
     let check = |certificate: &fsl_replay::SimulationCertificate| {

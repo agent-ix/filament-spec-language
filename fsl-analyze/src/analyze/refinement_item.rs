@@ -144,9 +144,7 @@ fn run(
         Err(refusal) => return EngineReport::Refused(model_refusal(&refusal)),
     };
     let certified = SimulationCertificateRequest {
-        refinement,
         concrete: concrete.clone(),
-        abstract_package: package,
         abstract_initial: abstract_initial.clone(),
     };
     // FR-630 "Outputs": the replay that reproduces a counterexample gives

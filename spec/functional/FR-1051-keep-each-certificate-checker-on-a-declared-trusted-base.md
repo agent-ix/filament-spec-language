@@ -264,9 +264,10 @@ not caught by mutation; the false-claim corpus is the evidence against them.
   O) SHALL have its own removal ticket and a named owner, filed under
   QSL-3501; a row group with no owned ticket is a defect of this requirement.
 - The must-fix commits of QSL-3499 (QSL-3503, QSL-3506, QSL-3550, QSL-3551)
-  remove no row through QSL-3501. QSL-3551 removes the `dyn RefinementRead`
-  and `dyn RefinementWorld` sharing of `check_simulation_certificate` from
-  O-9 and nothing else in that row. The first QSL-3501 group is the EN-5
+  remove no row through QSL-3501. QSL-3551 and QSL-3625 remove the `dyn RefinementRead`
+  and `dyn RefinementWorld` request fields of `check_simulation_certificate`
+  from O-9 and nothing else in that row. `RefinementCheckRequest`, the
+  producer's request, keeps both `dyn` types; it is not a checker request. The first QSL-3501 group is the EN-5
   rows: S-1 (the shared EN-1 product of ADR-028 CE-7), P-1 to P-5, O-1 and
   O-7; it is a later commit of the block or a stacked follow-on and does not
   hold the must-fix commits. Every other S, P and O row is removed later,
@@ -330,7 +331,7 @@ new caller raises the count and fails the check.
 | O-6 | Producer object | `contract_check.rs` | The operation-contract replay reads the `ModelSystem` the producer opened through `self` | QSL-3501 |
 | O-7 | Producer object | `probability_certificate/document.rs`, `probability_certificate/document/mdp.rs`, `probability_certificate/document/long_run.rs`, `probability_certificate/witness.rs` | The test-support `*_observing` entries take the caller's `observe` closure, which receives each checker phase and returns nothing | QSL-3501 |
 | O-8 | Producer object | `certificate/zone_certificate.rs` | `check_zone_certificate` and `check_free_delay_zone_certificate` take the producer's `item_of` closure, which maps the certificate's obligation to the item identity the FR-245 identity check compares | QSL-3501 |
-| O-9 | Producer object | `certificate/closure.rs`, `certificate/product.rs`, `certificate/simulation.rs`, `certificate/smt.rs`, `certificate/state_graph.rs`, `certificate/zone_certificate.rs` | The zone, explicit state-graph, closure, SCC-components, protocol-closure, product-closure, SMT proof, refinement SMT proof and simulation checkers take the producer's model evaluator in the request's subject and evaluate the model's values with it ; `check_simulation_certificate` also takes `&dyn RefinementRead` and `&dyn RefinementWorld`, producer-built refinement readers, which the package route still receives from the producer | QSL-3501; the simulation checker's `dyn` types by QSL-3551 (with QSL-3625 for the package route) |
+| O-9 | Producer object | `certificate/closure.rs`, `certificate/product.rs`, `certificate/simulation.rs`, `certificate/smt.rs`, `certificate/state_graph.rs`, `certificate/zone_certificate.rs` | The zone, explicit state-graph, closure, SCC-components, protocol-closure, product-closure, SMT proof, refinement SMT proof and simulation checkers take the producer's model evaluator in the request's subject and evaluate the model's values with it ; `check_simulation_certificate` opens the refinement and both subjects from the checked package (source and package route) and takes no refinement object | QSL-3501 |
 
 ### Routes
 
@@ -523,9 +524,9 @@ The exception rows record the sharing on origin/main as of this requirement.
 The restructuring that removes S-1 and S-3 to S-14, P-1 to P-14 and O-1 to O-9
 (QSL-3501, in row groups; see "Removal order and call-site counts"), the
 separate timed monitor that removes S-2 (QSL-3324), the shared admission data
-of B-10 (QSL-3494, after FSL PR #4042) and the simulation checker's `dyn`
-refinement types (QSL-3551, with QSL-3625 for the package route) are not yet
-built. The corpus holds six seeds; seeds QSL-3324 and QSL-3445 commit after
+of B-10 (QSL-3494, after FSL PR #4042) are not yet
+built; the simulation checker's `dyn` refinement request fields are removed
+(QSL-3551 for the source route, QSL-3625 for the package route). The corpus holds six seeds; seeds QSL-3324 and QSL-3445 commit after
 the producer fixes they need (S-2 and QSL-3445), or land as expected-fail
 with the ticket named, and QSL-3468 has no seed unless one is added (the
 reason is recorded in QSL-3550).

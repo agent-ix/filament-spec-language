@@ -10,8 +10,9 @@
 //! It applies its rules in this order and rejects at the first failing
 //! position in index order:
 //!
-//! 1. identity: a certificate that names another refinement is refused
-//!    `stale_dependency`/`content-mismatch` ([`SimulationRefusal::Stale`]);
+//! 1. identity: a certificate that names a refinement the checked package
+//!    does not declare is refused `stale_dependency`/`content-mismatch`
+//!    ([`SimulationRefusal::Undeclared`]);
 //! 2. `Malformed`, before any recomputation: the lists do not match in
 //!    length, or a position has no state because no initial state and no
 //!    earlier edge reaches it;
@@ -36,6 +37,7 @@
 
 use filament_exact::{Cancel, LimitKind};
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::model::{
     check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSimulationRequest,
     ModelSystem,
@@ -43,6 +45,8 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::temporal::UndefinedCause;
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::CheckedRefinement;
 use ix_trace_rs::implements;
 use serde::{Serialize, Serializer};
 
@@ -55,8 +59,8 @@ use crate::model_check::counterexample::{UndefinedEvaluation, UndefinedLocus};
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits};
 use crate::refinement::{
     check_initial, check_step_for_model, open_systems, ConcreteStep, EvalFailure,
-    RefinementFailure, RefinementPosition, RefinementSystems, StepRejection, StepVerdict,
-    SubjectRefusal, Taken, Undetermined,
+    PackageRefinement, RefinementFailure, RefinementPosition, RefinementSystems, StepRejection,
+    StepVerdict, SubjectRefusal, Taken, Undetermined,
 };
 
 /// One position of a simulation certificate: a product state EN-1 stored.
@@ -440,16 +444,15 @@ fn undefined_cause_kind(cause: &UndefinedCause) -> &'static str {
     }
 }
 
-/// What [`check_simulation_certificate`] checks: the refinement and its
-/// subjects, re-opened by the checker itself.
+/// What [`check_simulation_certificate`] checks: the concrete subject, whose
+/// package declares the refinement the certificate names. The checker opens
+/// the refinement and both subjects from that package itself, never from
+/// objects the producer built (FR-1051 "No producer objects").
 pub struct SimulationCertificateRequest<'a> {
-    /// The checked refinement (FR-135).
-    pub refinement: &'a dyn crate::RefinementRead,
     /// The concrete subject's request, under the meter the check evaluates
-    /// each clause with.
+    /// each clause with. Its package (source or admitted) holds the
+    /// refinement and the abstract model.
     pub concrete: ModelSimulationRequest<'a>,
-    /// The package that holds the abstract model.
-    pub abstract_package: &'a dyn crate::RefinementWorld,
     /// The abstract subject's initial states: its FR-106 snapshots, or the
     /// mapping's image of the concrete initial states.
     pub abstract_initial: crate::refinement::AbstractInitial,
@@ -459,32 +462,79 @@ pub struct SimulationCertificateRequest<'a> {
 /// the certificate's rules, is at fault.
 #[derive(Debug, thiserror::Error)]
 pub enum SimulationRefusal {
-    /// The certificate names another refinement than the request's.
-    #[error(
-        "stale_dependency/content-mismatch: the certificate names refinement {certificate} but the request is for {request}"
-    )]
-    Stale {
-        /// The refinement the certificate names.
-        certificate: String,
-        /// The request's refinement.
-        request: String,
-    },
-    /// The request's refinement is not one the checked source package
-    /// declares: the checker reads the package's own refinement, never one
+    /// The certificate names a refinement the checked package does not
+    /// declare: the checker reads the package's own refinement, never one
     /// the producer built (FR-1051 "No producer objects").
     #[error(
-        "stale_dependency/content-mismatch: the checked package declares no refinement {request} (certificate: {certificate})"
+        "stale_dependency/content-mismatch: the checked package declares no refinement {certificate} (it declares: {declared})"
     )]
     Undeclared {
         /// The refinement the certificate names.
         certificate: String,
-        /// The request's refinement.
-        request: String,
+        /// The refinements the checked package declares, comma-separated.
+        declared: String,
     },
     /// A subject did not open, the subject has no initial state, a state
     /// has no canonical encoding, or an invariant broke.
     #[error(transparent)]
     Subject(#[from] ClosureRefusal),
+}
+
+/// The refinement the checked package declares under `name`, and the world
+/// that holds its abstract model.
+enum Declared<'a> {
+    Source(&'a CheckedPackage, &'a CheckedRefinement),
+    Package(&'a PackageModelInput<'a>, PackageRefinement<'a>),
+}
+
+/// The refinement of `request`'s own package named `name`.
+fn find_declared<'a>(
+    request: &ModelSimulationRequest<'a>,
+    name: &str,
+) -> Result<Declared<'a>, SimulationRefusal> {
+    use filament_contract_model::CheckedTerm;
+    use fsl_package::AnalysisView;
+    let undeclared = |declared: Vec<&str>| SimulationRefusal::Undeclared {
+        certificate: name.to_owned(),
+        declared: declared.join(", "),
+    };
+    if let Some(package) = request.source_package() {
+        let refinements = package.graph().refinements();
+        return refinements
+            .iter()
+            .find(|declared| declared.name() == name)
+            .map(|found| Declared::Source(package, found))
+            .ok_or_else(|| undeclared(refinements.iter().map(|row| row.name()).collect()));
+    }
+    let Some(owner) = request.input.package_owner() else {
+        return Err(Checker::Simulation
+            .fault("the-checked-package-is-open")
+            .into());
+    };
+    let bare = owner.package();
+    let package = bare.package();
+    let mut names: Vec<&str> = Vec::new();
+    for node in &package.resolved_graph().nodes {
+        let Some(CheckedTerm::Refinement { name: row, .. }) = package.term(&node.node_id) else {
+            continue;
+        };
+        let row: &str = row;
+        if row != name {
+            names.push(row);
+            continue;
+        }
+        let read = AnalysisView::refinement(bare, &node.node_id)
+            .ok()
+            .and_then(|view| PackageRefinement::read(view, bare, owner).ok());
+        return read
+            .map(|refinement| Declared::Package(owner, refinement))
+            .ok_or_else(|| {
+                Checker::Simulation
+                    .fault("the-package-refinement-reads")
+                    .into()
+            });
+    }
+    Err(undeclared(names))
 }
 
 /// FR-149: check `certificate` for `request`'s refinement under `limits` and
@@ -493,9 +543,10 @@ pub enum SimulationRefusal {
 ///
 /// # Errors
 ///
-/// [`SimulationRefusal`] when the certificate names another refinement, a
-/// subject does not open, a root is unbounded, or the concrete subject has no
-/// initial state. A refusal is never an acceptance.
+/// [`SimulationRefusal`] when the checked package does not declare the
+/// refinement the certificate names, a subject does not open, a root is
+/// unbounded, or the concrete subject has no initial state. A refusal is
+/// never an acceptance.
 #[implements("FR-149-AC-1")]
 pub fn check_simulation_certificate(
     request: &SimulationCertificateRequest<'_>,
@@ -503,27 +554,11 @@ pub fn check_simulation_certificate(
     limits: &ModelCheckLimits,
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, SimulationRefusal> {
-    if certificate.refinement != request.refinement.name() {
-        return Err(SimulationRefusal::Stale {
-            certificate: certificate.refinement.clone(),
-            request: request.refinement.name().to_owned(),
-        });
-    }
-    // On the source route the checker reads the refinement the checked
-    // package declares, not the one the request carries; the request's one
-    // only names it. The package route has no source package: its refinement
-    // is read from the admitted package by the caller (QSL-3551 follow-up).
-    let declared: &dyn crate::RefinementRead = match request.concrete.source_package() {
-        Some(package) => package
-            .graph()
-            .refinements()
-            .iter()
-            .find(|declared| declared.name() == request.refinement.name())
-            .ok_or_else(|| SimulationRefusal::Undeclared {
-                certificate: certificate.refinement.clone(),
-                request: request.refinement.name().to_owned(),
-            })?,
-        None => request.refinement,
+    let found = find_declared(&request.concrete, &certificate.refinement)?;
+    let (declared, world): (&dyn crate::RefinementRead, &dyn crate::RefinementWorld) = match &found
+    {
+        Declared::Source(package, refinement) => (*refinement, *package),
+        Declared::Package(owner, refinement) => (refinement, *owner),
     };
     let budgets = Budgets::of(&request.concrete);
     let RefinementSystems {
@@ -533,7 +568,7 @@ pub fn check_simulation_certificate(
     } = open_systems(
         declared,
         &request.concrete,
-        request.abstract_package,
+        world,
         request.abstract_initial.clone(),
     )
     .map_err(|refusal| match refusal {

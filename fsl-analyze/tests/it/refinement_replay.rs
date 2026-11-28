@@ -139,9 +139,7 @@ fn settle(subject: &Subject<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {
 
 fn certified<'w>(subject: &Subject<'w>) -> SimulationCertificateRequest<'w> {
     SimulationCertificateRequest {
-        refinement: subject.refinement,
         concrete: subject.concrete.clone(),
-        abstract_package: subject.package,
         abstract_initial: subject.abstract_initials.clone().into(),
     }
 }

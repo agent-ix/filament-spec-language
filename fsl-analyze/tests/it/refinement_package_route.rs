@@ -10,7 +10,8 @@ use fsl_eval::simulation::model::{ModelSimulationRequest, PackageModelInput};
 use fsl_package::AnalysisView;
 use fsl_replay::{
     check_simulation_certificate, ModelCheckLimits, PackageRefinement, SafetyOutcome,
-    SimulationCertificate, SimulationCertificateRequest, TemporalCertificateCheck,
+    SimulationCertificate, SimulationCertificateRequest, SimulationRefusal,
+    TemporalCertificateCheck,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -98,6 +99,17 @@ fn concrete<'a>(
     }
 }
 
+/// The simulation certificate request over the package route's input.
+fn request<'a>(
+    world: &'a RingWorld,
+    input: &'a PackageModelInput<'a>,
+) -> SimulationCertificateRequest<'a> {
+    SimulationCertificateRequest {
+        concrete: concrete(world, input),
+        abstract_initial: vec![world.abstract_initial()].into(),
+    }
+}
+
 /// The certificate of the holding safety half of `refinement` over `input`.
 fn certificate(
     world: &RingWorld,
@@ -129,9 +141,9 @@ fn certificate(
 
 /// FR-149-AC-1, FR-1051 "No producer objects" (QSL-3625): a certificate of the
 /// package's `RingIsQueue`, checked against a package that declares only
-/// `RingIsQueueOther`, with the producer's `RingIsQueue` handed in as the
-/// request's refinement, is not accepted: the package does not declare the
-/// refinement the certificate names.
+/// `RingIsQueueOther`, is refused as naming a refinement the package does not
+/// declare. The checker opens the refinement from the checked package: the
+/// request has no place for the producer's one.
 #[trace("TC-556", "FR-149-AC-1")]
 #[test]
 fn a_package_that_does_not_declare_the_certificates_refinement_does_not_accept_it() {
@@ -141,13 +153,9 @@ fn a_package_that_does_not_declare_the_certificates_refinement_does_not_accept_i
         &producer_world,
         |producer_world, producer_input, producer| {
             let certificate = certificate(producer_world, producer_input, producer);
+            assert_eq!(certificate.refinement, "RingIsQueue");
             let own = check_simulation_certificate(
-                &SimulationCertificateRequest {
-                    refinement: producer,
-                    concrete: concrete(producer_world, producer_input),
-                    abstract_package: producer_input,
-                    abstract_initial: vec![producer_world.abstract_initial()].into(),
-                },
+                &request(producer_world, producer_input),
                 &certificate,
                 &ModelCheckLimits::default(),
                 &Cancel::new(),
@@ -158,19 +166,21 @@ fn a_package_that_does_not_declare_the_certificates_refinement_does_not_accept_i
             );
             over_package(&checked_world, |checked_world, checked_input, _| {
                 let outcome = check_simulation_certificate(
-                    &SimulationCertificateRequest {
-                        refinement: producer,
-                        concrete: concrete(checked_world, checked_input),
-                        abstract_package: checked_input,
-                        abstract_initial: vec![checked_world.abstract_initial()].into(),
-                    },
+                    &request(checked_world, checked_input),
                     &certificate,
                     &ModelCheckLimits::default(),
                     &Cancel::new(),
                 );
-                assert!(
-                    !matches!(outcome, Ok(TemporalCertificateCheck::Accepted)),
-                    "a refinement the checked package does not declare was accepted: {outcome:?}"
+                let Err(SimulationRefusal::Undeclared {
+                    certificate: named,
+                    declared,
+                }) = outcome
+                else {
+                    panic!("a refinement the checked package does not declare was not refused: {outcome:?}");
+                };
+                assert_eq!(
+                    (named.as_str(), declared.as_str()),
+                    ("RingIsQueue", "RingIsQueueOther")
                 );
             });
         },

@@ -311,9 +311,7 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
         &outcome.safety,
         &ModelCheckLimits::default(),
         &SimulationCertificateRequest {
-            refinement: world.refinement(),
             concrete: concrete.clone(),
-            abstract_package: world.package(),
             abstract_initial: vec![initial.clone()].into(),
         },
         &Cancel::new(),

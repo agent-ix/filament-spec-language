@@ -85,9 +85,7 @@ fn budget() -> u64 {
 /// The certificate request of `world` under the work-unit budget `work`.
 fn certified(world: &RingWorld, work: u64) -> SimulationCertificateRequest<'_> {
     SimulationCertificateRequest {
-        refinement: world.refinement(),
         concrete: world.concrete_request(meter(work)),
-        abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     }
 }
