@@ -892,7 +892,7 @@ fn tc_736_a_100000_term_source_is_refused_at_the_default_stage_limits() {
 /// `s3.*`, `i2.*` and `emit.output_bytes` settings, and whose
 /// `replay.input_bytes` is raised to fit, replays to the proving run's
 /// verdict.
-#[trace("TC-736", "FR-263-AC-1")]
+#[trace("TC-736")]
 #[test]
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
     on_small_stack(|| {
