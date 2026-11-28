@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 
 use filament_exact::{Cancel, CancelCause, ValueType};
 use fsl_eval::simulation::model::{
-    en5_admission, Admission, ClaimForm, DelayClass, ModelSystem, PredicateReading, ReadFrom,
-    RegionCause, RouteConditions, TimedSystem,
+    en5_admission, workload_mean_time, Admission, ClaimForm, DelayClass, ModelSystem,
+    PredicateReading, ReadFrom, RegionCause, RouteConditions, TimedSystem,
 };
 use fsl_replay::ModelCheckLimit;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
@@ -17,7 +17,7 @@ use fsl_route::reductions::{ObligationReductions, Reductions};
 use fsl_semantics::check::{
     BinaryTemporal, Bound, BoundedMeasure, CheckedInterval, CheckedPredicate,
     CheckedProbabilisticClaim, CheckedTemporalFormula, ClaimActivation, DelayDistribution, Event,
-    FormulaNode, FractionMeasure, ProbForm, ProbScheduler, ReachTarget, UnaryTemporal, Weighting,
+    FormulaNode, FractionMeasure, ProbForm, ReachTarget, UnaryTemporal, Weighting,
 };
 use ix_trace_rs::implements;
 use num_traits::Zero;
@@ -91,8 +91,7 @@ fn conditions(
         form,
         read_from,
         takes_event_maximum,
-        workload_mean_time: matches!(claim.form, ProbForm::MeanTime { .. })
-            && matches!(claim.scheduler, ProbScheduler::Workload(_)),
+        workload_mean_time: workload_mean_time(claim),
     })
 }
 

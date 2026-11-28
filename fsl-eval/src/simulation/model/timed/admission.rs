@@ -7,9 +7,22 @@
 //! reads its own rows. Nothing here reads a model, a claim or a state: each
 //! side establishes every condition with its own code and then looks the
 //! row up, so a wrong condition on one side is caught by the other and a
-//! wrong row is a specification defect.
+//! wrong row is a specification defect. The one exception is
+//! [`workload_mean_time`], read from the claim shape by both sides.
 
+use fsl_semantics::check::{CheckedProbabilisticClaim, ProbForm, ProbScheduler};
 use ix_trace_rs::implements;
+
+/// Whether `claim` is an expected elapsed time under a workload, the one
+/// claim shape a mixed subject keeps on the product route (ADR-038
+/// "Workload-resolved infinite mean time", FR-204-AC-24). Both sides call this
+/// one function so the exemption cannot drift between producer and checker;
+/// every other condition each side still reads for itself.
+#[implements("FR-204-AC-24")]
+pub fn workload_mean_time(claim: &CheckedProbabilisticClaim) -> bool {
+    matches!(claim.form, ProbForm::MeanTime { .. })
+        && matches!(claim.scheduler, ProbScheduler::Workload(_))
+}
 
 /// How a subject's delays are given.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -83,9 +96,11 @@ pub struct RouteConditions {
     /// matching `always`: a `<=` bound on `eventually` or `until`, or a `>=`
     /// bound on `always`.
     pub takes_event_maximum: bool,
-    /// Whether the claim reads an expected elapsed time under a workload, which
-    /// resolves free delays itself (ADR-038 workload-resolved infinite mean time,
-    /// FR-204-AC-24): a mixed subject is not read over regions for it.
+    /// Whether the claim is an expected elapsed time under a workload
+    /// ([`workload_mean_time`]). ADR-038 "Workload-resolved infinite mean time"
+    /// and FR-204-AC-24 admit it over a mixed subject, where the product
+    /// decides the infinite value and refuses a delay-dependent one. FSpec
+    /// FR-421-AC-8 (the `Split` row) does not state this exemption.
     pub workload_mean_time: bool,
 }
 
@@ -267,6 +282,7 @@ pub fn en5_admission(conditions: RouteConditions) -> Admission {
 }
 
 /// [`en5_admission`] of the claim read as closed.
+#[implements("FR-204-AC-24")]
 fn closed_admission(conditions: RouteConditions) -> Admission {
     let RouteConditions {
         closed: _,
@@ -557,6 +573,39 @@ mod tests {
                 Region(RegionCause::Fairness)
             );
         }
+    }
+
+    /// FR-204-AC-24, ADR-038 "Workload-resolved infinite mean time": over a
+    /// mixed subject, an expected elapsed time under a workload leaves the
+    /// region route (the product then decides the infinite value or refuses a
+    /// delay-dependent one), while the same claim without the workload and
+    /// every other form stay on `MixedDelays`.
+    #[trace("FR-204-AC-24")]
+    #[test]
+    fn a_workload_mean_time_over_mixed_delays_takes_the_product_route_only() {
+        let mixed = closed(DelayClass::Mixed, F::ExpectedElapsed, Origin);
+        // Hand values: the ExpectedElapsed row admits a free subject only
+        // without a reachable time-lock.
+        assert_eq!(
+            en5_admission(RouteConditions {
+                workload_mean_time: true,
+                ..mixed
+            }),
+            DigitalIfNoTimeLock
+        );
+        assert_eq!(en5_admission(mixed), Region(RegionCause::MixedDelays));
+        // A finite mixed claim of another form never takes the exemption.
+        let reach = closed(DelayClass::Mixed, F::Reachability, Origin);
+        assert_eq!(en5_admission(reach), Region(RegionCause::MixedDelays));
+        // Fairness still declines it.
+        assert_eq!(
+            en5_admission(RouteConditions {
+                workload_mean_time: true,
+                fairness: true,
+                ..mixed
+            }),
+            Region(RegionCause::Fairness)
+        );
     }
 
     #[trace("FR-243-AC-5")]

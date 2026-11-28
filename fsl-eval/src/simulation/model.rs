@@ -239,8 +239,8 @@ pub use task_product::{
 };
 pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::admission::{
-    en5_admission, Admission, AdmissionRow, ClaimForm, DelayClass, FreeSubject, ReadFrom,
-    RegionCause, RouteConditions, SearchItem, EN1_DIGITAL, EN5_DIGITAL, STRICT_GRID_WALK,
+    en5_admission, workload_mean_time, Admission, AdmissionRow, ClaimForm, DelayClass, FreeSubject,
+    ReadFrom, RegionCause, RouteConditions, SearchItem, EN1_DIGITAL, EN5_DIGITAL, STRICT_GRID_WALK,
 };
 pub use timed::{
     advance_timed, sample_timed, sample_timed_from, sample_timed_race, BehaviourLetters,

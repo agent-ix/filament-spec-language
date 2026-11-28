@@ -831,6 +831,20 @@ fn a_workload_infinity_with_a_reachable_free_delay_target_is_not_certified() {
     is_unsupported_with(&world, "not-yet-implemented");
 }
 
+/// FR-204-AC-24: over a mixed subject (`send` given, `toggle` free) a
+/// reachable target keeps a finite, scheduler-dependent mean, so the
+/// workload `MeanTime` is not decided and settles no terminal verdict.
+#[trace("TC-639", "FR-204-AC-24")]
+#[test]
+fn a_finite_workload_mean_time_over_mixed_delays_stays_unsupported() {
+    let world = uncertified_race(
+        "",
+        " and self.x >= 1 ms",
+        "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
+    );
+    is_unsupported_with(&world, "not-yet-implemented");
+}
+
 /// FR-204-AC-24: the checker rederives target nonreachability across both
 /// scheduler-chosen free delays.
 #[trace("TC-639", "FR-204-AC-24")]

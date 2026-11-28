@@ -11,13 +11,13 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use fsl_eval::simulation::model::{
-    en5_admission, Admission, ClaimForm, DelayClass, PredicateReading, ReadFrom, RegionCause,
-    RouteConditions,
+    en5_admission, workload_mean_time, Admission, ClaimForm, DelayClass, PredicateReading,
+    ReadFrom, RegionCause, RouteConditions,
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedTemporalFormula, ClaimActivation,
-    DelayDistribution, Event, FormulaNode, FractionMeasure, ProbForm, ProbScheduler, ReachTarget,
-    UnaryTemporal, Weighting,
+    DelayDistribution, Event, FormulaNode, FractionMeasure, ProbForm, ReachTarget, UnaryTemporal,
+    Weighting,
 };
 
 use super::*;
@@ -47,8 +47,7 @@ pub(super) fn certificate_route(
         form,
         read_from: position_of(system, timed, claim, cancel)?,
         takes_event_maximum,
-        workload_mean_time: matches!(claim.form, ProbForm::MeanTime { .. })
-            && matches!(claim.scheduler, ProbScheduler::Workload(_)),
+        workload_mean_time: workload_mean_time(claim),
     };
     match en5_admission(conditions) {
         Admission::Digital => Ok(TimedProbabilityRoute::Digital),
