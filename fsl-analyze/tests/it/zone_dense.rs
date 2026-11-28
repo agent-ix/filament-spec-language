@@ -8,7 +8,7 @@ use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::model_check::admit;
 use fsl_analyze::zone_check::{
     canonical_symbolic_state, settle_zone_check, Bound, Dbm, ZoneCheckLimits, ZoneCheckOutcome,
-    ZoneCheckRefusal, ZoneItem, ZoneReduction,
+    ZoneCheckRefusal, ZoneItem, ZoneReduction, ZoneUndecided,
 };
 use fsl_eval::simulation::model::TimedSystem;
 use fsl_eval::simulation::Permutation;
@@ -582,12 +582,13 @@ fn a_partial_class_fixes_the_timers_outside_it() {
     assert!(reproduced(&settlement), "{settlement:?}");
 }
 
-/// FR-160 over EN-6: a claim over an empty universe has no orbit to
-/// reduce, so under a selected symmetry it runs unreduced and its proof is
-/// certified, never `Reduced` with no reduction applied.
-#[trace("TC-1170", "FR-430-AC-3")]
+/// FR-125-AC-7: a claim over an empty universe has zero instances, so under
+/// a selected symmetry too the item is `Undecided(NoInstance)` with no state
+/// explored, never proved (the earlier `Holds` expectation predates the
+/// instance derivation of QSL-3600).
+#[trace("TC-1170", "FR-430-AC-3", "FR-125-AC-7", "FSpec-FR-361-AC-8")]
 #[test]
-fn symmetry_over_no_instance_runs_unreduced() {
+fn symmetry_over_no_instance_is_undecided_no_instance() {
     let empty = timers_over(false, "always holds(not t.inflight)", &[], &[]);
     let declared = Reductions {
         symmetry: vec![SymmetryDeclaration {
@@ -603,7 +604,14 @@ fn symmetry_over_no_instance_runs_unreduced() {
         &declared,
     );
     assert!(
-        matches!(outcome, ZoneCheckOutcome::Holds { .. }),
+        matches!(
+            outcome,
+            ZoneCheckOutcome::Undecided {
+                cause: ZoneUndecided::NoInstance,
+                stats,
+                ..
+            } if stats.symbolic_states == 0
+        ),
         "{outcome:?}"
     );
 }
