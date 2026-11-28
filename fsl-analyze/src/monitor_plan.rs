@@ -550,7 +550,6 @@ mod tests {
     /// dispatches `self.size()`, when `size`'s body returns `size` and its
     /// precondition is `self.versionNumber >= gate`.
     fn dispatch_closure(size: i64, gate: i64) -> BTreeMap<NodeKey, CheckedBody> {
-        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         use fsl_replay::spine::{self, ParseRequest, SpineLimits};
         fn fail<T>(failure: spine::FrontEndFailure) -> T {
             panic!("the unit compiles: {:?}", spine::refusal_or_fault(failure))

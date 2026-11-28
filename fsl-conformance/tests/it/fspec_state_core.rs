@@ -518,7 +518,6 @@ fn run_invocation(case: &Value) -> Result<Settled, String> {
 /// Parses and checks a unit against the model; the observation is a
 /// refusal's code or `Completed(true)` for a unit that checks.
 fn check_unit(unit: &str, model: Option<String>) -> Result<Observed, String> {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = match &model {
         Some(model) => fsl_semantics::model::intake::package_input([model.as_bytes()])
             .map_err(|refusal| format!("the model package: {refusal:?}"))?,

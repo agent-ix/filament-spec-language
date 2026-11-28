@@ -595,7 +595,6 @@ fn try_compile_supplied(
     inputs: &PackageInput,
     supplies: Supplies,
 ) -> Result<Value, Refusal> {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("catalog-source", name);
