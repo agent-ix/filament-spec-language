@@ -780,6 +780,7 @@ impl ReplayRefusal {
 
     /// The catalog cause tag under [`Self::code`], where the refusing stage
     /// or request check names one.
+    #[implements("FR-110-AC-16")]
     pub fn cause(&self) -> Option<&str> {
         match self {
             Self::Request(refusal) => refusal.cause(),
@@ -798,7 +799,7 @@ impl ReplayRefusal {
             Self::DependencySelections(_) => Some("invalid-value"),
             Self::PackageSources(_) => Some("invalid-value"),
             Self::PackageRead(_) | Self::HostAllocationFailed(_) => None,
-            Self::CatalogPackage(refusal) => refusal.cause.as_deref(),
+            Self::CatalogPackage(refusal) => refusal.reader_cause(),
             Self::DependencySources { .. } => Some("invalid-value"),
             Self::DependencyInput(refusal) => refusal.cause(),
             Self::UnknownFunction { .. }

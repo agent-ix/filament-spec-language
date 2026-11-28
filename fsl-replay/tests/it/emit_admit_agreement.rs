@@ -284,8 +284,8 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
     .expect_err("paired uncatalogued law mutation must retain its operation-law refusal");
     assert_eq!(catalog_refusal.code, fsl_foundation::Code::InvalidPackage);
     assert_eq!(
-        catalog_refusal.cause.as_deref(),
-        Some("operation-law-mismatch")
+        catalog_refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::OperationLawMismatch)
     );
     assert!(
         catalog_refusal
@@ -355,7 +355,10 @@ fn catalog_bound_package_reader_rejects_unknown_law_at_lock_row() {
     )
     .expect_err("unknown law must be refused by the catalog-bound reader");
     assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
-    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
+    assert_eq!(
+        refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::UnsupportedSelection)
+    );
     assert_eq!(
         refusal.pointer.as_deref(),
         Some(format!("/lock/definition_selections/{index}").as_str())
@@ -375,7 +378,10 @@ fn catalog_bound_package_reader_rejects_unknown_law_at_lock_row() {
     )
     .expect_err("the first bad definition row must win");
     assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
-    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
+    assert_eq!(
+        refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::UnsupportedSelection)
+    );
     assert_eq!(
         refusal.pointer.as_deref(),
         Some("/lock/definition_selections/0")
@@ -393,7 +399,10 @@ fn catalog_bound_package_reader_rejects_unknown_law_at_lock_row() {
     )
     .expect_err("unknown law authority must be refused");
     assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
-    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
+    assert_eq!(
+        refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::UnsupportedSelection)
+    );
     assert_eq!(
         refusal.pointer.as_deref(),
         Some(format!("/lock/definition_selections/{index}").as_str())
@@ -413,7 +422,10 @@ fn catalog_bound_package_reader_rejects_unknown_law_at_lock_row() {
     )
     .expect_err("layer identity in a law row must be refused");
     assert_eq!(refusal.code, fsl_foundation::Code::UnknownProfile);
-    assert_eq!(refusal.cause.as_deref(), Some("wrong-selection-role"));
+    assert_eq!(
+        refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::WrongSelectionRole)
+    );
     assert_eq!(
         refusal.pointer.as_deref(),
         Some(format!("/lock/definition_selections/{index}").as_str())

@@ -264,7 +264,7 @@ pub fn admit_checked_package_with_evidence_and_catalog(
             actual,
         ))),
         code: Code::StageLimitExceeded,
-        cause: Some("insufficient-next-charge".to_owned()),
+        cause: Some(CheckedPackageRefusalCause::InsufficientNextCharge),
         pointer,
         identity: None,
         host_allocation_failure: None,

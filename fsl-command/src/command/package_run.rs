@@ -15,7 +15,6 @@ use ix_trace_rs::implements;
 use std::path::Path;
 
 use fsl_replay::CertificationPolicy;
-use ix_trace_rs::implements;
 
 use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 

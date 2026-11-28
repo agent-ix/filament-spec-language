@@ -5,7 +5,6 @@ use ix_trace_rs::implements;
 
 use super::{dependency_manifest::Manifest, Intake, Result, RunCause};
 use filament_contract_model::CheckedPackageV2;
-use ix_trace_rs::implements;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Component, Path},

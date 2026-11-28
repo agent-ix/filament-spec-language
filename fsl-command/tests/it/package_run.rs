@@ -61,6 +61,103 @@ fn names(value: &Value, text: &str) {
     assert!(value.to_string().contains(text), "names {text}: {value}");
 }
 
+struct CatalogRefusalCase {
+    package: Value,
+    code: &'static str,
+    cause: &'static str,
+    path: String,
+}
+
+fn replace_definition_pair(value: &mut Value, authority: &str, old: &str, new: &str) -> usize {
+    match value {
+        Value::Object(object) => {
+            let matches = object.get("authority").and_then(Value::as_str) == Some(authority)
+                && object.get("identity").and_then(Value::as_str) == Some(old);
+            if matches {
+                object.insert("identity".to_owned(), new.into());
+            }
+            usize::from(matches)
+                + object
+                    .values_mut()
+                    .map(|child| replace_definition_pair(child, authority, old, new))
+                    .sum::<usize>()
+        }
+        Value::Array(values) => values
+            .iter_mut()
+            .map(|child| replace_definition_pair(child, authority, old, new))
+            .sum(),
+        _ => 0,
+    }
+}
+
+fn catalog_refusal_cases(original: &Value, index: usize) -> Vec<CatalogRefusalCase> {
+    let floor_authority = original["lock"]["definition_selections"][index]["authority"]
+        .as_str()
+        .expect("floor law authority");
+    let mut cases = Vec::new();
+    for (authority, identity, cause, row) in [
+        (
+            floor_authority,
+            "filament.value.integer-division.ceiling/v1",
+            "unsupported-selection",
+            index,
+        ),
+        ("agent-ix", "ext.retention", "unsupported-selection", index),
+        (
+            "another-authority",
+            "filament.value.integer-division.floor/v1",
+            "unsupported-selection",
+            index,
+        ),
+        (
+            floor_authority,
+            "filament.value.complete/v1",
+            "wrong-selection-role",
+            index,
+        ),
+    ] {
+        let mut package = original.clone();
+        package["lock"]["definition_selections"][index]["authority"] = authority.into();
+        package["lock"]["definition_selections"][index]["identity"] = identity.into();
+        cases.push(CatalogRefusalCase {
+            package,
+            code: "unknown_profile",
+            cause,
+            path: format!("/lock/definition_selections/{row}"),
+        });
+    }
+
+    let mut two_defects = original.clone();
+    two_defects["lock"]["definition_selections"][0]["identity"] =
+        "test:uncatalogued-first-row".into();
+    two_defects["lock"]["definition_selections"][index]["authority"] = "another-authority".into();
+    cases.push(CatalogRefusalCase {
+        package: two_defects,
+        code: "unknown_profile",
+        cause: "unsupported-selection",
+        path: "/lock/definition_selections/0".to_owned(),
+    });
+
+    let mut paired_law = original.clone();
+    paired_law["lock"]["definition_selections"][index]["identity"] =
+        "filament.value.integer-division.ceiling/v1".into();
+    let replaced = replace_definition_pair(
+        &mut paired_law,
+        floor_authority,
+        "filament.value.integer-division.floor/v1",
+        "filament.value.integer-division.ceiling/v1",
+    );
+    assert!(replaced >= 1, "operation law is paired with the lock row");
+    cases.push(CatalogRefusalCase {
+        package: paired_law,
+        code: "invalid_package",
+        cause: "operation-law-mismatch",
+        path: "/operation/laws/0/definition".to_owned(),
+    });
+
+    cases
+}
+
 /// FR-1039-AC-1, FR-100-AC-22, FR-945-AC-1: the package's recorded `floor`
 /// law evaluates `-7 div 2` to `-4` from the file and from the handoff
 /// directory with the source removed, the result echoing the selection;
@@ -182,29 +279,8 @@ fn package_analyze_rejects_an_unknown_law_at_its_lock_row() {
         format!("/lock/definition_selections/{index}"),
         "{refusal}"
     );
-    for (mutated, expected_cause) in [
-        (
-            {
-                let mut package = original.clone();
-                package["lock"]["definition_selections"][index]["authority"] =
-                    "another-authority".into();
-                package
-            },
-            "unsupported-selection",
-        ),
-        (
-            {
-                let mut package = original;
-                package["lock"]["definition_selections"][index]["identity"] =
-                    fsl_semantics::value::layer::HeaderLayer::ValueComplete
-                        .identity()
-                        .into();
-                package
-            },
-            "wrong-selection-role",
-        ),
-    ] {
-        std::fs::write(&path, serde_json::to_vec(&mutated).unwrap()).unwrap();
+    for case in catalog_refusal_cases(&original, index) {
+        std::fs::write(&path, serde_json::to_vec(&case.package).unwrap()).unwrap();
         let error = fsl_command::command::analyze(
             &request_path,
             &crate::negotiation::Fr290,
@@ -213,12 +289,13 @@ fn package_analyze_rejects_an_unknown_law_at_its_lock_row() {
         .expect_err("mutated law row must be refused before item settlement");
         assert_eq!(error.category().exit_code(), 20);
         let refusal = error.value().expect("a refusal document");
-        assert_eq!(refusal["code"], "unknown_profile", "{refusal}");
-        assert_eq!(refusal["cause"], expected_cause, "{refusal}");
-        assert_eq!(
-            refusal["details"]["path"],
-            format!("/lock/definition_selections/{index}"),
-            "{refusal}"
+        assert_eq!(refusal["code"], case.code, "{refusal}");
+        assert_eq!(refusal["cause"], case.cause, "{refusal}");
+        let path = refusal["details"]["path"].as_str().expect("refusal path");
+        assert!(
+            path.ends_with(&case.path),
+            "expected {} in {path}",
+            case.path
         );
     }
 }
@@ -233,6 +310,17 @@ fn package_run_rejects_an_unknown_law_at_its_lock_row() {
     let path = directory.path().join("package.json");
     let mut package: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let original = package.clone();
+    for package in [
+        json!({"file": "package.json"}),
+        json!({"directory": "handoff"}),
+    ] {
+        let (exit, value) = run(
+            directory.path(),
+            json!({"models": [], "package": package,
+                "call": {"function": "half", "arguments": []}}),
+        );
+        assert_eq!(exit, 0, "unchanged floor package must admit: {value}");
+    }
     let selections = package["lock"]["definition_selections"]
         .as_array_mut()
         .expect("definition selections");
@@ -271,29 +359,8 @@ fn package_run_rejects_an_unknown_law_at_its_lock_row() {
         );
     }
 
-    for (mutated, expected_cause) in [
-        (
-            {
-                let mut package = original.clone();
-                package["lock"]["definition_selections"][index]["authority"] =
-                    "another-authority".into();
-                package
-            },
-            "unsupported-selection",
-        ),
-        (
-            {
-                let mut package = original;
-                package["lock"]["definition_selections"][index]["identity"] =
-                    fsl_semantics::value::layer::HeaderLayer::ValueComplete
-                        .identity()
-                        .into();
-                package
-            },
-            "wrong-selection-role",
-        ),
-    ] {
-        let bytes = serde_json::to_vec(&mutated).unwrap();
+    for case in catalog_refusal_cases(&original, index) {
+        let bytes = serde_json::to_vec(&case.package).unwrap();
         std::fs::write(&path, &bytes).unwrap();
         std::fs::write(
             directory.path().join("handoff/checked-package.json"),
@@ -310,12 +377,17 @@ fn package_run_rejects_an_unknown_law_at_its_lock_row() {
                     "call": {"function": "half", "arguments": []}}),
             );
             assert_eq!(exit, 20, "{refusal}");
-            assert_eq!(refusal["code"], "unknown_profile", "{refusal}");
-            assert_eq!(refusal["cause"], expected_cause, "{refusal}");
-            assert_eq!(
-                refusal["details"]["path"],
-                format!("{path_prefix}/lock/definition_selections/{index}"),
-                "{refusal}"
+            assert_eq!(refusal["code"], case.code, "{refusal}");
+            assert_eq!(refusal["cause"], case.cause, "{refusal}");
+            let expected_path = if case.path == "/operation/laws/0/definition" {
+                case.path.as_str().to_owned()
+            } else {
+                format!("{path_prefix}{}", case.path)
+            };
+            let path = refusal["details"]["path"].as_str().expect("refusal path");
+            assert!(
+                path.ends_with(&expected_path),
+                "expected {expected_path} in {path}"
             );
         }
     }

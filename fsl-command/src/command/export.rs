@@ -988,7 +988,7 @@ mod tests {
             let cause = admission_cause(fsl_package::PackageAdmissionRefusal {
                 limit: None,
                 code,
-                cause: Some("invalid-value".to_owned()),
+                cause: Some(filament_contract_model::CheckedPackageRefusalCause::InvalidValue),
                 pointer: Some("/claim_names/2".to_owned()),
                 identity: None,
                 host_allocation_failure: None,

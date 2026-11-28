@@ -175,6 +175,104 @@ fn wire(artifact: &DependencyArtifact) -> Value {
     serde_json::from_slice(&artifact.bytes).expect("the library wire")
 }
 
+struct CatalogRefusalCase {
+    package: Value,
+    code: Code,
+    cause: filament_contract_model::CheckedPackageRefusalCause,
+    pointer_suffix: String,
+}
+
+fn replace_definition_pair(value: &mut Value, authority: &str, old: &str, new: &str) -> usize {
+    match value {
+        Value::Object(object) => {
+            let matches = object.get("authority").and_then(Value::as_str) == Some(authority)
+                && object.get("identity").and_then(Value::as_str) == Some(old);
+            if matches {
+                object.insert("identity".to_owned(), new.into());
+            }
+            usize::from(matches)
+                + object
+                    .values_mut()
+                    .map(|child| replace_definition_pair(child, authority, old, new))
+                    .sum::<usize>()
+        }
+        Value::Array(values) => values
+            .iter_mut()
+            .map(|child| replace_definition_pair(child, authority, old, new))
+            .sum(),
+        _ => 0,
+    }
+}
+
+fn catalog_refusal_cases(original: &Value, index: usize) -> Vec<CatalogRefusalCase> {
+    let floor_authority = original["lock"]["definition_selections"][index]["authority"]
+        .as_str()
+        .expect("floor law authority");
+    let mut cases = Vec::new();
+    for (authority, identity, cause) in [
+        (
+            floor_authority,
+            "filament.value.integer-division.ceiling/v1",
+            filament_contract_model::CheckedPackageRefusalCause::UnsupportedSelection,
+        ),
+        (
+            "agent-ix",
+            "ext.retention",
+            filament_contract_model::CheckedPackageRefusalCause::UnsupportedSelection,
+        ),
+        (
+            "another-authority",
+            "filament.value.integer-division.floor/v1",
+            filament_contract_model::CheckedPackageRefusalCause::UnsupportedSelection,
+        ),
+        (
+            floor_authority,
+            "filament.value.complete/v1",
+            filament_contract_model::CheckedPackageRefusalCause::WrongSelectionRole,
+        ),
+    ] {
+        let mut package = original.clone();
+        package["lock"]["definition_selections"][index]["authority"] = authority.into();
+        package["lock"]["definition_selections"][index]["identity"] = identity.into();
+        cases.push(CatalogRefusalCase {
+            package,
+            code: Code::UnknownProfile,
+            cause,
+            pointer_suffix: format!("/lock/definition_selections/{index}"),
+        });
+    }
+
+    let mut two_defects = original.clone();
+    two_defects["lock"]["definition_selections"][0]["identity"] =
+        "test:uncatalogued-first-row".into();
+    two_defects["lock"]["definition_selections"][index]["authority"] = "another-authority".into();
+    cases.push(CatalogRefusalCase {
+        package: two_defects,
+        code: Code::UnknownProfile,
+        cause: filament_contract_model::CheckedPackageRefusalCause::UnsupportedSelection,
+        pointer_suffix: "/lock/definition_selections/0".to_owned(),
+    });
+
+    let mut paired_law = original.clone();
+    paired_law["lock"]["definition_selections"][index]["identity"] =
+        "filament.value.integer-division.ceiling/v1".into();
+    let replaced = replace_definition_pair(
+        &mut paired_law,
+        floor_authority,
+        "filament.value.integer-division.floor/v1",
+        "filament.value.integer-division.ceiling/v1",
+    );
+    assert!(replaced >= 1, "operation law is paired with the lock row");
+    cases.push(CatalogRefusalCase {
+        package: paired_law,
+        code: Code::InvalidPackage,
+        cause: filament_contract_model::CheckedPackageRefusalCause::OperationLawMismatch,
+        pointer_suffix: "/operation/laws/0/definition".to_owned(),
+    });
+
+    cases
+}
+
 /// FR-110-AC-16: the replay package route preserves a catalog-bound lock-row
 /// refusal instead of collapsing it to a malformed-package result.
 #[trace("FR-110-AC-16", "TC-3217")]
@@ -199,41 +297,44 @@ fn replay_handoff_applies_the_supplied_definition_catalog() {
         &mut join_budget(),
     )
     .expect("unchanged floor package admits on the replay route");
-    let mut package = wire(&root);
+    let package = wire(&root);
     let selections = package["lock"]["definition_selections"]
-        .as_array_mut()
+        .as_array()
         .expect("definition selections");
-    let (index, row) = selections
-        .iter_mut()
+    let (index, _) = selections
+        .iter()
         .enumerate()
         .find(|(_, row)| {
             row["identity"] == fsl_semantics::value::DefinitionRole::IntegerDivisionFloor.identity()
         })
         .expect("floor law row");
-    row["identity"] = "filament.value.integer-division.ceiling/v1".into();
-    let bytes = serde_json::to_vec(&package).expect("serialize lock-row mutation");
-    let refusal = HandoffSupply {
-        dependencies: &[],
-        identities: &root.identity_bytes,
-        equality: Some(&root.equality_bytes),
-        definition_catalog: Some(&catalog),
+    for case in catalog_refusal_cases(&wire(&root), index) {
+        let bytes = serde_json::to_vec(&case.package).expect("serialize catalog mutation");
+        let refusal = HandoffSupply {
+            dependencies: &[],
+            identities: &root.identity_bytes,
+            equality: Some(&root.equality_bytes),
+            definition_catalog: Some(&catalog),
+        }
+        .admit_package(
+            &bytes,
+            &Default::default(),
+            read_limits(),
+            &mut join_budget(),
+        )
+        .expect_err("catalog mutation must be refused before replay");
+        let ReplayRefusal::CatalogPackage(refusal) = refusal else {
+            panic!("catalog refusal was collapsed: {refusal:?}");
+        };
+        assert_eq!(refusal.code, case.code);
+        assert_eq!(refusal.cause, Some(case.cause));
+        let pointer = refusal.pointer.as_deref().expect("refusal pointer");
+        assert!(
+            pointer.ends_with(&case.pointer_suffix),
+            "expected {} in {pointer}",
+            case.pointer_suffix
+        );
     }
-    .admit_package(
-        &bytes,
-        &Default::default(),
-        read_limits(),
-        &mut join_budget(),
-    )
-    .expect_err("uncatalogued law row must be refused before replay");
-    let ReplayRefusal::CatalogPackage(refusal) = refusal else {
-        panic!("catalog refusal was collapsed: {refusal:?}");
-    };
-    assert_eq!(refusal.code, Code::UnknownProfile);
-    assert_eq!(refusal.cause.as_deref(), Some("unsupported-selection"));
-    assert_eq!(
-        refusal.pointer.as_deref(),
-        Some(format!("/lock/definition_selections/{index}").as_str())
-    );
 }
 
 /// Handoff admission refuses a second artifact under one library identity by
