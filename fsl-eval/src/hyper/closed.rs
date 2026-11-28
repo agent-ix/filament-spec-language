@@ -693,6 +693,9 @@ pub fn judge_closed_tuple(
             ClosedVerdict::Undefined(atom) if atom.position < found.position => {
                 ClosedVerdict::Undefined(atom)
             }
+            // A body stop that ranks before the `match` conjunct's position
+            // is the finding: it leaves the tuple undecided (FR-177).
+            stop @ ClosedVerdict::Incomplete { position, .. } if position < found.position => stop,
             _ => ClosedVerdict::Undefined(found),
         },
     }

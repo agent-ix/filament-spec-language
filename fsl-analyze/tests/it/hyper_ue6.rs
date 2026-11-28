@@ -1096,7 +1096,11 @@ fn a_refused_match_does_not_hide_a_body_atom_undefined_at_an_earlier_position() 
         GUARDED,
         false,
         &[(0, 0)],
-        &forall_exists("ep", "", "eventually [0, 3] holds(quotient(v.l @ b) >= 0)"),
+        &forall_exists(
+            "ep",
+            "match { a.step.Vault::step.i = b.step.Vault::step.i }",
+            "eventually [0, 3] holds(quotient(v.l @ b) >= 0)",
+        ),
         QUOTIENT,
     );
     let seams = world.seams();
@@ -1300,4 +1304,78 @@ fn a_body_meter_stop_ranks_first_and_never_yields_to_a_later_undefined_partner()
             "{stopped_first}: {settled}"
         );
     }
+}
+
+/// `μ_E` has no value on every joint step.
+struct UndefinedMatch<'w>(crate::hyper_world::Seams<'w>);
+
+impl StepMatch for UndefinedMatch<'_> {
+    fn universal(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        self.0.universal(instance, steps, meter)
+    }
+
+    fn existential(
+        &self,
+        _instance: &[ParameterBinding],
+        _steps: &[StepLabel<'_>],
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        Ok(MatchReading::Undefined {
+            conjunct: 0,
+            cause: DIVISION,
+        })
+    }
+}
+
+/// FR-177 "Ranking findings": `μ_E` has no value at joint 1 and the body's
+/// evaluation then runs out of meter at no reported position (rank 0). By hand
+/// the stop at position 0 is before the undefined `match` at position 1, so the
+/// tuple is `Undecided`, never refuted at joint 1.
+#[trace("TC-2243", "FR-177-AC-14")]
+#[test]
+fn a_body_meter_stop_ranks_before_an_undefined_match_at_joint_1() {
+    use fsl_eval::hyper::search_partner;
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        &forall_exists(
+            "ep",
+            "match { a.step.Vault::step.i = b.step.Vault::step.i }",
+            "holds(v.l @ b >= 0)",
+        ),
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let partners = vec![walk(systems[1], &[0])];
+    let matcher = UndefinedMatch(world.seams());
+    let letters = IncompleteOn {
+        seams: world.seams(),
+        states: &partners[0].states,
+    };
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &letters,
+        matcher: &matcher,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    let settled = format!(
+        "{:?}",
+        search_partner(&inputs, &[&a], &[partners.as_slice()], 100)
+    );
+    assert!(
+        settled.starts_with("Stopped(Incomplete") && settled.contains("position: 0"),
+        "{settled}"
+    );
 }
