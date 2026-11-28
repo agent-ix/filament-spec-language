@@ -4789,6 +4789,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::Clause(prepared) => {
             let PreparedClauseRun { request, sources } = *prepared;
             let selection = request.selection.clone();
+            // Retain the checked emission's map for text witnesses; the shared Arc avoids a deep map clone.
             let (report, source_map) = fsl_replay::spine::run_clause_with_source_map(*request)
                 .map_err(|error| RunCause::ClauseRequest {
                     member: "clause".to_owned(),

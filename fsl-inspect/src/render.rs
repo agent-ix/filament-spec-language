@@ -147,12 +147,6 @@ impl RenderSources {
         }
     }
 
-    /// Retain the admitted package's source correspondence for text witnesses.
-    pub fn with_emission(mut self, emission: &fsl_package::Emission) -> Self {
-        self.source_map = Some(emission.source_map_shared());
-        self
-    }
-
     /// Retain a shared admitted package source map for text witnesses.
     pub fn with_source_map(mut self, source_map: Arc<PackageSourceMap>) -> Self {
         self.source_map = Some(source_map);
@@ -502,7 +496,9 @@ fn outcome_text(
                 .get("witness")
                 .filter(|witness| !witness.is_null())
             {
-                writer.unit(|| format!("{}\n", witness_line(witness, sources)))?;
+                if let Some(line) = witness_line(witness, sources) {
+                    writer.unit(|| format!("{line}\n"))?;
+                }
             }
         }
     }
@@ -540,14 +536,18 @@ fn outcome_text(
     Ok(())
 }
 
-fn witness_line(witness: &serde_json::Value, sources: &RenderSources) -> String {
+fn witness_line(witness: &serde_json::Value, sources: &RenderSources) -> Option<String> {
     let Some(operands) = witness
         .get("operands")
         .and_then(serde_json::Value::as_array)
     else {
-        return format!("  witness: {}", canonical_json(witness));
+        return None;
     };
-    let names = witness_operand_names(witness, sources);
+    let names = if operands.len() == 2 {
+        witness_operand_names(witness, sources)
+    } else {
+        [None, None]
+    };
     let rendered = operands
         .iter()
         .take(8)
@@ -568,9 +568,9 @@ fn witness_line(witness: &serde_json::Value, sources: &RenderSources) -> String 
         .join(", ");
     let omitted = operands.len().saturating_sub(8);
     if omitted == 0 {
-        format!("  witness: {rendered}")
+        Some(format!("  witness: {rendered}"))
     } else {
-        format!("  witness: {rendered}, ... ({omitted} more)")
+        Some(format!("  witness: {rendered}, ... ({omitted} more)"))
     }
 }
 
@@ -591,16 +591,36 @@ fn witness_operand_names(
     let Some(source_map) = sources.source_map.as_ref() else {
         return unavailable();
     };
-    let Some(node_text) = witness
+    let Some(comparison_wire) = witness
         .get("deciding_comparison")
-        .and_then(|comparison| comparison.get("node_id"))
+    else {
+        return unavailable();
+    };
+    let Some(node_text) = comparison_wire
+        .get("node_id")
         .and_then(serde_json::Value::as_str)
     else {
+        return unavailable();
+    };
+    let (Some(role), Some(ordinal)) = (
+        comparison_wire.get("role").and_then(serde_json::Value::as_str),
+        comparison_wire
+            .get("ordinal")
+            .and_then(serde_json::Value::as_u64),
+    ) else {
         return unavailable();
     };
     let Ok(comparison) = fsl_foundation::node_wire::node_key_from_text(node_text) else {
         return unavailable();
     };
+    let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+        comparison.clone(),
+        fsl_foundation::source::provenance::Origin::new(
+            fsl_foundation::source::provenance::Role::new(role),
+            ordinal,
+        ),
+    );
+    let scope = source_map.regions(&occurrence);
     let mut segments = comparison.path().into_iter();
     if !matches!(segments.next(), Some(filament_exact::PathSegment::Text(text)) if text == "expression")
         || !matches!(segments.next(), Some(filament_exact::PathSegment::Text(text)) if text == "binary")
@@ -634,8 +654,9 @@ fn witness_operand_names(
     };
     let mut operands = operands.into_iter();
     [operands.next(), operands.next()].map(|node| {
-        node.flatten()
-            .and_then(|node| source_spelling(source_map, &node, &sources.sources))
+        node.flatten().and_then(|node| {
+            source_spelling(source_map, &node, scope, &sources.sources)
+        })
     })
 }
 
@@ -649,39 +670,59 @@ fn is_expression_node(node: &filament_exact::NodeKey) -> bool {
 fn source_spelling(
     source_map: &PackageSourceMap,
     node: &filament_exact::NodeKey,
+    scope: Option<&[SourceRegion]>,
     sources: &[Source],
 ) -> Option<String> {
     let mut spelling: Option<String> = None;
+    let mut found_region = false;
     for (_, regions) in source_map.occurrences(node) {
         for region in regions {
+            if scope.is_some_and(|scope| {
+                !scope.iter().any(|parent| {
+                    parent.source() == region.source()
+                        && parent.start() <= region.start()
+                        && region.end() <= parent.end()
+                })
+            }) {
+                continue;
+            }
+            found_region = true;
             let Some(source) = sources
                 .iter()
                 .find(|source| source.reference() == region.source())
             else {
-                continue;
+                return None;
             };
             let (Ok(start), Ok(end)) = (
                 usize::try_from(region.start()),
                 usize::try_from(region.end()),
             ) else {
-                continue;
+                return None;
             };
-            if let Some(region_spelling) = source.text().get(start..end) {
-                let region_spelling = region_spelling.trim();
-                if !region_spelling.is_empty() {
-                    let region_spelling = truncate_spelling(region_spelling);
-                    if spelling
-                        .as_ref()
-                        .is_some_and(|existing| existing != &region_spelling)
-                    {
-                        return None;
-                    }
-                    spelling = Some(region_spelling);
-                }
+            let Some(region_spelling) = source.text().get(start..end) else {
+                return None;
+            };
+            let normalized = normalize_spelling(region_spelling);
+            if normalized.is_empty() {
+                return None;
             }
+            if spelling
+                .as_ref()
+                .is_some_and(|existing| existing != &normalized)
+            {
+                return None;
+            }
+            spelling = Some(normalized);
         }
     }
-    spelling
+    if !found_region {
+        return None;
+    }
+    spelling.map(|spelling| truncate_spelling(&spelling))
+}
+
+fn normalize_spelling(spelling: &str) -> String {
+    spelling.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn truncate_spelling(spelling: &str) -> String {
@@ -2709,6 +2750,7 @@ mod tests {
             ),
             (occurrence(total.clone()), vec![region_for("self.total")]),
             (occurrence(int_type.clone()), vec![region_for("self.total")]),
+            (occurrence(comparison.clone()), vec![region_for(text)]),
         ])
         .expect("fixture source map is valid");
         let sources = RenderSources {
@@ -2730,7 +2772,7 @@ mod tests {
 
         assert_eq!(
             witness_line(&witness, &sources),
-            "  witness: self.charged = 4000, self.total = 4200"
+            Some("  witness: self.charged = 4000, self.total = 4200".to_owned())
         );
 
         let literal_comparison = node(
@@ -2747,7 +2789,9 @@ mod tests {
         let literal_witness = serde_json::json!({
             "deciding_comparison": {
                 "node_id": fsl_foundation::node_wire::node_key_to_text(&literal_comparison)
-                    .expect("literal comparison encodes")
+                    .expect("literal comparison encodes"),
+                "role": "expression",
+                "ordinal": 0
             },
             "operands": [
                 {"kind": "integer", "decimal": "4000"},
@@ -2756,12 +2800,39 @@ mod tests {
         });
         assert_eq!(
             witness_line(&literal_witness, &sources),
-            "  witness: self.charged = 4000, operand 2 = 7"
+            Some("  witness: self.charged = 4000, operand 2 = 7".to_owned())
         );
+
+        let one_operand = serde_json::json!({
+            "deciding_comparison": witness["deciding_comparison"],
+            "operands": [{"kind": "integer", "decimal": "4000"}]
+        });
+        assert_eq!(
+            witness_line(&one_operand, &sources),
+            Some("  witness: operand 1 = 4000".to_owned())
+        );
+        let three_operands = serde_json::json!({
+            "deciding_comparison": witness["deciding_comparison"],
+            "operands": [
+                {"kind": "integer", "decimal": "4000"},
+                {"kind": "integer", "decimal": "4200"},
+                {"kind": "integer", "decimal": "5000"}
+            ]
+        });
+        assert_eq!(
+            witness_line(&three_operands, &sources),
+            Some("  witness: operand 1 = 4000, operand 2 = 4200, operand 3 = 5000".to_owned())
+        );
+        assert_eq!(witness_line(&serde_json::json!({"operands": null}), &sources), None);
+        assert_eq!(witness_line(&serde_json::json!({}), &sources), None);
 
         let long = "self.".to_owned() + &"a".repeat(61);
         let expected = "self.".to_owned() + &"a".repeat(55) + "...";
         assert_eq!(truncate_spelling(&long), expected);
+        assert_eq!(
+            truncate_spelling(&"é".repeat(61)),
+            "é".repeat(60) + "..."
+        );
 
         let many_operands = serde_json::json!({
             "operands": (0..10)
@@ -2770,13 +2841,13 @@ mod tests {
         });
         assert_eq!(
             witness_line(&many_operands, &RenderSources::from_sources([])),
-            "  witness: operand 1 = 0, operand 2 = 1, operand 3 = 2, operand 4 = 3, operand 5 = 4, operand 6 = 5, operand 7 = 6, operand 8 = 7, ... (2 more)"
+            Some("  witness: operand 1 = 0, operand 2 = 1, operand 3 = 2, operand 4 = 3, operand 5 = 4, operand 6 = 5, operand 7 = 6, operand 8 = 7, ... (2 more)".to_owned())
         );
 
         let without_map = RenderSources::from_sources(Vec::new());
         assert_eq!(
             witness_line(&witness, &without_map),
-            "  witness: operand 1 = 4000, operand 2 = 4200"
+            Some("  witness: operand 1 = 4000, operand 2 = 4200".to_owned())
         );
 
         let partial_map = PackageSourceMap::from_entries([(
@@ -2790,7 +2861,125 @@ mod tests {
         };
         assert_eq!(
             witness_line(&witness, &partial_sources),
-            "  witness: self.charged = 4000, operand 2 = 4200"
+            Some("  witness: self.charged = 4000, operand 2 = 4200".to_owned())
+        );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn text_witness_source_names_require_unanimous_in_scope_valid_regions() {
+        use fsl_foundation::source::provenance::{
+            OccurrenceKey, Origin, PackageSourceMap, RawSourceRef, Role, SourceRegion,
+        };
+
+        let text = "self.\n  charged self.total é";
+        let source = source_under("paid-short", "rules/paid-in-full.fsl", text);
+        let region = |spelling: &str| {
+            let start = text.find(spelling).expect("spelling is present");
+            source
+                .region(Span {
+                    start,
+                    end: start + spelling.len(),
+                })
+                .expect("fixture region is valid")
+        };
+        let node = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![
+                filament_exact::PathSegment::Text("expression".to_owned()),
+                filament_exact::PathSegment::Text("query".to_owned()),
+            ],
+            0,
+        )
+        .expect("operand node key is valid");
+        let occurrence = |ordinal| {
+            OccurrenceKey::new(
+                node.clone(),
+                Origin::new(Role::new("expression"), ordinal),
+            )
+        };
+        let sources = [source.clone()];
+
+        let multiline = PackageSourceMap::from_entries([(
+            occurrence(0),
+            vec![region("self.\n  charged")],
+        )])
+        .expect("multiline source map is valid");
+        assert_eq!(
+            source_spelling(&multiline, &node, None, &sources),
+            Some("self. charged".to_owned())
+        );
+
+        let scoped = PackageSourceMap::from_entries([
+            (occurrence(0), vec![region("self.\n  charged")]),
+            (occurrence(1), vec![region("self.total")]),
+        ])
+        .expect("scoped source map is valid");
+        let clause_scope = [region("self.\n  charged")];
+        assert_eq!(
+            source_spelling(&scoped, &node, Some(&clause_scope), &sources),
+            Some("self. charged".to_owned())
+        );
+        assert_eq!(
+            source_spelling(&scoped, &node, None, &sources),
+            None,
+            "different relevant source spellings are ambiguous"
+        );
+
+        let absent_source = RawSourceRef::new("agent-ix", "test:absent-source")
+            .expect("source identity is valid");
+        let absent_region = SourceRegion::new(absent_source, 0, 12)
+            .expect("absent-source region is structurally valid");
+        let missing_file = PackageSourceMap::from_entries([
+            (occurrence(0), vec![region("self.\n  charged")]),
+            (occurrence(1), vec![absent_region]),
+        ])
+        .expect("multi-file source map is valid");
+        assert_eq!(
+            source_spelling(&missing_file, &node, None, &sources),
+            None,
+            "an unavailable source reference makes the name unknown"
+        );
+
+        let out_of_range = PackageSourceMap::from_entries([(
+            occurrence(0),
+            vec![SourceRegion::new(source.reference().clone(), 1000, 1005)
+                .expect("out-of-range region remains structurally valid")],
+        )])
+        .expect("out-of-range source map is valid");
+        assert_eq!(
+            source_spelling(&out_of_range, &node, None, &sources),
+            None
+        );
+
+        let non_boundary = PackageSourceMap::from_entries([(
+            occurrence(0),
+            vec![SourceRegion::new(source.reference().clone(), 28, 29)
+                .expect("non-character-boundary region is structurally valid")],
+        )])
+        .expect("non-character-boundary source map is valid");
+        assert_eq!(
+            source_spelling(&non_boundary, &node, None, &sources),
+            None
+        );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn text_refuted_stop_witness_without_operands_is_omitted() {
+        let stop_witness = serde_json::json!({
+            "deciding_element": {"kind": "boolean", "value": false},
+            "operands": null
+        });
+        assert_eq!(
+            witness_line(&stop_witness, &RenderSources::from_sources([])),
+            None
+        );
+        assert_eq!(
+            witness_line(&serde_json::json!({}), &RenderSources::from_sources([])),
+            None
         );
     }
 
