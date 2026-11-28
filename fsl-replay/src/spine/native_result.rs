@@ -2797,7 +2797,7 @@ pub fn temporal_disposition_json(
     let (category, basis, truth, outcome, temporal) = match result {
         Ok(evaluated) => {
             let verdict = super::clause::verdict(evaluated.clone());
-            let category = ClauseDisposition::Temporal(verdict.clone()).category_label();
+            let category = ClauseDisposition::Temporal(verdict.clone()).category();
             let basis = verdict.basis().as_str();
             match &verdict {
                 TemporalVerdict::Violated { at } => {
@@ -2842,7 +2842,7 @@ pub fn temporal_disposition_json(
         }
         Err(refused) => {
             let refusal = super::clause::trace_refusal(refused.clone());
-            let category = ClauseDisposition::TemporalRefusal(refusal.clone()).category_label();
+            let category = ClauseDisposition::TemporalRefusal(refusal.clone()).category();
             let (wire, outcome) =
                 temporal::refusal_wire(&refusal).ok_or(NativeRunResultError::Counterexample)?;
             (
@@ -2854,16 +2854,133 @@ pub fn temporal_disposition_json(
             )
         }
     };
-    let mut disposition = serde_json::json!({
-        "stage": "evaluate", "category": category, "basis": basis, "temporal": temporal,
-    });
-    if let Some(truth) = truth {
-        disposition["truth"] = serde_json::json!(truth);
-    }
-    if let Some(outcome) = outcome {
-        disposition["outcome"] = serde_json::to_value(outcome)?;
-    }
+    // The member list is the declared `Disposition`'s; `basis` is the
+    // analyze item's own member, read back into its `axes.settlement`.
+    let mut disposition = Disposition::new(super::ClauseRunStage::Evaluate, Category::of(category));
+    disposition.truth = truth;
+    disposition.outcome = outcome;
+    disposition.temporal = Some(temporal);
+    let mut disposition = serde_json::to_value(&disposition)?;
+    disposition["basis"] = serde_json::json!(basis);
     Ok(disposition)
+}
+
+/// One value-invariant item's result (FR-652).
+#[derive(Clone, Debug)]
+pub enum ItemRunOutcome {
+    /// The invariant was evaluated: `true` holds, `false` is violated.
+    Settled(bool),
+    /// The item was refused or incomplete at admission, with its catalog
+    /// `code`, `cause` and text `fields`.
+    Unadmitted {
+        /// `incomplete` when true, `refusal` when false.
+        incomplete: bool,
+        /// The catalog code.
+        code: String,
+        /// The catalog cause.
+        cause: String,
+        /// The record's text fields.
+        fields: BTreeMap<&'static str, String>,
+    },
+}
+
+/// FR-652, FSpec FR-352: the `native-run-result/2` clause-run document of one
+/// value-invariant item, written through the one declared document type.
+/// `usage` is the admission consumed.
+///
+/// # Errors
+///
+/// [`NativeRunResultError`] when the declared document does not encode.
+pub fn item_run_result_value(
+    outcome: &ItemRunOutcome,
+    usage: &fsl_semantics::model::observation::AdmissionUsage,
+) -> Result<serde_json::Value, NativeRunResultError> {
+    use crate::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
+    let (disposition, basis, axes) = match outcome {
+        ItemRunOutcome::Settled(holds) => {
+            let mut disposition = Disposition::new(
+                super::ClauseRunStage::Evaluate,
+                if *holds {
+                    Category::Success
+                } else {
+                    Category::Violation
+                },
+            );
+            disposition.truth = Some(*holds);
+            disposition.outcome = Some(Outcome::Completed {
+                value: OutcomeValue::Boolean { value: *holds },
+            });
+            (
+                disposition,
+                SettlementBasis::ClosedScope,
+                OutcomeAxes {
+                    activation: ActivationAxis::Active,
+                    execution: Some(ExecutionAxis::Completed),
+                    truth: Some(if *holds {
+                        TruthAxis::True
+                    } else {
+                        TruthAxis::False
+                    }),
+                    settlement: Some(SettlementBasis::ClosedScope),
+                },
+            )
+        }
+        ItemRunOutcome::Unadmitted {
+            incomplete,
+            code,
+            cause,
+            fields,
+        } => {
+            let mut disposition = Disposition::new(
+                super::ClauseRunStage::Admit,
+                if *incomplete {
+                    Category::Incomplete
+                } else {
+                    Category::Refusal
+                },
+            );
+            disposition.refusal =
+                Some(RefusalRecord::new(code, Some(cause)).fields(fields.clone()));
+            (
+                disposition,
+                SettlementBasis::Unavailable,
+                OutcomeAxes {
+                    activation: ActivationAxis::Unavailable,
+                    execution: None,
+                    truth: None,
+                    settlement: Some(SettlementBasis::Unavailable),
+                },
+            )
+        }
+    };
+    let document = ClauseRunDocument {
+        format: RunResultFormat,
+        disposition,
+        usage: Usage {
+            admission: AdmissionUsage {
+                document_bytes: usage.document_bytes,
+                objects: usage.objects,
+                values: usage.values,
+            },
+            evaluation_admissions: 0,
+            evaluation_consumed: Vec::new(),
+        },
+        basis,
+        witness: None,
+        extraction: None,
+        ledger: None,
+        limits: None,
+        axes,
+        support: None,
+        late: None,
+        admitted_late: None,
+        result_identity: None,
+        input_identity: None,
+        relation: None,
+        lineage: None,
+        evidence_ledger: None,
+    };
+    Ok(serde_json::to_value(&document)?)
 }
 
 /// Serialize one FR-109 report as RFC 8785 `native-run-result/2` bytes.

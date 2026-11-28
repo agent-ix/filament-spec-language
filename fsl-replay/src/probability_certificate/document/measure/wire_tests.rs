@@ -106,6 +106,14 @@ fn measure_document_bytes_are_unchanged_and_round_trip() {
     }
 }
 
+/// The document with `values` an object, which is well-formed JSON of the
+/// wrong shape.
+fn wrong_values(good: &str) -> String {
+    let mut document: serde_json::Value = serde_json::from_str(good).expect("well-formed JSON");
+    document["values"] = serde_json::json!({"x": []});
+    document.to_string()
+}
+
 /// FR-201-AC-9: the strict reader refuses extra members and wrong shapes.
 #[trace("FR-201-AC-9")]
 #[test]
@@ -118,7 +126,7 @@ fn measure_document_reader_refuses_unknown_members_and_wrong_shapes() {
         good.replacen("\"ordinal\":3", "\"ordinal\":3,\"extra\":1", 1),
         good.replacen("\"numerator\":\"2\"", "\"numerator\":\"2\",\"extra\":1", 1),
         good.replacen("\"window\":4", "\"window\":\"4\"", 1),
-        good.replacen("\"values\":[", "\"values\":{\"x\":[", 1),
+        wrong_values(&good),
         good.replacen("\"kind\":\"exact\"", "\"kind\":7", 1),
     ];
     for case in cases {

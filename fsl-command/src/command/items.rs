@@ -6,7 +6,6 @@ use super::{
     RunLimits, RunResult,
 };
 use serde_json::{json, Map, Value};
-use ix_trace_rs::implements;
 use std::path::Path;
 
 const FORMAT: &str = fsl_foundation::wire_format::WireFormat::RunItems.as_str();
@@ -641,7 +640,7 @@ pub(super) fn run_bytes(
     let mut exit_code = 0;
     for (index, object, execution) in prepared {
         let (value, item_exit) = match execution {
-            ItemExecution::PopulationNotHeld(population) => (population_refusal(&population), 20),
+            ItemExecution::PopulationNotHeld(population) => (population_refusal(&population)?, 20),
             ItemExecution::ValueInvariants(result) => match result {
                 Ok((results, item_exit)) => {
                     exit_code = more_severe(exit_code, item_exit);
@@ -927,17 +926,16 @@ fn value_invariant_items(
                 .results
                 .iter()
                 .map(|result| {
-                    let holds = result.holds();
-                    json!({
+                    Ok(json!({
                         "invariant": {"package": result.clause.package, "node": result.clause.node},
                         "path": fsl_replay::runtime_value_path_json(&result.path),
-                        "result": invariant_result(
-                            if holds { "success" } else { "violation" },
-                            "evaluate", Some(holds), None, &outcome.admission_usage,
-                        ),
-                    })
+                        "result": item_document(
+                            &fsl_replay::spine::ItemRunOutcome::Settled(result.holds()),
+                            &outcome.admission_usage,
+                        )?,
+                    }))
                 })
-                .collect();
+                .collect::<Result<Vec<_>>>()?;
             let exit = match outcome.evaluation.outcome {
                 fsl_eval::value::ValueInvariantOutcome::True => 0,
                 fsl_eval::value::ValueInvariantOutcome::False => 10,
@@ -946,31 +944,21 @@ fn value_invariant_items(
             Ok((values, exit))
         }
         Err(fsl_replay::spine::ValueInvariantsBatchFailure::Admission(failure)) => {
-            let (category, exit, code, cause, fields) = match failure {
-                AdmissionFailure::Refused(record) => (
-                    "refusal",
-                    20,
-                    record.catalog.code().to_owned(),
-                    record.catalog.cause().to_owned(),
-                    serde_json::to_value(record.fields).unwrap_or(Value::Null),
-                ),
-                AdmissionFailure::Incomplete(record) => (
-                    "incomplete",
-                    22,
-                    record.catalog.code().to_owned(),
-                    record.catalog.cause().to_owned(),
-                    serde_json::to_value(record.fields).unwrap_or(Value::Null),
-                ),
+            let (incomplete, exit, record) = match failure {
+                AdmissionFailure::Refused(record) => (false, 20, record),
+                AdmissionFailure::Incomplete(record) => (true, 22, record),
                 AdmissionFailure::Fault(_) => return Err(RunCause::ItemsFault),
             };
-            Ok((
-                vec![json!({"result": invariant_result(
-                    category, "admit", None,
-                    Some(json!({"code": code, "cause": cause, "fields": fields})),
-                    &fsl_semantics::model::observation::AdmissionUsage::default(),
-                )})],
-                exit,
-            ))
+            let result = item_document(
+                &fsl_replay::spine::ItemRunOutcome::Unadmitted {
+                    incomplete,
+                    code: record.catalog.code().to_owned(),
+                    cause: record.catalog.cause().to_owned(),
+                    fields: record.fields,
+                },
+                &fsl_semantics::model::observation::AdmissionUsage::default(),
+            )?;
+            Ok((vec![json!({"result": result})], exit))
         }
         Err(fsl_replay::spine::ValueInvariantsBatchFailure::Evaluation(
             filament_eval::CallFailure::Fault(_),
@@ -1195,32 +1183,25 @@ fn refused(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
-#[implements("FR-267-AC-8")]
-fn population_refusal(population: &str) -> Value {
-    json!({
-        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
-        "disposition": {
-            "category": "refusal",
-            "refusal": {
-                "code": "invalid_runtime_input",
-                "cause": "wrong-role-mapping",
-                "fields": {"population": population},
-            },
-            "stage": "admit",
+/// FR-652, FSpec FR-352: a population the request does not hold is an admit
+/// refusal clause-run document, written through the declared type.
+fn population_refusal(population: &str) -> Result<Value> {
+    item_document(
+        &fsl_replay::spine::ItemRunOutcome::Unadmitted {
+            incomplete: false,
+            code: "invalid_runtime_input".to_owned(),
+            cause: "wrong-role-mapping".to_owned(),
+            fields: std::collections::BTreeMap::from([("population", population.to_owned())]),
         },
-        "basis": "unavailable",
-        "axes": {
-            "activation": "unavailable",
-            "execution": null,
-            "settlement": "unavailable",
-            "truth": null,
-        },
-        "usage": {
-            "admission": {"document_bytes": 0, "objects": 0, "values": 0},
-            "evaluation_admissions": 0,
-            "evaluation_consumed": [],
-        },
-    })
+        &fsl_semantics::model::observation::AdmissionUsage::default(),
+    )
+}
+
+fn item_document(
+    outcome: &fsl_replay::spine::ItemRunOutcome,
+    usage: &fsl_semantics::model::observation::AdmissionUsage,
+) -> Result<Value> {
+    fsl_replay::spine::item_run_result_value(outcome, usage).map_err(|_| RunCause::ItemsFault)
 }
 
 fn more_severe(left: u8, right: u8) -> u8 {
@@ -1287,84 +1268,150 @@ fn category_for_exit(exit_code: u8) -> &'static str {
     }
 }
 
-#[ix_trace_rs::string_edge]
-#[implements("FR-267-AC-8")]
-fn invariant_result(
-    category: &str,
-    stage: &str,
-    truth: Option<bool>,
-    refusal: Option<Value>,
-    usage: &fsl_semantics::model::observation::AdmissionUsage,
-) -> Value {
-    // FSpec FR-352: an absent member is the form; `null` is not.
-    let mut disposition = json!({"category": category, "stage": stage});
-    if let Some(truth) = truth {
-        disposition["truth"] = json!(truth);
-    }
-    if stage == "evaluate" {
-        if let Some(value) = truth {
-            disposition["outcome"] = json!({
-                "kind": "completed",
-                "value": {"kind": "boolean", "value": value},
-            });
-        }
-    }
-    if let Some(refusal) = refusal {
-        disposition["refusal"] = refusal;
-    }
-    let settled = truth.is_some();
-    json!({
-        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
-        "disposition": disposition,
-        "usage": {
-            "admission": {
-                "document_bytes": usage.document_bytes,
-                "objects": usage.objects,
-                "values": usage.values,
-            },
-            "evaluation_admissions": 0,
-            "evaluation_consumed": [],
-        },
-        "basis": if settled { "closed-scope" } else { "unavailable" },
-        "axes": {
-            "activation": if settled { "active" } else { "unavailable" },
-            "execution": if stage == "evaluate" { Some("completed") } else { None::<&str> },
-            "settlement": if settled { Some("closed-scope") } else { Some("unavailable") },
-            "truth": truth.map(|truth| if truth { "true" } else { "false" }),
-        },
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
 
-    fn read_label(value: &serde_json::Value) -> std::result::Result<(), String> {
+    const LABEL: &str = fsl_foundation::wire_format::WireFormat::RunResult.as_str();
+
+    fn read_clause(value: &serde_json::Value) -> fsl_replay::spine::ClauseRunRecord {
         let bytes = fsl_foundation::canonical_json::encode(value).expect("canonical bytes");
-        fsl_replay::spine::read_native_run_result(&bytes)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        match fsl_replay::spine::read_native_run_result(&bytes) {
+            Ok(fsl_replay::spine::NativeRunResult::Clause(record)) => *record,
+            Ok(_) => panic!("the item document must read as a clause run"),
+            Err(error) => panic!("the strict reader refused the item document: {error}"),
+        }
     }
 
-    /// FR-267-AC-8, FSpec FR-352: the item-level documents that carry the
-    /// label omit an absent disposition member (never `null`), keep every
-    /// axis member present, and both read as clause runs.
-    #[ix_trace_rs::trace("FR-267-AC-8")]
+    fn admission_record(
+        code: &str,
+        cause: &'static str,
+    ) -> Box<filament_semantic_value::admission::AdmissionRecord> {
+        Box::new(filament_semantic_value::admission::AdmissionRecord {
+            catalog: filament_semantic_value::catalog::CatalogCode::new(code, cause),
+            fields: std::collections::BTreeMap::from([("population", "Order".to_owned())]),
+            path: Vec::new(),
+            kernel: None,
+        })
+    }
+
+    /// FR-267-AC-8, FSpec FR-352: an item document through the production
+    /// admit path is the admit-stage refusal FR-352 assigns, written with
+    /// every axis member present (`null` where none applies) and no
+    /// disposition `truth`, and the strict reader reads it as a clause run.
+    #[trace("FR-267-AC-8")]
     #[test]
-    fn the_item_documents_with_the_run_result_label_are_read_by_the_strict_reader() {
-        let usage = fsl_semantics::model::observation::AdmissionUsage::default();
-        let settled = invariant_result("success", "evaluate", Some(true), None, &usage);
-        assert_eq!(read_label(&settled), Ok(()));
-        assert_eq!(settled["axes"]["truth"], "true");
-        let unsettled = invariant_result("refusal", "admit", None, None, &usage);
-        assert!(unsettled["disposition"].get("truth").is_none());
-        assert!(unsettled["axes"]["truth"].is_null());
-        assert!(unsettled["axes"]["execution"].is_null());
-        let refusal = population_refusal("Order");
-        assert_eq!(read_label(&refusal), Ok(()));
-        assert!(refusal["disposition"].get("truth").is_none());
-        // The axes keep `null`: the axes type declares each of them present.
-        assert!(refusal["axes"]["truth"].is_null());
+    fn the_production_admit_refusal_item_is_the_fr_352_refusal_form() {
+        use fsl_semantics::model::observation::AdmissionFailure;
+        let failure =
+            fsl_replay::spine::ValueInvariantsBatchFailure::Admission(AdmissionFailure::Refused(
+                admission_record("invalid_runtime_input", "wrong-role-mapping"),
+            ));
+        let (items, exit) = value_invariant_items(Err(failure)).expect("an admit refusal item");
+        assert_eq!(exit, 20);
+        let expected = json!({
+            "format": LABEL,
+            "disposition": {
+                "category": "refusal",
+                "stage": "admit",
+                "refusal": {
+                    "code": "invalid_runtime_input",
+                    "cause": "wrong-role-mapping",
+                    "fields": {"population": "Order"},
+                },
+            },
+            "basis": "unavailable",
+            "axes": {
+                "activation": "unavailable",
+                "execution": null,
+                "settlement": "unavailable",
+                "truth": null,
+            },
+            "usage": {
+                "admission": {"document_bytes": 0, "objects": 0, "values": 0},
+                "evaluation_admissions": 0,
+                "evaluation_consumed": [],
+            },
+        });
+        assert_eq!(items, vec![json!({"result": expected.clone()})]);
+        let read = read_clause(&expected);
+        assert_eq!(
+            (read.stage(), read.category(), read.truth(), read.basis()),
+            ("admit", "refusal", None, "unavailable")
+        );
+        assert_eq!(population_refusal("Order").expect("document"), expected);
+    }
+
+    /// FR-267-AC-8, FSpec FR-352: an incomplete admission is an `incomplete`
+    /// admit-stage record at exit 22 and reads as a clause run.
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn the_production_incomplete_admit_item_reads_as_an_incomplete_clause_run() {
+        use fsl_semantics::model::observation::AdmissionFailure;
+        let failure = fsl_replay::spine::ValueInvariantsBatchFailure::Admission(
+            AdmissionFailure::Incomplete(admission_record("missing_evidence", "missing")),
+        );
+        let (items, exit) = value_invariant_items(Err(failure)).expect("an incomplete item");
+        assert_eq!(exit, 22);
+        let document = items[0]["result"].clone();
+        assert_eq!(document["disposition"]["category"], "incomplete");
+        assert_eq!(
+            document["disposition"]["refusal"]["code"],
+            "missing_evidence"
+        );
+        assert!(document["disposition"].get("truth").is_none());
+        let read = read_clause(&document);
+        assert_eq!(
+            (read.stage(), read.category(), read.truth()),
+            ("admit", "incomplete", None)
+        );
+    }
+
+    /// FR-267-AC-8, FSpec FR-352: a violated invariant is stage `evaluate`,
+    /// category `violation`, `truth: false` with a completed Boolean outcome,
+    /// `closed-scope` settlement and the admission usage it consumed.
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn a_violated_item_is_the_fr_352_violation_form_and_reads_back() {
+        let mut usage = fsl_semantics::model::observation::AdmissionUsage::default();
+        usage.document_bytes = 7;
+        usage.objects = 2;
+        usage.values = 3;
+        let document = item_document(&fsl_replay::spine::ItemRunOutcome::Settled(false), &usage)
+            .expect("document");
+        assert_eq!(
+            document,
+            json!({
+                "format": LABEL,
+                "disposition": {
+                    "category": "violation",
+                    "stage": "evaluate",
+                    "truth": false,
+                    "outcome": {
+                        "kind": "completed",
+                        "value": {"kind": "boolean", "value": false},
+                    },
+                },
+                "basis": "closed-scope",
+                "axes": {
+                    "activation": "active",
+                    "execution": "completed",
+                    "settlement": "closed-scope",
+                    "truth": "false",
+                },
+                "usage": {
+                    "admission": {"document_bytes": 7, "objects": 2, "values": 3},
+                    "evaluation_admissions": 0,
+                    "evaluation_consumed": [],
+                },
+            })
+        );
+        let read = read_clause(&document);
+        assert_eq!(
+            (read.stage(), read.category(), read.truth(), read.basis()),
+            ("evaluate", "violation", Some(false), "closed-scope")
+        );
     }
 
     #[test]

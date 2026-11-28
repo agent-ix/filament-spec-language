@@ -1050,17 +1050,29 @@ fn transfer_document(refinement: Value, transfers: Vec<Value>) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use ix_trace_rs::trace;
     use serde_json::json;
 
-    /// FR-267-AC-8: the transfer document carries the run-result label with
-    /// no clause-run or command-error members, so the strict reader refuses
-    /// it; this records what it shows.
-    #[ix_trace_rs::trace("FR-267-AC-8")]
+    /// FR-267-AC-8, FSpec FR-352-AC-8: the transfer document carries the
+    /// run-result label with no clause-run or command-error members, so the
+    /// strict reader refuses it at its unknown `refinement_transfer` member
+    /// (the defect that it is no FR-352 form is tracked separately).
+    #[trace("FR-267-AC-8")]
     #[test]
     fn the_transfer_document_is_refused_by_the_run_result_reader() {
         let value = super::transfer_document(json!({}), Vec::new());
         let bytes = fsl_foundation::canonical_json::encode(&value).expect("canonical bytes");
-        assert!(fsl_replay::spine::read_native_run_result(&bytes).is_err());
+        let Err(fsl_replay::spine::NativeRunReadError::MalformedMember { source, .. }) =
+            fsl_replay::spine::read_native_run_result(&bytes)
+        else {
+            panic!("expected a refusal at the unknown member");
+        };
+        assert!(
+            source
+                .to_string()
+                .starts_with("unknown field `refinement_transfer`"),
+            "{source}"
+        );
     }
 
     use super::step_for_step_value;

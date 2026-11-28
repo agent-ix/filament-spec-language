@@ -26,14 +26,23 @@ pub(super) struct WireMeasure<Str, Rw, U, Rat> {
 }
 impl<Str: Emit, Rw: Emit, U: Emit, Rat: Emit> Emit for WireMeasure<Str, Rw, U, Rat> {
     fn emit<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        let Self {
+            kind,
+            window,
+            reward,
+            unit,
+            comparison,
+            threshold,
+            level,
+        } = self;
         writer.begin_object()?;
-        member(writer, "kind", &self.kind)?;
-        member(writer, "window", &self.window)?;
-        member(writer, "reward", &self.reward)?;
-        member(writer, "unit", &self.unit)?;
-        member(writer, "comparison", &self.comparison)?;
-        member(writer, "threshold", &self.threshold)?;
-        member(writer, "level", &self.level)?;
+        member(writer, "kind", kind)?;
+        member(writer, "window", window)?;
+        member(writer, "reward", reward)?;
+        member(writer, "unit", unit)?;
+        member(writer, "comparison", comparison)?;
+        member(writer, "threshold", threshold)?;
+        member(writer, "level", level)?;
         writer.end_object()
     }
 }
@@ -50,12 +59,19 @@ pub(super) struct WireObjective<Str, M, F> {
 }
 impl<Str: Emit, M: Emit, F: Emit> Emit for WireObjective<Str, M, F> {
     fn emit<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        let Self {
+            profile,
+            payoff,
+            measure,
+            optimization,
+            fairness,
+        } = self;
         writer.begin_object()?;
-        member(writer, "profile", &self.profile)?;
-        member(writer, "payoff", &self.payoff)?;
-        member(writer, "measure", &self.measure)?;
-        member(writer, "optimization", &self.optimization)?;
-        member(writer, "fairness", &self.fairness)?;
+        member(writer, "profile", profile)?;
+        member(writer, "payoff", payoff)?;
+        member(writer, "measure", measure)?;
+        member(writer, "optimization", optimization)?;
+        member(writer, "fairness", fairness)?;
         writer.end_object()
     }
 }
@@ -70,12 +86,17 @@ pub(super) struct WireConditional<Str, D> {
 }
 impl<Str: Emit, D: Emit> Emit for WireConditional<Str, D> {
     fn emit<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        let Self {
+            mode,
+            numerator,
+            denominator,
+        } = self;
         writer.begin_object()?;
-        member(writer, "mode", &self.mode)?;
-        if let Some(numerator) = &self.numerator {
+        member(writer, "mode", mode)?;
+        if let Some(numerator) = numerator {
             member(writer, "numerator", numerator)?;
         }
-        if let Some(denominator) = &self.denominator {
+        if let Some(denominator) = denominator {
             member(writer, "denominator", denominator)?;
         }
         writer.end_object()
@@ -98,13 +119,21 @@ impl<Str: Emit, I: Emit, O: Emit, V: Emit, R: Emit, C: Emit> Emit
     for WireDocument<Str, I, O, V, R, C>
 {
     fn emit<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        let Self {
+            identity,
+            objective,
+            kind,
+            values,
+            ranking,
+            conditional,
+        } = self;
         writer.begin_object()?;
-        member(writer, "identity", &self.identity)?;
-        member(writer, "objective", &self.objective)?;
-        member(writer, "kind", &self.kind)?;
-        member(writer, "values", &self.values)?;
-        member(writer, "ranking", &self.ranking)?;
-        if let Some(conditional) = &self.conditional {
+        member(writer, "identity", identity)?;
+        member(writer, "objective", objective)?;
+        member(writer, "kind", kind)?;
+        member(writer, "values", values)?;
+        member(writer, "ranking", ranking)?;
+        if let Some(conditional) = conditional {
             member(writer, "conditional", conditional)?;
         }
         writer.end_object()

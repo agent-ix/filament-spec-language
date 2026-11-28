@@ -50,6 +50,20 @@ where
     T::deserialize(decoder).map(Some)
 }
 
+/// A member present as a JSON value other than `null`: an absent optional
+/// member is omitted, never written as `null` (FSpec FR-352-AC-8).
+fn present_non_null<'de, D>(decoder: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(decoder)? {
+        serde_json::Value::Null => Err(serde::de::Error::custom(
+            "an absent optional member is omitted, never `null`",
+        )),
+        value => Ok(Some(value)),
+    }
+}
+
 /// A member present as a closed JSON object (Serde's derived struct decoder
 /// also accepts a positional array).
 fn present_object<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
@@ -1115,25 +1129,57 @@ pub(super) struct ClauseRunDocument {
     pub axes: crate::OutcomeAxes,
     /// FR-501 "Result report": the decision support of a finite-window
     /// result, as `(position, atom)` pairs in canonical positions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub support: Option<Vec<SupportWire>>,
     /// FR-501 "Request-file spelling": the observations a late-data cutoff
     /// excluded, written whenever a cutoff is selected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub late: Option<Vec<LateWire>>,
     /// FR-526: the late observations a superseding repair admitted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub admitted_late: Option<Vec<AdmittedWire>>,
     /// FR-526: the result's identity, its input identity, its relation, its
     /// lineage and the updated evidence ledger.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub result_identity: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub input_identity: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub relation: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub lineage: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub evidence_ledger: Option<serde_json::Value>,
 }

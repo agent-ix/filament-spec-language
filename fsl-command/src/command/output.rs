@@ -1159,15 +1159,26 @@ fn clock_selection_refusal(
 mod tests {
     use super::*;
 
-    /// FR-267-AC-8: the model-based-test document carries the run-result
-    /// label with no clause-run or command-error members, so the strict
-    /// reader refuses it; this records what it shows.
+    /// FR-267-AC-8, FSpec FR-352-AC-8: the model-based-test document carries
+    /// the run-result label with no clause-run or command-error members, so
+    /// the strict reader refuses it at its unknown `model_based_test` member
+    /// (the defect that it is no FR-352 form is tracked separately).
     #[trace("FR-267-AC-8")]
     #[test]
     fn the_model_based_test_document_is_refused_by_the_run_result_reader() {
         let result = NativeResult::model_based_test_document(serde_json::json!({}));
         let bytes = result.to_bytes().expect("canonical bytes");
-        assert!(fsl_replay::spine::read_native_run_result(&bytes).is_err());
+        let Err(fsl_replay::spine::NativeRunReadError::MalformedMember { source, .. }) =
+            fsl_replay::spine::read_native_run_result(&bytes)
+        else {
+            panic!("expected a refusal at the unknown member");
+        };
+        assert!(
+            source
+                .to_string()
+                .starts_with("unknown field `model_based_test`"),
+            "{source}"
+        );
     }
     use crate::formal_source::FormalSource;
     use filament_contract_model as ir;

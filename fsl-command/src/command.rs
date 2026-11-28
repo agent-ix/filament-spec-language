@@ -2294,7 +2294,7 @@ fn run_extracted_clause_bytes(
     }
     let request =
         read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes), overrides)?;
-    let (extraction, map) = extraction_record(&request, &value)?;
+    let (extraction, map) = extraction_record(&request.source, &value)?;
     let selection = request.selection.clone();
     let report =
         fsl_replay::spine::run_clause(request).map_err(|error| RunCause::ClauseRequest {
@@ -3025,13 +3025,13 @@ fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
 #[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
 fn extraction_record(
-    request: &fsl_replay::spine::ClauseRunRequest,
+    source: &fsl_replay::spine::ClauseRunSource,
     envelope: &serde_json::Value,
 ) -> Result<(
     fsl_replay::spine::ExtractionRecord,
     fsl_foundation::source_map::SourceMap,
 )> {
-    let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = &request.source else {
+    let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = source else {
         return Err(RunCause::ClauseRequest {
             member: "program.extraction".to_owned(),
             reason: "extraction request did not produce an extracted source".to_owned(),
@@ -5658,6 +5658,49 @@ mod tests {
     use super::*;
     use filament_semantic_value::catalog::InternalFault;
     use ix_trace_rs::trace;
+
+    /// FR-267-AC-17, FSpec FR-352-AC-13: an extraction whose source map has
+    /// no segments is refused naming `extraction.map.segments`, an invalid
+    /// request at exit 20, and writes no extraction record.
+    #[cfg(feature = "quire-extraction")]
+    #[trace("FR-267-AC-17")]
+    #[test]
+    fn an_extraction_with_no_map_segments_is_refused_at_the_member() {
+        let text = "# Doc\n\n## Invariants\n\n### empty\n```ix:native\n```\n";
+        let identity = fsl_foundation::SourceIdentity::new("agent-ix", "ix://example/empty");
+        let original =
+            fsl_foundation::Source::read(identity, "empty.md", text.as_bytes(), text.len())
+                .expect("the fixture document reads");
+        let context = fsl_source::clause_context("example/empty", &original)
+            .expect("the clause-only context validates");
+        let extracted = fsl_source::extract(
+            original,
+            &context,
+            fsl_source::Selection {
+                clause_id: "empty".to_owned(),
+                package: "example/empty".to_owned(),
+                body: fsl_foundation::SourceIdentity::new("agent-ix", "empty-body"),
+            },
+            fsl_source::Limits::default(),
+        )
+        .expect("an empty fence extracts");
+        let envelope = serde_json::json!({"request": {"program": {
+            "extraction": {"body": {"document": "Body"}},
+            "clauses": [{"clause": "empty", "package": "example/empty"}],
+        }}});
+        let source = fsl_replay::spine::ClauseRunSource::Extracted(extracted);
+        let Err(cause) = extraction_record(&source, &envelope) else {
+            panic!("a map with no segments must be refused");
+        };
+        assert!(
+            matches!(
+                &cause,
+                RunCause::ClauseRequest { member, .. } if member == "extraction.map.segments"
+            ),
+            "{cause:?}"
+        );
+        assert_eq!(cause.category().exit_code(), 20);
+    }
 
     /// FR-286-AC-15: the command's forms wrapper preserves a blank source
     /// label without inventing a region, and retains the exact region for a

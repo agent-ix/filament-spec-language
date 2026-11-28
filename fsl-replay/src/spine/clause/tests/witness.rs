@@ -817,7 +817,7 @@ fn native_result_two_writes_decisive_closed_and_unavailable_reports() {
 /// members equal the values FR-352 assigns by hand: a closed-scope `true`
 /// claim is stage `evaluate`, category `success`, a completed Boolean outcome
 /// and `closed-scope` settlement.
-#[ix_trace_rs::trace("FR-267-AC-1")]
+#[trace("FR-267-AC-1")]
 #[test]
 fn native_result_two_one_declared_type_round_trips_the_writer_bytes() {
     let report = run("AllBelow", Snapshot::Low, "child");
@@ -850,7 +850,7 @@ fn native_result_two_one_declared_type_round_trips_the_writer_bytes() {
 
 /// FR-267-AC-8: a member the declared type does not define is refused by the
 /// one strict reader, and so is a changed format label.
-#[ix_trace_rs::trace("FR-267-AC-8")]
+#[trace("FR-267-AC-8")]
 #[test]
 fn native_result_two_declared_type_refuses_an_injected_member_and_label() {
     let report = run("AllBelow", Snapshot::Low, "child");
@@ -866,6 +866,42 @@ fn native_result_two_declared_type_refuses_an_injected_member_and_label() {
         crate::spine::read_native_run_result(&relabelled),
         Err(crate::spine::NativeRunReadError::UnsupportedFormat(_))
     ));
+}
+
+/// FR-267-AC-8, FSpec FR-352-AC-8: an absent optional top-level member is
+/// omitted, so each one written as `null` refuses at that member.
+#[trace("FR-267-AC-8")]
+#[test]
+fn native_result_two_refuses_null_for_each_absent_optional_member() {
+    let report = run("AllBelow", Snapshot::Low, "child");
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let valid: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    for member in [
+        "support",
+        "late",
+        "admitted_late",
+        "result_identity",
+        "input_identity",
+        "relation",
+        "lineage",
+        "evidence_ledger",
+        "witness",
+        "extraction",
+        "ledger",
+        "limits",
+    ] {
+        assert!(
+            valid.get(member).is_none(),
+            "{member} is absent when unused"
+        );
+        let mut value = valid.clone();
+        value[member] = serde_json::Value::Null;
+        let bytes = fsl_foundation::canonical_json::encode(&value).unwrap();
+        let error = crate::spine::read_native_run_result(&bytes)
+            .err()
+            .unwrap_or_else(|| panic!("`null` for {member} must refuse"));
+        assert!(error.to_string().contains(member), "{member}: {error}");
+    }
 }
 
 /// FR-109-AC-1: the Boolean completion must agree with both truth and its
