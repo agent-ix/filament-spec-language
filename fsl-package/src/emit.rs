@@ -5553,9 +5553,12 @@ fn write_external_keys(
                     .dependencies()
                     .get(vacant.key())
                     .ok_or(EmitRefusal::SourceMapInvariant)?;
-                // The dependency's own bytes, held to `limits.output_bytes`
-                // by `emit_checked`, give its graph order.
-                let emission = emit_checked(dependency, limits)?;
+                // The dependency's linked bytes, held to
+                // `limits.output_bytes`, give its graph order.
+                let emission = match emit_linked_dependency(package, vacant.key(), limits) {
+                    Some(linked) => linked?,
+                    None => emit_checked(dependency, limits)?,
+                };
                 let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
                     emission.package().bytes(),
                 )
@@ -5594,15 +5597,16 @@ fn dependency_selections(package: &CheckedPackage) -> Vec<CheckedDependencySelec
         .collect()
 }
 
-/// The caller-selected clocks used by this package's dependency closure, in
-/// ascending byte order of clock name.
+/// The caller-selected clocks used by this package's dependency closure, as
+/// it linked each library, in ascending byte order of clock name.
+#[implements("FR-640-AC-17")]
 fn dependency_clock_selections(
     package: &CheckedPackage,
 ) -> Option<Vec<CheckedDependencyClockSelection>> {
     let mut selections = BTreeMap::new();
-    let mut pending: Vec<_> = package.dependencies().values().map(AsRef::as_ref).collect();
-    while let Some(dependency) = pending.pop() {
-        if let Some(emission) = dependency.remembered_emission() {
+    let mut pending: Vec<_> = package.dependencies().iter().collect();
+    while let Some((identity, dependency)) = pending.pop() {
+        if let Some(emission) = package.dependency_emission(identity) {
             for binding in emission.temporal_rows().bindings() {
                 if !is_model_binding_name(&binding.clock_name) {
                     selections
@@ -5611,7 +5615,7 @@ fn dependency_clock_selections(
                 }
             }
         }
-        pending.extend(dependency.dependencies().values().map(AsRef::as_ref));
+        pending.extend(dependency.dependencies().iter());
     }
     (!selections.is_empty()).then(|| {
         selections
@@ -5643,9 +5647,10 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// (`CheckedGraph::region`, FR-096).
 ///
 /// A package emitted before (by this function or
-/// [`emit_checked_with_cancel`]) returns its remembered emission: a checked
-/// package does not change, so a dependency reached again, or a caller that
-/// emits what the lifecycle already emitted, does not emit it twice.
+/// [`emit_checked_with_cancel`]) returns its remembered emission, so a
+/// dependency reached again, or a caller that emits what the lifecycle already
+/// emitted, does not emit it twice. A successful abstraction binding changes
+/// the package and drops that emission ([`CheckedPackage::bind_abstraction`]).
 ///
 /// `limits` is the caller's ceiling on the package's canonical bytes
 /// (`emit.output_bytes`); a remembered emission longer than it is refused
@@ -5653,9 +5658,23 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     if let Some(emission) = package.remembered_emission() {
-        return remembered_within(emission, limits, package.graph());
+        return remembered_within(&emission, limits, package.graph());
     }
     emit_checked_with_cancel(package, &Cancel::new(), limits)
+}
+
+/// The emission of the library `identity` that `package` linked
+/// ([`CheckedPackage::dependency_emission`]), held to `limits` as
+/// [`emit_checked`] holds a remembered one; `None` when `identity` is not in
+/// the closure `package` linked.
+#[implements("FR-640-AC-17")]
+pub fn emit_linked_dependency(
+    package: &CheckedPackage,
+    identity: &fsl_semantics::library::LibraryName,
+    limits: EmitLimits,
+) -> Option<Result<Emission, EmitRefusal>> {
+    let (graph, emission) = package.linked_dependency(identity)?;
+    Some(remembered_within(emission, limits, graph))
 }
 
 /// A remembered `emission`, when its canonical bytes fit `limits`.
@@ -7284,10 +7303,10 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let (requirement_rows, path_condition_frames, renumbered) =
+    let (requirement_rows, path_condition_frames, renumbered, synthetics) =
         value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
-        value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+        value_validity_requirements::ordinals::relabel_term_data(&renumbered, &synthetics, data);
     }
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
@@ -8464,13 +8483,13 @@ fn emit_package_nodes(
         &source_map,
     )?;
     meter.charge(&claim_names)?;
-    let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
+    let mut equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
-    let equality_fact_witness_rows = equality_fact_witness_rows(
+    let mut equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
         &producer_node_ids,
         &nodes,
@@ -8487,16 +8506,22 @@ fn emit_package_nodes(
         &source_keys,
         &mut meter,
     )?;
-    if let Some(data) = &mut checked_term_data {
-        if value_validity.renumbering.renumbers() {
-            let mut row_ids = emitted_node_ids.clone();
-            row_ids.extend(
-                producer_node_ids
-                    .iter()
-                    .map(|(key, id)| (key.clone(), id.clone())),
-            );
+    if value_validity.renumbering.renumbers() {
+        let mut row_ids = emitted_node_ids.clone();
+        row_ids.extend(
+            producer_node_ids
+                .iter()
+                .map(|(key, id)| (key.clone(), id.clone())),
+        );
+        if let Some(data) = &mut checked_term_data {
             value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
+        value_validity.renumbering.relabel_equality_rows(
+            &row_ids,
+            &mut equality_producer_identity_rows,
+            &mut equality_fact_witness_rows,
+            &source_map,
+        );
     }
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
@@ -11178,9 +11203,13 @@ impl ForeignNodes {
             return Ok(foreign);
         }
         for (identity, dependency) in package.dependencies() {
-            let emission = emit_checked(dependency, limits)?;
+            let emission = match emit_linked_dependency(package, identity, limits) {
+                Some(linked) => linked?,
+                None => emit_checked(dependency, limits)?,
+            };
             // The positions are read from the dependency's own bytes, which
-            // `emit_checked` has just held to `limits.output_bytes`; that
+            // the link-time emission (or fallback) has held to
+            // `limits.output_bytes`; that
             // ceiling bounds this parse. The parse itself is not charged to
             // any budget, and its JSON tree is dropped when the positions
             // are read.

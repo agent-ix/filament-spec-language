@@ -351,6 +351,10 @@ is its own RFC 8785 re-encoding, and validates each event line against
 `MONITOR_EVENT_SCHEMA_1` and the summary line against
 `MONITOR_SUMMARY_SCHEMA_1`.
 
+- A request with provider-routed `items` MAY carry `require_certified`, a JSON
+  boolean, absent meaning `false`, read only beside `items`, which settles
+  them under [FR-1052](FR-1052-settle-a-proof-that-is-not-certified-inconclusive-when-the-request-requires-certified-proofs.md).
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

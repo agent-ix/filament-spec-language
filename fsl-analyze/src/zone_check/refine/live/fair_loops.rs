@@ -324,9 +324,9 @@ fn arc_relation(
         Some(Taken::Abstract(_)) => Err(ZoneCheckRefusal::Fault(
             "hidden-model-edge-retains-candidate-steps",
         )),
-        Some(Taken::Protocol(_) | Taken::ProtocolTraces(_)) => Err(ZoneCheckRefusal::Fault(
-            "hidden-model-edge-is-not-a-protocol-edge",
-        )),
+        Some(Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::ProtocolPathRefs(_)) => Err(
+            ZoneCheckRefusal::Fault("hidden-model-edge-is-not-a-protocol-edge"),
+        ),
     }
 }
 

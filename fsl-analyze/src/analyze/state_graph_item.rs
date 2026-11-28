@@ -25,9 +25,10 @@ use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence, GraphEvidenceEnvelope,
     GraphReplayResult, GraphReplaySettlement, ModelTraceSubject, ProfileSelection, ReplayRefusal,
-    ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire, StateGraphCertificateForm,
-    StateGraphInstanceOutcome, StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord,
-    TerminalValue, TrapClosure, WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
+    ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
+    StateGraphCertificateDecision, StateGraphCertificateForm, StateGraphInstanceOutcome,
+    StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure,
+    WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
@@ -50,8 +51,8 @@ use crate::model_check::{
     check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    certificate_item, decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
-    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
+    certificate_item, explore_timed_state_graph, TimedStateGraphDecision, ZoneCheckLimit,
+    ZoneCheckRefusal, ZoneStop,
 };
 
 /// The property form of a checked claim.
@@ -706,6 +707,8 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     )
 }
 
+type DigitalPredicateValues = (Vec<bool>, Vec<(usize, fsl_replay::GraphUndefined)>);
+
 /// EN-6's timed state-graph route. The zone certificate is checked by the
 /// qualified core before this result is reported; a refutation is accepted
 /// only when that checker re-derives the form's failed condition.
@@ -718,7 +721,7 @@ fn digital_predicate_values(
     role: PredicateRole,
     over: Option<&ObjectReference>,
     cancel: &Cancel,
-) -> Result<(Vec<bool>, Vec<(usize, fsl_replay::GraphUndefined)>), ()> {
+) -> Result<DigitalPredicateValues, ()> {
     if predicate.is_constant_true() {
         return Ok((vec![true; nodes.len()], Vec::new()));
     }
@@ -1263,6 +1266,7 @@ fn no_timed_graph_decision(
 }
 
 #[implements(
+    "FR-852-AC-2",
     "FR-852-AC-8",
     "FR-852-AC-9",
     "FR-852-AC-10",
@@ -1275,6 +1279,7 @@ fn no_timed_graph_decision(
     "FR-852-AC-25",
     "FR-852-AC-26",
     "FR-852-AC-27",
+    "FR-852-AC-32",
     "FR-852-AC-34"
 )]
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
@@ -1346,6 +1351,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             Err(refusal) => return stopped(refusal, read, cancel),
         };
         let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
+        let undefined_decision = matches!(decision, TimedStateGraphDecision::Undefined { .. });
         let form = certificate_form(read.claim.form());
         let ef_nodes = match &decision {
             TimedStateGraphDecision::Holds { ef_nodes, .. }
@@ -1372,7 +1378,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             Ok(certificate) => certificate,
             Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
-        let check = fsl_replay::check_zone_certificate(
+        let check = fsl_replay::check_state_graph_certificate(
             ZoneCertificateRequest {
                 simulation: simulation.clone(),
                 model: &model,
@@ -1388,22 +1394,20 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             super::timed_item::certificate_limits(&bounds),
             cancel,
         );
-        if let Ok(ZoneCertificateVerdict::Stopped(cause)) = &check {
+        if let Ok((ZoneCertificateVerdict::Stopped(cause), _)) = &check {
             return EngineReport::Refused(Refusal::Incomplete(cause.clone()));
         }
-        let accepted = matches!(check, Ok(ZoneCertificateVerdict::Accepted));
-        let refuted = matches!(
-            check,
-            Ok(ZoneCertificateVerdict::Rejected(ref refusal))
-                if matches!(
-                    refusal.rule,
-                    CertificateRule::InitialMissing
-                        | CertificateRule::SuccessorMissing
-                        | CertificateRule::CountBroken
-                        | CertificateRule::PredicateUndefined
-                )
-        );
-        if (held && !accepted) || (!held && !refuted) {
+        // ADR-018 UE-6: an undefined model-side expression at a reachable
+        // state refutes the item as an undefined claim. The zone certificate
+        // for that state is accepted, not rejected, so an `Undefined` decision
+        // is let through with an accepted certificate and its evidence reaches
+        // replay, which reproduces the undefined reading.
+        let undefined_accepted = !held
+            && undefined_decision
+            && matches!(check, Ok((ZoneCertificateVerdict::Accepted, _)));
+        let confirmed = undefined_accepted
+            || check.is_ok_and(|(verdict, decision)| checker_confirms(held, &verdict, decision));
+        if !confirmed {
             return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
         let evidence = match timed_evidence(&timed, &graph, read.claim, decision, instance.clone())
@@ -1487,13 +1491,14 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             undefined,
         };
         let selected_instance = item_instance(&record, read.claim, instance.as_ref());
-        let certificate_document = (accepted || refuted).then(|| {
-            serde_json::json!({
-                "state_graph": {
-                    "form": form.as_str(),
-                    "ef_nodes": certificate.state_graph.as_ref().map_or_else(Vec::new, |part| part.ef_nodes.clone())
-                }
-            })
+        let certificate_document = serde_json::json!({
+            "state_graph": {
+                "form": form.as_str(),
+                "ef_nodes": certificate
+                    .state_graph
+                    .as_ref()
+                    .map_or_else(Vec::new, |part| part.ef_nodes.clone())
+            }
         });
         let report = GraphReport {
             record,
@@ -1505,8 +1510,8 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             },
             counterexample: (!held).then(|| wire.clone()).flatten(),
             evidence: held.then(|| wire.clone()).flatten(),
-            certificate_document,
-            checker: (accepted || refuted).then_some(CertificateChecker::Zone),
+            certificate_document: Some(certificate_document),
+            checker: Some(CertificateChecker::Zone),
         };
         if selected.is_none() || !held {
             selected = Some(report);
@@ -1981,5 +1986,73 @@ impl<'a> PackageStateGraphSubject<'a> {
             },
         )
         .claimed(key)
+    }
+}
+
+/// Whether the certificate checker confirms the engine's answer: for a claim
+/// the engine proved, an accepted certificate the checker decided holds; for
+/// one it refuted, the checker's own decision that the claim is violated.
+/// Never the rule a rejection names: the coverage checks reject a broken
+/// certificate under the same rules.
+#[implements("FR-852-AC-32")]
+fn checker_confirms(
+    held: bool,
+    verdict: &ZoneCertificateVerdict,
+    decision: Option<StateGraphCertificateDecision>,
+) -> bool {
+    match decision {
+        Some(StateGraphCertificateDecision::Holds) => {
+            held && matches!(verdict, ZoneCertificateVerdict::Accepted)
+        }
+        Some(StateGraphCertificateDecision::Violated) => !held,
+        // An undefined predicate reading is refuted by `Undefined` evidence
+        // (QSL-3478), and the checker's rejection of it carries no decision.
+        None => {
+            !held
+                && matches!(
+                    verdict,
+                    ZoneCertificateVerdict::Rejected(refusal)
+                        if refusal.rule == CertificateRule::PredicateUndefined
+                )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fsl_replay::{
+        CertificateLocus, CertificateMember, CertificateRejection, CertificateRule,
+        StateGraphCertificateDecision, ZoneCertificateVerdict,
+    };
+    use ix_trace_rs::trace;
+
+    use super::checker_confirms;
+
+    /// A rejection under a rule a violation also reports, with no decision
+    /// of the checker's, confirms neither answer.
+    #[trace("FR-852-AC-32")]
+    #[test]
+    fn a_rejection_without_a_decision_confirms_no_answer() {
+        let accepted = ZoneCertificateVerdict::Accepted;
+        let holds = Some(StateGraphCertificateDecision::Holds);
+        let violated = Some(StateGraphCertificateDecision::Violated);
+        for rule in [
+            CertificateRule::SuccessorMissing,
+            CertificateRule::InitialMissing,
+            CertificateRule::CountBroken,
+        ] {
+            let rejected = ZoneCertificateVerdict::Rejected(CertificateRejection {
+                rule,
+                at: CertificateLocus::CertificateMember(CertificateMember::Nodes),
+            });
+            assert!(!checker_confirms(false, &rejected, None), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, None), "{rule:?}");
+            assert!(checker_confirms(false, &rejected, violated), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, violated), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, holds), "{rule:?}");
+        }
+        assert!(checker_confirms(true, &accepted, holds));
+        assert!(!checker_confirms(false, &accepted, holds));
+        assert!(!checker_confirms(true, &accepted, None));
     }
 }

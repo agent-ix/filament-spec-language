@@ -222,6 +222,7 @@ fn configuration_3_runs_an_item_on_the_plugin_provider() {
             },
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().expect("a terminal record");
     assert_eq!(terminal.backend().map(BackendId::as_str), Some(PLUGIN));

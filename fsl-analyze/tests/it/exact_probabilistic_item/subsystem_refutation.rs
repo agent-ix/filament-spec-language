@@ -19,11 +19,14 @@ const CALLS: &str = "reward calls on Service::call = 1;\n";
 
 // Hand-counted from the deterministic expected-reward subsystem charge path.
 // The first witness-production charge follows the 70,989-unit product prefix;
-// production admits 169,184 units and independent replay admits 165,143.
+// production admits 168,995 units and independent replay admits 165,143.
+// Production is 189 units below its earlier 169,184 since QSL-3611 (#4109)
+// reduced the exact certificate candidate work; FR-203-AC-31/32 pin the
+// shared count, not its value.
 #[cfg(feature = "test-support")]
 const SUBSYSTEM_PREFIX_WORK: u64 = 70_989;
 #[cfg(feature = "test-support")]
-const SUBSYSTEM_PRODUCTION_WORK: u64 = 169_184;
+const SUBSYSTEM_PRODUCTION_WORK: u64 = 168_995;
 #[cfg(feature = "test-support")]
 const SUBSYSTEM_REPLAY_WORK: u64 = 165_143;
 #[cfg(feature = "test-support")]
@@ -393,7 +396,13 @@ fn settle_tampered(
         world.request(name, ModelCheckLimits::default()),
         tamper,
     );
-    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0)
+    analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 fn replay_refused(record: &fsl_analyze::analyze::AnalyzeRecord) {

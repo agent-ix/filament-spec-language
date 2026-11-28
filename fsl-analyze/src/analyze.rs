@@ -69,11 +69,12 @@ use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_eval::simulation::protocol::ProtocolTransition;
 use fsl_foundation::budget::Budget;
-use fsl_foundation::diagnostic::category_of;
+use fsl_foundation::diagnostic::exit_category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex, Setting};
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::StatisticalRecord;
+use fsl_replay::CertificationPolicy;
 use fsl_replay::{
     CounterexampleKind, CounterexampleWireError, OutcomeItemError, TemporalCounterexample,
 };
@@ -943,6 +944,23 @@ impl AnalyzeLimits {
     }
 }
 
+/// Settle `records` under `certification`, after every item's own
+/// settlement.
+#[implements("FR-1052-AC-8")]
+pub(crate) fn apply_certification_policy(
+    certification: CertificationPolicy,
+    records: &mut [AnalyzeRecord],
+) {
+    match certification {
+        CertificationPolicy::AdmitAny => {}
+        CertificationPolicy::RequireCertified => {
+            records
+                .iter_mut()
+                .for_each(AnalyzeRecord::require_certified);
+        }
+    }
+}
+
 /// The exploration and trace-length limits of a `model_based_test` plan step
 /// (FR-281 "Inputs").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -990,6 +1008,8 @@ pub struct AnalyzeRequest<'a> {
     pub items: Vec<NegotiatedItem>,
     /// Source bytes under every label the checked package names.
     pub provision: SourceProvision,
+    /// Which proofs settle `proved`.
+    pub certification: CertificationPolicy,
 }
 
 /// The outcome of analyzing a request, preserving the typed result for each
@@ -1525,7 +1545,7 @@ impl AnalyzeRefusal {
             )]),
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
-                let category = category_of(&catalog).unwrap_or(Category::Refusal);
+                let category = exit_category_of(&catalog).unwrap_or(Category::Refusal);
                 OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
                     .with_diagnostics(vec![OutcomeDiagnostic::new(
                         Some(catalog.cause()),
@@ -1560,7 +1580,7 @@ pub(crate) fn refusal_document(
             });
             (
                 record.catalog,
-                category_of(&record.catalog).unwrap_or(Category::Refusal),
+                exit_category_of(&record.catalog).unwrap_or(Category::Refusal),
                 details,
             )
         }
@@ -2658,6 +2678,30 @@ impl AnalyzeRecord {
         }
     }
 
+    /// Apply [`CertificationPolicy::RequireCertified`] to the settled item:
+    /// its terminal record and, unless that record is a certified proof, the
+    /// conformance labels it writes beside it.
+    fn require_certified(&mut self) {
+        let certified = match &mut self.settlement {
+            Settlement::Terminal(record) => {
+                record.require_certified();
+                matches!(
+                    record.value(),
+                    TerminalValue::Proved {
+                        certification: fsl_replay::Certification::Certified,
+                        ..
+                    }
+                )
+            }
+            Settlement::Disposed(_) => false,
+        };
+        if !certified {
+            if let Some(output) = &mut self.protocol_conformance {
+                output.withhold_proofs();
+            }
+        }
+    }
+
     /// The counterexample's FR-286 spelling, written where the run's
     /// `package` is at hand; `None` when the record holds none.
     fn spell(
@@ -2987,16 +3031,50 @@ impl Counterexample {
 /// other than `supported` runs no engine, and an item whose `Supported`
 /// candidate `engines` does not hold, or holds without advertising the
 /// item's kind and mode, settles `invalid-request`.
+#[implements("FR-1052-AC-15")]
 pub fn analyze_items(
     engines: &Engines,
     items: Vec<AnalyzeItem<'_>>,
     cancel: &Cancel,
+    certification: CertificationPolicy,
 ) -> Vec<AnalyzeRecord> {
     let mut settled = crate::provider::settle_items(engines, &items, cancel);
-    items
+    let mut records: Vec<AnalyzeRecord> = items
         .into_iter()
         .map(|item| run(engines, item, cancel, &mut settled))
-        .collect()
+        .collect();
+    apply_certification_policy(certification, &mut records);
+    records
+}
+
+/// Run one state-graph item through the real analyze settlement path.
+///
+/// This adapter is available only to integration tests that exercise the
+/// package-backed state-graph item constructor directly.
+#[cfg(feature = "test-support")]
+pub fn test_support_state_graph_item<'a>(
+    engines: &Engines,
+    analysis: &RunInput<'a>,
+    binding: &SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    provision: &'a SourceProvision,
+    key: &OccurrenceKey,
+    index: RequestIndex,
+    form: &TemporalItem,
+    method: Option<&str>,
+    cancel: &Cancel,
+) -> Option<AnalyzeRecord> {
+    let item = state_graph_item::state_graph_item(
+        analysis, binding, limits, provision, key, index, form, method,
+    )?;
+    analyze_items(
+        engines,
+        vec![item],
+        cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .into_iter()
+    .next()
 }
 
 /// The caller's requiredness for one request index.
@@ -3884,6 +3962,29 @@ mod tests {
 
     use super::*;
 
+    /// FR-285-AC-1: an admission refusal carrying an unsupported code
+    /// (`unknown_required_feature`, `unsupported_construct`) is category
+    /// `unsupported`, exit 21, never the record map's `Refusal` (20).
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn an_unsupported_admission_refusal_is_category_unsupported_exit_21() {
+        for (code, cause) in [
+            ("unknown_required_feature", "unsupported-feature"),
+            ("unsupported_construct", "not-yet-implemented"),
+        ] {
+            let record = filament_semantic_value::admission::AdmissionRecord {
+                catalog: CatalogCode::new(code, cause),
+                fields: std::collections::BTreeMap::new(),
+                path: Vec::new(),
+                kernel: None,
+            };
+            let failure = AdmissionFailure::Refused(Box::new(record));
+            let document = refusal_document(Operation::Analyze, &failure, String::new());
+            assert_eq!(document.category(), Category::Unsupported, "{code}");
+            assert_eq!(document.category().exit_code(), 21, "{code}");
+        }
+    }
+
     /// FR-255-AC-25: a non-timed item that states an engine limit in its own
     /// member, with the caller's bound for the same setting, is a conflict at
     /// the item's request position; the item silent, or the caller silent, is
@@ -3894,7 +3995,8 @@ mod tests {
         let item = |value: serde_json::Value| -> document::ItemSelection {
             serde_json::from_value(value).expect("a well-formed item")
         };
-        let silent = item(serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate"}}));
+        let silent =
+            item(serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate"}}));
         let stating = item(
             serde_json::json!({"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}),
         );
@@ -4068,10 +4170,15 @@ mod tests {
                 &ran,
             )
             .disposed(disposition, handed_diagnostic);
-            let record = analyze_items(&engines, vec![item], &Cancel::new())
-                .into_iter()
-                .next()
-                .expect("one requested item has one result");
+            let record = analyze_items(
+                &engines,
+                vec![item],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            )
+            .into_iter()
+            .next()
+            .expect("one requested item has one result");
             let Settlement::Disposed(disposed) = record.settlement else {
                 panic!("inapplicable item must settle by disposition");
             };
@@ -4136,7 +4243,12 @@ mod tests {
             .collect();
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
-        let records = analyze_items(&engines, items, &Cancel::new());
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), 12 * 7);
         assert_eq!(ran.get(), expected_runs);
@@ -4209,7 +4321,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new());
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].request_index, RequestIndex::new(0));
@@ -4244,7 +4361,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new());
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(calls.get(), 1);
         assert_eq!(
@@ -4261,7 +4383,12 @@ mod tests {
         let requirements: Vec<_> = items.iter().map(AnalyzeItem::requirement).collect();
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
-        let mut records = analyze_items(&engines, items, &Cancel::new());
+        let mut records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         let last = records.pop().expect("two records");
 
         assert_eq!(
@@ -4317,7 +4444,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new());
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), 7 * 4);
         assert_eq!(calls.get(), 7);
@@ -4375,7 +4507,12 @@ mod tests {
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
 
-        let records = analyze_items(&engines, items, &Cancel::new());
+        let records = analyze_items(
+            &engines,
+            items,
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(records.len(), cases.len());
         assert_eq!(calls.get(), 2);
@@ -4404,6 +4541,7 @@ mod tests {
                 &Engines::default(),
                 vec![AnalyzeItem::unadapted(RequestIndex::new(7), kind, None)],
                 &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
             )
             .remove(0);
             let Settlement::Disposed(disposed) = record.settlement else {
@@ -4516,9 +4654,60 @@ mod tests {
                 &ran,
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         assert!(ran.get());
         assert!(records[0].terminal().is_some());
+    }
+
+    /// FR-1052 (TC-3240): the library batch entry settles an uncertified
+    /// proof as its policy says.
+    #[ix_trace_rs::trace("TC-3240", "FR-1052-AC-15")]
+    #[test]
+    fn analyze_items_settles_an_uncertified_proof_under_its_policy() {
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("one engine");
+        for (certification, proved) in [
+            (fsl_replay::CertificationPolicy::AdmitAny, true),
+            (fsl_replay::CertificationPolicy::RequireCertified, false),
+        ] {
+            let item = AnalyzeItem::new(
+                RequestIndex::new(0),
+                Capability::OperationContract,
+                Some(DeclarationFamily::StateModel),
+                Mode::Bounded,
+                "test-a",
+                |_| {
+                    EngineReport::FiniteHyper(Box::new(FiniteHyperReport {
+                        terminal: TerminalRecord::proved_by_provider(
+                            RequestIndex::new(0),
+                            fsl_foundation::BackendId::new("test-a"),
+                            fsl_replay::Certification::Uncertified,
+                        ),
+                        counterexample: None,
+                    }))
+                },
+            );
+            let records = analyze_items(&engines, vec![item], &Cancel::new(), certification);
+            let value = records[0].terminal().expect("a terminal record").value();
+            assert_eq!(
+                matches!(value, TerminalValue::Proved { .. }),
+                proved,
+                "{value:?}"
+            );
+            assert_eq!(
+                matches!(
+                    value,
+                    TerminalValue::Inconclusive(
+                        fsl_replay::InconclusiveCause::ProofNotCertified { .. }
+                    )
+                ),
+                !proved,
+                "{value:?}"
+            );
+        }
     }
 
     /// FR-281-AC-10: a `Supported` candidate that does not advertise the
@@ -4541,6 +4730,7 @@ mod tests {
                 &ran,
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let settled = disposed(&records);
         assert_eq!(settled.kind, DispositionKind::InvalidRequest);
@@ -4563,6 +4753,7 @@ mod tests {
                 &ran,
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let diagnostic = disposed(&records).diagnostic.clone().expect("a diagnostic");
         assert_eq!(diagnostic.code.cause(), "unknown-backend");
@@ -4603,6 +4794,7 @@ mod tests {
                 ),
             ],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let settled = disposed(&records);
         assert_eq!(settled.kind, DispositionKind::InvalidRequest);
@@ -4624,7 +4816,12 @@ mod tests {
             .expect("first");
         let ran = std::cell::Cell::new(false);
         let written = |item: AnalyzeItem<'_>| {
-            let records = analyze_items(&engines, vec![item], &Cancel::new());
+            let records = analyze_items(
+                &engines,
+                vec![item],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            );
             let records = terminal_records(records);
             serde_json::to_value(OutcomeItem::from_terminal(&records[0])).expect("serializes")
         };
@@ -4711,7 +4908,12 @@ mod tests {
                     finite_bound_available: available,
                 },
             );
-            let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+            let mut records = terminal_records(analyze_items(
+                &engines,
+                vec![item],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            ));
             let record = records.remove(0);
             let document = analyze_document(std::slice::from_ref(&record), &[])
                 .expect("the disposed analyzer record serializes");
@@ -4796,7 +4998,12 @@ mod tests {
             ))
         })
         .disposed(Disposition::Unsupported, Some(diagnostic));
-        let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        let mut records = terminal_records(analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        ));
         let record = records.remove(0);
         let document = analyze_document(std::slice::from_ref(&record), &[])
             .expect("the negotiated disposition serializes");
@@ -4861,7 +5068,12 @@ mod tests {
                 detail,
             )
         });
-        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        let records = terminal_records(analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        ));
         let record = &records[0];
         assert_eq!(record.backend(), Some(&BackendId::new("test-a")));
         let detail = record.disposition_detail().expect("the refusal's detail");
@@ -4886,7 +5098,12 @@ mod tests {
                 detail,
             )
         });
-        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        let records = terminal_records(analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        ));
         assert_eq!(records[0].backend(), Some(&BackendId::new("test-a")));
         let detail = records[0].disposition_detail().expect("the detail");
         assert_eq!(detail["backend"], "provider-x");
@@ -4903,7 +5120,12 @@ mod tests {
             .with(engine("test-a", Capability::OperationContract))
             .expect("first");
         let run = |refusal: fn() -> Refusal| {
-            analyze_items(&engines, vec![refusing(refusal)], &Cancel::new())
+            analyze_items(
+                &engines,
+                vec![refusing(refusal)],
+                &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
+            )
         };
 
         let records = run(|| Refusal::RequiresBound);
@@ -4962,6 +5184,7 @@ mod tests {
             &engines,
             vec![refusing(move || Refusal::Failed(wrong))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let terminal = records[0].terminal().expect("a terminal record");
         assert_eq!(terminal.value(), &TerminalValue::Failed);
@@ -4996,7 +5219,12 @@ mod tests {
         }
         let mut engines = Engines::default();
         engines.with(engine_all("test-all")).expect("one engine");
-        let uncancelled = analyze_items(&engines, vec![item(0, |_| failed())], &Cancel::new());
+        let uncancelled = analyze_items(
+            &engines,
+            vec![item(0, |_| failed())],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         let cancel = Cancel::new();
         let (blocked, wait_for_block) = std::sync::mpsc::channel();
@@ -5029,7 +5257,12 @@ mod tests {
                 failed()
             }),
         ];
-        let records = analyze_items(&engines, items, &cancel);
+        let records = analyze_items(
+            &engines,
+            items,
+            &cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         canceller.join().expect("the canceller finished");
 
         let cancelled = Some(&TerminalValue::Incomplete(IncompleteCause::Cancelled {
@@ -5068,7 +5301,12 @@ mod tests {
                 failed()
             },
         );
-        let records = analyze_items(&engines, vec![item], &cancel);
+        let records = analyze_items(
+            &engines,
+            vec![item],
+            &cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
 
         assert_eq!(cancel.cause(), Some(CancelCause::Requested));
         assert_eq!(cancel.tripped(), None);
@@ -5083,6 +5321,7 @@ mod tests {
                 |_| failed(),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         assert_eq!(records[0].terminal(), expected[0].terminal());
     }

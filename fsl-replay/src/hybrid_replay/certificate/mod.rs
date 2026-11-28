@@ -97,6 +97,12 @@ impl Rule {
     }
 }
 
+impl serde::Serialize for Rule {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.spelling())
+    }
+}
+
 /// The first failing rule and the pointer it failed at, rooted at
 /// `/certificate`.
 #[derive(Clone, Debug, Eq, PartialEq)]

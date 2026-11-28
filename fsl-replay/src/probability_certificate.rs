@@ -35,8 +35,8 @@ mod cyclic_state;
 mod state_predicate;
 pub use bounded::probabilistic_formula_monitor_context;
 mod source;
-pub(crate) use document::is_model_state_key;
 pub use document::*;
+pub(crate) use document::{clock_constraints, is_model_state_key};
 pub use source::*;
 mod witness;
 pub use witness::*;
@@ -850,15 +850,16 @@ impl ExactProbabilityAcceptance {
     }
 }
 
-/// A value-free vacuous probability proof accepted by the independent checker.
-/// Its private document can only be obtained by proving activation unreachable.
+/// A proof with no numeric value, accepted by the independent checker: a
+/// vacuous one, whose activation it proved unreachable, or an expected time it
+/// proved infinite. Only the checker builds one.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProbabilityVacuityAcceptance {
+pub struct ProbabilityValueFreeAcceptance {
     document: Box<[u8]>,
     side: ProbabilityBoundSide,
 }
-impl ProbabilityVacuityAcceptance {
-    /// The accepted Conditional::Vacuous document's canonical bytes.
+impl ProbabilityValueFreeAcceptance {
+    /// The accepted document's canonical bytes.
     pub fn document(&self) -> &[u8] {
         &self.document
     }
@@ -875,7 +876,10 @@ pub enum ExactProbabilityCertificateCheck {
     /// value satisfies the claim bound.
     Accepted(ExactProbabilityAcceptance),
     /// Activation is unreachable; this certified proof has no numeric value.
-    AcceptedVacuous(ProbabilityVacuityAcceptance),
+    AcceptedVacuous(ProbabilityValueFreeAcceptance),
+    /// Every scheduler's expected time is infinite, as the checker rederives
+    /// from its own graph; an `>=` bound holds with no finite value.
+    AcceptedInfinite(ProbabilityValueFreeAcceptance),
     /// The certificate fails a checked condition.
     Rejected(ProbabilityCertificateRejection),
     /// The checked subject has an empty `initial` list (FR-201 "Instancing

@@ -272,7 +272,7 @@ fn finite_parameter_refusals(model: &Value, label: &str) -> Vec<(Value, Value, O
         } else {
             fsl_command::command::compile_outcome(&path).map(|_| ()).unwrap_err()
         };
-        assert_eq!(failure.category().exit_code(),20,"{failure}");
+        assert_eq!(failure.category().exit_code(),21,"{failure}");
         let native = failure.value().unwrap();
         assert_eq!(native["stage"],"check","{native}");
         assert_eq!(native["code"],"unsupported_projection","{native}");
@@ -2678,6 +2678,38 @@ fn supplied_refinement_transfer_premises_are_consumed_once() {
     assert_eq!(result["cause"]["type"], "premise-unproved", "{value}");
     assert_eq!(result["cause"]["premise"], 0, "{value}");
     assert_eq!(result["cause"]["result"], "refuted", "{value}");
+}
+
+/// FR-1052 (TC-3240): under `require_certified` a supplied `uncertified`
+/// transfer premise settles no `proved` transfer.
+#[test]
+#[trace("TC-3240", "FR-1052-AC-11")]
+fn require_certified_withholds_an_uncertified_transfer() {
+    let seed = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]);
+    let (_, seed_value) = transfer_run_over(&[("refinement_transfer", seed.clone())], true, true);
+    let premises = &transfer(&seed_value, "PrevSafe")["transfer"]["premises"];
+    let mut supplied = seed;
+    supplied["premises"] = json!({
+        "refinement": transfer_premise(&premises[0]["identity"], "proved"),
+        "claims": {"PrevSafe": transfer_premise(&premises[1]["identity"], "proved")},
+    });
+    let (exit, value) = transfer_run_over(
+        &[
+            ("refinement_transfer", supplied),
+            ("require_certified", json!(true)),
+        ],
+        true,
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let result = transfer(&value, "PrevSafe");
+    assert_eq!(result["value"], "inconclusive", "{value}");
+    assert_eq!(
+        result["cause"],
+        json!({"type": "proof-not-certified", "certification": "uncertified"}),
+        "{value}"
+    );
+    assert!(result.get("certification").is_none(), "{value}");
 }
 
 /// FR-1030-AC-4: the liveness premise is analyzed over stutter closure before

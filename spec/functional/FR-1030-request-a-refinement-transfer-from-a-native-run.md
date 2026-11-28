@@ -174,6 +174,10 @@ The run outcome's `refinement_transfer` member:
   still replays unchanged. No empty certificate or engine verdict settles a
   premise `proved`.
 
+- A `native-run/1` request MAY carry `require_certified`, a JSON boolean beside
+  `refinement_transfer`, absent meaning `false`, which settles the premises
+  and the transfer result under [FR-1052](FR-1052-settle-a-proof-that-is-not-certified-inconclusive-when-the-request-requires-certified-proofs.md).
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

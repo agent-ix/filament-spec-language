@@ -130,6 +130,21 @@ pub struct SubjectSelection {
     pub memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
 }
 
+#[implements("FR-480-AC-2")]
+fn unique_source_population(
+    population: &str,
+    declarations: impl IntoIterator<Item = DeclarationKey>,
+) -> Result<Option<DeclarationKey>, AmbiguousSourcePopulation> {
+    let declarations: BTreeSet<_> = declarations.into_iter().collect();
+    if declarations.len() > 1 {
+        return Err(AmbiguousSourcePopulation {
+            population: population.to_owned(),
+            declarations: declarations.into_iter().collect(),
+        });
+    }
+    Ok(declarations.into_iter().next())
+}
+
 /// FSL FR-1033: an `over` binding, FSpec FR-433's `{reference}` spelling.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -331,6 +346,25 @@ impl SubjectSelection {
         packages: &'a fsl_semantics::model::intake::PackageInput,
         documents: &'a DocumentProvision,
     ) -> SubjectBinding<'a> {
+        self.binding_with_source_packages(packages, documents, &[])
+            .expect("an empty source package list has no ambiguous populations")
+    }
+
+    /// Build this subject's binding while resolving scheme-less population
+    /// names against the checked package's source declarations (FR-569).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AmbiguousSourcePopulation`] when more than one checked
+    /// source declaration has the scheme-less population name.
+    #[implements("FR-569-AC-9", "FR-480-AC-2")]
+    #[ix_trace_rs::string_edge]
+    pub fn binding_with_source_packages<'a>(
+        &self,
+        packages: &'a fsl_semantics::model::intake::PackageInput,
+        documents: &'a DocumentProvision,
+        source_packages: &[fsl_semantics::model::domain_package::DomainPackage],
+    ) -> Result<SubjectBinding<'a>, AmbiguousSourcePopulation> {
         let mut universes: BTreeMap<DeclarationKey, (Vec<String>, BTreeSet<String>)> =
             BTreeMap::new();
         for read in self.universes.iter().filter_map(|selection| {
@@ -346,19 +380,40 @@ impl SubjectSelection {
                 // A hyper subject can share one snapshot across selected
                 // models. Its `model` header names one model, while each
                 // population identity names its own declaring package.
-                let (keys, seen) = universes
-                    .entry(DeclarationKey {
-                        package: population
-                            .population
-                            .strip_prefix("ix://")
-                            .and_then(|identity| identity.rsplit_once('/'))
-                            .map_or_else(
-                                || read.model.identity.clone(),
-                                |(package, _)| package.to_owned(),
-                            ),
+                let source_declaration = if population.population.starts_with("ix://") {
+                    None
+                } else {
+                    unique_source_population(
+                        &population.population,
+                        source_packages
+                            .iter()
+                            .flat_map(|source| &source.records)
+                            .filter_map(|record| match record {
+                                fsl_semantics::model::domain_package::DomainPackageRecord::Population(
+                                    source_population,
+                                ) if source_population.key.node.rsplit('/').next()
+                                    == Some(population.population.as_str()) =>
+                                {
+                                    Some(source_population.key.clone())
+                                }
+                                _ => None,
+                            }),
+                    )?
+                };
+                let declaration = population
+                    .population
+                    .strip_prefix("ix://")
+                    .and_then(|identity| identity.rsplit_once('/'))
+                    .map(|(package, _)| DeclarationKey {
+                        package: package.to_owned(),
                         node: population.population.clone(),
                     })
-                    .or_default();
+                    .or(source_declaration)
+                    .unwrap_or_else(|| DeclarationKey {
+                        package: read.model.identity.clone(),
+                        node: population.population.clone(),
+                    });
+                let (keys, seen) = universes.entry(declaration).or_default();
                 for object in &population.objects {
                     if seen.insert(object.key.clone()) {
                         keys.push(object.key.clone());
@@ -366,7 +421,7 @@ impl SubjectSelection {
                 }
             }
         }
-        SubjectBinding {
+        Ok(SubjectBinding {
             packages,
             snapshots: documents,
             initial: self
@@ -378,7 +433,7 @@ impl SubjectSelection {
                 .into_iter()
                 .map(|(population, (keys, _))| PopulationUniverse { population, keys })
                 .collect(),
-        }
+        })
     }
 
     fn wire(&self) -> Value {
@@ -416,6 +471,69 @@ impl SubjectSelection {
         self.initial_states == other.initial_states
             && self.universes == other.universes
             && self.proof_bounds == other.proof_bounds
+    }
+}
+
+/// A scheme-less population name matched multiple source declarations.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("source population `{population}` is ambiguous among {declarations:?}")]
+pub struct AmbiguousSourcePopulation {
+    /// The population name from the snapshot.
+    pub population: String,
+    /// The declarations and source identities that share that name.
+    pub declarations: Vec<DeclarationKey>,
+}
+
+impl AmbiguousSourcePopulation {
+    /// The existing FR-480 catalog refusal for a duplicate declaration name.
+    #[must_use]
+    #[implements("FR-480-AC-2")]
+    pub fn admission_record(&self) -> fsl_semantics::model::observation::AdmissionRecord {
+        let declarations = self
+            .declarations
+            .iter()
+            .map(|declaration| format!("{} ({})", declaration.node, declaration.package))
+            .collect::<Vec<_>>()
+            .join(", ");
+        fsl_semantics::model::observation::AdmissionRecord {
+            catalog: CatalogCode::new("ambiguous_declaration", "ambiguous-name"),
+            fields: BTreeMap::from([
+                ("population", self.population.clone()),
+                ("declarations", declarations),
+            ]),
+            path: Vec::new(),
+            kernel: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod source_population_resolution_tests {
+    use super::unique_source_population;
+    use filament_checked::key::DeclarationKey;
+    use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("FR-480-AC-2")]
+    fn a_scheme_less_population_name_refuses_multiple_source_declarations() {
+        let declarations = vec![
+            DeclarationKey {
+                package: "unit-a".to_owned(),
+                node: "ix://unit-a/lamps".to_owned(),
+            },
+            DeclarationKey {
+                package: "unit-b".to_owned(),
+                node: "ix://unit-b/lamps".to_owned(),
+            },
+        ];
+        let refusal = unique_source_population("lamps", declarations.clone())
+            .expect_err("multiple source declarations must not be resolved by order");
+
+        assert_eq!(refusal.population, "lamps");
+        assert_eq!(refusal.declarations, declarations);
+        let rendered = refusal.to_string();
+        assert!(rendered.contains("unit-a"), "{rendered}");
+        assert!(rendered.contains("unit-b"), "{rendered}");
     }
 }
 
@@ -3899,6 +4017,8 @@ pub struct AnalyzeRun<'a> {
     pub engines: &'a Engines,
     /// The shared limits.
     pub limits: AnalyzeLimits,
+    /// Which proofs settle `proved`.
+    pub certification: fsl_replay::CertificationPolicy,
     /// The items as the caller stated them, in request order: the run
     /// refuses an item that states a limit the caller also set (FR-255
     /// "Caller limits and item limits"). Empty states no item members.
@@ -4034,6 +4154,7 @@ pub fn settle_run_with_smt_proofs(
         items,
         engines,
         limits,
+        certification,
         selections,
     } = run;
     if let Some((position, setting)) = limits.engines.conflict(selections).or_else(|| {
@@ -4090,6 +4211,7 @@ pub fn settle_run_with_smt_proofs(
             engines,
             limits: &limits,
             cancel,
+            certification,
         },
     )
     .map_err(|failure| match failure {
