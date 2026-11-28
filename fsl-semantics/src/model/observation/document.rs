@@ -2633,15 +2633,13 @@ fn admit_value<'a: 'w, 'w>(
                             if components.is_some() || variant.has_invalid_components() {
                                 return Err(refuse("unknown-member"));
                             }
-                        } else if components.is_none() {
-                            if !variant.has_invalid_components() {
-                                return Err(admission_record(
-                                    Code::InvalidRuntimeInput,
-                                    "missing-member",
-                                )
-                                .with("member", "components")
-                                .at(path.clone()));
-                            }
+                        } else if components.is_none() && !variant.has_invalid_components() {
+                            return Err(admission_record(
+                                Code::InvalidRuntimeInput,
+                                "missing-member",
+                            )
+                            .with("member", "components")
+                            .at(path.clone()));
                         }
                         if variant.has_invalid_components() {
                             return Err(refuse("wrong-value-kind"));
@@ -6271,9 +6269,8 @@ mod tests {
         };
         assert_eq!((variant.type_identity(), variant.case()), (None, None));
         assert!(variant.has_extra_member());
-        for malformed in [r#"{"variant":"Gold"}"#] {
-            assert!(read(malformed).is_none(), "{malformed}");
-        }
+        let malformed = r#"{"variant":"Gold"}"#;
+        assert!(read(malformed).is_none(), "{malformed}");
         let wrong_kind = snapshot(r#"{"variant":{"type":7,"case":"Gold"}}"#);
         let RawForm::Variant(variant) = wrong_kind.form() else {
             panic!("variant payload")

@@ -600,7 +600,7 @@ fn parse_with_declaration_recovery(
     }
 
     loop {
-        let mut engine = Engine::new(&grammar, reserved_words, &tokens, limits, cancel);
+        let mut engine = Engine::new(grammar, reserved_words, &tokens, limits, cancel);
         match engine.production(Production::CompleteUnit, 0) {
             Outcome::Match(_) => {
                 append_omitted_diagnostic(
@@ -871,7 +871,7 @@ fn parse_with_declaration_recovery(
                         },
                     );
                     let mut retry =
-                        Engine::new(&grammar, reserved_words, &inserted, limits, cancel);
+                        Engine::new(grammar, reserved_words, &inserted, limits, cancel);
                     if let Outcome::Match(_) = retry.production(Production::CompleteUnit, 0) {
                         let span = failure_span(source, &tokens, failure.position);
                         let expected = failure.expected.joined_descriptions();
@@ -1390,7 +1390,7 @@ fn recover_at_protocol_delimiter(
             },
         );
     }
-    let mut engine = Engine::new(&grammar, reserved_words, &recovered, limits, cancel);
+    let mut engine = Engine::new(grammar, reserved_words, &recovered, limits, cancel);
     let Outcome::Match(_) = engine.production(Production::CompleteUnit, 0) else {
         return None;
     };
@@ -1413,7 +1413,7 @@ fn selection_prelude_nodes(
         }
     }
 
-    let mut engine = Engine::new(&grammar, reserved_words, tokens, limits, cancel);
+    let mut engine = Engine::new(grammar, reserved_words, tokens, limits, cancel);
     let Outcome::Match(mut position) = engine.production(Production::Header, 0) else {
         return Vec::new();
     };
