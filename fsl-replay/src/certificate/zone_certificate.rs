@@ -4505,6 +4505,28 @@ impl<O> Checker<'_, '_, O> {
         }
         let length = steps.len();
         for (position, (step, part)) in steps.iter().enumerate() {
+            // An enabled reset can support a time-divergent cycle even when
+            // its guard has no lower bound: a positive delay may fit under
+            // the source state's invariant before the reset on every turn.
+            // `repeats` independently checks that the complete cycle remains
+            // feasible, so this only establishes that one turn can advance.
+            let edge = &self.certificate.edges[cycle[position]];
+            let source = self.state(edge.from)?;
+            let invariants = self.invariants(source)?;
+            if let Some(step) = step {
+                for (place, reset) in step.resets() {
+                    if invariants.iter().any(|invariant| {
+                        invariant.place() == *place
+                            && matches!(
+                                invariant.op(),
+                                ClockOp::Less | ClockOp::LessOrEqual
+                            )
+                            && invariant.bound() > reset
+                    }) {
+                        return Ok(true);
+                    }
+                }
+            }
             let Some(constraints) = step
                 .zip(*part)
                 .and_then(|(step, part)| step.parts().get(part))
