@@ -4,9 +4,11 @@
 use filament_exact::Cancel;
 use fsl_foundation::{source::provenance::OccurrenceKey, BackendId, RequestIndex};
 use fsl_replay::{
-    CertificateCheckLimits, CertificateRequest, ModelCheckItem, SmtProofOutcome,
+    CertificateCheckLimits, CertificateRequest, CrossCheckRun, ModelCheckItem, SmtProofOutcome,
     SmtProofSettlement, SubjectIdentity,
 };
+
+use ix_trace_rs::implements;
 
 use crate::analyze::ClaimItem;
 use crate::analyze::ItemForm;
@@ -132,18 +134,24 @@ impl SmtProofEvidence {
 
 /// Settle CG's typed temporal SMT evidence and retain FR-621 checker evidence.
 ///
+/// `cross_check` is CG's Z3 run (or its absence) for the same query; FSL
+/// settles it beside the outcome by FR-290's table (FR-290-AC-16).
+///
 /// The returned value is ready for the analyze document projection. A checker
 /// identity is present only when FSL verified the certificate.
 #[must_use]
+#[implements("FR-290-AC-16")]
 pub fn settle_temporal_smt_proof(
     request: &BoundSmtProofRequest<'_>,
     outcome: &SmtProofOutcome,
+    cross_check: Option<CrossCheckRun>,
     limits: &CertificateCheckLimits,
     cancel: &Cancel,
 ) -> SmtProofEvidence {
     let settlement = fsl_replay::settle_smt_proof_with_evidence(
         &request.certificate_request,
         outcome,
+        cross_check,
         limits,
         cancel,
     );

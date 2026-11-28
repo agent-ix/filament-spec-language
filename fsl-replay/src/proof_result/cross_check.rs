@@ -140,7 +140,20 @@ impl TerminalRecord {
         backend: BackendId,
         settlement: &SmtProofSettlement,
     ) -> Self {
-        Self::with_backend(request_index, backend, settlement.value().clone())
+        let record = Self::with_backend(request_index, backend, settlement.value().clone());
+        record.settled_beside_handed_cross_check(settlement)
+    }
+
+    /// FR-290's table applied to the cross-check the handoff carried. A
+    /// refused cross-check leaves the settlement unchanged (one record per
+    /// item); nothing handed leaves it as it was.
+    pub(super) fn settled_beside_handed_cross_check(self, settlement: &SmtProofSettlement) -> Self {
+        match settlement.cross_check() {
+            Some(run) => self
+                .with_cross_check(run.clone())
+                .unwrap_or_else(|refused| refused.record),
+            None => self,
+        }
     }
 
     /// This record, the SMT backend's own settlement of one item, settled

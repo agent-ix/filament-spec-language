@@ -80,7 +80,7 @@ fn counter_refutation(query: &[u8]) -> String {
     proof
 }
 
-#[trace("FR-314-AC-23")]
+#[trace("FR-314-AC-23", "TC-774", "FR-290-AC-16")]
 #[test]
 fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
     let world = world(CONTRACT, &[("c", 0)]);
@@ -187,6 +187,11 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
     let evidence = fsl_analyze::model_check::smt::settle_temporal_smt_proof(
         &bound_request,
         &cg_settlement.outcome,
+        // CG's Z3 run for the same query, handed beside cvc5's outcome.
+        Some(fsl_replay::CrossCheckRun::Ran(fsl_replay::CrossCheck {
+            tool: "z3".to_owned(),
+            verdict: fsl_replay::CrossCheckVerdict::Refuted,
+        })),
         &CertificateCheckLimits::default(),
         &cancel,
     );
@@ -267,6 +272,12 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
         serde_json::from_slice(&serialized).expect("the serialized document parses");
     assert_eq!(document["format"], "filament-outcome/1");
     assert_eq!(document["items"][0]["record"]["result"], "proved");
+    // FR-290-AC-16: a certified proof stands whatever Z3 says, and the
+    // settled item records Z3's verdict beside it.
+    assert_eq!(
+        document["items"][0]["record"]["cross_check"],
+        serde_json::json!({"tool": "z3", "verdict": "refuted"})
+    );
     assert_eq!(document["items"][0]["certificate"]["checker"], "smt-proof");
     assert_eq!(document["items"][0]["certificate"]["accepted"], true);
 }

@@ -1810,6 +1810,7 @@ impl TerminalRecord {
     ///
     /// A record is produced only from the matching certified settlement;
     /// callers cannot label an uncertified result as an accepted SMT proof.
+    #[ix_trace_rs::implements("FR-290-AC-16")]
     pub fn proved_by_smt_proof(
         request_index: RequestIndex,
         backend: BackendId,
@@ -1826,11 +1827,10 @@ impl TerminalRecord {
         {
             return None;
         }
-        Some(Self::with_backend(
-            request_index,
-            backend,
-            settlement.value().clone(),
-        ))
+        Some(
+            Self::with_backend(request_index, backend, settlement.value().clone())
+                .settled_beside_handed_cross_check(settlement),
+        )
     }
 
     /// A `proved` record for a supplied finite trace that replayed step by step
