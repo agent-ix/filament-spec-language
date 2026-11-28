@@ -258,7 +258,7 @@ fn assert_command_replay(wire: ReplayRequestWire) {
 }
 
 fn command_replay_with_exact_input_bound(wire: &ReplayRequestWire) -> Value {
-    let envelope = request_file_value(&wire);
+    let envelope = request_file_value(wire);
     let bytes = serde_json::to_vec(&envelope).expect("request envelope serializes");
     let directory = tempfile::tempdir().expect("replay workspace");
     let request_path = directory.path().join("request.json");
