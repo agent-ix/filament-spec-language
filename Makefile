@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify parity cargo-deny-bans fuzz-deep-input test-deep-format test-deep-measurements ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
+.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint limit-literals checked-input canonical-types refinement-versioning refinement-layering qualify parity cargo-deny-bans fuzz-deep-input test-deep-format test-deep-measurements ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
 
 # Fail when a tracked file is executable/binary content or exceeds
 # the size ceiling. See the script's own header for the detection method and
@@ -68,6 +68,12 @@ pre-push:
 # never ambient state.
 route-lint:
 	cargo run --package xtask -- route-lint
+
+# FR-255 (QSL-3573): fails when production code puts a type's maximum, an
+# `UNLIMITED` constant or `unbounded()` where a limit goes, past what
+# xtask/limit-literals.allow names.
+limit-literals:
+	cargo run --package xtask -- limit-literals
 
 # FR-270 (ADR-032 CK-1 to CK-5): fails when an execution, routing or replay
 # stage entry takes a pre-check representation, or a stage crate calls a
@@ -369,7 +375,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint limit-literals checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # runs the focused conformance lanes.

@@ -30,7 +30,8 @@ pub const DOMAINS: [&str; 1] = [DomainKind::Integer.to_wire()];
 
 /// The published default for `max_cases` (FSpec FR-483): the cases an item
 /// without its own `check.limits.max_cases` may examine.
-pub const DEFAULT_MAX_CASES: NonZeroU64 = NonZeroU64::new(1_048_576).unwrap();
+pub const DEFAULT_MAX_CASES: NonZeroU64 =
+    NonZeroU64::new(fsl_replay::value_check::DEFAULT_MAX_CASES).unwrap();
 
 /// The arm's routed descriptor with its published `max_cases` default,
 /// converted by FR-288's conversion for a check arm, which refuses a

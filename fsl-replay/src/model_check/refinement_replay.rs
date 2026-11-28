@@ -34,6 +34,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{Constraint, Identity, Strength};
 use fsl_eval::simulation::model::{ClockValuation, ModelFinding, TimedSystem};
 use fsl_eval::simulation::{Limits, TransitionSystem};
+use fsl_foundation::budget::Budget;
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::implements;
 
@@ -48,6 +49,7 @@ use crate::model_check::replay::{
     timed_prefix, unfair_constraint, ModelTraceRefusal, Position,
 };
 use crate::refinement::RefinementRead;
+use crate::refinement::ReplayStop;
 use crate::refinement::{
     abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
     check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
@@ -130,14 +132,25 @@ pub fn replay_protocol_assumption_witness(
             disagreement(Category::Success),
         ));
     };
-    let Some((mut candidate, initial_closure)) = protocol_initial_closure(
+    let closure = match protocol_initial_closure(
         refinement,
         systems,
         protocol,
         &concrete,
         &witness.path.protocol_initial,
-    )?
-    else {
+    ) {
+        Ok(closure) => closure,
+        Err(InitialClosureStop::Limit(reached)) => {
+            return Ok(ProtocolAssumptionReplaySettlement::Stopped(reached))
+        }
+        Err(InitialClosureStop::Cancelled) => {
+            return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
+                disagreement(Category::Success),
+            ))
+        }
+        Err(InitialClosureStop::Refused(refusal)) => return Err(refusal),
+    };
+    let Some((mut candidate, initial_closure)) = closure else {
         return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
             disagreement(Category::Success),
         ));
@@ -446,13 +459,43 @@ type InitialClosure = (
     )>,
 );
 
+/// Why the initial closure of an assumption witness ended without a path.
+enum InitialClosureStop {
+    /// The replay's transition or retained-byte allowance ran out.
+    Limit(ReachedLimit),
+    /// The run was cancelled; it decides nothing.
+    Cancelled,
+    /// The replay cannot be carried out.
+    Refused(ReplayRefusal),
+}
+
+impl From<ReplayStop> for InitialClosureStop {
+    fn from(stop: ReplayStop) -> Self {
+        match stop {
+            ReplayStop::Limit(reached) => Self::Limit(reached),
+            ReplayStop::Cancelled => Self::Cancelled,
+            ReplayStop::Fault => Self::Refused(fault("a-byte-charge-is-no-kernel-charge")),
+        }
+    }
+}
+
+impl From<ReplayRefusal> for InitialClosureStop {
+    fn from(refusal: ReplayRefusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
+/// The closure of the protocol's initial roots over its internal classes,
+/// charged to the replay's allowance (FR-255: `model_check.max_transitions`
+/// and `analysis.retained_bytes`) before each state is stored.
+#[implements("FR-255-AC-47")]
 fn protocol_initial_closure(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     protocol: &crate::refinement::AbstractProtocolSystem<'_>,
     concrete: &fsl_eval::simulation::model::ModelSimState,
     target: &[u8],
-) -> Result<Option<InitialClosure>, ReplayRefusal> {
+) -> Result<Option<InitialClosure>, InitialClosureStop> {
     use std::collections::{BTreeSet, VecDeque};
 
     let history = initial_history(refinement, &systems.concrete, concrete.state());
@@ -516,9 +559,12 @@ fn protocol_initial_closure(
         let Ok((protocol_key, _)) = protocol.state_key(&root) else {
             continue;
         };
+        let root_bytes = crate::refinement::closure_path_node_bytes(&protocol_key);
         if !seen.insert(protocol_key) {
             continue;
         }
+        // A queued root holds a clone of its state, as a stored path node.
+        protocol.charge_replay(0, root_bytes)?;
         queue.push_back((root.clone(), root, Vec::new()));
     }
     let mut expanded = 0_u64;
@@ -532,6 +578,11 @@ fn protocol_initial_closure(
         let expansion = protocol
             .successors(&state)
             .map_err(|_| fault("assumption-replay-protocol-initial-expands"))?;
+        // Every successor the expansion yields is a transition expanded.
+        protocol.charge_replay(
+            u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX),
+            0,
+        )?;
         for (transition, next) in expansion.successors {
             let Some(class) = crate::refinement::protocol_transition_class(protocol, &transition)
             else {
@@ -543,6 +594,7 @@ fn protocol_initial_closure(
             let (next_key, _) = protocol
                 .state_key(&next)
                 .map_err(|_| fault("assumption-replay-protocol-state-has-a-key"))?;
+            let node_bytes = crate::refinement::closure_path_node_bytes(&next_key);
             if !seen.insert(next_key) {
                 continue;
             }
@@ -550,6 +602,14 @@ fn protocol_initial_closure(
             if expanded > protocol.model().max_candidates() {
                 return Ok(None);
             }
+            // The queued entry stores a clone of the whole path to `next`:
+            // one path node per step, by the one formula of the step check.
+            let stored = node_bytes.saturating_mul(
+                u64::try_from(path.len())
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1),
+            );
+            protocol.charge_replay(0, stored)?;
             let mut next_path = path.clone();
             next_path.push((transition, next.clone()));
             queue.push_back((root.clone(), next, next_path));
@@ -761,7 +821,22 @@ pub fn replay_refinement_trace(
     payload: &TemporalCounterexample,
     limits: &ModelCheckLimits,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
-    bound_protocol_replay(systems, &limits.limits);
+    replay_refinement_trace_retained(refinement, systems, payload, limits, None)
+}
+
+/// FR-255-AC-28: [`replay_refinement_trace`] with the item's
+/// `analysis.retained_bytes` allowance `retained`: the protocol closures of
+/// the replay are charged to it, a clone sharing the counters the check
+/// spent. `None` runs under the published default allowance.
+#[implements("FR-255-AC-28")]
+pub fn replay_refinement_trace_retained(
+    refinement: &dyn RefinementRead,
+    systems: &RefinementSystems<'_>,
+    payload: &TemporalCounterexample,
+    limits: &ModelCheckLimits,
+    retained: Option<&Budget>,
+) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    bound_protocol_replay(systems, &limits.limits, retained);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
@@ -780,9 +855,16 @@ pub fn replay_refinement_trace(
 /// `limits.max_transitions` transitions; a replay over a system with no
 /// protocol side has nothing to bound.
 #[implements("FR-255-AC-30")]
-fn bound_protocol_replay(systems: &RefinementSystems<'_>, limits: &Limits) {
+fn bound_protocol_replay(
+    systems: &RefinementSystems<'_>,
+    limits: &Limits,
+    retained: Option<&Budget>,
+) {
     if let Some(protocol) = systems.abstract_protocol.as_ref() {
         protocol.bound_replay_transitions(widen(limits.max_transitions));
+        if let Some(retained) = retained {
+            protocol.share_replay_retained(retained);
+        }
     }
 }
 
@@ -840,7 +922,7 @@ fn replay_refinement_trace_with_time_source(
     exploration: &Limits,
     timed: &TimedSystem<'_, '_>,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
-    bound_protocol_replay(systems, exploration);
+    bound_protocol_replay(systems, exploration, None);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };

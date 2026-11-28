@@ -97,7 +97,7 @@ use super::{
 use crate::model_subject::ModelInstance;
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::{Footprint, Location};
-use crate::simulation::model::Budget;
+use crate::simulation::model::CandidateCount;
 use crate::simulation::model::FootprintError;
 
 /// One parallel instance (ADR-027 PS-4): the thread that forked it, its
@@ -458,7 +458,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         state: &ProtocolState<M>,
         step: &ProtocolTransition,
     ) -> Result<Footprint, ProtocolFootprintError> {
-        let mut budget: Budget = self.model.budget();
+        let mut budget: CandidateCount = self.model.budget();
         let accesses = self
             .state_accesses(state, &mut budget)
             .map_err(ProtocolFootprintError::Expansion)?;
@@ -477,7 +477,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         state: &ProtocolState<M>,
         steps: &[&ProtocolTransition],
     ) -> Result<Vec<Footprint>, ProtocolFootprintError> {
-        let mut budget: Budget = self.model.budget();
+        let mut budget: CandidateCount = self.model.budget();
         let accesses = self
             .state_accesses(state, &mut budget)
             .map_err(ProtocolFootprintError::Expansion)?;

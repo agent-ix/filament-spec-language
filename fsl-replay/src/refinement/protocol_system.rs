@@ -15,7 +15,12 @@ use fsl_eval::simulation::protocol::{
 use fsl_eval::simulation::{
     Cut, EncodingRefusal, Expansion, ExpansionStop, SubjectSystem, TransitionSystem,
 };
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::{Setting, SettingLimits};
 use fsl_semantics::check::CheckedProtocol;
+use ix_trace_rs::implements;
+
+use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 
 /// One operation-class fairness row selected through a protocol's admitted
 /// `requires temporal` link.
@@ -56,20 +61,70 @@ pub struct AbstractProtocolSystem<'a> {
     replay_transitions: ReplayTransitions,
 }
 
-/// The total protocol-closure transition allowance of one replay, and what
-/// its checks have used so far. A system nobody bounded charges nothing
-/// against `u64::MAX`.
+/// Why a replay charge was not made.
+#[derive(Debug)]
+pub(crate) enum ReplayStop {
+    /// A limit of the replay's allowance was reached.
+    Limit(ReachedLimit),
+    /// The run was cancelled; it decides nothing.
+    Cancelled,
+    /// The byte charge could not be accounted (an internal fault).
+    Fault,
+}
+
+/// The total protocol-closure allowance of one replay, and what its checks
+/// have used so far: transitions, and the bytes its stored closure paths
+/// retain (`analysis.retained_bytes`). A system nobody bounded runs under the
+/// published defaults of `model_check.max_transitions` and
+/// `analysis.retained_bytes` (FR-255), so a direct caller of
+/// `check_protocol_initial` and `check_protocol_step` is limited too.
 #[derive(Debug)]
 struct ReplayTransitions {
     max: std::cell::Cell<u64>,
     consumed: std::cell::Cell<u64>,
+    retained: std::cell::RefCell<Budget>,
+}
+
+/// At most one caller value, for `analysis.retained_bytes`: every other row,
+/// and that one when unset, takes its published default.
+struct RetainedCaller(Option<u64>);
+
+impl SettingLimits for RetainedCaller {
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        self.0
+            .map(|bound| (Setting::AnalysisRetainedBytes, bound))
+            .into_iter()
+            .collect()
+    }
+
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        if setting == Setting::AnalysisRetainedBytes {
+            self.0 = Some(bound);
+            return true;
+        }
+        false
+    }
+}
+
+fn fresh_retained(bound: Option<u64>) -> Budget {
+    Budget::from_settings(
+        &RetainedCaller(bound),
+        crate::spine::default_accounting(0),
+        &filament_exact::Cancel::new(),
+    )
 }
 
 impl Default for ReplayTransitions {
+    #[implements("FR-255-AC-47")]
     fn default() -> Self {
         Self {
-            max: std::cell::Cell::new(u64::MAX),
+            max: std::cell::Cell::new(
+                Setting::ModelCheckMaxTransitions
+                    .default_bound()
+                    .unwrap_or(0),
+            ),
             consumed: std::cell::Cell::new(0),
+            retained: std::cell::RefCell::new(fresh_retained(None)),
         }
     }
 }
@@ -150,6 +205,64 @@ impl<'a> AbstractProtocolSystem<'a> {
     pub fn bound_replay_transitions(&self, max_transitions: u64) {
         self.replay_transitions.max.set(max_transitions);
         self.replay_transitions.consumed.set(0);
+        *self.replay_transitions.retained.borrow_mut() = fresh_retained(None);
+    }
+
+    /// Charge the retained bytes of this replay's closures to the caller's
+    /// item allowance `retained` instead of a fresh one: a clone shares its
+    /// counters, so the check and the replay spend one allowance
+    /// (FR-255-AC-28). Call after [`Self::bound_replay_transitions`].
+    #[implements("FR-255-AC-47")]
+    pub fn share_replay_retained(&self, retained: &Budget) {
+        *self.replay_transitions.retained.borrow_mut() = retained.clone();
+    }
+
+    /// Bound the bytes the closure paths of one replay retain to `bytes`
+    /// (`analysis.retained_bytes`), counting from none used. Call after
+    /// [`Self::bound_replay_transitions`], which restores the default.
+    #[implements("FR-255-AC-47")]
+    pub fn bound_replay_retained(&self, bytes: u64) {
+        *self.replay_transitions.retained.borrow_mut() = fresh_retained(Some(bytes));
+    }
+
+    /// The `analysis.retained_bytes` allowance the closure paths of this
+    /// replay are charged to. Clones share its total.
+    #[must_use]
+    pub fn replay_retained(&self) -> Budget {
+        self.replay_transitions.retained.borrow().clone()
+    }
+
+    /// Charge `expanded` transitions and `bytes` of retained closure state
+    /// to the replay's allowance before they are stored.
+    ///
+    /// # Errors
+    ///
+    /// The limit reached: `max_transitions` or `analysis.retained_bytes`.
+    #[implements("FR-255-AC-47")]
+    pub(crate) fn charge_replay(&self, expanded: u64, bytes: u64) -> Result<(), ReplayStop> {
+        let (max, consumed) = self.replay_transitions();
+        let total = consumed.saturating_add(expanded);
+        if total > max {
+            return Err(ReplayStop::Limit(ReachedLimit {
+                limit: ModelCheckLimit::MaxTransitions,
+                value: max,
+            }));
+        }
+        match self
+            .replay_retained()
+            .charge(Setting::AnalysisRetainedBytes, bytes)
+        {
+            Ok(()) => {
+                self.replay_transitions.consumed.set(total);
+                Ok(())
+            }
+            Err(BudgetStop::Limit(limit)) => Err(ReplayStop::Limit(ReachedLimit {
+                limit: ModelCheckLimit::AnalysisRetainedBytes,
+                value: limit.configured_bound(),
+            })),
+            Err(BudgetStop::Cancelled(_)) => Err(ReplayStop::Cancelled),
+            Err(BudgetStop::Accounting(_)) => Err(ReplayStop::Fault),
+        }
     }
 
     /// The total transition allowance of the replay and what it has used.

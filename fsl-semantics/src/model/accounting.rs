@@ -242,9 +242,10 @@ impl NormalizationLimitKind {
         }
     }
 
-    /// Whether this counter is cumulative rather than a high-water size.
+    /// Whether this counter is cumulative rather than a high-water size:
+    /// the one table, [`fsl_foundation::Setting::count_kind`], decides.
     pub fn is_cumulative(self) -> bool {
-        matches!(self, Self::WorkUnits)
+        self.setting().count_kind() == fsl_foundation::CountKind::Cumulative
     }
 
     fn index(self) -> Option<usize> {
