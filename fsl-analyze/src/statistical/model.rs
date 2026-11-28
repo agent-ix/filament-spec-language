@@ -29,7 +29,7 @@ use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
     advance_timed, step_rewards, ModelSimState, ModelSimulationRequest, ModelSystem,
     PredicateReading, TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState,
-    TimedStop, TimedSystem, TransitionId,
+    TimedStop, TimedSystem, TransitionId, UndefinedContract,
 };
 use fsl_eval::simulation::{
     ExpansionStop, NotSimulated, Permutation, ProbabilisticSampler, SampleStop, SampledPosition,
@@ -762,12 +762,28 @@ type Truths = Result<Vec<bool>, Box<UndefinedEvaluation>>;
 enum Ended {
     Halt(SampleHalt),
     Undecided,
+    /// A contract conjunction had no value at the state the step expanded
+    /// (ADR-018 UE-6): the caller knows the position and names the site.
+    Contract(Box<UndefinedContract>),
+}
+
+/// The undefined evaluation of `contract` at the state `key` at `position`
+/// (ADR-018 UE-6): the clause, with the guarded transition for a
+/// precondition.
+#[implements("FR-189-AC-21")]
+fn contract_evaluation(
+    position: u64,
+    key: &fsl_eval::simulation::StateKey,
+    contract: UndefinedContract,
+) -> UndefinedEvaluation {
+    UndefinedEvaluation::of_contract(position, key.clone(), contract)
 }
 
 impl From<SampleStop> for Ended {
     fn from(stop: SampleStop) -> Self {
         Self::Halt(match stop {
             SampleStop::UndecidedSuccessor => return Self::Undecided,
+            SampleStop::UndefinedContract(contract) => return Self::Contract(Box::new(contract)),
             SampleStop::GeneratorMismatch { supplied } => {
                 SampleHalt::GeneratorMismatch { supplied }
             }
@@ -994,7 +1010,7 @@ impl<'c> Shared<'_, '_, 'c> {
         let mut cursor = match self.cursor(start, seed, trace) {
             Ok(cursor) => cursor,
             Err(Ended::Halt(halt)) => return Err(halt),
-            Err(Ended::Undecided) => return Err(broken()),
+            Err(Ended::Undecided | Ended::Contract(_)) => return Err(broken()),
         };
         let read = match &self.reading {
             Reading::Formula { .. } => self.formula(binding, &mut cursor),
@@ -1006,6 +1022,13 @@ impl<'c> Shared<'_, '_, 'c> {
             Ok(Read::Sample(sample)) => sample,
             Ok(Read::Undefined(evaluation)) => Sample::Undefined(*evaluation),
             Err(Ended::Undecided) => Sample::UndecidedSuccessor,
+            // The step out of the cursor's position failed: that state is the
+            // one whose guard has no value.
+            Err(Ended::Contract(contract)) => Sample::Undefined(contract_evaluation(
+                u64::try_from(cursor.steps.len()).map_err(|_| broken())?,
+                cursor.position.key(),
+                *contract,
+            )),
             Err(Ended::Halt(halt)) => return Err(halt),
         };
         Ok(Drawn {
@@ -1487,7 +1510,23 @@ impl ModelWalk<'_, '_, '_> {
             trace: self.trace,
             step: walk.taken,
         };
-        let (position, step) = shared.generator.step(&walk.position, at)?;
+        let (position, step) = match shared.generator.step(&walk.position, at) {
+            Ok(stepped) => stepped,
+            Err(SampleStop::UndefinedContract(contract)) => {
+                // The state the walk expands has a guard with no value; the
+                // witness's steps are the walk again, to that position.
+                let evaluation = contract_evaluation(walk.taken, walk.position.key(), contract);
+                let mut cursor = shared.cursor(walk.start.clone(), self.seed, self.trace)?;
+                for _ in 0..walk.taken {
+                    shared.advance(&mut cursor)?;
+                }
+                return Ok(WalkStep::Undefined {
+                    evaluation,
+                    steps: cursor.steps,
+                });
+            }
+            Err(stop) => return Err(stop.into()),
+        };
         let weight = match weight {
             None => Rational::from_integer(Integer::one()),
             Some(Weighting::Reward(name)) => magnitude(&step, name)?,
@@ -1511,7 +1550,7 @@ impl RegenerationWalk for ModelWalk<'_, '_, '_> {
     fn step(&mut self) -> Result<WalkStep, SampleHalt> {
         match self.step_or_end() {
             Ok(step) => Ok(step),
-            Err(Ended::Undecided) => Ok(WalkStep::UndecidedSuccessor),
+            Err(Ended::Undecided | Ended::Contract(_)) => Ok(WalkStep::UndecidedSuccessor),
             Err(Ended::Halt(halt)) => Err(halt),
         }
     }
@@ -1652,7 +1691,7 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                         | WalkStep::Terminal { .. }
                         | WalkStep::TimeLocked,
                     )
-                    | Err(Ended::Undecided) => break,
+                    | Err(Ended::Undecided | Ended::Contract(_)) => break,
                     Err(Ended::Halt(halt)) => return Err(halt.into()),
                 }
             }

@@ -1005,6 +1005,7 @@ impl<'c> Builder<'_, '_, 'c> {
             // it is its own ticket's.
             TimedStop::Undefined(_) => ProductRefusal::UndecidedSuccessor(UndecidedSuccessor {
                 state: StateKey::from_canonical_bytes(key.clone()),
+                undefined: None,
             })
             .into(),
             TimedStop::Undecided(reading)
@@ -1016,6 +1017,7 @@ impl<'c> Builder<'_, '_, 'c> {
             {
                 ProductRefusal::UndecidedSuccessor(UndecidedSuccessor {
                     state: StateKey::from_canonical_bytes(key.clone()),
+                    undefined: None,
                 })
                 .into()
             }
@@ -1428,7 +1430,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 PredicateReading::False => truths.push(false),
                 PredicateReading::Undefined { cause, .. } => {
                     return Ok(Err(Hit {
-                        read: *read,
+                        read: read.clone(),
                         cause,
                         state_key,
                     }));

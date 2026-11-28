@@ -23,8 +23,8 @@ use crate::hyper::seam::{
     HyperLetters, MatchPart, MatchReading, ParameterBinding, StepLabel, StepMatch,
 };
 use crate::temporal::{
-    evaluate_closed_tuple, AtomReading, ComponentPosition, LetterStop, TemporalOutcome,
-    TemporalPosition, TupleLetters,
+    evaluate_closed_tuple, read_closed_atom, AtomReading, ComponentPosition, LetterStop,
+    TemporalOutcome, TemporalPosition, TupleLetters,
 };
 
 use crate::simulation::model::{ModelSimState, ModelSystem};
@@ -110,6 +110,49 @@ pub enum ClosedStop {
     /// A state's expansion refused a contract conjunction, so what the state
     /// enables is not exactly known.
     Refused,
+}
+
+/// The expression of a closed tuple's reading that has no value (ADR-023
+/// HV-8).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClosedLocus {
+    /// A `holds` atom of the body.
+    Atom(FormulaNodeId),
+    /// A universal `match` conjunct, by its index.
+    Match {
+        /// The conjunct's index among the universal conjuncts.
+        conjunct: usize,
+    },
+    /// An existential `match` conjunct, by its index.
+    ExistentialMatch {
+        /// The conjunct's index among the existential conjuncts.
+        conjunct: usize,
+    },
+    /// A `pre` or `post` clause of a contract conjunction, by its name.
+    Contract(String),
+}
+
+/// The first expression with no value along a tuple of closed executions,
+/// in the engine's reading order (ADR-018 UE-4): the joint position, what has
+/// no value, the components it reads, the guarded transition of a
+/// precondition, and why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClosedUndefined {
+    /// The joint position, read over the visible positions of an `align skip`
+    /// clause.
+    pub position: u64,
+    /// The expression.
+    pub locus: ClosedLocus,
+    /// The components whose states it reads.
+    pub components: Vec<usize>,
+    /// The transition a precondition guards.
+    pub transition: Option<ModelTransition>,
+    /// The index of the execution's state a contract conjunction was read at,
+    /// among all its states, skipped steps included; `None` for a `match` or an
+    /// atom, which read the visible positions.
+    pub state: Option<usize>,
+    /// Why it has no value.
+    pub cause: crate::temporal::UndefinedCause,
 }
 
 /// The body's horizon (ADR-014 TR-4): the greatest sum of interval upper
@@ -205,8 +248,13 @@ pub fn closed_executions(
                     .iter()
                     .find_map(crate::simulation::model::ModelFinding::undefined_contract)
                 {
+                    // The shortest prefix with such a state is the first refuting
+                    // evidence (ADR-018 UE-4), not the first the depth-first walk meets.
+                    let (prefix, contract) =
+                        shortest_undefined(system, depth, limit, skips, cancel, &execution)?
+                            .unwrap_or((execution, contract));
                     return Err(ClosedStop::Undefined {
-                        prefix: Box::new(execution),
+                        prefix: Box::new(prefix),
                         contract: Box::new(contract),
                     });
                 }
@@ -258,6 +306,153 @@ pub fn closed_executions(
     Ok(complete)
 }
 
+/// The execution of `system` with the earliest visible position whose last
+/// state has an undefined contract conjunction, when that position is earlier
+/// than `found`'s (ADR-018 UE-4: the first refuting evidence, shortest prefix
+/// first). The search is over states, each expanded once by its state key,
+/// with a parent pointer to the path that reached it, level by visible
+/// position: a skipped step stays in its level (ADR-023 PA-2), a level is read
+/// in the order its states were reached, and a state's successors come in the
+/// order of their transition and state keys. A state whose contract
+/// conjunction is refused is not entered. `Ok(None)` when `found` is already
+/// the earliest.
+///
+/// # Errors
+///
+/// [`ClosedStop::Executions`] when the search expands more than `limit`
+/// states (each is charged as the walk charges an execution), and the walk's
+/// own stops for a state it cannot expand or encode or a cancelled run.
+pub fn shortest_undefined(
+    system: &ModelSystem<'_>,
+    depth: usize,
+    limit: usize,
+    skips: &BTreeSet<String>,
+    cancel: &Cancel,
+    found: &ClosedExecution,
+) -> Result<Option<(ClosedExecution, crate::simulation::model::UndefinedContract)>, ClosedStop> {
+    /// A state reached, and the step that reached it.
+    struct Reached {
+        parent: Option<usize>,
+        step: Option<ClosedStep>,
+        state: ModelSimState,
+        initial: usize,
+        key: Vec<u8>,
+    }
+    // The levels up to and including `found`'s own: another state at the same
+    // visible position can come first in canonical order.
+    let ceiling = found.visible_steps().min(depth.saturating_sub(1));
+    let mut nodes: Vec<Reached> = Vec::new();
+    let mut expanded_keys = BTreeSet::new();
+    // The nodes of each visible level, in the order they were reached.
+    let mut levels: Vec<Vec<usize>> = vec![Vec::new()];
+    for (initial, state) in system.initial().into_iter().enumerate() {
+        let (key, _) = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .map_err(ClosedStop::Encoding)?;
+        levels.first_mut().map(|level| level.push(nodes.len()));
+        nodes.push(Reached {
+            parent: None,
+            step: None,
+            state,
+            initial,
+            key,
+        });
+    }
+    let mut expanded = 0_usize;
+    for level in 0..=ceiling {
+        let mut cursor = 0_usize;
+        while let Some(&index) = levels.get(level).and_then(|reached| reached.get(cursor)) {
+            cursor += 1;
+            if cancel.poll() {
+                return Err(ClosedStop::Cancelled);
+            }
+            let Some(node) = nodes.get(index) else {
+                return Ok(None);
+            };
+            if !expanded_keys.insert(node.key.clone()) {
+                continue;
+            }
+            expanded += 1;
+            if expanded > limit {
+                return Err(ClosedStop::Executions { limit });
+            }
+            let expansion = system
+                .successors(&node.state)
+                .map_err(ClosedStop::Expansion)?;
+            if let Some(contract) = expansion
+                .findings
+                .iter()
+                .find_map(crate::simulation::model::ModelFinding::undefined_contract)
+            {
+                let mut chain = vec![index];
+                while let Some(parent) = chain
+                    .last()
+                    .and_then(|last| nodes.get(*last))
+                    .and_then(|node| node.parent)
+                {
+                    chain.push(parent);
+                }
+                chain.reverse();
+                let mut states = Vec::with_capacity(chain.len());
+                let mut steps = Vec::with_capacity(chain.len());
+                for link in &chain {
+                    if let Some(node) = nodes.get(*link) {
+                        states.push(node.state.clone());
+                        steps.extend(node.step.clone());
+                    }
+                }
+                let reached = ClosedExecution {
+                    initial: node.initial,
+                    states,
+                    steps,
+                };
+                return Ok(Some((reached, contract)));
+            }
+            if expansion
+                .findings
+                .iter()
+                .any(crate::simulation::model::ModelFinding::is_refused_contract)
+            {
+                continue;
+            }
+            let initial = node.initial;
+            let mut keyed = Vec::with_capacity(expansion.successors.len());
+            for (transition, next) in expansion.successors {
+                let (key, post_state) = system
+                    .state_key(&next, fsl_foundation::IdentityLimits::default())
+                    .map_err(ClosedStop::Encoding)?;
+                let order = system
+                    .transition_key(&transition)
+                    .map_err(ClosedStop::Encoding)?;
+                keyed.push(((order, key.clone()), key, transition, next, post_state));
+            }
+            keyed.sort_by(|left, right| left.0.cmp(&right.0));
+            for (_, key, transition, next, post_state) in keyed {
+                let skipped = skips.contains(transition.operation());
+                let into = if skipped { level } else { level + 1 };
+                while levels.len() <= into {
+                    levels.push(Vec::new());
+                }
+                levels
+                    .get_mut(into)
+                    .map(|reached| reached.push(nodes.len()));
+                nodes.push(Reached {
+                    parent: Some(index),
+                    step: Some(ClosedStep {
+                        skipped,
+                        transition,
+                        post_state,
+                    }),
+                    state: next,
+                    initial,
+                    key,
+                });
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// What reading a tuple of closed executions settles (FR-173 "Event-position
 /// form", ADR-023 HM-3).
 #[derive(Debug)]
@@ -275,11 +470,12 @@ pub enum ClosedVerdict {
         /// The joint position.
         at: u64,
     },
-    /// A `match` conjunct has no value or was refused or incomplete at a
-    /// joint step (ADR-023 HV-4).
+    /// A `match` conjunct was refused or incomplete at a joint step
+    /// (ADR-023 HV-4).
     MatchUndetermined,
-    /// An atom of the body has no value on the tuple (ADR-023 HV-8).
-    Undefined,
+    /// A `match` conjunct or an atom of the body has no value on the tuple
+    /// (ADR-023 HV-8).
+    Undefined(Box<ClosedUndefined>),
     /// The evaluation meter ran out.
     Incomplete(filament_exact::LimitKind),
     /// An invariant of the evaluation broke.
@@ -415,17 +611,25 @@ pub fn judge_closed_tuple(
         (universals, false, !clause.mu_universal().is_empty()),
         (executions.len(), true, !clause.mu_existential().is_empty()),
     ];
-    for (components, existential, present) in parts {
-        if !present {
-            continue;
-        }
-        let longest = executions
+    let longest_of = |components: usize| {
+        executions
             .iter()
             .take(components)
             .map(|execution| execution.steps.len())
             .max()
-            .unwrap_or(0);
-        for joint in 1..=longest {
+            .unwrap_or(0)
+    };
+    let overall = longest_of(executions.len());
+    // The `match` is read at the joint positions in increasing order, `μ_U`
+    // and then `μ_E` at one position (FR-183); the first conjunct with no
+    // value waits for the body, whose atom at an earlier position is read
+    // first (ADR-018 UE-4).
+    let mut undefined_match: Option<Box<ClosedUndefined>> = None;
+    'joints: for joint in 1..=overall {
+        for (components, existential, present) in parts {
+            if !present || joint > longest_of(components) {
+                continue;
+            }
             let part = if existential {
                 MatchPart::Existential
             } else {
@@ -440,11 +644,43 @@ pub fn judge_closed_tuple(
                         ClosedVerdict::UniversalUnmatched
                     };
                 }
+                Ok(MatchReading::Undefined { conjunct, cause }) => {
+                    undefined_match = Some(Box::new(ClosedUndefined {
+                        position: u64::try_from(joint).unwrap_or(u64::MAX),
+                        locus: if existential {
+                            ClosedLocus::ExistentialMatch { conjunct }
+                        } else {
+                            ClosedLocus::Match { conjunct }
+                        },
+                        components: (0..executions.len()).collect(),
+                        transition: None,
+                        state: None,
+                        cause,
+                    }));
+                    break 'joints;
+                }
                 Ok(_) => return ClosedVerdict::MatchUndetermined,
                 Err(verdict) => return verdict,
             }
         }
     }
+    let body = judge_closed_body(inputs, executions);
+    match undefined_match {
+        None => body,
+        Some(found) => match body {
+            ClosedVerdict::Undefined(atom) if atom.position < found.position => {
+                ClosedVerdict::Undefined(atom)
+            }
+            _ => ClosedVerdict::Undefined(found),
+        },
+    }
+}
+
+/// The verdict of the clause's body over `executions`, read over the
+/// executions as given: an undefined atom is the first in position and then
+/// clause-node order.
+fn judge_closed_body(inputs: &ClosedInputs<'_>, executions: &[&ClosedExecution]) -> ClosedVerdict {
+    let clause = inputs.clause;
     let lens: Vec<u64> = executions
         .iter()
         .map(|execution| u64::try_from(execution.states.len()).unwrap_or(u64::MAX))
@@ -458,7 +694,32 @@ pub fn judge_closed_tuple(
     match evaluate_closed_tuple(clause, &lens, &mut letters, &mut meter) {
         Ok(TemporalOutcome::Holds) => ClosedVerdict::Holds,
         Ok(TemporalOutcome::Violated { at }) => ClosedVerdict::Violated { at: at.index() },
-        Ok(TemporalOutcome::Undefined(_)) => ClosedVerdict::Undefined,
+        Ok(TemporalOutcome::Undefined(found)) => {
+            // The first undefined atom at that position, in clause-node order.
+            let index = found.at.index();
+            for node in 0..clause.body().nodes().len() {
+                let atom = FormulaNodeId::from_arena_index(node);
+                let Some(reads) = clause.component_reads(atom) else {
+                    continue;
+                };
+                match read_closed_atom(clause, &lens, &mut letters, atom, index, &mut meter) {
+                    Ok(AtomReading::Undefined(cause)) => {
+                        let components: BTreeSet<usize> = reads.values().copied().collect();
+                        return ClosedVerdict::Undefined(Box::new(ClosedUndefined {
+                            position: index,
+                            locus: ClosedLocus::Atom(atom),
+                            components: components.into_iter().collect(),
+                            transition: None,
+                            state: None,
+                            cause,
+                        }));
+                    }
+                    Ok(AtomReading::True | AtomReading::False) => {}
+                    Err(_) => break,
+                }
+            }
+            closed_fault("an-undefined-closed-atom-is-found")
+        }
         Ok(TemporalOutcome::Incomplete(incomplete)) => {
             ClosedVerdict::Incomplete(incomplete.limit_kind)
         }
@@ -530,6 +791,14 @@ pub enum PartnerSearch {
         /// The budget.
         limit: u64,
     },
+    /// An expression has no value on the universal tuple with the existential
+    /// tuple of these indices (ADR-023 HV-8): the clause is refuted.
+    Undefined {
+        /// What has no value.
+        found: Box<ClosedUndefined>,
+        /// The index of each existential variable's execution in its list.
+        existentials: Vec<usize>,
+    },
     /// A reading stopped the search; it settles no partner.
     Stopped(ClosedVerdict),
     /// The run was cancelled.
@@ -539,6 +808,13 @@ pub enum PartnerSearch {
 /// Search the product of `existentials`, one list of closed executions per
 /// existential variable in quantifier order, for a partner of `universal`,
 /// one execution per universal variable. At most `limit` existential tuples.
+/// Every partner is read: one with an expression with no value refutes, and the
+/// one whose position is earliest is reported, the first in list order on a
+/// tie (ADR-018 UE-4, ADR-023 HV-8, FR-177), whatever holding partner comes
+/// before or after it. Only when none is undefined does a holding partner
+/// witness, and a partner whose reading was refused or incomplete leaves the
+/// tuple undecided only when no partner is undefined or holds; a fault ends
+/// the search at once.
 pub fn search_partner(
     inputs: &ClosedInputs<'_>,
     universal: &[&ClosedExecution],
@@ -556,6 +832,12 @@ pub fn search_partner(
         return PartnerSearch::TooMany { limit };
     }
     let mut position = 0_u64;
+    let mut witnessed = false;
+    // The earliest undefined partner so far; a shorter one replaces it, a tie
+    // keeps the first in list order.
+    let mut earliest: Option<(Box<ClosedUndefined>, Vec<usize>)> = None;
+    // The first partner whose reading stopped without a value or a verdict.
+    let mut undecided: Option<ClosedVerdict> = None;
     for picked in Tuples::over(lens) {
         if inputs.cancel.poll() {
             return PartnerSearch::Cancelled;
@@ -567,16 +849,225 @@ pub fn search_partner(
                 None => return PartnerSearch::Stopped(closed_fault("an-index-is-in-its-list")),
             }
         }
-        match judge_closed_tuple(inputs, &tuple) {
-            ClosedVerdict::Holds => return PartnerSearch::Witnessed,
+        let verdict = judge_closed_tuple(inputs, &tuple);
+        match verdict {
+            ClosedVerdict::Holds => witnessed = true,
             ClosedVerdict::UniversalUnmatched => return PartnerSearch::UniversalUnmatched,
             ClosedVerdict::ExistentialUnmatched => {}
             ClosedVerdict::Violated { at } => position = position.max(at),
-            stopped @ (ClosedVerdict::MatchUndetermined
-            | ClosedVerdict::Undefined
-            | ClosedVerdict::Incomplete(_)
-            | ClosedVerdict::Fault(_)) => return PartnerSearch::Stopped(stopped),
+            ClosedVerdict::Undefined(found) => {
+                if earliest
+                    .as_ref()
+                    .map_or(true, |(best, _)| found.position < best.position)
+                {
+                    earliest = Some((found, picked));
+                }
+            }
+            fault @ ClosedVerdict::Fault(_) => return PartnerSearch::Stopped(fault),
+            stopped @ (ClosedVerdict::MatchUndetermined | ClosedVerdict::Incomplete(_)) => {
+                undecided.get_or_insert(stopped);
+            }
         }
     }
-    PartnerSearch::Exhausted { position }
+    match earliest {
+        Some((found, existentials)) => PartnerSearch::Undefined {
+            found,
+            existentials,
+        },
+        None if witnessed => PartnerSearch::Witnessed,
+        None => match undecided {
+            Some(stopped) => PartnerSearch::Stopped(stopped),
+            None => PartnerSearch::Exhausted { position },
+        },
+    }
+}
+
+/// What reading a tuple of closed executions, or a joint prefix of them, for
+/// an expression with no value found (ADR-023 HV-8).
+#[derive(Debug)]
+pub enum ClosedRead {
+    /// The first expression with no value, in reading order.
+    Undefined(Box<ClosedUndefined>),
+    /// `μ` is false at a joint step: the tuple is outside the clause's scope.
+    Unmatched,
+    /// Every expression the tuple reads has a value.
+    Clear,
+    /// A state could not be expanded for its contract conjunctions.
+    Expansion {
+        /// The component whose state it was.
+        component: usize,
+        /// Why.
+        stop: ExpansionStop,
+    },
+    /// A reading stopped before it found a value.
+    Stopped(ClosedVerdict),
+}
+
+/// Read `executions`, one per trace variable in quantifier order, for the
+/// first expression with no value (ADR-018 UE-4, UE-6; ADR-023 HV-8), in the
+/// one order the producer and the replay share and FR-183 states: at each
+/// joint position in increasing order, the `match` over the step entering it
+/// (`μ_U`, then `μ_E`), then the atoms of the body at it, then the contract
+/// conjunctions of the states it holds, by component. A contract conjunction
+/// of any component, universal or existential, refutes (FR-177). An `align
+/// skip` clause reads its `match` and atoms over the visible positions and its
+/// contract conjunctions on the unprojected states, each at the visible
+/// position it follows. `systems` holds each component's subject. The
+/// executions may differ in length: a component that has ended reads false
+/// (FR-043) and is expanded no further.
+pub fn read_closed_undefined(
+    inputs: &ClosedInputs<'_>,
+    systems: &[&ModelSystem<'_>],
+    executions: &[&ClosedExecution],
+) -> ClosedRead {
+    match judge_closed_tuple(inputs, executions) {
+        // A contract at a position before the `match` or atom with no value
+        // is read first (UE-4).
+        ClosedVerdict::Undefined(found) => {
+            return match read_contracts(inputs, systems, executions, Some(found.position)) {
+                ClosedRead::Clear => ClosedRead::Undefined(found),
+                earlier => earlier,
+            };
+        }
+        ClosedVerdict::UniversalUnmatched | ClosedVerdict::ExistentialUnmatched => {
+            return ClosedRead::Unmatched;
+        }
+        stopped @ (ClosedVerdict::MatchUndetermined
+        | ClosedVerdict::Incomplete(_)
+        | ClosedVerdict::Fault(_)) => return ClosedRead::Stopped(stopped),
+        ClosedVerdict::Holds | ClosedVerdict::Violated { .. } => {}
+    }
+    read_contracts(inputs, systems, executions, None)
+}
+
+/// The visible position each state of `execution` follows: the number of
+/// visible steps before it (every step of a clause with no `align skip`).
+fn visible_positions(execution: &ClosedExecution) -> Vec<u64> {
+    let mut positions = Vec::with_capacity(execution.states.len());
+    let mut position = 0_u64;
+    positions.push(position);
+    for step in &execution.steps {
+        if !step.skipped {
+            position += 1;
+        }
+        positions.push(position);
+    }
+    positions
+}
+
+/// The first contract conjunction with no value, by visible position, then
+/// component, then state, at the positions before `before` when given;
+/// [`ClosedRead::Clear`] when there is none.
+fn read_contracts(
+    inputs: &ClosedInputs<'_>,
+    systems: &[&ModelSystem<'_>],
+    executions: &[&ClosedExecution],
+    before: Option<u64>,
+) -> ClosedRead {
+    let clause = inputs.clause;
+    let Some(depth) = horizon(clause.body()) else {
+        return ClosedRead::Stopped(closed_fault("a-body-has-a-horizon"));
+    };
+    let limit = before.map_or(depth, |before| before.min(depth));
+    let positions: Vec<Vec<u64>> = executions
+        .iter()
+        .map(|execution| visible_positions(execution))
+        .collect();
+    let last = positions
+        .iter()
+        .filter_map(|of| of.last().copied())
+        .max()
+        .unwrap_or(0);
+    for position in 0..=last {
+        if position >= limit {
+            break;
+        }
+        for (component, execution) in executions.iter().enumerate() {
+            for (index, state) in execution.states.iter().enumerate() {
+                if positions[component].get(index) != Some(&position) {
+                    continue;
+                }
+                let Some(system) = systems.get(component) else {
+                    return ClosedRead::Stopped(closed_fault("a-component-has-a-system"));
+                };
+                let expansion = match system.successors(state) {
+                    Ok(expansion) => expansion,
+                    Err(stop) => return ClosedRead::Expansion { component, stop },
+                };
+                if let Some(contract) = expansion
+                    .findings
+                    .iter()
+                    .find_map(crate::simulation::model::ModelFinding::undefined_contract)
+                {
+                    return ClosedRead::Undefined(Box::new(ClosedUndefined {
+                        position,
+                        locus: ClosedLocus::Contract(contract.clause),
+                        components: vec![component],
+                        transition: contract.guard_of,
+                        state: Some(index),
+                        cause: contract.cause,
+                    }));
+                }
+            }
+        }
+    }
+    ClosedRead::Clear
+}
+
+/// The state key of the state a [`ClosedUndefined`] names in `execution`, the
+/// component's execution, which the producer and the replay both spell: the
+/// unprojected state of a contract conjunction, otherwise the state at the
+/// joint position, read over the visible positions of an `align skip` clause
+/// (ADR-023 PA-2). `None` when the execution has no such state.
+///
+/// # Errors
+///
+/// [`EncodingRefusal`] when the state has no canonical key.
+pub fn closed_found_state_key(
+    system: &ModelSystem<'_>,
+    clause: &CheckedHyperClause,
+    execution: &ClosedExecution,
+    found: &ClosedUndefined,
+) -> Result<Option<StateKey>, EncodingRefusal> {
+    let Some(index) = found.state else {
+        return closed_state_key(system, clause, execution, found.position);
+    };
+    let Some(state) = execution.states.get(index) else {
+        return Ok(None);
+    };
+    system
+        .state_key(state, fsl_foundation::IdentityLimits::default())
+        .map(|(_, key)| Some(key))
+}
+
+/// The state key of `execution`'s state at joint `position` of `clause`, read
+/// over the visible positions of an `align skip` clause (ADR-023 PA-2): the
+/// state a [`ClosedUndefined`] names, which the producer and the replay both
+/// spell. `None` when the execution has no such position.
+///
+/// # Errors
+///
+/// [`EncodingRefusal`] when the state has no canonical key.
+pub fn closed_state_key(
+    system: &ModelSystem<'_>,
+    clause: &CheckedHyperClause,
+    execution: &ClosedExecution,
+    position: u64,
+) -> Result<Option<StateKey>, EncodingRefusal> {
+    let Ok(index) = usize::try_from(position) else {
+        return Ok(None);
+    };
+    let projected;
+    let read = if clause.align_skip().is_empty() {
+        execution
+    } else {
+        projected = execution.projection();
+        &projected
+    };
+    let Some(state) = read.states.get(index) else {
+        return Ok(None);
+    };
+    system
+        .state_key(state, fsl_foundation::IdentityLimits::default())
+        .map(|(_, key)| Some(key))
 }
