@@ -1262,8 +1262,11 @@ body, the checker SHALL refuse `ill_typed`/`type-mismatch` at the outermost
 constant expression, naming the member, the constraint, its keyword and its
 bound. A constant is a quantity literal under negation, addition, subtraction
 and scaling by a literal factor. A value that is not constant is not refused
-here. The bounded quantity type of FSpec FR-154-AC-31 is not provided: no
-position is typed `Quantity<u>[min, max]`.
+here. The same refusal, naming the alias as the bounded member, applies where
+such a constant is written into a source position typed by the model alias
+itself (FSpec FR-154-AC-31): the value of a `let` annotated with the alias, an
+argument to a source parameter typed by it, and the body of a source function
+whose result is typed by it. No position is typed `Quantity<u>[min, max]`.
 
 ## Constraints
 
