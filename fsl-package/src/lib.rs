@@ -440,6 +440,12 @@ pub mod test_support {
     pub fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
         crate::emit::with_repeated_read_index_rewrite(f)
     }
+
+    /// Run a closure with the historical repeated-replacement path enabled
+    /// for compile-time structural/index and operand/index rewrites.
+    pub fn with_repeated_compile_index_rewrites<T>(f: impl FnOnce() -> T) -> T {
+        crate::emit::with_repeated_compile_index_rewrites(f)
+    }
 }
 
 // ADR-011 §4 I2: `read_checked_package_v2` and its staged outcome remain

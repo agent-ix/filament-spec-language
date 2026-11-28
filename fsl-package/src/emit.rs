@@ -112,6 +112,7 @@ static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     static READ_INDEX_REWRITE_WORK_UNITS: Cell<usize> = const { Cell::new(0) };
     static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
+    static USE_REPEATED_COMPILE_INDEX_REWRITES: Cell<bool> = const { Cell::new(false) };
     static S4_PHASE_TIMES: Cell<S4PhaseTimes> = const { Cell::new(S4PhaseTimes::ZERO) };
     static WRITE_INDEX_DIAGNOSTICS: Cell<WriteIndexDiagnostics> = const { Cell::new(WriteIndexDiagnostics::ZERO) };
     static DOCUMENT_NODE_DIAGNOSTICS: Cell<DocumentNodeDiagnostics> = const { Cell::new(DocumentNodeDiagnostics::ZERO) };
@@ -375,6 +376,20 @@ pub(crate) fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
     }
 
     let previous = USE_REPEATED_READ_INDEX_REWRITE.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    f()
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn with_repeated_compile_index_rewrites<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            USE_REPEATED_COMPILE_INDEX_REWRITES.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let previous = USE_REPEATED_COMPILE_INDEX_REWRITES.with(|flag| flag.replace(true));
     let _restore = Restore(previous);
     f()
 }
@@ -11543,6 +11558,21 @@ pub(crate) fn document_nodes(
         }
         #[cfg(feature = "test-support")]
         let change_count = changes.len();
+        #[cfg(feature = "test-support")]
+        let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+        #[cfg(feature = "test-support")]
+        if repeated_reference {
+            for (old, new) in changes {
+                node.replace_node_id(&old, &new);
+            }
+        } else {
+            // Keep the old path for the red regression; the one-pass path is
+            // added as the production fix after the counter test lands.
+            for (old, new) in changes {
+                node.replace_node_id(&old, &new);
+            }
+        }
+        #[cfg(not(feature = "test-support"))]
         for (old, new) in changes {
             node.replace_node_id(&old, &new);
         }
@@ -11801,6 +11831,21 @@ fn write_index_segments(
         // cannot (an operation's closed record and views, a nominal or
         // refinement body). Every id it can reach already holds index
         // segments, so it never matches a structural id deep in a chain.
+        #[cfg(feature = "test-support")]
+        let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+        #[cfg(feature = "test-support")]
+        if repeated_reference {
+            for (old, new) in &changes {
+                node.replace_node_id(old, new);
+            }
+        } else {
+            // Keep the old path for the red regression; the one-pass path is
+            // added as the production fix after the counter test lands.
+            for (old, new) in &changes {
+                node.replace_node_id(old, new);
+            }
+        }
+        #[cfg(not(feature = "test-support"))]
         for (old, new) in &changes {
             node.replace_node_id(old, new);
         }

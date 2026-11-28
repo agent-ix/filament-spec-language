@@ -8,7 +8,7 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_command::command::{self, RequestOverrides, RunLimits};
 use fsl_foundation::Setting;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const NESTED: usize = 1_000;
 
@@ -84,8 +84,8 @@ impl fsl_analyze::analyze::document::Negotiate for FslNegotiate {
         Option<fsl_analyze::analyze::Diagnostic>,
     ) {
         use fsl_analyze::analyze::{Diagnostic, Payload};
-        use fsl_route::routing::Disposition;
         use fsl_route::NegotiationOutcome;
+        use fsl_route::routing::Disposition;
 
         match candidates {
             fsl_route::CandidateOutcome::UnknownBackend(backend) => (
@@ -942,14 +942,13 @@ fn compile_has_bounded_operand_rewrite_candidates_at_ten_thousand() {
     );
 }
 
-/// The inverse checked-package index rewrite uses bounded work for an ordered
-/// 12,000-value collection. The counter records ID-slot visits, path
-/// inspections, structural lookups, and slots scanned by repeated replacement.
-/// The test-support reference path proves repeated replacements exceed the
-/// same bound.
-#[trace("TC-3242", "FR-869-AC-10")]
+/// The accepted ordered 12,000-value compile keeps both compile index rewrites
+/// within their combined work bound and preserves bytes against the repeated
+/// replacement reference. The inverse checked-package rewrite retains its
+/// separate AC-10 check.
+#[trace("TC-3242", "FR-869-AC-10", "FR-869-AC-11")]
 #[test]
-fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
+fn compile_has_bounded_combined_index_rewrite_work_at_twelve_thousand() {
     const N: usize = 12_000;
     let directory = tempfile::tempdir().expect("collection workspace");
     let values = (0..N)
@@ -991,24 +990,43 @@ fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
     };
 
     const MAX_WORK_UNITS: usize = N * 48;
-    let (repeated_work, repeated_package_bytes) =
-        fsl_package::test_support::with_repeated_read_index_rewrite(|| {
-            fsl_package::test_support::reset_read_index_rewrite_work_units();
-            let outcome = command::compile_outcome_with_limits_and_overrides(
-                &path,
-                RunLimits::default(),
-                &overrides,
-            )
-            .expect("the 12,000-value sequence compiles with repeated reference rewrites");
-            assert!(!outcome.package_bytes().is_empty());
-            (
-                fsl_package::test_support::read_index_rewrite_work_units(),
-                outcome.package_bytes().to_vec(),
-            )
+    let (repeated_read_work, repeated_package_bytes, repeated_write_index, repeated_document_node) =
+        fsl_package::test_support::with_repeated_compile_index_rewrites(|| {
+            fsl_package::test_support::with_repeated_read_index_rewrite(|| {
+                fsl_package::test_support::reset_read_index_rewrite_work_units();
+                fsl_package::test_support::reset_write_index_diagnostics();
+                let outcome = command::compile_outcome_with_limits_and_overrides(
+                    &path,
+                    RunLimits::default(),
+                    &overrides,
+                )
+                .expect("the 12,000-value sequence compiles with repeated reference rewrites");
+                assert!(!outcome.package_bytes().is_empty());
+                (
+                    fsl_package::test_support::read_index_rewrite_work_units(),
+                    outcome.package_bytes().to_vec(),
+                    fsl_package::test_support::write_index_diagnostics(),
+                    fsl_package::test_support::document_node_diagnostics(),
+                )
+            })
         });
     assert!(
-        repeated_work > MAX_WORK_UNITS,
-        "repeated read-index replacement used only {repeated_work} instrumented work units; expected it to exceed {MAX_WORK_UNITS}"
+        repeated_read_work > MAX_WORK_UNITS,
+        "repeated read-index replacement used only {repeated_read_work} instrumented work units; expected it to exceed {MAX_WORK_UNITS}"
+    );
+    let repeated_compile_work = repeated_write_index.repeated_scan_work_units
+        + repeated_document_node.repeated_scan_work_units;
+    assert!(
+        repeated_compile_work > N * 213,
+        "forced repeated compile rewrites used {repeated_compile_work} work units; expected more than {}",
+        N * 213
+    );
+    eprintln!(
+        "QSL3570_AC11_REFERENCE values={N} write_index_units={} document_nodes_units={} combined_units={} package_bytes={}",
+        repeated_write_index.repeated_scan_work_units,
+        repeated_document_node.repeated_scan_work_units,
+        repeated_compile_work,
+        repeated_package_bytes.len(),
     );
 
     fsl_package::test_support::reset_read_index_rewrite_work_units();
@@ -1019,8 +1037,32 @@ fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
             .expect("the 12,000-value sequence compiles with the raised independent limits");
     assert!(!outcome.package_bytes().is_empty());
     assert_eq!(outcome.package_bytes(), repeated_package_bytes);
-
     let write_index = fsl_package::test_support::write_index_diagnostics();
+    let document_rewrite = fsl_package::test_support::document_node_diagnostics();
+    let one_pass_work = write_index.linear_work_units + document_rewrite.linear_work_units;
+    let repeated_default_work =
+        write_index.repeated_scan_work_units + document_rewrite.repeated_scan_work_units;
+    eprintln!(
+        "QSL3570_AC11 values={N} write_index_linear={} document_nodes_linear={} combined_linear={} write_index_repeated={} document_nodes_repeated={} combined_repeated={} reference_bytes={} result_bytes={}",
+        write_index.linear_work_units,
+        document_rewrite.linear_work_units,
+        one_pass_work,
+        write_index.repeated_scan_work_units,
+        document_rewrite.repeated_scan_work_units,
+        repeated_default_work,
+        repeated_package_bytes.len(),
+        outcome.package_bytes().len(),
+    );
+    assert!(
+        one_pass_work <= N * 213,
+        "12,000-value combined one-pass rewrite used {one_pass_work} work units; expected at most {}",
+        N * 213
+    );
+    assert_eq!(
+        repeated_default_work, 0,
+        "default compile path still performs {repeated_default_work} units of repeated rewrite scans"
+    );
+
     eprintln!(
         "QSL3570_WRITE_INDEX_WORK values={N} linear_work_units={} repeated_scan_work_units={} one_pass_id_slots={} changed_ids={} structural_key_lookups={}",
         write_index.linear_work_units,
@@ -1029,7 +1071,6 @@ fn compile_has_bounded_read_index_rewrite_work_at_twelve_thousand() {
         write_index.changed_ids,
         write_index.structural_key_lookups,
     );
-    let document_rewrite = fsl_package::test_support::document_node_diagnostics();
     eprintln!(
         "QSL3570_DOCUMENT_NODE_WORK values={N} linear_work_units={} repeated_scan_work_units={} one_pass_id_slots={} changed_ids={} operand_row_lookups={} combined_linear_work_units={} combined_repeated_scan_work_units={}",
         document_rewrite.linear_work_units,
