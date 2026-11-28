@@ -323,6 +323,43 @@ fn timed_command_replay_with_exact_input_bound(
     (row, setup_ms, decode_ms, exact_ms, exact_input_bytes)
 }
 
+fn set_s1_input_bytes_from_serialized_request(wire: &mut ReplayRequestWire) -> (usize, u64) {
+    let reader_bytes =
+        match ReplayRequest::decode(wire.clone(), ReplayLimits::default().with_input_bytes(0)) {
+            Err(ReplayRequestRefusal::BoundExceeded(limit)) => {
+                usize::try_from(limit.actual).expect("measured replay bytes fit usize")
+            }
+            Err(other) => panic!("unexpected zero-bound replay request result: {other:?}"),
+            Ok(_) => panic!("zero-byte replay input bound admitted the request"),
+        };
+    let setting = Setting::S1InputBytes.name();
+    let mut bound = u64::try_from(
+        serde_json::to_vec(&request_file_value(wire))
+            .expect("request envelope serializes")
+            .len(),
+    )
+    .expect("serialized request size fits u64")
+    .min(u64::try_from(reader_bytes).expect("reader byte count fits u64"));
+    let final_request_bytes = loop {
+        let (_, value) = wire
+            .stage_limits
+            .iter_mut()
+            .find(|(name, _)| name.as_str() == setting)
+            .expect("request carries the s1.input_bytes ceiling");
+        *value = bound;
+        let request_bytes =
+            serde_json::to_vec(&request_file_value(wire)).expect("request envelope serializes");
+        let next = u64::try_from(request_bytes.len())
+            .expect("serialized request size fits u64")
+            .min(u64::try_from(reader_bytes).expect("reader byte count fits u64"));
+        if next == bound {
+            break request_bytes.len();
+        }
+        bound = next;
+    };
+    (final_request_bytes, bound)
+}
+
 fn profile_native_size_replay(count: usize) {
     let values = (0..count)
         .map(|value| value.to_string())
@@ -341,7 +378,9 @@ fn profile_native_size_replay(count: usize) {
     let compile_started = Instant::now();
     let (package, site, source_tokens) = package_bytes(&source, &empty_packages(), limits);
     let compile_ms = compile_started.elapsed().as_millis();
-    let wire = request_wire(&package, &source, &site);
+    let mut wire = request_wire(&package, &source, &site);
+    let (request_json_bytes, s1_input_limit) =
+        set_s1_input_bytes_from_serialized_request(&mut wire);
     let (result, setup_ms, decode_ms, exact_ms, input_bytes) =
         timed_command_replay_with_exact_input_bound(&wire);
 
@@ -350,7 +389,7 @@ fn profile_native_size_replay(count: usize) {
     assert_eq!(result["category"], "success");
     assert_eq!(result["value"], true);
     eprintln!(
-        "QSL3570_NATIVE_REPLAY_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} replay_input_bytes={input_bytes} compile_ms={compile_ms} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
+        "QSL3570_NATIVE_REPLAY_PROFILE values={count} source_tokens={source_tokens} source_bytes={} package_bytes={} request_json_bytes={request_json_bytes} s1_input_bytes={s1_input_limit} replay_input_bytes={input_bytes} compile_ms={compile_ms} setup_ms={setup_ms} decode_ms={decode_ms} command_exact_ms={exact_ms}",
         source.len(),
         package.len(),
     );
