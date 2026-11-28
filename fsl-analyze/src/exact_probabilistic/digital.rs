@@ -27,6 +27,7 @@ use fsl_eval::probabilistic::TimedOperatorState;
 use fsl_eval::simulation::model::{
     same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
     PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
+    UndecidedSuccessor, LOCKED_RUN_TERMINAL,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_replay::{
@@ -998,7 +999,28 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             Err(stop) => return Err(ProductRefusal::Expansion(stop).into()),
         };
-        let steps = self.timed.guarded_steps(model).map_err(timed_refusal)?;
+        let steps = self.timed.guarded_steps(model).map_err(|stop| match stop {
+            // An undefined step guard leaves the state's successors not
+            // exactly known (ADR-018 UE-6); the exact route's refutation of
+            // it is its own ticket's.
+            TimedStop::Undefined(_) => ProductRefusal::UndecidedSuccessor(UndecidedSuccessor {
+                state: StateKey::from_canonical_bytes(key.clone()),
+            })
+            .into(),
+            TimedStop::Undecided(reading)
+                if reading.cause.is_some()
+                    && matches!(
+                        reading.site,
+                        fsl_eval::simulation::model::TimedSite::Guard { .. }
+                    ) =>
+            {
+                ProductRefusal::UndecidedSuccessor(UndecidedSuccessor {
+                    state: StateKey::from_canonical_bytes(key.clone()),
+                })
+                .into()
+            }
+            stop => timed_refusal(stop),
+        })?;
         let invariants = self.timed.invariants(model).map_err(timed_refusal)?;
         let urgent = self.timed.is_urgent(model).map_err(timed_refusal)?;
         let local = Rc::new(Local {
@@ -3183,6 +3205,7 @@ impl<'c> Builder<'_, '_, 'c> {
         maximal_end_components_from(&graph, (0..count).collect()).unwrap_or_default()
     }
 
+    #[implements("FR-924-AC-5")]
     fn finish(
         mut self,
         initial: Vec<(u32, Option<ModelInstance>, ProbStateId)>,
@@ -3282,11 +3305,20 @@ impl<'c> Builder<'_, '_, 'c> {
                 _ => None,
             })
             .collect();
-        // A pending event at a state with no move at all (a time-lock) can
-        // never be met: ADR-026 TD-2 reports the lock, and the event closes
-        // as a rejection (FR-196 "Canonical probability product key").
+        // A pending event at a state with no move at all (a time-lock) closes
+        // as FSpec FR-416 "How claims read a time-lock" reads it: an `always`
+        // holds, an `eventually` or `until` is refuted (ADR-026 TD-2 reports
+        // the lock; ADR-038 RL-7). A nested formula keeps the rejection.
         for state in &self.time_locked {
-            decided.push((ProbStateId(*state), MonitorVerdict::Reject));
+            let kind = match self.nodes[*state].key.monitor {
+                Some(MonitorState::Deadline { kind, .. }) => Some(kind),
+                _ => None,
+            };
+            let verdict = LOCKED_RUN_TERMINAL
+                .iter()
+                .find(|(locked, _)| Some(*locked) == kind)
+                .map_or(MonitorVerdict::Reject, |(_, verdict)| *verdict);
+            decided.push((ProbStateId(*state), verdict));
         }
         decided.sort_by_key(|(state, _)| state.index());
         decided.dedup_by_key(|(state, _)| state.index());

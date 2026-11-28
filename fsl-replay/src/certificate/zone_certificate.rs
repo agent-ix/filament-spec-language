@@ -105,8 +105,8 @@ use fsl_eval::automaton::{
 use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
-    TerminalClass, TimedSubjectRefusal, TimedSystem,
+    claim_start, GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
+    TerminalClass, TimedSubjectRefusal, TimedSystem, TimedVacuity,
 };
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::diagnostic::Code;
@@ -272,6 +272,12 @@ pub struct RefinementIdentity {
     /// side, the request's `abstract_package` on the recompiled side.
     pub abstract_package: EmittedPackage,
 }
+
+/// The `automaton_state` of a liveness-product node past an undefined
+/// reading (FR-245): no claim automaton state, since the claim is read no
+/// further. The node is in every automaton acceptance set, so the component
+/// reasons show that no fair behaviour passes through the reading.
+pub const UNDEFINED_POSITION_STATE: usize = u32::MAX as usize;
 
 /// What a node of FR-240's liveness product carries beyond a search
 /// node: the instance whose claim automaton it reads, and how it was
@@ -773,6 +779,9 @@ pub enum ZoneCertificateRefusal<O> {
     TaskProductPlan(Box<fsl_eval::simulation::model::TaskProductPlanRefusal>),
     /// The item is not one this checker reads yet (see the module).
     UnsupportedItem,
+    /// The clause item has no initial state or no instance (FR-125
+    /// "Instancing"), so no certificate proves it.
+    Vacuous(TimedVacuity),
     /// The clause's instances are not finite.
     Unbounded,
     /// A reading the check needs has no value: a guard, invariant, urgency,
@@ -795,6 +804,7 @@ impl<O> ZoneCertificateRefusal<O> {
             Self::TaskProductPlan(_)
             | Self::Admission(_)
             | Self::TimedSubject(_)
+            | Self::Vacuous(_)
             | Self::Unbounded
             | Self::Undecided => Code::InvalidRuntimeInput,
         }
@@ -1040,6 +1050,7 @@ pub fn check_state_graph_certificate<O: Clone + Eq>(
     Ok((verdict, decision))
 }
 
+#[implements("FR-125-AC-7")]
 fn check_zone_certificate_with_time_source<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -1235,14 +1246,21 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
             ) {
                 return Err(ZoneCertificateRefusal::UnsupportedItem);
             }
-            let instances = concrete
-                .instances(&clause.over().1)
-                .map_err(|_| ZoneCertificateRefusal::Unbounded)?;
-            let atom = fsl_eval::automaton::invariant_atom(clause);
+            let over = concrete.claim_instances(&clause.over().1);
+            let instances = claim_start(timed.initial().len(), over)
+                .map_err(|_| ZoneCertificateRefusal::Unbounded)?
+                .map_err(ZoneCertificateRefusal::Vacuous)?
+                .as_slice()
+                .to_vec();
+            // A clause declaring a fairness is read on the liveness
+            // product, which alone reads one (FR-240).
+            let fair = !clause.fairness().is_empty();
+            let atom = fsl_eval::automaton::invariant_atom(clause).filter(|_| !fair);
             // A TT-2 window nesting no interval operator under another has
             // FR-242's horizon automaton; any other clause is read on the
             // liveness product.
             let flat = if atom.is_none()
+                && !fair
                 && matches!(
                     clause.timed_form(),
                     Some(TimedPropertyForm::BoundedWindow { .. })
@@ -1301,8 +1319,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
                     start,
                     letters,
                     instances.clone(),
-                    clause.capture_site(),
-                    clause.fairness().to_vec(),
+                    clause,
                     operations,
                 ));
                 None
@@ -2274,6 +2291,10 @@ impl<O> Checker<'_, '_, O> {
         }
         if self.window.is_none() && self.live.is_none() {
             return listed == 0 && q == 0;
+        }
+        // Past an undefined reading both name the one such position.
+        if (listed == UNDEFINED_POSITION_STATE) != (q == UNDEFINED_POSITION_STATE) {
+            return false;
         }
         match (self.bound.get(&listed), self.binds.get(&q)) {
             (Some(&known), _) => known == q,
@@ -3383,10 +3404,7 @@ impl<O> Checker<'_, '_, O> {
                     CertificateLocus::ModelState(state_key.clone()),
                 )
             };
-            let Some(starts) = self.live_initial(&state)? else {
-                return missing();
-            };
-            for (_, q, mark, zone) in starts {
+            for (_, q, mark, zone) in self.live_initial(&state)? {
                 let cell = self.cell_zone_of(&state, &zone)?;
                 let mut covered = None;
                 for &node in &certificate.initials {
@@ -3582,7 +3600,7 @@ impl<O> Checker<'_, '_, O> {
         let period = self.timed.tick_period().cloned();
         let mut positions = 0_usize;
         if !tail || decided {
-            let checker_steps = self.timed.guarded_steps(state).or_else(undecided)?;
+            let checker_steps = self.steps_at(state)?;
             for step in checker_steps {
                 let target = self.invariants(step.post())?;
                 let state_key = self.state_key(step.post())?;
@@ -3823,7 +3841,32 @@ impl<O> Checker<'_, '_, O> {
             .ok_or(fault(CheckerFault::UnreachedNode))
     }
 
+    /// Whether the item refutes a state with an undefined step guard as a
+    /// bad node (ADR-018 UE-6): a claim or deadlock-freedom item. Every
+    /// other item refuses `Undecided` at such a state.
+    pub(super) fn refutes_undefined_guards(&self) -> bool {
+        !(self.time_lock
+            || self.release_ops.is_some()
+            || self.live.is_some()
+            || self.refined.is_some()
+            || self.state_graph.is_some())
+    }
+
+    /// The guarded steps of `state`. An undefined step guard is read as a
+    /// disabled step where the item judges the state bad
+    /// ([`Self::refutes_undefined_guards`]), and refuses `Undecided`
+    /// otherwise.
+    #[implements("FR-245-AC-13")]
+    pub(super) fn steps_at(&self, state: &ModelSimState) -> Step<Vec<GuardedStep>, O> {
+        let expanded = self.timed.guarded_expansion(state).or_else(undecided)?;
+        if expanded.undefined.is_some() && !self.refutes_undefined_guards() {
+            return undecided(());
+        }
+        Ok(expanded.steps)
+    }
+
     /// Whether `node` violates the item at some valuation of its zone.
+    #[implements("FR-245-AC-13")]
     fn bad(&self, node: usize) -> Step<bool, O> {
         let state = self.state(node)?;
         if self.time_lock
@@ -3836,6 +3879,17 @@ impl<O> Checker<'_, '_, O> {
             // Time-lock freedom is read from the divergence part, and a
             // liveness product's bad cycles from its components.
             return Ok(false);
+        }
+        // ADR-018 UE-6: a step guard with no value at the node's state is
+        // a violation, whatever the claim reads there.
+        if self
+            .timed
+            .guarded_expansion(state)
+            .or_else(undecided)?
+            .undefined
+            .is_some()
+        {
+            return Ok(true);
         }
         let Some(claim) = &self.claim else {
             return self.deadlocked(node);
@@ -3877,7 +3931,7 @@ impl<O> Checker<'_, '_, O> {
             return Ok(false);
         }
         let mut enabling = Vec::new();
-        for step in self.timed.guarded_steps(state).or_else(undecided)? {
+        for step in self.steps_at(state)? {
             let target = self.invariants(step.post())?;
             // Pull post-state invariants through the simultaneous carries
             // and resets to the pre-state valuations that enable this step.
