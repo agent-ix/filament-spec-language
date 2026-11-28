@@ -64,6 +64,26 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
     }
 }
 
+/// The item-level binding that identifies a refuting or first non-proved
+/// state-graph instance (FR-621, FSpec FR-390).
+#[implements("FR-621-AC-24", "FR-628-AC-4")]
+fn item_instance(
+    record: &StateGraphRecord,
+    claim: &CheckedStateGraphClaim,
+    instance: Option<&ModelInstance>,
+) -> Option<fsl_replay::StateGraphInstance> {
+    if matches!(&record.value, TerminalValue::Proved { .. }) {
+        return None;
+    }
+    let (Some(parameter), Some(instance)) = (claim.over(), instance) else {
+        return None;
+    };
+    Some(fsl_replay::StateGraphInstance::new(
+        parameter.name.as_str(),
+        instance.key.as_str(),
+    ))
+}
+
 /// The EN-1 item that decides the state-graph claim at `key` over the
 /// binding, with the item's budgets, or `None` when the package holds no
 /// such claim.
@@ -233,6 +253,9 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let (Some(record), Some(instance)) = (records.get(chosen), instances.get(chosen)) else {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
+    let Some(bound) = bound_instance(&system, claim, instance.over.as_ref()) else {
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+    };
     let property = property_form(claim.form());
     let parameter = claim.over().map(|over| over.name.as_str());
     let spelled = evidence_of(&system, claim, instance).map(|evidence| {
@@ -276,6 +299,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     EngineReport::StateGraph(Box::new(GraphReport {
         record: record.clone(),
+        instance: item_instance(record, claim, bound.as_ref()),
         exploration,
         counterexample,
         evidence,
@@ -594,8 +618,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 _ => None,
             }),
         };
+        let selected_instance = item_instance(&record, read.claim, instance.as_ref());
         let report = GraphReport {
             record,
+            instance: selected_instance,
             exploration: fsl_replay::RunStats {
                 product_states: u64::try_from(graph.nodes.len()).unwrap_or(u64::MAX),
                 product_edges: u64::try_from(graph.edges.len()).unwrap_or(u64::MAX),
@@ -1424,6 +1450,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             end: None,
             undefined,
         };
+        let selected_instance = item_instance(&record, read.claim, instance.as_ref());
         let certificate_document = serde_json::json!({
             "state_graph": {
                 "form": form.as_str(),
@@ -1435,6 +1462,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         });
         let report = GraphReport {
             record,
+            instance: selected_instance,
             exploration: fsl_replay::RunStats {
                 product_states: graph.stats.symbolic_states,
                 product_edges: graph.stats.retained_edges,
@@ -1666,6 +1694,7 @@ fn evidence_of(
 
 /// The instance `reference` is the binding of: `Some(None)` for a claim with
 /// no `over` parameter, `None` when the reference names no instance.
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
 fn bound_instance(
     system: &ModelSystem<'_>,
     claim: &CheckedStateGraphClaim,
@@ -1675,14 +1704,16 @@ fn bound_instance(
         return Some(None);
     };
     system
-        .instances(&ValueType::Reference(over.object.clone()))
+        .claim_instances(&ValueType::Reference(over.object.clone()))
         .ok()?
-        .into_iter()
+        .as_slice()
+        .iter()
         .find(|instance| {
             system
                 .written_reference(over.object.clone(), instance)
                 .is_ok_and(|bound| &bound == reference)
         })
+        .cloned()
         .map(Some)
 }
 

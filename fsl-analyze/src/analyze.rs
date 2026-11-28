@@ -43,7 +43,7 @@ mod hybrid_process;
 mod hyper_route;
 pub(crate) mod instance_records;
 mod invariant_item;
-mod items;
+pub(crate) mod items;
 mod package_hyper;
 pub(crate) mod protocol_item;
 mod reduction_item;
@@ -1413,6 +1413,9 @@ pub enum Counterexample {
 pub struct GraphReport {
     /// The decisive instance's FR-169 record.
     pub record: fsl_replay::StateGraphRecord,
+    /// The selected claim binding, including for a non-proved record without
+    /// evidence.
+    pub instance: Option<fsl_replay::StateGraphInstance>,
     /// The explored graph's counts (FR-621 `exploration`).
     pub exploration: fsl_replay::RunStats,
     /// A refuted record's evidence in FSpec FR-393's spelling.
@@ -1773,6 +1776,7 @@ fn item_stage(
 /// # Errors
 ///
 /// As [`analyze_document`].
+#[implements("FR-621-AC-24", "FR-628-AC-4")]
 pub fn analyze_item(
     record: &TerminalRecord,
     counterexamples: &[ItemCounterexample],
@@ -1783,6 +1787,7 @@ pub fn analyze_item(
     if let Some(Counterexample::StateGraph(graph)) = found.map(|found| &found.counterexample) {
         return Ok(
             OutcomeItem::from_state_graph(record.request_index(), &graph.record)
+                .with_state_graph_instance(graph.instance.clone())
                 .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone())
                 .with_graph_certificate_document(graph.certificate_document.clone()),
         );

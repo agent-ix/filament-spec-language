@@ -21,6 +21,7 @@ pub fn settle_product_refusal(
         request @ ProductRefusal::NotSimulated(
             NotSimulated::RequiresBound(_)
             | NotSimulated::UnboundCapacity(_)
+            | NotSimulated::ConflictingIdentity(_)
             | NotSimulated::ProtocolInitial(_),
         ) => return Err(request),
         // FR-204's digital product exposes these recognized unsupported

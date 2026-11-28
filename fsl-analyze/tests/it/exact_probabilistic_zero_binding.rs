@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The exact checker and EN-5 item refuse a claim whose `over` parameter
-//! has no instance, rather than supplying a vacuous probability proof.
+//! The exact checker refuses a claim whose `over` parameter has no instance,
+//! and the EN-5 item settles it `no-instance`, rather than supplying a
+//! vacuous probability proof.
 
 use filament_exact::{Cancel, ValueType};
-use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
-};
+use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
 use fsl_package::ObligationIdentity;
@@ -63,8 +62,9 @@ fn the_checker_reports_an_empty_over_population_as_unsupported_binding() {
 }
 
 #[trace("TC-762", "FR-281", "FR-203")]
+#[trace("TC-3241", "FR-203-AC-34")]
 #[test]
-fn an_en5_item_over_no_instances_is_unsupported_without_proof_or_counterexample() {
+fn an_en5_item_over_no_instances_settles_no_instance_without_proof_or_counterexample() {
     let world = World::with_objects(&prob_world::link(CLAIM), &[]);
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(
@@ -78,17 +78,15 @@ fn an_en5_item_over_no_instances_is_unsupported_without_proof_or_counterexample(
         fsl_replay::CertificationPolicy::AdmitAny,
     );
     let [record] = records.as_slice() else {
-        panic!("the empty binding must still settle exactly one item: {records:?}");
+        panic!("the empty population must still settle exactly one item: {records:?}");
     };
-    let Settlement::Disposed(disposed) = &record.settlement else {
-        panic!("the empty binding must be unsupported, not a terminal verdict: {record:?}");
-    };
-    assert_eq!(disposed.kind, DispositionKind::Unsupported);
+    let terminal = record
+        .terminal()
+        .expect("an empty population settles a terminal record, not a disposition");
     assert_eq!(
-        disposed.backend.as_ref().map(|id| id.as_str()),
-        Some("en-5")
+        terminal.value(),
+        &fsl_replay::TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
     );
-    assert!(record.terminal().is_none());
     assert!(record.exact_probabilistic.is_none());
     assert!(record.counterexample().is_none());
 }

@@ -2425,6 +2425,19 @@ fn check_document_bytes(
     {
         return document_admission_error(ProbabilityDocumentError::MalformedMember("policy"));
     }
+    // FR-201 "Instancing outcomes": the certificate is read and its identity
+    // compared first; the instancing outcomes follow, before the claim's form
+    // is admitted or its kind compared with the certificate's.
+    let identity = match certificate_identity(bytes, limits, cancel) {
+        Ok(identity) => identity,
+        Err(error) => return document_admission_error(error),
+    };
+    if identity != *item {
+        return Err(ProbabilityDocumentError::IdentityMismatch);
+    }
+    if let Some(outcome) = instancing_outcome(system, bind_claim(claims, item, cancel)?)? {
+        return Ok(outcome);
+    }
     match dispatch {
         ProfileDispatch::Measure => {
             return measure::check(

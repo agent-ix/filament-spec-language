@@ -878,6 +878,9 @@ pub struct ModelSystem<'a> {
     /// FR-125 "Instancing": the type of the member record an initial state
     /// admits for each (universe, key); a key has one type across the subject.
     admitted_types: BTreeMap<(UniverseId, String), DeclarationKey>,
+    /// Conflicting identities are retained until the requested claim has
+    /// passed extent and initial-state checks (FR-125).
+    conflicting_identity: Option<crate::simulation::ConflictingIdentity>,
     clauses: Clauses,
     applications: BTreeMap<EffectiveId, Vec<Application>>,
     fields: BTreeMap<DeclarationKey, Vec<StateField>>,
@@ -1106,15 +1109,22 @@ pub(crate) type ClockCount = (DeclarationKey, StateField, u64, Option<u64>);
 ///
 /// # Errors
 ///
-/// `conflicting-identity` for two records of one universe key with different
-/// types; an admission failure for a record with no reference.
-#[implements("FR-125-AC-9")]
+/// An admission failure for a record with no reference. Conflicting
+/// identities are retained for the later claim-instance decision.
+#[implements("FR-125-AC-9", "FR-125-AC-23")]
 fn admitted_types(
     model: &StateModel,
     universes: &BTreeMap<DeclarationKey, Vec<String>>,
     initial: &[ModelSimState],
-) -> Result<BTreeMap<(UniverseId, String), DeclarationKey>, AdmissionFailure> {
+) -> Result<
+    (
+        BTreeMap<(UniverseId, String), DeclarationKey>,
+        Option<crate::simulation::ConflictingIdentity>,
+    ),
+    AdmissionFailure,
+> {
     let mut admitted = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
+    let mut conflicting_identity = None;
     for state in initial {
         for (population, objects) in &state.state().populations {
             if !universes.contains_key(population) {
@@ -1128,15 +1138,13 @@ fn admitted_types(
                 let identity = (universe, key.clone());
                 match admitted.get(&identity) {
                     Some(first_type) if first_type != &object.type_identity => {
-                        return Err(refused(
-                            Code::InvalidRuntimeInput,
-                            "conflicting-identity",
-                            &[
-                                ("key", key.clone()),
-                                ("first_type", first_type.node.clone()),
-                                ("second_type", object.type_identity.node.clone()),
-                            ],
-                        ));
+                        conflicting_identity.get_or_insert_with(|| {
+                            crate::simulation::ConflictingIdentity {
+                                key: key.clone(),
+                                first_type: first_type.node.clone(),
+                                second_type: object.type_identity.node.clone(),
+                            }
+                        });
                     }
                     Some(_) => {}
                     None => {
@@ -1146,7 +1154,24 @@ fn admitted_types(
             }
         }
     }
-    Ok(admitted)
+    Ok((admitted, conflicting_identity))
+}
+
+impl crate::simulation::ConflictingIdentity {
+    /// The typed admission refusal of this conflict (FR-125-AC-9): the key and
+    /// both types.
+    #[must_use]
+    pub fn admission_failure(&self) -> AdmissionFailure {
+        refused(
+            Code::InvalidRuntimeInput,
+            "conflicting-identity",
+            &[
+                ("key", self.key.clone()),
+                ("first_type", self.first_type.clone()),
+                ("second_type", self.second_type.clone()),
+            ],
+        )
+    }
 }
 
 fn refused(code: Code, cause: &'static str, fields: &[(&'static str, String)]) -> AdmissionFailure {
@@ -1686,9 +1711,11 @@ impl<'a> ModelSystem<'a> {
         // Before reference bindings or any instance is formed: otherwise one
         // reference could denote different objects depending on which
         // population or initial snapshot supplied the row.
-        let admitted_types = admitted_types(&model, &universes, &initial)?;
+        let (admitted_types, conflicting_identity) = admitted_types(&model, &universes, &initial)?;
 
-        let reference_bindings = if let Some(package) = input.source_package() {
+        let reference_bindings = if conflicting_identity.is_some() {
+            ReferenceBindings::default()
+        } else if let Some(package) = input.source_package() {
             ReferenceBindings::bind(
                 package.graph(),
                 &model,
@@ -1876,6 +1903,7 @@ impl<'a> ModelSystem<'a> {
             initial_all: std::sync::OnceLock::new(),
             reference_bindings,
             admitted_types,
+            conflicting_identity,
             applications,
             fields,
             populations,
@@ -2639,9 +2667,17 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
+        let members = self.universe_members(parameter)?;
+        // FR-125-AC-13 and AC-23: after the bound and the empty-initial
+        // outcomes, which claim_instances orders first.
+        if let Some(conflict) = &self.conflicting_identity {
+            return Err(NotSimulated::ConflictingIdentity(Box::new(
+                conflict.clone(),
+            )));
+        }
         let mut seen = BTreeSet::new();
         let mut instances = Vec::new();
-        for (population, key) in self.universe_members(parameter)? {
+        for (population, key) in members {
             let Ok(selected) = self.selects_instance(population, key, &mut seen);
             if selected {
                 instances.push(ModelInstance {
@@ -2683,11 +2719,10 @@ impl<'a> ModelSystem<'a> {
 
     /// Return the non-empty admitted instances for a claim's `over` type.
     ///
-    /// The refusal order is FR-125-AC-13: extent/bound failures from
-    /// [`Self::instances`], then no initial state, then no admitted instance.
-    /// Conflicting identities are rejected by [`Self::new`] before a system
-    /// is available.
-    #[implements("FR-125-AC-13", "FR-125-AC-21")]
+    /// FR-125-AC-13's order is extent/bound, no initial state, conflicting
+    /// identity, and no instance. Identity checks are deferred here so the
+    /// claim can report the earlier outcomes first.
+    #[implements("FR-125-AC-13", "FR-125-AC-21", "FR-125-AC-23")]
     pub fn claim_instances(&self, over: &ValueType) -> Result<ClaimInstances, NoClaimInstances> {
         let instances = self
             .instances(over)
@@ -2701,19 +2736,22 @@ impl<'a> ModelSystem<'a> {
         Ok(ClaimInstances(instances))
     }
 
-    /// FR-125 Instancing: the instances of a hyper clause parameter of object
-    /// type `object`, under the one rule of [`Self::instances`]. `self` is the
-    /// system of the parameter's alias.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::instances`].
-    #[implements("FR-125-AC-19", "FR-125-AC-20")]
-    pub fn hyper_instances(
-        &self,
-        object: &EffectiveId,
-    ) -> Result<Vec<ModelInstance>, NotSimulated> {
-        self.instances(&ValueType::Reference(object.clone()))
+    /// The first of FR-125's outcomes a parameter of object type `object`
+    /// raises before any initial state is read: `RequiresBound` when an
+    /// overlapping population has no universe.
+    pub(crate) fn check_parameter_bound(&self, object: &EffectiveId) -> Result<(), NotSimulated> {
+        self.universe_members(object).map(|_| ())
+    }
+
+    /// Whether some initial state of the subject exists.
+    pub(crate) fn has_initial_state(&self) -> bool {
+        !self.initial_base.is_empty()
+    }
+
+    /// The conflicting identity two initial member records of the subject
+    /// make, when they do.
+    pub(crate) fn identity_conflict(&self) -> Option<&crate::simulation::ConflictingIdentity> {
+        self.conflicting_identity.as_ref()
     }
 
     /// Every key a hyper parameter of object type `object` may name in an

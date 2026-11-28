@@ -809,20 +809,16 @@ fn claim_over_instances(
         return model
             .claim_instances(over_type)
             .map(|instances| instances.as_slice().to_vec())
-            .map_err(|failure| match failure {
-                fsl_eval::simulation::model::NoClaimInstances::NoInstance => Box::new({
-                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInstance)
-                }),
-                fsl_eval::simulation::model::NoClaimInstances::NoInitialState => Box::new({
-                    empty_population_report(index, fsl_replay::InconclusiveCause::NoInitialState)
-                }),
-                fsl_eval::simulation::model::NoClaimInstances::NotSimulated(
-                    fsl_eval::simulation::NotSimulated::RequiresBound(_),
-                ) => Box::new(crate::analyze::EngineReport::Refused(
-                    crate::analyze::Refusal::RequiresBound,
-                )),
-                _ => Box::new(internal_fault()),
-            });
+            .map_err(
+                |failure| match crate::analyze::items::instance_stop(failure) {
+                    crate::analyze::items::InstanceStop::Inconclusive(cause) => {
+                        Box::new(empty_population_report(index, cause))
+                    }
+                    crate::analyze::items::InstanceStop::Refused(refusal) => {
+                        Box::new(crate::analyze::EngineReport::Refused(refusal))
+                    }
+                },
+            );
     }
     Ok(vec![fsl_eval::model_subject::ModelInstance {
         population: filament_checked::key::DeclarationKey {

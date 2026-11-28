@@ -50,7 +50,9 @@ pub use explore::{
 pub use footprint::{any_affects, independent, Footprint, Location};
 pub use frontier::{Frontier, Limit};
 pub use key::{EncodingRefusal, StateKey};
-pub use not_simulated::{ClockReferenceDomain, NotSimulated, RequiresBound, Root, BOUND_POSITIONS};
+pub use not_simulated::{
+    ClockReferenceDomain, ConflictingIdentity, NotSimulated, RequiresBound, Root, BOUND_POSITIONS,
+};
 pub use progress::{FairLoop, ZeroProgress, ZeroProgressError};
 pub use reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryClass, SymmetryGroup,

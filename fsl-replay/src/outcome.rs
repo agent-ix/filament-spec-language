@@ -1043,6 +1043,29 @@ enum ItemCauseMember {
     Omitted {},
 }
 
+/// The `{type: "instance", parameter, key}` binding that names the claim
+/// instance a state-graph item rests on (FR-621-AC-24, FR-628-AC-4). The one
+/// writer of that wire shape.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct StateGraphInstance {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    parameter: String,
+    key: String,
+}
+
+impl StateGraphInstance {
+    /// The binding of the claim parameter `parameter` to the universe key `key`.
+    #[must_use]
+    pub fn new(parameter: impl Into<String>, key: impl Into<String>) -> Self {
+        Self {
+            kind: "instance",
+            parameter: parameter.into(),
+            key: key.into(),
+        }
+    }
+}
+
 /// One requested item of a `prove`, `analyze` or `monitor` outcome: its
 /// terminal record and its category.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1127,6 +1150,9 @@ pub struct OutcomeItem {
     /// internally to the FR-286 item writer and nested under `certificate`.
     #[serde(skip_serializing_if = "Option::is_none")]
     certificate_document: Option<serde_json::Value>,
+    /// The selected state-graph claim instance, including when no evidence exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance: Option<StateGraphInstance>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1590,6 +1616,7 @@ impl OutcomeItem {
             witness: None,
             evidence: None,
             certificate_document: None,
+            instance: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1659,6 +1686,14 @@ impl OutcomeItem {
         item
     }
 
+    /// Attach the selected instance of a claim-level state-graph record.
+    #[implements("FR-628-AC-4")]
+    #[must_use]
+    pub fn with_state_graph_instance(mut self, instance: Option<StateGraphInstance>) -> Self {
+        self.instance = instance;
+        self
+    }
+
     /// This state-graph item carrying the FR-393 spelling of its refuting
     /// evidence as `counterexample` and of its witnesses as `evidence`.
     #[must_use]
@@ -1712,6 +1747,7 @@ impl OutcomeItem {
             witness: None,
             evidence: None,
             certificate_document: None,
+            instance: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1771,6 +1807,7 @@ impl OutcomeItem {
             witness: record.witness,
             evidence: None,
             certificate_document: None,
+            instance: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,
@@ -4355,6 +4392,43 @@ mod tests {
 
     fn record(index: usize, value: TerminalValue) -> OutcomeItem {
         OutcomeItem::from_terminal(&TerminalRecord::from_value(RequestIndex::new(index), value))
+    }
+
+    /// FR-628-AC-4: a claim-level state-graph record preserves its selected
+    /// binding even when it has no evidence to carry that binding.
+    #[trace("FR-621-AC-24", "FR-628-AC-4")]
+    #[test]
+    fn state_graph_item_writes_selected_instance_without_evidence() {
+        let item = record(
+            0,
+            TerminalValue::Inconclusive(InconclusiveCause::BoundReached { depth: 1 }),
+        )
+        .with_state_graph_instance(Some(StateGraphInstance::new("c", "a")));
+
+        assert_eq!(
+            serde_json::to_value(item).expect("serializes"),
+            json!({
+                "request_index": 0,
+                "result": "inconclusive",
+                "cause": {"kind": "bound-reached", "depth": 1},
+                "instance": {"type": "instance", "parameter": "c", "key": "a"},
+                "category": "inconclusive",
+            })
+        );
+
+        let proved = record(
+            0,
+            TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                certification: Certification::Uncertified,
+            },
+        )
+        .with_state_graph_instance(None);
+        assert!(!serde_json::to_value(proved)
+            .expect("serializes")
+            .as_object()
+            .expect("item is an object")
+            .contains_key("instance"));
     }
 
     /// FR-990 writes the structured result members on the settled item while
