@@ -2715,7 +2715,7 @@ fn compile_targets(recipe: &Recipe) -> BTreeMap<(String, TestTarget), Vec<String
         .collect()
 }
 
-/// The cargo features a `cargo test` command must enable to build `target`,
+/// The cargo features the `[[test]]` target `target` requires,
 /// read from the `required-features` of the matching `[[test]]` target in
 /// `cargo metadata` output. Library targets declare none.
 fn target_required_features(
@@ -2749,6 +2749,9 @@ fn target_required_features(
     features.into_iter().collect()
 }
 
+/// Gives every selector of a package the union of the required features of
+/// that package's selected targets, so every printed command and the preflight
+/// build compile the same feature set.
 fn apply_required_features(
     workspace_root: &Path,
     recipe: &mut Recipe,
@@ -2770,11 +2773,24 @@ fn apply_required_features(
     }
     let metadata = serde_json::from_slice::<serde_json::Value>(&output.stdout)
         .map_err(|error| Error::MergeGateRecipe(format!("cargo metadata is not JSON: {error}")))?;
+    let mut package_features = BTreeMap::<String, BTreeSet<String>>::new();
+    for selector in &recipe.selectors {
+        package_features
+            .entry(selector.package.clone())
+            .or_default()
+            .extend(target_required_features(
+                &metadata,
+                &selector.package,
+                &selector.target,
+            ));
+    }
     recipe.selectors = std::mem::take(&mut recipe.selectors)
         .into_iter()
         .map(|mut selector| {
-            selector.features =
-                target_required_features(&metadata, &selector.package, &selector.target);
+            selector.features = package_features[&selector.package]
+                .iter()
+                .cloned()
+                .collect();
             selector
         })
         .collect();
