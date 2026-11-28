@@ -113,24 +113,31 @@ fn operation(name: &str, modifies: &[&str], unbounded: bool, scoped: bool) -> Js
 /// The package with clock fields `clocks` and `operations` (name, the
 /// fields it modifies).
 pub(crate) fn document(clocks: &[&str], operations: &[(&str, &[&str])]) -> Vec<u8> {
-    document_with(clocks, operations, false, false)
+    document_with(clocks, operations, false, false, false)
+}
+
+/// [`document`] whose frames modify the receiver only, over a population
+/// that is not symmetric: a step of one object leaves the others as they are.
+pub(crate) fn scoped_document(clocks: &[&str], operations: &[(&str, &[&str])]) -> Vec<u8> {
+    document_with(clocks, operations, false, true, false)
 }
 
 /// [`document`] whose population is declared `symmetric` (FR-151).
 pub(crate) fn symmetric_document(clocks: &[&str], operations: &[(&str, &[&str])]) -> Vec<u8> {
-    document_with(clocks, operations, false, true)
+    document_with(clocks, operations, false, true, true)
 }
 
 /// [`document`] whose first operation also takes `n: Integer`, an
 /// unbounded population root (FR-126).
 pub(crate) fn document_unbounded(clocks: &[&str], operations: &[(&str, &[&str])]) -> Vec<u8> {
-    document_with(clocks, operations, true, false)
+    document_with(clocks, operations, true, false, false)
 }
 
 fn document_with(
     clocks: &[&str],
     operations: &[(&str, &[&str])],
     unbounded: bool,
+    scoped: bool,
     symmetric: bool,
 ) -> Vec<u8> {
     let call = ident("Call");
@@ -160,7 +167,7 @@ fn document_with(
     let operations: Vec<Json> = operations
         .iter()
         .enumerate()
-        .map(|(at, (name, modifies))| operation(name, modifies, unbounded && at == 0, symmetric))
+        .map(|(at, (name, modifies))| operation(name, modifies, unbounded && at == 0, scoped))
         .collect();
     let population = ident("calls");
     json!({
@@ -317,8 +324,8 @@ pub(crate) fn world_armed(
     world_built(document, profiles, body, keys, armed, &json!({}))
 }
 
-/// [`world_armed`] checked under `mode`, for runtime undefinedness fixtures
-/// over several objects.
+/// [`world_armed`] checked under `mode`, for runtime undefinedness over a
+/// universe whose objects start differently.
 pub(crate) fn world_armed_with_mode(
     document: &[u8],
     profiles: &str,

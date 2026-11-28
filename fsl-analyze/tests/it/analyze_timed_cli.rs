@@ -8,7 +8,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use filament_exact::{Cancel, Meter, Undefined};
+use filament_exact::{Cancel, Integer, Meter, Rational, Undefined};
 use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, TimedSystem};
@@ -657,6 +657,91 @@ fn digital_idle_tail_undefined_reading_is_a_violation() {
     );
 }
 
+/// The T5 world of QSL-3601 (derivation: Linear comment 33f09d4a): `a` is
+/// armed and can go to phase 1 (an undefined reading in a time lock) or to
+/// phase 2 (the claim false, a quiescent idle tail); `z` never moves.
+fn undefined_beside_a_refuted_branch(keys: &[&str]) -> crate::timed_world::World {
+    let body = format!(
+        "{}\
+         function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
+         pre Send using v on M::Call::send {{ self.phase = 0 and self.inflight }}\n\
+         post SendDone using v on M::Call::send {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre NoReply using v on M::Call::reply {{ self.phase = 0 and self.phase = 1 }}\n\
+         pre NoReset using v on M::Call::reset {{ self.phase = 0 and self.phase = 1 }}\n\
+         pre Timeout using v on M::Call::timeout {{ self.phase = 0 and self.inflight }}\n\
+         post TimeoutDone using v on M::Call::timeout {{ self.phase = 2 }}\n\
+         time invariant Lock when {{ self.phase = 1 }} {{ self.x <= 1 ms }}\n\
+         temporal Safe using tt over (c: M::Call) on origin \
+         {{ always holds(c.phase != 2 and q(c.phase - 1) >= 0) }}\n",
+        crate::timed_world::DENSE,
+    );
+    crate::timed_world::world_armed_with_mode(
+        &crate::timed_world::scoped_document(
+            &["x"],
+            &[
+                ("send", &["phase", "inflight", "late", "x"]),
+                ("reply", &["phase", "inflight", "late"]),
+                ("timeout", &["phase"]),
+                ("reset", &["phase"]),
+            ],
+        ),
+        &format!(
+            "{}profile d = \"filament.value.integer-division.truncating/v1\";\n",
+            crate::zone_search::TIMED
+        ),
+        &body,
+        keys,
+        &["a"],
+        filament_semantic_value::checking::CheckMode::Kernel,
+    )
+}
+
+/// FR-126 "TP-4 items" on the digital route (QSL-3601 FND-007): an undefined
+/// position whose state has no time-divergent continuation is pruned, not
+/// the end of its instance, so the refuting cycle on another branch of the
+/// same instance is found, whichever order the instances are decided in.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn digital_undefined_position_without_divergence_does_not_hide_a_refutation() {
+    for keys in [["a", "z"], ["z", "a"]] {
+        let world = undefined_beside_a_refuted_branch(&keys);
+        let system = world.system();
+        let timed = TimedSystem::new(&system, "M").expect("timed model");
+        let node = &world.package.graph().temporal_clauses()[0];
+        let letters = system.clause_letters(node).expect("clause letters");
+        let request = DigitalRequest {
+            subject: &timed,
+            clause: node.clause(),
+            letters: &letters,
+            limits: DigitalLimits {
+                max_states: u64::MAX,
+                max_transitions: u64::MAX,
+                max_automaton_states: u64::MAX,
+            },
+        };
+        let outcome = check_digital(&request, &Cancel::new()).expect("digital route accepts");
+        let ModelCheckOutcome::Violated { counterexample, .. } = outcome.outcome else {
+            panic!("{keys:?}: the cycle at phase 2 refutes instance a: {outcome:?}");
+        };
+        assert_eq!(
+            counterexample.over_binding.as_ref().map(|b| b.key.as_str()),
+            Some("a"),
+            "{keys:?}"
+        );
+        assert!(
+            matches!(counterexample.kind, CounterexampleKind::Formula),
+            "{keys:?}: {counterexample:?}"
+        );
+        assert!(counterexample.lasso.is_some(), "{keys:?}");
+        assert_eq!(counterexample.prefix.len(), 1, "{keys:?}: Timeout(a)");
+        assert_eq!(
+            counterexample.prefix[0].delay,
+            Some(Rational::from_integer(Integer::from(0_u64))),
+            "{keys:?}"
+        );
+    }
+}
+
 /// QSL-2129: an item naming `options.method` `zones` negotiates to EN-6 and
 /// one naming a value no backend publishes has no candidate.
 #[trace("TC-2290", "FR-243-AC-4")]
@@ -955,7 +1040,7 @@ fn an_initial_position_violation_is_refuted_on_both_timed_routes() {
          post Blocked using v on M::Call::block {{ self.phase = 2 }}\n\
          pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
          post Gone using v on M::Call::go {{ self.phase = 1 }}\n\
-         time invariant Locked when {{ self.phase = 2 }} {{ self.x <= 0 ms }}\n\
+         time invariant Locked when {{ self.phase = 2 }} {{ self.x <= 1 ms }}\n\
          temporal InitialPhase using tt over (c: M::Call) clock \"model-time\" on origin {{ always holds(c.phase = 1) }}\n",
         DENSE,
     );
@@ -985,11 +1070,18 @@ fn an_initial_position_violation_is_refuted_on_both_timed_routes() {
             {"claim": "InitialPhase", "options": {"method": "digital-clocks"}}
         ]}),
     ));
-    let items = run.document()["items"].as_array().cloned().unwrap_or_default();
+    let items = run.document()["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(items.len(), 2, "analysis result: {:#?}", run.document());
 
     let outcomes = items.iter().map(label).collect::<Vec<_>>();
-    assert_eq!(outcomes, ["refuted", "refuted"], "route records: {items:#?}");
+    assert_eq!(
+        outcomes,
+        ["refuted", "refuted"],
+        "route records: {items:#?}"
+    );
     assert_eq!(items[0]["record"]["backend"], "en-6", "{items:#?}");
     assert_eq!(items[1]["record"]["backend"], "en-1", "{items:#?}");
     assert_eq!(run.exit, 10, "route records: {items:#?}");

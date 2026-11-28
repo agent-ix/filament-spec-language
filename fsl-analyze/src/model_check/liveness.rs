@@ -2294,22 +2294,6 @@ impl<T: SubjectTransition> From<Built<T>> for FirstHit<T> {
     }
 }
 
-impl<T: SubjectTransition> FirstHit<T> {
-    fn outcome(self, stats: RunStats) -> ModelCheckOutcome<T> {
-        match self {
-            Self::Violated(counterexample) => ModelCheckOutcome::Violated {
-                counterexample,
-                stats,
-            },
-            Self::Undecided => ModelCheckOutcome::Undecided {
-                cause: UndecidedCause::UndecidedSuccessor,
-                stats,
-            },
-            Self::Stopped(cause, limit) => stopped(cause, limit, stats),
-        }
-    }
-}
-
 /// The shallowest depth each model state is known at, by its state-key
 /// state key: a product state's, or the model-only pass's own.
 #[derive(Default)]
