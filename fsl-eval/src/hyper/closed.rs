@@ -339,7 +339,9 @@ pub fn shortest_undefined(
         initial: usize,
         key: Vec<u8>,
     }
-    let ceiling = found.visible_steps().min(depth.saturating_add(1));
+    // The levels up to and including `found`'s own: another state at the same
+    // visible position can come first in canonical order.
+    let ceiling = found.visible_steps().min(depth.saturating_sub(1));
     let mut nodes: Vec<Reached> = Vec::new();
     let mut expanded_keys = BTreeSet::new();
     // The nodes of each visible level, in the order they were reached.
@@ -358,7 +360,7 @@ pub fn shortest_undefined(
         });
     }
     let mut expanded = 0_usize;
-    for level in 0..ceiling {
+    for level in 0..=ceiling {
         let mut cursor = 0_usize;
         while let Some(&index) = levels.get(level).and_then(|reached| reached.get(cursor)) {
             cursor += 1;
@@ -811,7 +813,9 @@ pub enum PartnerSearch {
 /// one whose position is earliest is reported, the first in list order on a
 /// tie (ADR-018 UE-4, ADR-023 HV-8, FR-177), whatever holding partner comes
 /// before or after it. Only when none is undefined does a holding partner
-/// witness.
+/// witness, and a partner whose reading was refused or incomplete leaves the
+/// tuple undecided only when no partner is undefined or holds; a fault ends
+/// the search at once.
 pub fn search_partner(
     inputs: &ClosedInputs<'_>,
     universal: &[&ClosedExecution],
@@ -833,6 +837,8 @@ pub fn search_partner(
     // The earliest undefined partner so far; a shorter one replaces it, a tie
     // keeps the first in list order.
     let mut earliest: Option<(Box<ClosedUndefined>, Vec<usize>)> = None;
+    // The first partner whose reading stopped without a value or a verdict.
+    let mut undecided: Option<ClosedVerdict> = None;
     for picked in Tuples::over(lens) {
         if inputs.cancel.poll() {
             return PartnerSearch::Cancelled;
@@ -858,12 +864,9 @@ pub fn search_partner(
                     earliest = Some((found, picked));
                 }
             }
-            stopped @ (ClosedVerdict::MatchUndetermined
-            | ClosedVerdict::Incomplete(_)
-            | ClosedVerdict::Fault(_)) => {
-                if earliest.is_none() {
-                    return PartnerSearch::Stopped(stopped);
-                }
+            fault @ ClosedVerdict::Fault(_) => return PartnerSearch::Stopped(fault),
+            stopped @ (ClosedVerdict::MatchUndetermined | ClosedVerdict::Incomplete(_)) => {
+                undecided.get_or_insert(stopped);
             }
         }
     }
@@ -873,7 +876,10 @@ pub fn search_partner(
             existentials,
         },
         None if witnessed => PartnerSearch::Witnessed,
-        None => PartnerSearch::Exhausted { position },
+        None => match undecided {
+            Some(stopped) => PartnerSearch::Stopped(stopped),
+            None => PartnerSearch::Exhausted { position },
+        },
     }
 }
 

@@ -12,6 +12,7 @@ use filament_exact::{Cancel, Undefined};
 use fsl_analyze::model_check::ModelCheckRefusal;
 use fsl_eval::hyper::{
     read_closed_undefined, ClosedExecution, ClosedInputs, ClosedLocus, ClosedRead, ClosedStep,
+    MatchReading, ParameterBinding, StepLabel, StepMatch,
 };
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
@@ -846,7 +847,7 @@ fn a_holding_partner_after_an_undefined_one_does_not_witness() {
 /// `l = 1`, where the guard has no value: the search expands the initial state
 /// and the `l = 1` state, two states, and finds the one-step prefix `[1]`
 /// that is shorter than the walk's three-step prefix `[0, 0, 1]`.
-#[trace("TC-2243", "FR-177-AC-13")]
+#[trace("TC-2243")]
 #[test]
 fn the_shortest_undefined_search_is_charged_to_the_limit() {
     use fsl_eval::hyper::{shortest_undefined, ClosedStop};
@@ -882,4 +883,97 @@ fn the_shortest_undefined_search_is_charged_to_the_limit() {
         .expect("within the limit")
         .expect("a shorter prefix exists");
     assert_eq!(found.0.steps.len(), 1);
+}
+
+/// A `match` that reads `μ_E` as holding on every step but `step(0)` of the
+/// existential component, whose reading is incomplete: the stand-in for a
+/// partner whose `match` the evaluator cannot finish.
+struct IncompleteOnZero<'w>(crate::hyper_world::Seams<'w>);
+
+impl StepMatch for IncompleteOnZero<'_> {
+    fn universal(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        self.0.universal(instance, steps, meter)
+    }
+
+    fn existential(
+        &self,
+        _instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        if steps.get(1).and_then(crate::hyper_world::input_of) == Some(0) {
+            filament_exact::Meter::new(crate::counter::ZERO)
+                .charge(filament_exact::Charge::new(
+                    filament_exact::ChargePoint::GraphExpand,
+                ))
+                .map_err(|incomplete| fsl_eval::hyper::MatchIncomplete {
+                    conjunct: 0,
+                    incomplete,
+                })?;
+        }
+        Ok(MatchReading::Holds)
+    }
+}
+
+/// FR-177: the verdict on a universal tuple does not depend on the order of
+/// its partners. One partner whose `match` is incomplete (`step(0)`) does not
+/// hide another whose atom has no value at position 1 (`step(1)`, where
+/// `l = 1`): the search reports the undefined partner whichever comes first.
+fn partner_search_with_incomplete(incomplete_first: bool) -> (usize, u64) {
+    use fsl_eval::hyper::{search_partner, PartnerSearch};
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        "hyper Part using ep over behaviours (v: V::Vault) \
+         forall trace a of V exists trace b of V \
+         match { a.step.Vault::step.i = b.step.Vault::step.i } \
+         { eventually [1, 3] holds(quotient(1 - v.l @ b) >= 1) }",
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let incomplete = walk(systems[1], &[0]);
+    let undefined = walk(systems[1], &[1]);
+    let partners = if incomplete_first {
+        vec![incomplete, undefined]
+    } else {
+        vec![undefined, incomplete]
+    };
+    let matcher = IncompleteOnZero(world.seams());
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &seams,
+        matcher: &matcher,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    match search_partner(&inputs, &[&a], &[partners.as_slice()], 100) {
+        PartnerSearch::Undefined {
+            found,
+            existentials,
+        } => (existentials[0], found.position),
+        other => panic!("expected an undefined partner, got {other:?}"),
+    }
+}
+
+#[trace("TC-2243", "FR-177-AC-13")]
+#[test]
+fn an_incomplete_partner_before_an_undefined_one_does_not_hide_it() {
+    assert_eq!(partner_search_with_incomplete(true), (1, 1));
+}
+
+#[trace("TC-2243", "FR-177-AC-13")]
+#[test]
+fn an_incomplete_partner_after_an_undefined_one_does_not_hide_it() {
+    assert_eq!(partner_search_with_incomplete(false), (0, 1));
 }
