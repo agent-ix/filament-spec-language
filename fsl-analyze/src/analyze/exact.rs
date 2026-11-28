@@ -4700,6 +4700,8 @@ fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> 
 /// returns that operation's transition, the model state right after it (what a
 /// single recorded transition produces) and the model state at the end of the
 /// chain (what the product key names, and where the next step starts).
+/// When a timed edge leaves the discrete state unchanged, it returns no
+/// transition.
 /// A previous key that is a region key, or a chain still open after `CHAIN`
 /// operations, is [`TimedStepFailure::Unbuilt`] (a region refutation through a
 /// clock-guarded step therefore settles not-yet); a step expansion or key

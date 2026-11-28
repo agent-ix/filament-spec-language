@@ -53,10 +53,10 @@
 //! itself, never by the search's evidence. The `admitted` path is
 //! recomputed in exact zones from the initial state. Its cycle target lets
 //! time advance when, under a tick source, it takes a tick, and under a
-//! dense source, some clock it resets to `r` is guarded on it by `x >= c`
-//! (or `x > c`) with `c > r` before its next reset, so each repetition
-//! takes at least `c - r`; and it repeats forever: the greatest set of the
-//! exact valuations at its start each of which takes the cycle back into
+//! dense source, a clock is either guarded above its previous reset value or
+//! reset after a positive delay fits under its source state's invariant; and
+//! it repeats forever: the greatest set of the exact valuations at its start
+//! each of which takes the cycle back into
 //! the set is not empty. A strongly connected set of nodes lets no time
 //! diverge when every member is urgent, or some clock that no edge inside
 //! it resets is bounded above by every member state's own time invariants.
@@ -4469,8 +4469,8 @@ impl<O> Checker<'_, '_, O> {
 
     /// Whether `cycle` is a cycle of valid edges from and back to `at`
     /// each repetition of which lets time advance: it ticks, under a tick
-    /// source; under a dense source, some clock guarded on it by a lower
-    /// bound above the value its last reset before the guard set it.
+    /// source; under a dense source, some clock is guarded above its last
+    /// reset, or reset after a positive delay that fits its source invariant.
     fn advancing_cycle(&self, at: usize, cycle: &[usize]) -> Step<bool, O> {
         let mut node = at;
         for &index in cycle {
