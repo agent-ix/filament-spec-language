@@ -1423,6 +1423,11 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         .diagnostics
         .iter()
         .filter(|located| located.severity == agent_ix_semantic_ir::diag::Severity::Error)
+        // FR-056-AC-10 defines field presence independently of its declared
+        // value type. Optional presence on an Option<T> field is the outer
+        // Option layer, so the shared validator's older duplicate-option
+        // diagnostic does not apply to this FSL model.
+        .filter(|located| located.code != agent_ix_semantic_ir::rules::INVALID_OPTION_PRESENCE)
         // FR-103: a `modifies`/`creates`/`deletes` frame entry's
         // resolution is FSL's own, strictly finer classification
         // (`resolve_pending_frames`/`resolve_frame_array`), not this
@@ -1461,9 +1466,6 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
                 return Some(refusal);
             }
             if let Some(refusal) = missing_option_inner_schema_refusal(document, located) {
-                return Some(refusal);
-            }
-            if let Some(refusal) = option_presence_refusal(document, located) {
                 return Some(refusal);
             }
             if let Some(refusal) = duplicate_member_identity_refusal(document, located) {
@@ -1592,55 +1594,6 @@ fn missing_option_inner_schema_refusal(
             "TypeDefinition.inner ({}) on {located_node}: missing required option inner",
             located.pointer,
             located_node = option
-                .get("identity")
-                .and_then(Value::as_str)
-                .unwrap_or("<unknown>")
-        ),
-    ))
-}
-
-/// FSpec locates duplicate Option<Option<T>> spelling on the field itself,
-/// with the field's own `Field.presence` path.
-#[ix_trace_rs::string_edge]
-fn option_presence_refusal(
-    document: &PackageDocument,
-    located: &agent_ix_semantic_ir::diag::Located,
-) -> Option<ModelRefusal> {
-    if located.code != agent_ix_semantic_ir::rules::INVALID_OPTION_PRESENCE {
-        return None;
-    }
-    let pointer = located.pointer.strip_prefix("/ir")?;
-    let mut segments = pointer.strip_prefix('/')?.split('/');
-    if segments.next()? != "types" {
-        return None;
-    }
-    let type_index = segments.next()?.parse::<usize>().ok()?;
-    if segments.next()? != "fields" {
-        return None;
-    }
-    let field_index = segments.next()?.parse::<usize>().ok()?;
-    if segments.next()? != "presence" || segments.next().is_some() {
-        return None;
-    }
-    let field = document
-        .tree
-        .get("types")?
-        .as_array()?
-        .get(type_index)?
-        .get("fields")?
-        .as_array()?
-        .get(field_index)?;
-    let node = field.get("identity")?.as_str()?.to_owned();
-    let (artifact, span) = located_span(located);
-    Some(malformed_declaration(
-        node,
-        artifact,
-        span,
-        MemberPath::new(MemberRoot::Field).name("presence"),
-        format!(
-            "Field.presence ({}) on {located_node}: optional presence on an Option<T> field at [1,1] is Option<Option<T>>",
-            located.pointer,
-            located_node = field
                 .get("identity")
                 .and_then(Value::as_str)
                 .unwrap_or("<unknown>")
@@ -7213,24 +7166,23 @@ mod tests {
             "{refusals:?}"
         );
 
-        let mut invalid_presence =
+        let mut nested_option_presence =
             option_wire_document(Some(serde_json::json!("ix://filament/native/Integer")));
-        invalid_presence["types"][1]["fields"][0]["presence"] = serde_json::json!("optional");
-        let document = parse_document(invalid_presence.to_string().as_bytes());
-        let refusals = read_records("acme/optionals", &document)
-            .expect_err("a field cannot spell Option<Option<T>> through presence");
-        assert!(
-            refusals.iter().any(|refusal| {
-                refusal.code == Code::InvalidModelBinding
-                    && matches!(
-                        &refusal.cause,
-                        ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
-                            if node == "ix://acme/optionals/Holder/a"
-                                && *member == MemberPath::new(MemberRoot::Field).name("presence")
-                    )
-            }),
-            "{refusals:?}"
-        );
+        nested_option_presence["types"][1]["fields"][0]["presence"] =
+            serde_json::json!("optional");
+        let document = parse_document(nested_option_presence.to_string().as_bytes());
+        let records = read_records("acme/optionals", &document)
+            .expect("optional presence wraps the declared Option<Integer>");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            DomainPackageRecord::FieldMember(field)
+                if field.key.node == "ix://acme/optionals/Holder/a"
+                    && field.value_type == ValueTypeRef::Package(declaration_key(
+                        "acme/optionals",
+                        "ix://acme/optionals/OptInt",
+                    ))
+                    && field.presence == Presence::Optional
+        )));
     }
 
     /// FSpec FR-154-AC-33: package intake retains a tuple declaration and
