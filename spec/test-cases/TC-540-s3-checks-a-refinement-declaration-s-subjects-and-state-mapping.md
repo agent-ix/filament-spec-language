@@ -75,9 +75,15 @@ Fixtures: ADR-020 §8's `CasRefinesCounter` unit, with `Spec` local and with
     `holder = self.state` when the active tag is `Points`; then with concrete
     `union State { Empty, Has(Reference<Ring>) }`, check the same row when
     the active tag matches `Has`.
+14. With the abstract `box`, `pair` and `holder` fields of steps 11 to 13 and
+    the same-kind concrete composites, check each of the six rows that
+    names a field of a different composite kind (`box = self.pair`,
+    `box = self.holder`, `pair = self.box`, `pair = self.holder`,
+    `holder = self.box`, `holder = self.pair`).
 
 Tag the composite positive cases with `FR-135-AC-13` through `AC-16`, and
-the name, arity and tag refusals with `FR-135-AC-17` through `AC-19`.
+the name, arity and tag refusals with `FR-135-AC-17` through `AC-19`, and
+the cross-kind refusals with `FR-135-AC-20`.
 Tag all tests `#[trace("TC-540", "FR-135-AC-n")]` for their owning criteria.
 
 ## Expected Results
@@ -122,3 +128,6 @@ Tag all tests `#[trace("TC-540", "FR-135-AC-n")]` for their owning criteria.
 - Step 13: active `Points` has no paired abstract tag and refuses
   `ill_typed`/`type-mismatch` at `holder.variant`; matching active `Has`
   succeeds and lifts its payload through the object row.
+- Step 14: each of the six cross-kind rows refuses `ill_typed`/`type-mismatch`
+  at its row expression, with no `CheckedRefinement`; no kind is coerced to
+  another.
