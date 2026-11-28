@@ -326,8 +326,7 @@ fn assert_analyze_request_exact_and_one_byte_over(path: &Path) {
     bytes.push(b' ');
     std::fs::write(path, bytes).expect("one byte appends");
     let error = analyze_with_request_bound(path, request_bytes)
-        .err()
-        .expect("one byte above the request limit refuses before the item");
+        .expect_err("one byte above the request limit refuses before the item");
     let document = error.outcome_document(fsl_replay::Operation::Analyze);
     let value: Value =
         serde_json::from_slice(&document.to_bytes().expect("incomplete outcome serializes"))
@@ -443,8 +442,7 @@ fn analyze_admits_one_hundred_thousand_observation_values_at_their_bound() {
     over.push(b' ');
     std::fs::write(&path, over).expect("one request byte appends");
     let error = analyze_with_request_bound(&path, request_bytes)
-        .err()
-        .expect("one request byte over remains a whole-document refusal");
+        .expect_err("one request byte over remains a whole-document refusal");
     let document = error.outcome_document(fsl_replay::Operation::Analyze);
     let value: Value = serde_json::from_slice(
         &document
