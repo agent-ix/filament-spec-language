@@ -7531,6 +7531,7 @@ pub(crate) fn timed_models_of<'g>(
 /// Timed-node identities are recomputed from their written bodies, dependent
 /// timed references and source-map entries are updated, and the package
 /// identity is recomputed before the IR encoder writes the package.
+#[implements("FSpec-FR-322-AC-120", "FSpec-FR-415-AC-17")]
 pub fn emit_timed_models(
     base: &CheckedPackageV2,
     models: &[CheckedTimedModel],

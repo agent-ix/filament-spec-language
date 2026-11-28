@@ -1845,7 +1845,7 @@ fn conformance_typed_timed_model_writer_emits_an_admitted_package() {
 
 /// FR-322-AC-120: a dense timed model with no clock places reconstructs and
 /// re-emits even though its timed nodes contain no integer literals.
-#[trace("TC-367", "FR-322-AC-120", "FR-415-AC-17")]
+#[trace("TC-367", "FSpec-FR-322-AC-120", "FSpec-FR-415-AC-17")]
 #[test]
 fn a_no_clock_dense_timed_model_needs_no_integer_literal_type() {
     let (_fspec, directory, _) = fspec_v2_fixtures();
