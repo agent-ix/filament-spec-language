@@ -30,7 +30,7 @@ evidence, and release admission. This replaces the former
 Scope: FR-249-AC-1 to FR-249-AC-6, FR-249-AC-11 to FR-249-AC-16,
 FR-237-AC-7 to FR-237-AC-13, FSpec FR-364-AC-21, FSpec FR-364-AC-22 (its
 `queue_growth` cycle case), FSpec FR-364-AC-23, FSpec FR-364-AC-24,
-FR-239-AC-6,
+FR-239-AC-6, FR-249-AC-17,
 FR-235-AC-6, FR-128-AC-9, and FR-230-AC-7.
 
 ## Test Procedure
@@ -105,6 +105,7 @@ Tag executable tests with the criterion IDs in scope, for example
 `#[trace("TC-704", "FR-249-AC-3")]`; a schema-only task-search check is not
 evidence that the runtime provider implements the search semantics.
 Tag step 19 with `#[trace("TC-704", "FR-237-AC-13")]`.
+20. Build the task automaton of `OneFp` where `copy` carries `us`'s element into `ts` and `work` compares `ts` with `5 ms`, and where `work` is guarded by `forall(e in self.ts: e.x >= 5 ms)`; read the clock ceilings.
 
 ## Expected Results
 
@@ -190,3 +191,4 @@ Tag step 19 with `#[trace("TC-704", "FR-237-AC-13")]`.
   `invalid_runtime_input`/`invalid-value` with
   `ModelTraceRefusal::TraceAlphabet`, naming required and supplied
   alphabets, before any step replays. Neither mismatch reproduces.
+- Step 20: ceilings 5, 5, 0 for the first three clocks of the carried form, and 5 for the family element's `x`.

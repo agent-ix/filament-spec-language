@@ -98,6 +98,10 @@ pub enum TimedRaceStop {
     /// The choice total exceeds the sampler's 256-bit range.
     #[error("a race choice exceeds the sampler's draw range")]
     DrawRange,
+    /// An exponential delay's interval holds no multiple of the delay grid,
+    /// so the sample ends as an undecided successor (FSpec FR-420).
+    #[error("a delay interval holds no multiple of the delay grid")]
+    NoGridDelay,
     /// The timed state could not be assigned its canonical state key.
     #[error("the timed state has no canonical state key")]
     StateKey,
@@ -632,6 +636,7 @@ pub fn sample_timed_race(
         let drawn = match draw_timed_delay(distribution, &window.intervals, point, q) {
             Ok(drawn) => drawn,
             Err(TimedDelayRefusal::NoMass) => continue,
+            Err(TimedDelayRefusal::NoGridPoint) => return Err(TimedRaceStop::NoGridDelay),
             Err(TimedDelayRefusal::Internal(fault)) => return Err(TimedRaceStop::Internal(fault)),
             Err(TimedDelayRefusal::UnboundedUniform | TimedDelayRefusal::GridExponent { .. }) => {
                 return Err(TimedRaceStop::NotStochastic {

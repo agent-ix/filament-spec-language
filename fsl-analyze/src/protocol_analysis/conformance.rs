@@ -1000,6 +1000,7 @@ fn wrong_over_subject() -> crate::analyze::EngineReport {
 
 #[implements("FR-896-AC-7", "FR-990-AC-11")]
 #[ix_trace_rs::string_edge]
+#[implements("FR-896-AC-11")]
 fn behavior_report(
     index: fsl_foundation::RequestIndex,
     protocol: &super::recording_input::Protocol<'_>,
@@ -1016,13 +1017,7 @@ fn behavior_report(
     let label = if matches!(&record.value, fsl_replay::TerminalValue::Incomplete(_)) {
         "incomplete"
     } else {
-        match record.label {
-            fsl_replay::ResultLabel::Proved => "proved",
-            fsl_replay::ResultLabel::Refuted => "refuted",
-            fsl_replay::ResultLabel::Inconclusive => "inconclusive",
-            fsl_replay::ResultLabel::Unsupported => "unsupported",
-            fsl_replay::ResultLabel::Failed => "failed",
-        }
+        record.label.as_str()
     };
     let closed = label == "proved";
     let refuted = label == "refuted";
@@ -1147,13 +1142,16 @@ fn behavior_report(
                 witness: witness.clone(),
             }),
     );
+    // FR-896-AC-11: the closure check is the only evaluator here and reads no
+    // requirement, so a requirement is never `satisfied`: it is `pending`
+    // unless the item is refuted.
     obligations.extend(protocol.requirements.iter().map(|requirement| {
         ConformanceObligationOutput {
             obligation: serde_json::json!({
                 "kind": "requirement",
                 "temporal": requirement.temporal,
             }),
-            verdict: verdict.to_owned(),
+            verdict: if refuted { "violated" } else { "pending" }.to_owned(),
             cause: cause.clone(),
             basis: "explored".to_owned(),
             witness: witness.clone(),
@@ -1449,6 +1447,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     None
 }
 
+#[implements("FR-896-AC-11")]
 #[allow(
     clippy::too_many_arguments,
     reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
@@ -1550,8 +1549,20 @@ fn every_behavior_result(
             }
         }
     };
-    let record =
+    let mut record =
         fsl_replay::settle_protocol_check(&outcome, &form.limits, &certificate, cancel, replay);
+    // FR-896-AC-11: the closure check reads neither a requirement nor the
+    // exactly-once-premise channel premise, so a proof over a protocol with
+    // either is `uncertified`; FR-1052 then settles it by policy.
+    let unchecked_premise = !protocol.requirements.is_empty()
+        || protocol.channels.iter().any(|channel| {
+            channel.delivery == fsl_semantics::check::ChannelDelivery::ExactlyOncePremise
+        });
+    if unchecked_premise {
+        if let fsl_replay::TerminalValue::Proved { certification, .. } = &mut record.value {
+            *certification = fsl_replay::Certification::Uncertified;
+        }
+    }
     let counterexample = record.counterexample.as_ref().and_then(|counterexample| {
         let over = fsl_eval::simulation::protocol::over_reference(
             wire_simulation,

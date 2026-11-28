@@ -5,12 +5,12 @@ resolver = "2"
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "ef4f027ae29f92cca557fbdff117de1ec9c55b89" }
 filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "ef4f027ae29f92cca557fbdff117de1ec9c55b89" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
 quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "v0.3.2", default-features = false }
+serde = { version = "1.0.228", features = ["derive"] }
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
 # each its own repository so IR, RT and CG depend on them without the FSL repo.
 filament-exact = { git = "https://github.com/agent-ix/filament-exact", rev = "743c42e4e458782bf7a8befc3b76cc8a190ed727", features = ["json-object"] }

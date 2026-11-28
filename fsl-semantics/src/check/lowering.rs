@@ -810,6 +810,13 @@ impl SemanticGraph {
         }
     }
 
+    /// Take out a node [`Self::insert_finalized`] added.
+    pub(crate) fn remove_finalized(&mut self, key: &NodeKey) {
+        if self.nodes.remove(key).is_some() {
+            self.order.retain(|ranked| ranked != key);
+        }
+    }
+
     /// Take out the node keyed `key`, as a re-key leaves the key it had.
     #[cfg(any(test, feature = "test-support"))]
     pub fn remove(&mut self, key: NodeKey) -> Option<SemanticNode> {
@@ -8102,6 +8109,7 @@ fn is_map(content: &NodeContent) -> bool {
 /// hybrid and bounded-domain nodes retain their compact first-occurrence
 /// spelling; this computation-key rule does not revise their encodings. A
 /// decimal or integer range retains repeated text, so equal bounds repeat.
+#[implements("FSpec-FR-322-AC-545", "FSpec-FR-322-AC-546")]
 #[ix_trace_rs::string_edge]
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
@@ -8602,15 +8610,16 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                         walk.push(PathSegment::Node(population.clone()));
                     }
                 }
-                // FSpec FR-322 states no path spelling for a position index,
-                // so the declaration is the only operand of a position.
-                Some(
-                    Member::Position {
-                        declaration,
-                        position: _,
-                    }
-                    | Member::Element { declaration },
-                ) => walk.push(PathSegment::Node(declaration.clone())),
+                Some(Member::Position {
+                    declaration,
+                    position,
+                }) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    walk.text(&position.to_string());
+                }
+                Some(Member::Element { declaration }) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                }
                 // FSpec FR-322: an operator name is a string operand.
                 Some(Member::ProfileOperator { operator }) => walk.text(operator.as_str()),
                 // FSpec FR-322: a field member's operands are its declaring
@@ -8627,7 +8636,11 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                     // so equal operands and result types must not alias its
                     // bare and explicit source forms under one node key.
                     if let Some(explicit_deref) = explicit_deref {
-                        walk.text(if *explicit_deref { "true" } else { "false" });
+                        walk.text(if *explicit_deref {
+                            "explicit_deref"
+                        } else {
+                            "bare"
+                        });
                     }
                     // FSpec FR-322 "Population link of a `reaches`": the
                     // population is part of the path when present.

@@ -338,13 +338,11 @@ fn the_event_position_item_has_the_same_instance() {
     }
 }
 
-/// FR-940-AC-17: a package selection of an HP-5 clause with an object
-/// parameter settles as its program-source item does, with no `unsupported`
-/// record and no `not-yet-implemented` diagnostic; a proved record names no
-/// instance (FSpec FR-390).
-#[trace("TC-3127", "FR-940-AC-17")]
+/// FR-181-AC-10: a package selection of an HP-5 clause with an object
+/// parameter is not yet implemented, with no verdict and no instance.
+#[trace("TC-3219", "FR-181-AC-10")]
 #[test]
-fn a_package_selection_of_an_object_parameter_hp5_clause_settles() {
+fn hp5_object_parameter_package_selection_returns_typed_unsupported() {
     for (name, body) in [("guard", GUARD), ("read", READ)] {
         let run = Pets::LAMP.analyze(
             &format!("hyper-admitted-package-hp5-{name}"),
@@ -352,14 +350,20 @@ fn a_package_selection_of_an_object_parameter_hp5_clause_settles() {
             claim(),
             true,
         );
-        let text = run.document().to_string();
-        assert_eq!(run.exit, 0, "{text}");
-        assert!(!text.contains("unsupported_construct"), "{text}");
-        assert!(!text.contains("not-yet-implemented"), "{text}");
-        // The proved record and its item carry no `instance` member; the
-        // witness evidence names its own instance.
-        assert!(run.item(0).get("instance").is_none(), "{text}");
-        assert!(run.item(0)["record"].get("instance").is_none(), "{text}");
+        let document = run.document();
+        let item = run.item(0);
+        assert_eq!(run.exit, 21, "{document}");
+        assert_eq!(item["record"]["result"], "unsupported", "{document}");
+        assert_eq!(
+            item["record"]["diagnostic"]["code"], "unsupported_construct",
+            "{document}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], "not-yet-implemented",
+            "{document}"
+        );
+        assert!(item["axes"]["truth"].is_null(), "{document}");
+        assert!(!document.to_string().contains("\"instance\""), "{document}");
     }
 }
 

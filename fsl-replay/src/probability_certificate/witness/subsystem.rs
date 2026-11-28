@@ -198,6 +198,7 @@ pub(super) fn replay(
                     return Err(ProbabilityWitnessError::CertificateRejected(rejection));
                 }
                 ExactProbabilityCertificateCheck::AcceptedVacuous(_)
+                | ExactProbabilityCertificateCheck::AcceptedInfinite(_)
                 | ExactProbabilityCertificateCheck::NoInitialState
                 | ExactProbabilityCertificateCheck::NoInstance => {
                     return Err(ProbabilityWitnessError::Refused);

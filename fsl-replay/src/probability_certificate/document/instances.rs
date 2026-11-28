@@ -1793,7 +1793,7 @@ pub(super) fn check(
                     ProbabilityCertificateLocus::ProductState(key.clone()),
                 ),
                 None => ExactProbabilityCertificateCheck::AcceptedVacuous(
-                    ProbabilityVacuityAcceptance {
+                    ProbabilityValueFreeAcceptance {
                         document: bytes.into(),
                         side,
                     },

@@ -30,7 +30,8 @@ use ix_trace_rs::implements;
 
 use super::{
     at_node, fault, intersect, malformed, reject, CertificateLocus, CertificateMember,
-    CertificateRule, Checker, CheckerFault, Halt, Step, ValueType, ZoneCertificateRefusal,
+    CertificateRejection, CertificateRule, Checker, CheckerFault, Halt, Step, ValueType,
+    ZoneCertificateRefusal,
 };
 use crate::certificate::zone::Zone;
 
@@ -64,7 +65,9 @@ struct Space {
 
 impl<O> Checker<'_, '_, O> {
     /// FSpec FR-712's form of the state-graph claim, decided on the timed
-    /// states.
+    /// states: `None` when it holds, and the rejection that reports the
+    /// violation when it does not. A certificate the form cannot be read from
+    /// halts with no decision.
     #[implements(
         "FR-852-AC-32",
         "FSpec-FR-712-AC-1",
@@ -72,7 +75,7 @@ impl<O> Checker<'_, '_, O> {
         "FSpec-FR-712-AC-3",
         "FSpec-FR-712-AC-10"
     )]
-    pub(super) fn state_graph(&self) -> Step<(), O> {
+    pub(super) fn state_graph(&self) -> Step<Option<CertificateRejection>, O> {
         let Some(state_graph) = &self.state_graph else {
             return malformed(CertificateMember::Nodes);
         };
@@ -161,13 +164,13 @@ impl<O> Checker<'_, '_, O> {
             StateGraphForm::Possible { .. } => {
                 for (location, point) in &points {
                     if !self.outside(point, &eventually[*location])?.is_empty() {
-                        return reject(
+                        return Ok(violation(
                             CertificateRule::InitialMissing,
                             CertificateLocus::CertificateMember(CertificateMember::Initials),
-                        );
+                        ));
                     }
                 }
-                Ok(())
+                Ok(None)
             }
             StateGraphForm::AlwaysPossible { .. } => {
                 let Some(part) = &self.certificate.state_graph else {
@@ -191,10 +194,13 @@ impl<O> Checker<'_, '_, O> {
                     per_location(&from_values.ok_or_else(|| fault(CheckerFault::Automaton))?);
                 for (location, zone) in &reached {
                     if from[*location] && !self.outside(zone, &eventually[*location])?.is_empty() {
-                        return reject(CertificateRule::SuccessorMissing, name(*location));
+                        return Ok(violation(
+                            CertificateRule::SuccessorMissing,
+                            name(*location),
+                        ));
                     }
                 }
-                Ok(())
+                Ok(None)
             }
             StateGraphForm::UniquePath { .. } => {
                 let from =
@@ -205,12 +211,12 @@ impl<O> Checker<'_, '_, O> {
                     .collect();
                 for (location, zone) in &sources {
                     if !self.outside(zone, &eventually[*location])?.is_empty() {
-                        return reject(CertificateRule::CountBroken, name(*location));
+                        return Ok(violation(CertificateRule::CountBroken, name(*location)));
                     }
                 }
                 match self.second_sequence(&mut space, &sources, &target_values)? {
-                    Some(location) => reject(CertificateRule::CountBroken, name(location)),
-                    None => Ok(()),
+                    Some(location) => Ok(violation(CertificateRule::CountBroken, name(location))),
+                    None => Ok(None),
                 }
             }
         }
@@ -452,6 +458,11 @@ impl<O> Checker<'_, '_, O> {
         }
         Ok(both)
     }
+}
+
+/// The rejection reporting that the claim's form is false.
+fn violation(rule: CertificateRule, at: CertificateLocus) -> Option<CertificateRejection> {
+    Some(CertificateRejection { rule, at })
 }
 
 /// The parts of `zone` that no zone of `held` holds.

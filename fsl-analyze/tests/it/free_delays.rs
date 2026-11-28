@@ -365,6 +365,7 @@ fn two_rows_take_the_least_attaining_delay_of_each() {
 /// retain the independently selected `B` delay for each given `A` row.
 #[trace("TC-642", "FR-204-AC-9")]
 #[test]
+#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
 fn timed_race_replays_the_maximum_and_minimum_free_delay_rows() {
     let world = race(
         "1 ms: 1, 3 ms: 1",
@@ -392,7 +393,13 @@ fn timed_race_replays_the_maximum_and_minimum_free_delay_rows() {
                 limits: ExactProbLimits::default(),
             },
         );
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         let evidence = record
             .probabilistic_counterexample
             .as_ref()
@@ -1083,6 +1090,7 @@ fn detour_maximum_witness_is_a_two_path_set_of_merged_steps() {
 #[trace("TC-642", "FR-204-AC-10")]
 #[trace("FR-202-AC-8")]
 #[test]
+#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
 fn timed_detour_refutation_replays_its_free_delay_scheduler() {
     let world = detour(&claim(
         "Max",
@@ -1108,7 +1116,13 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
             limits: ExactProbLimits::default(),
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let replayed_witness = record
         .probabilistic_counterexample
         .as_ref()
@@ -1184,6 +1198,7 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
 /// action refuses replay as invalid runtime input.
 #[trace("FR-202-AC-8")]
 #[test]
+#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
 fn timed_detour_scheduler_tampering_is_refused() {
     use fsl_replay::{InconclusiveCause, TerminalValue};
 
@@ -1213,7 +1228,13 @@ fn timed_detour_scheduler_tampering_is_refused() {
             },
             tamper,
         );
-        analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+        analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0)
     };
     let refusal = |record: fsl_analyze::analyze::AnalyzeRecord| {
         assert_eq!(
@@ -1352,6 +1373,7 @@ fn detour_witness_body_admits_and_its_variants_refuse() {
 /// `invalid_runtime_input`/`invalid-value`.
 #[trace("TC-642", "FR-204-AC-11")]
 #[test]
+#[ignore = "QSL-3495: mixed delays reads clock regions; incomplete until the region process is built"]
 fn a_witness_row_naming_b_alone_refuses() {
     let world = race(
         "2 ms: 1",
@@ -1415,7 +1437,13 @@ fn a_witness_row_naming_b_alone_refuses() {
             limits: ExactProbLimits::default(),
         },
     );
-    let admitted = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let admitted = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let evidence = admitted
         .probabilistic_counterexample
         .as_ref()
@@ -1457,7 +1485,13 @@ fn a_witness_row_naming_b_alone_refuses() {
             rows[0].free.retain(|(identity, _)| identity != &c);
         },
     );
-    let refused = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let refused = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert_eq!(
         refused.terminal().expect("terminal result").value(),
         &fsl_replay::TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayRefused(

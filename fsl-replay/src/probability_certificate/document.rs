@@ -68,7 +68,8 @@ pub use long_run::{
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
-pub use timed::digital_key_clocks;
+pub(crate) use crate::timed::clock_constraints;
+pub use timed::{digital_key_clocks, timed_certificate_route};
 pub(super) use timed::{is_timed_witness_claim, replay_timed_witness};
 mod unit;
 mod value_bounds;
@@ -2530,7 +2531,8 @@ fn check_document_bytes(
         return Ok(malformed_ranking());
     }
     let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
-    let ranked = bound_side != Some(SubsystemBoundKind::Upper) || reward_upper;
+    let reward_lower = reward.is_some() && bound_side == Some(SubsystemBoundKind::Lower);
+    let ranked = !reward_lower && (bound_side != Some(SubsystemBoundKind::Upper) || reward_upper);
     for (key, state) in graph
         .states
         .iter()
@@ -2555,9 +2557,10 @@ fn check_document_bytes(
     }
     // The derived ranks are a whole graph's, and a subset `lower` carries
     // those of its named states. A cyclic reward ranks progress instead, and
-    // so does a partial `lower` over a chain; a partial expected reward
-    // `lower` needs no ranking to be sound (FR-1042 "Conditions"). No height
-    // is derivable past a state the document does not name.
+    // so does a partial `lower` over a chain. Expected-reward `lower`
+    // certificates need no ranking, whether they name the whole graph or a
+    // partial graph (FR-1042 "Conditions"). No height is derivable past a
+    // state the document does not name.
     let progress_ranked = reward.is_some() && document.cyclic_dtmc;
     let partial_unbounded = partial && (reward.is_some() || document.cyclic_dtmc);
     if let Some(expected) =
@@ -2581,7 +2584,9 @@ fn check_document_bytes(
     // remaining horizon instead, and an `upper` document has no ranking.
     let progress_checked = match bound_side {
         None => true,
-        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc || acyclic_eventual,
+        Some(SubsystemBoundKind::Lower) => {
+            (document.cyclic_dtmc && reward.is_none()) || acyclic_eventual
+        }
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
     for (key, state) in graph

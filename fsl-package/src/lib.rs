@@ -198,14 +198,14 @@ pub use emit::{
     emit_checked_with_protocol_results,
     emit_checked_with_protocol_results_and_temporal_selections_and_cancel,
     emit_checked_with_temporal_selections, emit_checked_with_temporal_selections_and_cancel,
-    emit_dependency_with_temporal_selections_and_cancel, emit_monitor_plan_over, emit_package,
-    emit_package_with_temporal_selections, emit_timed_models, hyper_clock_name, hyper_wrapper,
-    is_model_binding_name, profile_clock_kind, ClockSelectionCause, ClockSelectionDeclaration,
-    ClockSelectionRefusal, Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode,
-    ProtocolEmission, ProtocolEmissionAggregate, ProtocolEmissionResult,
-    SelectedSourceCollectionRow, SelectedSourceRecordMemberRow, SelectedSourceRecordRow,
-    SourceObjectMemberFacts, SourceObjectOperationFacts, TemporalBindingRows, TemporalClauseRef,
-    TemporalClockSelection, TemporalRows, TimedOrderFault,
+    emit_dependency_with_temporal_selections_and_cancel, emit_linked_dependency,
+    emit_monitor_plan_over, emit_package, emit_package_with_temporal_selections, emit_timed_models,
+    hyper_clock_name, hyper_wrapper, is_model_binding_name, profile_clock_kind,
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, Emission, EmitRefusal,
+    MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission, ProtocolEmissionAggregate,
+    ProtocolEmissionResult, SelectedSourceCollectionRow, SelectedSourceRecordMemberRow,
+    SelectedSourceRecordRow, SourceObjectMemberFacts, SourceObjectOperationFacts,
+    TemporalBindingRows, TemporalClauseRef, TemporalClockSelection, TemporalRows, TimedOrderFault,
 };
 #[cfg(feature = "std")]
 pub use equality_file::{
@@ -268,6 +268,185 @@ pub use filament_contract_model::{
 // compiles into no shipped build.
 #[cfg(all(feature = "std", feature = "test-support"))]
 pub use emit::{checked_node_id_of, emit_checked_with_fault};
+
+/// Test-only instrumentation for focused emitter regression tests.
+#[cfg(all(feature = "std", feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support {
+    /// Timings for major S4 emission subphases, in microseconds.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct S4PhaseTimes {
+        /// Graph/node and temporal setup before lock assembly.
+        pub pre_lock_graph_temporal_us: u128,
+        /// Lock assembly.
+        pub lock_us: u128,
+        /// Inspection source-map construction.
+        pub inspection_us: u128,
+        /// Node and sidecar index rewriting.
+        pub index_us: u128,
+        /// Producer, temporal, claim and term rows.
+        pub producer_temporal_claim_term_us: u128,
+        /// Source, requirement and operand rows.
+        pub source_requirement_operand_us: u128,
+        /// Final canonical package encoding.
+        pub final_encode_us: u128,
+        /// Retained-node and post-encode construction.
+        pub retained_post_encode_us: u128,
+        /// Retained-node summary construction.
+        pub retained_summary_us: u128,
+        /// Exact-row selection and typed-graph conversion/drop.
+        pub retained_disposition_us: u128,
+        /// Emission value assembly.
+        pub retained_emission_assembly_us: u128,
+        /// Exact identity-row membership selection.
+        pub retained_identity_selection_us: u128,
+    }
+
+    /// Test-only write-index rewrite work report.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct WriteIndexDiagnostics {
+        /// Linear mapping build, one-pass slot visits/lookups and sidecars.
+        pub linear_work_units: usize,
+        /// Slot visits and path allowances for the repeated replacement scans.
+        pub repeated_scan_work_units: usize,
+        /// ID slots visited by the simulated one-pass node traversal.
+        pub one_pass_id_slots: usize,
+        /// Number of structural ID rewrites collected.
+        pub changed_ids: usize,
+        /// Structural-key lookups in the linear mapping and sidecar passes.
+        pub structural_key_lookups: usize,
+    }
+
+    /// Test-only work report for document-node operand restoration.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct DocumentNodeDiagnostics {
+        /// Linear slot visits, path inspections, and operand-row lookups.
+        pub linear_work_units: usize,
+        /// Slot visits and path allowances for repeated replacement scans.
+        pub repeated_scan_work_units: usize,
+        /// ID slots visited by one pass over document nodes.
+        pub one_pass_id_slots: usize,
+        /// Number of structural ID replacements collected.
+        pub changed_ids: usize,
+        /// Operand-row lookups performed while restoring index segments.
+        pub operand_row_lookups: usize,
+    }
+
+    /// Retained-path counts for interpreting the S4 subphase timings.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct S4RetainedCounts {
+        /// Number of nodes in the typed semantic graph before disposition.
+        pub graph_node_count: usize,
+        /// Selected exact declaration rows.
+        pub exact_declaration_count: usize,
+        /// Selected exact field rows.
+        pub exact_field_count: usize,
+        /// Whether the caller requested typed nodes to be retained.
+        pub keep_nodes: bool,
+        /// Number of document nodes produced after disposition.
+        pub document_node_count: usize,
+    }
+
+    /// Reset the S4 emission phase timing accumulator for the current thread.
+    pub fn reset_s4_phase_times() {
+        crate::emit::reset_s4_phase_times();
+    }
+
+    /// Read S4 emission phase timings accumulated on the current thread.
+    pub fn s4_phase_times() -> S4PhaseTimes {
+        let times = crate::emit::s4_phase_times();
+        S4PhaseTimes {
+            pre_lock_graph_temporal_us: times.pre_lock_graph_temporal_us,
+            lock_us: times.lock_us,
+            inspection_us: times.inspection_us,
+            index_us: times.index_us,
+            producer_temporal_claim_term_us: times.producer_temporal_claim_term_us,
+            source_requirement_operand_us: times.source_requirement_operand_us,
+            final_encode_us: times.final_encode_us,
+            retained_post_encode_us: times.retained_post_encode_us,
+            retained_summary_us: times.retained_summary_us,
+            retained_disposition_us: times.retained_disposition_us,
+            retained_emission_assembly_us: times.retained_emission_assembly_us,
+            retained_identity_selection_us: times.retained_identity_selection_us,
+        }
+    }
+
+    /// Reset write-index diagnostic work for the current thread.
+    pub fn reset_write_index_diagnostics() {
+        crate::emit::reset_write_index_diagnostics();
+    }
+
+    /// Read the current thread's write-index diagnostic work.
+    pub fn write_index_diagnostics() -> WriteIndexDiagnostics {
+        let diagnostics = crate::emit::write_index_diagnostics();
+        WriteIndexDiagnostics {
+            linear_work_units: diagnostics.linear_work_units,
+            repeated_scan_work_units: diagnostics.repeated_scan_work_units,
+            one_pass_id_slots: diagnostics.one_pass_id_slots,
+            changed_ids: diagnostics.changed_ids,
+            structural_key_lookups: diagnostics.structural_key_lookups,
+        }
+    }
+
+    /// Read document-node rewrite work diagnostics for this thread.
+    pub fn document_node_diagnostics() -> DocumentNodeDiagnostics {
+        let diagnostics = crate::emit::document_node_diagnostics();
+        DocumentNodeDiagnostics {
+            linear_work_units: diagnostics.linear_work_units,
+            repeated_scan_work_units: diagnostics.repeated_scan_work_units,
+            one_pass_id_slots: diagnostics.one_pass_id_slots,
+            changed_ids: diagnostics.changed_ids,
+            operand_row_lookups: diagnostics.operand_row_lookups,
+        }
+    }
+
+    /// Read retained/post-encode path counts for the current thread.
+    pub fn s4_retained_counts() -> S4RetainedCounts {
+        let counts = crate::emit::s4_retained_counts();
+        S4RetainedCounts {
+            graph_node_count: counts.graph_node_count,
+            exact_declaration_count: counts.exact_declaration_count,
+            exact_field_count: counts.exact_field_count,
+            keep_nodes: counts.keep_nodes,
+            document_node_count: counts.document_node_count,
+        }
+    }
+
+    /// Reset the number of node-ID slots visited during operand-slot emission.
+    pub fn reset_node_id_rewrite_slot_visits() {
+        crate::emit::reset_node_id_rewrite_slot_visits();
+    }
+
+    /// The number of node-ID slots visited during operand-slot emission.
+    pub fn node_id_rewrite_slot_visits() -> usize {
+        crate::emit::node_id_rewrite_slot_visits()
+    }
+
+    /// Reset the read-index rewrite work-unit counter.
+    pub fn reset_read_index_rewrite_work_units() {
+        crate::emit::reset_read_index_rewrite_work_units();
+    }
+
+    /// Read-index rewrite units: ID-slot visits, full path-length inspection
+    /// allowances, structural-key lookups, and slots scanned by each repeated
+    /// replacement in the test-support reference path.
+    pub fn read_index_rewrite_work_units() -> usize {
+        crate::emit::read_index_rewrite_work_units()
+    }
+
+    /// Run a closure with the historical per-ID replacement path enabled.
+    /// The path exists only to prove the focused work counter detects the
+    /// repeated node-ID slot scans that the bulk rewrite avoids.
+    pub fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
+        crate::emit::with_repeated_read_index_rewrite(f)
+    }
+
+    /// Run a closure with the historical repeated-replacement path enabled
+    /// for compile-time structural/index and operand/index rewrites.
+    pub fn with_repeated_compile_index_rewrites<T>(f: impl FnOnce() -> T) -> T {
+        crate::emit::with_repeated_compile_index_rewrites(f)
+    }
+}
 
 // ADR-011 §4 I2: `read_checked_package_v2` and its staged outcome remain
 // crate-local. The public `read_import_view` returns a structural import

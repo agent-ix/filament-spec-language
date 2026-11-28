@@ -167,11 +167,11 @@ fn undecided_clause(outcome: &Outcome) -> String {
     }
 }
 
-/// FR-239-AC-11: the orbit of `t1` ends `Undecided(UndecidedSuccessor)` at the
+/// FR-239-AC-13: the orbit of `t1` ends `Undecided(UndecidedSuccessor)` at the
 /// `aprobe` successor, and the orbit of `t3` is decided next: the quiescent
 /// `lag` successor has `t3.late`, so the item is refuted by `t3` with the
 /// one-step prefix `lag`.
-#[trace("TC-694", "FR-239-AC-11", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
+#[trace("TC-694", "FR-239-AC-13", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
 #[test]
 fn a_refuted_orbit_is_reported_past_an_earlier_undecided_orbit() {
     let world = orbits(Shape::Shallow, "not t.late", &["t1", "t2", "t3"], &["t3"]);
@@ -185,9 +185,9 @@ fn a_refuted_orbit_is_reported_past_an_earlier_undecided_orbit() {
     assert_eq!(receivers(&counterexample), ["t3"]);
 }
 
-/// FR-239-AC-11: with the refuted orbit first in instance order, it is
+/// FR-239-AC-13: with the refuted orbit first in instance order, it is
 /// reported and the orbit after it is not decided.
-#[trace("TC-694", "FR-239-AC-11", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
+#[trace("TC-694", "FR-239-AC-13", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
 #[test]
 fn a_refuted_first_orbit_is_reported() {
     let world = orbits(Shape::Shallow, "not t.late", &["t1", "t2", "t3"], &["t1"]);
@@ -201,9 +201,9 @@ fn a_refuted_first_orbit_is_reported() {
     assert_eq!(receivers(&counterexample), ["t1"]);
 }
 
-/// FR-239-AC-11 and arch ruling Q9: the orbit `{t2, t3}`, declared as
+/// FR-239-AC-13 and arch ruling Q9: the orbit `{t2, t3}`, declared as
 /// `[t3, t2]`, is bound to its first member in instance order, `t2`.
-#[trace("TC-694", "FR-239-AC-11", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
+#[trace("TC-694", "FR-239-AC-13", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
 #[test]
 fn an_orbit_is_bound_to_its_first_member_in_instance_order() {
     let world = orbits(Shape::Plain, "not t.late", &["t2", "t3"], &["t2", "t3"]);
@@ -217,13 +217,13 @@ fn an_orbit_is_bound_to_its_first_member_in_instance_order() {
     assert_eq!(receivers(&counterexample), ["t2"]);
 }
 
-/// FR-239-AC-12: `max_symbolic_states` is one budget for the run. The orbit
+/// FR-239-AC-14: `max_symbolic_states` is one budget for the run. The orbit
 /// of `t1` stores 6 or 7 of the 7 states (3 in the search, 3 or 4 in its
 /// admitted-behaviour check) and ends undecided; the orbit of `t3` is denied
 /// its second state, which ends the run, so the item is the first not-proved
 /// orbit's `Undecided`, not the `Violated` `t3` gives under a budget of its
 /// own.
-#[trace("TC-694", "FR-239-AC-12", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
+#[trace("TC-694", "FR-239-AC-14", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
 #[test]
 fn the_symbolic_state_budget_is_shared_by_the_orbits() {
     let world = orbits(Shape::Shallow, "not t.late", &["t1", "t2", "t3"], &["t3"]);
@@ -238,11 +238,11 @@ fn the_symbolic_state_budget_is_shared_by_the_orbits() {
     );
 }
 
-/// FR-239-AC-13: the search meets the undecided `aprobe` successor first in
+/// FR-239-AC-15: the search meets the undecided `aprobe` successor first in
 /// breadth-first order, leaves it unexpanded and goes on; the `lag`
 /// successor expands to the quiescent `finish` successor, where `t3.late`
 /// holds.
-#[trace("TC-694", "FR-239-AC-13")]
+#[trace("TC-694", "FR-239-AC-15")]
 #[test]
 fn a_later_violation_wins_over_an_undecided_node() {
     let world = orbits(Shape::Deep, "not t.late", &["t1", "t2", "t3"], &["t3"]);
@@ -256,10 +256,10 @@ fn a_later_violation_wins_over_an_undecided_node() {
     assert_eq!(receivers(&counterexample), ["t3", "t3"]);
 }
 
-/// FR-239-AC-13: with no violation, the search stores the four symbolic
+/// FR-239-AC-15: with no violation, the search stores the four symbolic
 /// states `R`, `aprobe`-successor, `lag`-successor and `finish`-successor,
 /// and ends `Undecided(UndecidedSuccessor)`, never `Holds`.
-#[trace("TC-694", "FR-239-AC-13")]
+#[trace("TC-694", "FR-239-AC-15")]
 #[test]
 fn an_undecided_node_leaves_the_search_going_and_the_item_undecided() {
     let world = orbits(Shape::Deep, "not t.retried", &["t1", "t2", "t3"], &["t3"]);
@@ -271,10 +271,10 @@ fn an_undecided_node_leaves_the_search_going_and_the_item_undecided() {
     assert_eq!(stats.symbolic_states, 4);
 }
 
-/// FR-239-AC-13: of the undecided nodes, `aprobe`'s successor and `lag`'s
+/// FR-239-AC-15: of the undecided nodes, `aprobe`'s successor and `lag`'s
 /// successor (whose `peek` guard is undefined), both one step from `R`, the
 /// first in breadth-first order gives the item's cause: the guard `Probe`.
-#[trace("TC-694", "FR-239-AC-13")]
+#[trace("TC-694", "FR-239-AC-15")]
 #[test]
 fn the_first_undecided_cause_in_breadth_first_order_is_kept() {
     let world = orbits(Shape::Peek, "not t.retried", &["t1", "t2", "t3"], &["t3"]);

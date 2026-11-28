@@ -194,11 +194,17 @@ pub(super) fn parse(
         limits,
         cancel,
     );
+    let declaration_words = declaration_starts(grammar);
+    let declaration_token_starts: Vec<_> = significant
+        .iter()
+        .filter(|token| declaration_words.contains(token.spelling.as_ref()))
+        .map(|token| token.span.start)
+        .collect();
     let (matched, parse_significant, mut parser_diagnostics, parser_recoveries) =
         parse_with_declaration_recovery(
             &source,
             grammar,
-            significant.clone(),
+            significant,
             &diagnostics,
             reserved_words,
             limits,
@@ -231,15 +237,13 @@ pub(super) fn parse(
     // A declaration the recovery skipped is kept as a `Declaration` node,
     // whether or not the declarations around it matched (FR-762-AC-3, AC-9).
     {
-        let starts = declaration_starts(grammar);
         let recovered_declarations: Vec<_> = recoveries
             .iter()
             .filter(|recovery| recovery.expected == "next declaration")
             .filter(|recovery| {
-                significant.iter().any(|token| {
-                    token.span.start == recovery.span.start
-                        && starts.contains(token.spelling.as_ref())
-                })
+                declaration_token_starts
+                    .binary_search(&recovery.span.start)
+                    .is_ok()
             })
             .map(|recovery| recovery.span)
             .collect();
@@ -1700,10 +1704,10 @@ fn scan(
                 end: range.start,
             };
             tokens.push(cst::token(
+                source,
                 TokenClass::Whitespace,
                 TokenKind::Whitespace,
                 span,
-                &source.text().as_bytes()[cursor..range.start],
             ));
         }
         let span = Span {
@@ -1785,27 +1789,27 @@ fn scan(
         };
         if matches!(kind, Some(Kind::Hex(_))) {
             tokens.push(cst::token(
+                source,
                 class,
                 TokenKind::HexPrefix,
                 Span {
                     start: span.start,
                     end: span.start + 2,
                 },
-                &spelling.as_bytes()[..2],
             ));
-            for (offset, byte) in spelling.as_bytes()[2..].iter().enumerate() {
+            for offset in 0..(spelling.len() - 2) {
                 tokens.push(cst::token(
+                    source,
                     class,
                     TokenKind::HexDigit,
                     Span {
                         start: span.start + 2 + offset,
                         end: span.start + 3 + offset,
                     },
-                    std::slice::from_ref(byte),
                 ));
             }
         } else {
-            tokens.push(cst::token(class, token_kind, span, spelling.as_bytes()));
+            tokens.push(cst::token(source, class, token_kind, span));
         }
         if !matches!(class, TokenClass::Whitespace | TokenClass::Comment) {
             let parts = if matches!(kind, Some(Kind::Hex(_))) {
@@ -1847,13 +1851,13 @@ fn scan(
             end: source.text().len(),
         };
         tokens.push(cst::token(
+            source,
             TokenClass::Whitespace,
             TokenKind::Whitespace,
             span,
-            &source.text().as_bytes()[cursor..],
         ));
     }
-    let tokens = coalesce_complete_cst_tokens(tokens, compounds);
+    let tokens = coalesce_complete_cst_tokens(source, tokens, compounds);
     let significant = coalesce_complete_compounds(significant, compounds);
     if let Some(excess) = tokens.get(limits.tokens) {
         return Err(super::diagnostic::resource_exhausted(
@@ -1869,6 +1873,7 @@ fn scan(
 }
 
 fn coalesce_complete_cst_tokens(
+    source: &Source,
     tokens: Vec<super::CstToken>,
     compounds: &[&'static str],
 ) -> Vec<super::CstToken> {
@@ -1891,15 +1896,15 @@ fn coalesce_complete_cst_tokens(
                 (spelling == compound.as_bytes()).then_some((compound, end))
             })
             .max_by_key(|(compound, _)| compound.len());
-        if let Some((compound, end)) = matched {
+        if let Some((_, end)) = matched {
             output.push(cst::token(
+                source,
                 TokenClass::Token,
                 TokenKind::Grammar,
                 Span {
                     start: tokens[index].span().start,
                     end: tokens[end - 1].span().end,
                 },
-                compound.as_bytes(),
             ));
             index = end;
         } else {

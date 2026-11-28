@@ -24,8 +24,8 @@ use super::request::{
 };
 use crate::outcome::{ItemLabel, OutcomeItem};
 use crate::proof_result::{
-    Certification, IncompleteCause, InconclusiveCause, PremiseOutcome, SettlementBasis,
-    TerminalRecord, TerminalValue, TransferReason, UnavailabilityCause,
+    Certification, CertificationPolicy, IncompleteCause, InconclusiveCause, PremiseOutcome,
+    SettlementBasis, TerminalRecord, TerminalValue, TransferReason, UnavailabilityCause,
 };
 use filament_exact::NodeKey;
 use fsl_foundation::node_wire::node_key_to_json;
@@ -278,7 +278,36 @@ pub struct PlannerResult {
     pub mismatch: Option<InterfaceMismatch>,
 }
 
-/// Settle the declaration `request` names in `package` from `request`.
+/// The value, cause and certification of a planner result under `policy`: a
+/// `proved` whose certification the policy withholds is `inconclusive`,
+/// `proof-not-certified`, with no certification. A planner result has no
+/// basis object, so the cause carries none (FSpec FR-492).
+#[ix_trace_rs::implements("FR-1052-AC-11", "FR-1052-AC-12")]
+pub(super) fn under_policy(
+    policy: CertificationPolicy,
+    value: PlannerValue,
+    cause: Option<PlannerCause>,
+    certification: Option<Certification>,
+) -> (PlannerValue, Option<PlannerCause>, Option<Certification>) {
+    match certification {
+        Some(certification) if value == PlannerValue::Proved && policy.withholds(certification) => {
+            (
+                PlannerValue::Inconclusive,
+                Some(PlannerCause::Inconclusive(
+                    InconclusiveCause::ProofNotCertified {
+                        basis: None,
+                        certification,
+                    },
+                )),
+                None,
+            )
+        }
+        other => (value, cause, other),
+    }
+}
+
+/// Settle the declaration `request` names in `package` from `request`,
+/// admitting as `proved` what `policy` admits.
 ///
 /// # Errors
 ///
@@ -290,13 +319,38 @@ pub fn settle(
     package: &CheckedPackage,
     request: &SettlementRequest,
     budget: Budget,
+    policy: CertificationPolicy,
 ) -> Result<PlannerResult, SettleRefusal> {
     if request.package != package.graph().package_name() {
         return Err(SettleRefusal::Mismatch);
     }
     let declaration = PlannerDeclaration::from_package(package, &request.item.node)
         .map_err(|_| SettleRefusal::Mismatch)?;
-    settle_declared(&declaration, request, budget)
+    settle_declared_under(&declaration, request, budget, policy)
+}
+
+/// [`settle_declared`] admitting as `proved` what `policy` admits: the part
+/// of [`settle()`] that follows the package's declaration.
+pub(crate) fn settle_declared_under(
+    declaration: &PlannerDeclaration,
+    request: &SettlementRequest,
+    budget: Budget,
+    policy: CertificationPolicy,
+) -> Result<PlannerResult, SettleRefusal> {
+    let mut result = settle_declared(declaration, request, budget)?;
+    let (value, cause, certification) = under_policy(
+        policy,
+        result.value,
+        result.cause.take(),
+        result.certification,
+    );
+    if value != result.value {
+        result.conclusion = None;
+    }
+    result.value = value;
+    result.cause = cause;
+    result.certification = certification;
+    Ok(result)
 }
 
 /// Settle `declaration` from `request`.
@@ -688,6 +742,26 @@ impl PlannerCause {
                         cause.insert("reason".to_owned(), json!("stutter-closure"));
                     }
                 }
+                ("cause", Value::Object(cause))
+            }
+            Self::Inconclusive(InconclusiveCause::ProofNotCertified {
+                basis,
+                certification,
+            }) => {
+                // FR-331 spells the cause tag `type`; the analyze item wire
+                // that `outcome_cause` reads spells it `kind`.
+                let mut cause = Map::new();
+                cause.insert("type".to_owned(), json!("proof-not-certified"));
+                if let Some(basis) = basis {
+                    cause.insert(
+                        "basis".to_owned(),
+                        serde_json::to_value(basis).unwrap_or(Value::Null),
+                    );
+                }
+                cause.insert(
+                    "certification".to_owned(),
+                    serde_json::to_value(certification).unwrap_or(Value::Null),
+                );
                 ("cause", Value::Object(cause))
             }
             Self::Inconclusive(other) => (

@@ -568,6 +568,7 @@ pub fn analyze(
             engines,
             limits,
             cancel,
+            certification: request.certification,
         },
     )
 }
@@ -590,6 +591,7 @@ pub(crate) fn analyze_bound<'a>(
         engines,
         limits,
         cancel,
+        certification,
     } = execution;
     let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
@@ -694,7 +696,7 @@ pub(crate) fn analyze_bound<'a>(
         .iter()
         .map(super::AnalyzeItem::requirement)
         .collect::<Vec<_>>();
-    let settled = super::analyze_items(engines, items, cancel);
+    let settled = super::analyze_items(engines, items, cancel, certification);
     let aggregate = super::aggregate(&requirements, &settled);
     let details = settled.iter().map(super::ItemDetail::of).collect();
     let protocol_conformance = settled
@@ -734,6 +736,7 @@ pub(crate) struct AnalyzeExecution<'a> {
     pub(crate) engines: &'a super::Engines,
     pub(crate) limits: &'a super::AnalyzeLimits,
     pub(crate) cancel: &'a filament_exact::Cancel,
+    pub(crate) certification: fsl_replay::CertificationPolicy,
 }
 
 fn check_provision(
@@ -774,12 +777,15 @@ pub(crate) fn dependency_packages(
 ) -> Option<Vec<fsl_replay::HybridProcessDependency>> {
     let mut closure: Vec<fsl_replay::HybridProcessDependency> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    add_dependencies(package, emit, &mut seen, &mut closure)?;
+    add_dependencies(package, package, emit, &mut seen, &mut closure)?;
     Some(closure)
 }
 
-/// `package`'s dependencies after their own, each once.
+/// `package`'s dependencies after their own, each once, with the bytes `root`
+/// linked each at.
+#[implements("FR-640-AC-17")]
 fn add_dependencies(
+    root: &fsl_package::CheckedPackage,
     package: &fsl_package::CheckedPackage,
     emit: fsl_package::EmitLimits,
     seen: &mut std::collections::BTreeSet<String>,
@@ -789,8 +795,8 @@ fn add_dependencies(
         if !seen.insert(identity.to_string()) {
             continue;
         }
-        add_dependencies(dependency, emit, seen, closure)?;
-        let emission = fsl_package::emit_checked(dependency, emit).ok()?;
+        add_dependencies(root, dependency, emit, seen, closure)?;
+        let emission = fsl_package::emit_linked_dependency(root, identity, emit)?.ok()?;
         closure.push(fsl_replay::HybridProcessDependency {
             identity: identity.to_string(),
             package: emission.package().bytes().to_vec(),

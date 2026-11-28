@@ -301,6 +301,7 @@ pub struct AnalyzeRequest {
     pub binding: SubjectBinding,
     pub provision: SourceProvision,
     pub items: Vec<NegotiatedItem>,
+    pub certification: CertificationPolicy, // FR-1052; default `AdmitAny`
 }
 
 pub struct ClaimItem {

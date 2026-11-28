@@ -10,7 +10,6 @@ description = "Brute-force semantic reference for tiny checked FSL models, used 
 [dependencies]
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-semantics = { path = "../fsl-semantics" }
-fsl-package = { path = "../fsl-package" }
 filament-exact = { workspace = true }
 filament-checked = { workspace = true }
 filament-contract-model = { workspace = true }

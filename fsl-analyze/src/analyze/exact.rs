@@ -17,7 +17,7 @@ mod subsystem;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational, WorkScope};
-use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, TimedSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
@@ -54,8 +54,8 @@ use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
     admit_in_scope, build_retaining_monitor_in_scope, decide_always, decide_bounded_event,
     decide_expected_reward, decide_reachability, decide_until, manifest as en5,
-    settle_product_refusal, ExtRational, FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal,
-    ProductRequest, UnboundedError, UnboundedObjective,
+    settle_product_refusal, timed_route, ExtRational, FhError, FhResult, ProbBuild, ProbProduct,
+    ProductRefusal, ProductRequest, ProductStop, TimedRoute, UnboundedError, UnboundedObjective,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -147,9 +147,6 @@ pub(crate) type SpelledWitness = (Box<ReproducedProbabilityWitness>, Probability
 pub(crate) enum ExactReport {
     /// Only independently reproduced path evidence can settle refuted.
     Refuted(Box<ReproducedProbabilityWitness>, Box<ProbabilityWire>),
-    /// A closed finite product establishes an unbounded expected-time bound
-    /// without a finite exact value or a checker certificate.
-    ProvedExhaustively,
     /// The `on each` claim has no instance to read (FR-875).
     NoInstance,
     /// The subject has no initial state (FR-125, FR-201 "Instancing outcomes").
@@ -224,10 +221,6 @@ impl ExactReport {
         Option<SpelledWitness>,
     ) {
         let (record, evidence) = match self {
-            Self::ProvedExhaustively => (
-                TerminalRecord::proved_by_exhaustive_engine(index, backend),
-                None,
-            ),
             Self::Refuted(reproduced, wire) => {
                 return (
                     TerminalRecord::refuted_by_probability_witness(
@@ -1135,6 +1128,7 @@ fn same_mean_time_choice(
 
 #[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
 #[implements("FR-204-AC-2")]
+#[implements("FR-204-AC-24", "FR-204-AC-25")]
 fn run_timed_mean(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -1254,24 +1248,23 @@ fn run_timed_mean(
             return broken();
         }
     };
-    if matches!(
+    // An infinite least time holds any `>=` bound; its certificate carries no
+    // value or rank, and the checker rederives it from its own graph.
+    let infinite = matches!(
         solved.values.get(start.index()),
         Some(ExtRational::PlusInfinity)
-    ) {
-        if matches!(bound, Bound::AtLeast(_)) {
-            return EngineReport::Exact(Box::new(ExactReport::ProvedExhaustively));
-        }
+    );
+    // Under a workload no checker reads a finite expected time, so only an
+    // infinite one that holds its bound is decided.
+    let workload = matches!(claim.scheduler, ProbScheduler::Workload(_));
+    if workload && !(infinite && matches!(bound, Bound::AtLeast(_))) {
         return not_yet();
     }
-    if matches!(claim.scheduler, ProbScheduler::Workload(_)) {
-        return not_yet();
-    }
-    let Some(ExtRational::Finite(value)) = solved.values.get(start.index()) else {
-        return not_yet();
-    };
-    let holds = match bound {
-        Bound::AtLeast(threshold) => value >= threshold,
-        Bound::AtMost(threshold) => value <= threshold,
+    let holds = match (solved.values.get(start.index()), bound) {
+        (Some(ExtRational::PlusInfinity), Bound::AtLeast(_)) => true,
+        (Some(ExtRational::Finite(value)), Bound::AtLeast(threshold)) => value >= threshold,
+        (Some(ExtRational::Finite(value)), Bound::AtMost(threshold)) => value <= threshold,
+        _ => false,
     };
     if !holds {
         return not_yet();
@@ -1280,20 +1273,23 @@ fn run_timed_mean(
         Ok(identity) => identity,
         Err(error) => return graph_failure(error, &limits, subject),
     };
-    let values = solved.values;
-    let mut certificate = match certificate_of(
-        &product,
-        None,
-        &values,
-        fsl_replay::ProbabilityDocumentIoLimits {
-            bytes: document_limits.bytes,
-            storage_bytes: document_limits.storage_bytes,
-        },
-        cancel,
-    ) {
-        Ok(certificate) => certificate,
-        Err(error) => {
-            return document_failure(error, subject);
+    let mut certificate = if infinite {
+        ExactProbabilityCertificate { values: Vec::new() }
+    } else {
+        match certificate_of(
+            &product,
+            None,
+            &solved.values,
+            fsl_replay::ProbabilityDocumentIoLimits {
+                bytes: document_limits.bytes,
+                storage_bytes: document_limits.storage_bytes,
+            },
+            cancel,
+        ) {
+            Ok(certificate) => certificate,
+            Err(error) => {
+                return document_failure(error, subject);
+            }
         }
     };
     let included = match mean_time_reachable_before_target(&product, &target) {
@@ -1322,11 +1318,16 @@ fn run_timed_mean(
         .collect::<Vec<_>>();
     targets.sort();
     targets.dedup();
-    let ranking = match mean_time_ranking(&product, &target, &included, &solved.policy) {
-        Some(ranking) => ranking,
-        None => return not_yet(),
+    let ranking = if infinite {
+        Vec::new()
+    } else {
+        match mean_time_ranking(&product, &target, &included, &solved.policy) {
+            Some(ranking) => ranking,
+            None => return not_yet(),
+        }
     };
     let optimization = match objective {
+        _ if workload => ProbabilityObjective::Workload,
         UnboundedObjective::Min => ProbabilityObjective::Minimum,
         UnboundedObjective::Max => ProbabilityObjective::Maximum,
     };
@@ -1376,7 +1377,51 @@ fn run_timed_mean(
         Ok(binding) => binding,
         Err(error) => return graph_failure(error, &limits, subject),
     };
-    checked_report(checked, certificate, binding, extremum, subject)
+    checked_report(
+        checked,
+        certificate,
+        binding,
+        extremum.filter(|_| !workload),
+        subject,
+    )
+}
+
+/// ADR-038 RL-3: a timed claim the route admission table takes off digital
+/// clocks, whose region process is not built, settles `incomplete` before any
+/// route reads a digital value or calls the form unsupported. `None` for
+/// every other request, one whose subject does not admit included: the claim's
+/// own route reports it.
+#[implements(
+    "FSpec-FR-421-AC-8",
+    "FSpec-FR-421-AC-10",
+    "FSpec-FR-421-AC-12",
+    "FSpec-FR-421-AC-13"
+)]
+fn region_not_built(request: &ProductRequest<'_>, cancel: &Cancel) -> Option<EngineReport> {
+    // A long-run fraction keeps its own typed outcome (FR-186-AC-15: the
+    // delay-weighted guard stays `unsupported` from `long_run`), so the
+    // region route does not override it.
+    if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
+        return None;
+    }
+    let simulation = request.subject.simulation.clone();
+    let meter = simulation.meter;
+    let subject = SubjectLimits {
+        expansion: simulation.expansion,
+        meter: &meter,
+    };
+    simulation.source_package()?;
+    let system = ModelSystem::new_with_cancel(simulation, cancel).ok()?;
+    let timed = TimedSystem::new(&system, &request.claim.subject.alias).ok()?;
+    let issue = match timed_route(&system, &timed, request.claim, &request.limits, cancel)? {
+        TimedRoute::Product => return None,
+        TimedRoute::RegionNotBuilt(cause) => ExactProbBuildIssue::RegionNotBuilt(cause),
+        TimedRoute::Stopped(ProductStop::Limit { limit, value }) => {
+            ExactProbBuildIssue::Limit { limit, value }
+        }
+        TimedRoute::Stopped(ProductStop::Cancelled(cause)) => ExactProbBuildIssue::Cancelled(cause),
+    };
+    Some(settled(&issue, subject))
 }
 
 pub(super) fn run_package_exact(request: ProductRequest<'_>, cancel: &Cancel) -> EngineReport {
@@ -1417,6 +1462,9 @@ fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    if let Some(report) = region_not_built(&request, cancel) {
+        return report;
+    }
     // Every `on each` form is settled by its instances first (FR-875), so an
     // empty instance set is `no-instance` whatever the form.
     if matches!(
@@ -2641,7 +2689,8 @@ fn checked_report(
                     evidence: Some(evidence),
                 }))
             }
-            ExactProbabilityCertificateCheck::AcceptedVacuous(_) => {
+            ExactProbabilityCertificateCheck::AcceptedVacuous(_)
+            | ExactProbabilityCertificateCheck::AcceptedInfinite(_) => {
                 EngineReport::Exact(Box::new(ExactReport::Proved {
                     check,
                     extremum: None,
@@ -4583,7 +4632,7 @@ fn replay_timed_paths(
                             };
                             (
                                 Some(identity.clone()),
-                                Some(transition),
+                                transition,
                                 step.draw.clone(),
                                 post,
                                 resume,
@@ -4689,11 +4738,14 @@ fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> 
 /// returns that operation's transition, the model state right after it (what a
 /// single recorded transition produces) and the model state at the end of the
 /// chain (what the product key names, and where the next step starts).
+/// When a timed edge leaves the discrete state unchanged, it returns no
+/// transition.
 /// A previous key that is a region key, or a chain still open after `CHAIN`
 /// operations, is [`TimedStepFailure::Unbuilt`] (a region refutation through a
 /// clock-guarded step therefore settles not-yet); a step expansion or key
 /// encoding that stops names its stop; only a search that exhausted every
 /// chain without reaching the wanted state is a fault.
+#[implements("FR-204-AC-21")]
 fn timed_step_for(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -4704,7 +4756,7 @@ fn timed_step_for(
     wanted: Option<&serde_json::Value>,
 ) -> Result<
     (
-        filament_semantic_value::model_transition::ModelTransition,
+        Option<filament_semantic_value::model_transition::ModelTransition>,
         fsl_eval::simulation::model::ModelSimState,
         fsl_eval::simulation::model::ModelSimState,
     ),
@@ -4724,7 +4776,7 @@ fn timed_step_for(
         fsl_eval::simulation::model::ModelSimState,
     )>;
     type Found = (
-        filament_semantic_value::model_transition::ModelTransition,
+        Option<filament_semantic_value::model_transition::ModelTransition>,
         fsl_eval::simulation::model::ModelSimState,
         fsl_eval::simulation::model::ModelSimState,
     );
@@ -4734,6 +4786,23 @@ fn timed_step_for(
         for level in 0..CHAIN {
             let mut next = Vec::new();
             for (at, first) in frontier {
+                // A free-delay product edge may advance only the clocks. Its
+                // discrete model state is unchanged, even when an operation
+                // happens to be enabled at the resulting time.
+                if first.is_none() {
+                    let key = system
+                        .state_key(at.discrete(), fsl_foundation::IdentityLimits::default())
+                        .map_err(|error| {
+                            TimedStepFailure::Key(ProbabilityDocumentError::KeyEncoding(error))
+                        })?
+                        .0;
+                    let discrete: serde_json::Value =
+                        serde_json::from_slice(&key).map_err(|_| TimedStepFailure::Fault)?;
+                    if Some(&discrete) == wanted {
+                        let state = at.discrete().clone();
+                        return Ok(Ok((None, state.clone(), state)));
+                    }
+                }
                 let steps = timed.steps(&at).map_err(TimedStepFailure::Stopped)?;
                 for (step, post) in steps {
                     let first = if level == 0 {
@@ -4757,7 +4826,7 @@ fn timed_step_for(
                         serde_json::from_slice(&key).map_err(|_| TimedStepFailure::Fault)?;
                     if Some(&discrete) == wanted {
                         let (transition, after_first) = first.ok_or(TimedStepFailure::Fault)?;
-                        return Ok(Ok((transition, after_first, post.discrete().clone())));
+                        return Ok(Ok((Some(transition), after_first, post.discrete().clone())));
                     }
                     next.push((post, first));
                 }

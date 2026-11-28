@@ -211,6 +211,9 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
         }
         ExactProbabilityCertificateCheck::NoInitialState => json!({"status":"no-initial-state"}),
         ExactProbabilityCertificateCheck::NoInstance => json!({"status":"no-instance"}),
+        ExactProbabilityCertificateCheck::AcceptedInfinite(accepted) => {
+            json!({"status":"accepted","basis":"exhaustive","infinite":true,"side":match accepted.side() { fsl_replay::ProbabilityBoundSide::AtLeast=>"at-least",fsl_replay::ProbabilityBoundSide::AtMost=>"at-most" }})
+        }
         ExactProbabilityCertificateCheck::Rejected(rejection) => {
             let rule = match rejection.rule {
                 fsl_replay::ProbabilityCertificateRule::InequalityFails => {

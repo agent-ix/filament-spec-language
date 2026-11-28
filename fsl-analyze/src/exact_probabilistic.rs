@@ -33,6 +33,7 @@ mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
 mod reward_interval;
+mod route;
 mod rows;
 mod settle;
 mod unbounded;
@@ -137,6 +138,7 @@ pub use finite_horizon::{
 pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
 pub use fsl_replay::FreeDelayRow;
 pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
+pub(crate) use route::{timed_route, TimedRoute};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 #[cfg(feature = "test-support")]

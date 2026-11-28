@@ -14,6 +14,8 @@ use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 
+use crate::timed::model_constants;
+
 /// A limit that stopped integer-clock graph expansion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DigitalGraphLimit {
@@ -25,6 +27,11 @@ pub enum DigitalGraphLimit {
     Clocks(u64),
     /// Caller cancellation.
     Cancelled,
+    /// A state's protocol expression (a join predicate) or step guard that is
+    /// not a data contract has no value (ADR-018 UE-6): no graph is built
+    /// past it. A data-contract guard with no value is recorded in the
+    /// graph's `undefined` list instead.
+    UndefinedGuard,
 }
 
 /// One edge of an integer-clock graph; `None` is a unit delay edge.
@@ -246,50 +253,16 @@ fn capped(state: TimedState, cap: &Rational) -> TimedState {
 }
 
 fn grid(timed: &TimedSystem<'_, '_>) -> (Rational, Rational) {
-    let model = timed.model();
-    let mut constants: Vec<Rational> = model
-        .guards()
-        .iter()
-        .flat_map(|guard| guard.parts())
-        .flat_map(|part| {
-            part.clocks()
-                .iter()
-                .map(|constraint| constraint.bound().clone())
-        })
-        .chain(
-            model
-                .guards()
-                .iter()
-                .flat_map(|guard| guard.parts())
-                .flat_map(|part| part.families())
-                .flat_map(|family| family.parts())
-                .flat_map(|part| {
-                    part.clocks()
-                        .iter()
-                        .map(|constraint| constraint.bound().clone())
-                }),
-        )
-        .chain(model.invariants().iter().flat_map(|invariant| {
-            invariant
-                .bounds()
-                .iter()
-                .map(|constraint| constraint.bound().clone())
-        }))
-        .chain(
-            model
-                .resets()
-                .iter()
-                .flat_map(|resets| resets.resets().iter().map(|reset| reset.value().clone())),
-        )
-        .collect();
+    let constants = model_constants(timed);
     let scale = constants.iter().fold(BigInt::from(1), |scale, value| {
         scale.lcm(value.denominator().as_big())
     });
     let unit = Rational::new(Integer::one(), Integer::from_big(scale))
         .unwrap_or_else(|_| Rational::from_integer(Integer::one()));
     let largest = constants
-        .drain(..)
+        .into_iter()
         .max()
+        .cloned()
         .unwrap_or_else(|| Rational::from_integer(Integer::zero()));
     let cap = largest.add(&unit);
     (unit, cap)
@@ -298,6 +271,43 @@ fn grid(timed: &TimedSystem<'_, '_>) -> (Rational, Rational) {
 fn limit_from_stop(stop: TimedStop, max_states: u64) -> DigitalGraphLimit {
     match stop {
         TimedStop::MaxClocks { max_clocks } => DigitalGraphLimit::Clocks(max_clocks),
+        TimedStop::Undefined(_) => DigitalGraphLimit::UndefinedGuard,
+        TimedStop::Undecided(reading)
+            if reading.cause.is_some()
+                && matches!(
+                    reading.site,
+                    fsl_eval::simulation::model::TimedSite::Guard { .. }
+                ) =>
+        {
+            DigitalGraphLimit::UndefinedGuard
+        }
         _ => DigitalGraphLimit::States(max_states),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_semantic_value::catalog::UndefinedReason;
+    use fsl_eval::simulation::model::{ClauseOutcome, ModelFinding};
+    use ix_trace_rs::trace;
+
+    /// A timed state whose protocol expression has no value stops the graph
+    /// with the undefined-guard limit, and a state limit does not.
+    #[trace("TC-710", "FR-239-AC-11")]
+    #[test]
+    fn an_undefined_protocol_expression_stops_the_graph_with_the_undefined_guard_limit() {
+        let finding = ModelFinding::ProtocolExpressionUndetermined {
+            node: "Main/Both".to_owned(),
+            evaluation: ClauseOutcome::FamilyUndefined(UndefinedReason::AbsentKey),
+        };
+        assert_eq!(
+            limit_from_stop(TimedStop::Undefined(Box::new(finding)), 7),
+            DigitalGraphLimit::UndefinedGuard
+        );
+        assert_eq!(
+            limit_from_stop(TimedStop::MaxClocks { max_clocks: 3 }, 7),
+            DigitalGraphLimit::Clocks(3)
+        );
     }
 }

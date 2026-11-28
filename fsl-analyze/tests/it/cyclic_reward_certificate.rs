@@ -182,6 +182,7 @@ fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
             closed.request("Cost", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     // The closed zero-cost class never reaches the target, so the expected
     // total is infinite and `<= 0` fails. It is refuted by a replayed finite

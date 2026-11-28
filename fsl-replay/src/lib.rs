@@ -216,14 +216,15 @@ pub use certificate::task_product::{
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
-    check_free_delay_zone_certificate, check_zone_certificate, explore_task_product,
-    recomputed_member, AcceptanceSet, CertEdge, CertNode, CertificateCheckLimits, CertificateItem,
-    CertifiedItem, CheckerFault, ComponentReason, Components, DivergenceWitness, DivergentTarget,
-    FairnessMember, ItemIdentity, NonZeno, ProductMark, QuotientEdge, QuotientIdentity,
-    QuotientInitial, QuotientStop, QuotientVertex, RefinementIdentity, RefinementPart, SilentMove,
+    check_free_delay_zone_certificate, check_state_graph_certificate, check_zone_certificate,
+    explore_task_product, recomputed_member, AcceptanceSet, CertEdge, CertNode,
+    CertificateCheckLimits, CertificateItem, CertifiedItem, CheckerFault, ComponentReason,
+    Components, DivergenceWitness, DivergentTarget, FairnessMember, ItemIdentity, NonZeno,
+    ProductMark, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop, QuotientVertex,
+    RefinementIdentity, RefinementPart, SilentMove, StateGraphCertificateDecision,
     StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
     ZoneCertificateReferenceError, ZoneCertificateRefusal, ZoneCertificateRequest,
-    ZoneCertificateVerdict, ZoneCertificateWireError,
+    ZoneCertificateVerdict, ZoneCertificateWireError, UNDEFINED_POSITION_STATE,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -262,6 +263,8 @@ pub use execute::{
     ParityArgument, ParityBoundRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch,
     ValueParityArgument, ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
+#[cfg(feature = "bench-counters")]
+pub use execute::replay_with_parse_counter;
 pub use hybrid::{
     hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem,
     AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal, CertificateRecord,
@@ -443,13 +446,13 @@ pub use refinement::{
     ObjectKey, ObjectMapping, ObservationField, ObservationLabel, PackageRefinement,
     PackageRefinementRefusal, PairedAssumptionPath, PairedAssumptionStep, PopulationMapping,
     ProtocolAssumptionFairness, ProtocolAssumptionReason, ProtocolAssumptionWitness,
-    ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation, ProtocolStep,
-    ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal, ProtocolTrace, RefinementFailure,
-    RefinementOutcome, RefinementPosition, RefinementRead, RefinementSystems, RefinementWitness,
-    RefinementWitnessError, RefinementWorld, RequiredTemporalFairness, SafetyOutcome,
-    SafetyUndecided, StateIndex, StepArgument, StepMapping, StepRejection, StepResult, StepVerdict,
-    StepViewRefusal, SubjectRefusal, Taken, TerminalSuccessDirection, Undetermined,
-    UnsteppedConstruct,
+    ProtocolCandidate, ProtocolPathNode, ProtocolPathRef, ProtocolRelationError,
+    ProtocolStateRelation, ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal,
+    ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementRead,
+    RefinementSystems, RefinementWitness, RefinementWitnessError, RefinementWorld,
+    RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex, StepArgument,
+    StepMapping, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
+    TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
@@ -525,7 +528,8 @@ pub use probability_certificate::{
     replay_probabilistic_undefined_with_work_scope, replay_probabilistic_witness,
     replay_probabilistic_witness_from_package,
     replay_probabilistic_witness_from_package_with_work_scope,
-    replay_probabilistic_witness_with_work_scope, vacuous_measure_probability_certificate_document,
+    replay_probabilistic_witness_with_work_scope, timed_certificate_route,
+    vacuous_measure_probability_certificate_document,
     vacuous_measure_probability_certificate_document_with_work_scope,
     weighted_long_run_probability_certificate_document,
     weighted_long_run_probability_certificate_document_with_work_scope,
@@ -547,7 +551,7 @@ pub use probability_certificate::{
     ProbabilityObjective, ProbabilityPackageRequest, ProbabilityProductKey,
     ProbabilityProofDocument, ProbabilityRewardObjective, ProbabilitySourceError,
     ProbabilitySourceLimits, ProbabilitySourceRequest, ProbabilityStateEvent,
-    ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness, ProbabilityVacuityAcceptance,
+    ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness, ProbabilityValueFreeAcceptance,
     ProbabilityWitnessError, ProbabilityWitnessPath, ProbabilityWitnessReplay,
     ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
     RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind, TimedProbabilityForm,
@@ -570,15 +574,15 @@ pub use proof_result::{
     read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
     read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
-    BackendProviderSource, BoundsExploration, BoundsMethod, Certification, DeclineCode,
-    EmptyEnvelopeSet, ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
-    IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
-    PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
-    ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, ReportedInconclusiveCause,
-    SettlementBasis, StaleIdentity, StatedInstanceBound, StatedMemoryBound,
-    StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal, TerminalRecord,
-    TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason, UnavailabilityCause,
-    ValueCheckUnsupported, ValueFault, WeakAccessFailure,
+    BackendProviderSource, BoundsExploration, BoundsMethod, Certification, CertificationPolicy,
+    DeclineCode, EmptyEnvelopeSet, ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum,
+    FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound,
+    MemoryBoundMember, PluginReplayContext, PluginReplayRefusal, PluginResultRefusal,
+    PremiseOutcome, ProofBasis, ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal,
+    Proviso, ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
+    StatedMemoryBound, StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal,
+    TerminalRecord, TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason,
+    UnavailabilityCause, ValueCheckUnsupported, ValueFault, WeakAccessFailure,
 };
 // The inputs `call_site` takes and the typed operation name it and FR-115
 // select by. They are defined in `spine` because the spine compile reads

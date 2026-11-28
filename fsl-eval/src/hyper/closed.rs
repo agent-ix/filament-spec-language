@@ -103,9 +103,9 @@ pub enum ClosedStop {
     /// reaches the state, which ends there, and the conjunction.
     Undefined {
         /// The path from an initial state to the state with no value.
-        prefix: ClosedExecution,
+        prefix: Box<ClosedExecution>,
         /// The conjunction.
-        contract: crate::simulation::model::UndefinedContract,
+        contract: Box<crate::simulation::model::UndefinedContract>,
     },
     /// A state's expansion refused a contract conjunction, so what the state
     /// enables is not exactly known.
@@ -206,8 +206,8 @@ pub fn closed_executions(
                     .find_map(crate::simulation::model::ModelFinding::undefined_contract)
                 {
                     return Err(ClosedStop::Undefined {
-                        prefix: execution,
-                        contract,
+                        prefix: Box::new(execution),
+                        contract: Box::new(contract),
                     });
                 }
                 if expansion

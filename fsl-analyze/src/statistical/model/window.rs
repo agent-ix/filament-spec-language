@@ -31,6 +31,7 @@ fn sample_halt(
     max_sample_steps: u64,
 ) -> Result<Option<TimedSample>, SampleHalt> {
     Err(match stop {
+        TimedSampleStop::Race(TimedRaceStop::NoGridDelay) => return Ok(None),
         TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
             SampleHalt::NotStochastic { state, identity }
         }

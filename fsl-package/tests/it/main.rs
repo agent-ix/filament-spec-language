@@ -9,6 +9,7 @@ mod protocol_artifact_v1;
 mod protocol_artifact_v2;
 mod protocol_number;
 mod protocol_view_surface;
+mod size_route_matrix;
 mod source_object_identity_rows_public;
 mod source_probabilistic_emission;
 mod verification_plan;

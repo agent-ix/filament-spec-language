@@ -2,18 +2,19 @@
 //! FSL FR-243: which items the digital-clock route declines because
 //! digitisation does not preserve their dense-time verdict.
 //!
-//! This is an interim rule. It is kept whole in [`digitisation_decline`] so
-//! that the consolidation step QSL-3494 can replace it in one place. The
-//! closed condition (a strict constraint or interval) is checked before it,
-//! by [`super::digital`] and the state-graph item.
+//! ADR-038 RL-7: which state-graph forms `digital-clocks` admits is read from
+//! the declared table (`EN1_DIGITAL`); the claim conditions of FR-243 (b) to
+//! (f) are established here. The closed condition (a strict constraint or
+//! interval) is checked before it, by [`super::digital`] and the
+//! state-graph item.
 
 use filament_exact::{Integer, Rational};
-use fsl_eval::simulation::model::TimedSystem;
+use fsl_eval::simulation::model::{SearchItem, TimedSystem, EN1_DIGITAL};
 use fsl_foundation::bound::TemporalUpper;
 use fsl_replay::{NotDigitisable, NotDigitisableRule};
 use fsl_semantics::check::{
     BinaryTemporal, CheckedInterval, CheckedStateGraphClaim, CheckedTemporalClause, FormulaNode,
-    UnaryTemporal,
+    StateGraphForm, UnaryTemporal,
 };
 use ix_trace_rs::implements;
 
@@ -54,7 +55,26 @@ pub(crate) fn digitisation_decline(
     const NO_SPAN: &str = "digital-source-span";
     let (subject, clause) = match item {
         DigitalItem::Temporal { subject, clause } => (subject, clause),
-        DigitalItem::StateGraph(claim) => return Ok(NotDigitisable::of_state_graph(claim)),
+        DigitalItem::StateGraph(claim) => {
+            let item = match claim.form() {
+                StateGraphForm::Possible { .. } => SearchItem::Possible,
+                StateGraphForm::AlwaysPossible { .. } => SearchItem::AlwaysPossible,
+                StateGraphForm::UniquePath { .. } => SearchItem::UniquePath,
+            };
+            // ADR-038's EN-1 rows are the declared table; `of_state_graph`
+            // names the FR-243 rule of a form no row admits.
+            if EN1_DIGITAL.contains(&item) {
+                return Ok(None);
+            }
+            return match item {
+                SearchItem::AlwaysPossible | SearchItem::UniquePath => {
+                    Ok(NotDigitisable::of_state_graph(claim))
+                }
+                SearchItem::DigitisableTemporalClaim
+                | SearchItem::Possible
+                | SearchItem::DeadlockFreedom => Err("digital-admission-table"),
+            };
+        }
     };
     let formula = clause.formula();
     let nodes = formula.nodes();

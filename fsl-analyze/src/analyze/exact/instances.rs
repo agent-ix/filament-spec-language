@@ -10,10 +10,9 @@ use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_replay::statistical::{OnEachRead, SubjectLimits};
 use fsl_replay::{
-    check_probability_certificate_document_as_with_work_scope, on_each_has_instance,
-    on_each_outcome_with_work_scope, replay_on_each_witness_with_work_scope, ExactProbBuildIssue,
-    ExactProbabilityCertificate, OnEachOutcome, ProbabilisticCounterexample,
-    ProbabilityDocumentLimits,
+    check_probability_certificate_document_as_with_work_scope, on_each_outcome_with_work_scope,
+    replay_on_each_witness_with_work_scope, ExactProbBuildIssue, ExactProbabilityCertificate,
+    OnEachOutcome, ProbabilisticCounterexample, ProbabilityDocumentLimits,
 };
 use ix_trace_rs::implements;
 

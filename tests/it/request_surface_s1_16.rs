@@ -4981,7 +4981,10 @@ fn a_package_call_reads_the_package_under_the_callers_reader_limit() {
         },
     );
     assert_ne!(code, 0, "{value}");
-    assert_eq!(value["details"]["path"], "/semantic_graph/nodes/2", "{value}");
+    assert_eq!(
+        value["details"]["path"], "/semantic_graph/nodes/2",
+        "{value}"
+    );
     let message = value["message"].as_str().unwrap_or_default();
     assert!(message.contains("node limit 2 reached (3)"), "{value}");
 }
