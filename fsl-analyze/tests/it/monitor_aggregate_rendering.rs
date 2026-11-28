@@ -54,7 +54,7 @@ fn compile(documents: &Documents, text: &str, clock: ClockConfiguration) -> Comp
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let source = identity();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse(
         &ParseRequest {
             source: &source,
             path: PATH,
@@ -65,11 +65,17 @@ fn compile(documents: &Documents, text: &str, clock: ClockConfiguration) -> Comp
     )
     .expect("the actual source parses")
     .into_value();
-    let models = spine::select(&qsl3309_parser_context, &parsed, &documents.packages, limits.model, &cancel)
+    let models = spine::select(&parsed, &documents.packages, limits.model, &cancel)
         .expect("the model selects")
         .into_value();
-    let cst = fsl_cst::parse(&qsl3309_parser_context, source, PATH, text.as_bytes(), fsl_cst::Limits::default())
-        .expect("the source parses for its declaration span");
+    let cst = fsl_cst::parse(
+        &qsl3309_parser_context,
+        source,
+        PATH,
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the source parses for its declaration span");
     let forms = fsl_forms::build_unit(&cst).expect("the source forms");
     let declaration = forms
         .forms()

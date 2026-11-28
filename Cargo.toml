@@ -211,8 +211,9 @@ opt-level = 3
 
 # Workspace crates and the CG dev-dependency both name FSL through this git
 # source. Patching these FSL packages to workspace members keeps one identity
-# for the typed request, evidence, and proof outcome in the cross-crate test.
+# for ParserContext, typed requests, evidence, and proof outcomes in cross-crate tests.
 [patch."https://github.com/agent-ix/filament-spec-language"]
+fsl-cst = { path = "fsl-cst" }
 fsl-foundation = { path = "fsl-foundation" }
 fsl-replay = { path = "fsl-replay" }
 fsl-package = { path = "fsl-package" }

@@ -846,7 +846,7 @@ fn the_plan_root_retains_the_acquisitions_witness_rows() {
         fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
     let source = SourceIdentity::new("agent-ix", "monitor-root");
     let cancel = Cancel::new();
-    let parsed = fsl_replay::spine::parse(&qsl3309_parser_context,
+    let parsed = fsl_replay::spine::parse(
         &fsl_replay::spine::ParseRequest {
             source: &source,
             path: "monitor.native",
@@ -859,7 +859,7 @@ fn the_plan_root_retains_the_acquisitions_witness_rows() {
     .expect("the stage succeeds")
     .into_value();
     let selected =
-        fsl_replay::spine::select(&qsl3309_parser_context, &parsed, &packages, SpineLimits::default().model, &cancel)
+        fsl_replay::spine::select(&parsed, &packages, SpineLimits::default().model, &cancel)
             .map_err(|_| "selects")
             .expect("the stage succeeds")
             .into_value();
