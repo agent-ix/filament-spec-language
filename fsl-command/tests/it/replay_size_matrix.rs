@@ -164,11 +164,12 @@ fn request_wire(
         .into_iter()
         .map(|setting| {
             let bound = match setting {
+                Setting::S1InputBytes => source_text.len() as u64,
                 Setting::ModelDeclarationRecords => 3_000,
                 Setting::ModelDerivationFacts => 1_504_502,
                 Setting::ModelAncestorSteps => 1_000,
                 Setting::ModelSequenceMaximum => 100_000,
-                Setting::S1Tokens => 100_001,
+                Setting::S1Tokens => source_text.len() as u64,
                 _ => WIDE,
             };
             (setting.name().to_owned(), bound)
