@@ -27,9 +27,9 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_eval::automaton::{translate_body, AutomatonError, Monitor, PropertyAutomaton, StateId};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    advance_timed, ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading,
-    TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState, TimedStop,
-    TimedSystem, TransitionId, UndefinedContract,
+    advance_timed, step_rewards, ModelSimState, ModelSimulationRequest, ModelSystem,
+    PredicateReading, TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState,
+    TimedStop, TimedSystem, TransitionId, UndefinedContract,
 };
 use fsl_eval::simulation::{
     ExpansionStop, NotSimulated, Permutation, ProbabilisticSampler, SampleStop, SampledPosition,
@@ -1293,7 +1293,6 @@ fn timed_halt(stop: TimedSampleStop) -> Ended {
         TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
             SampleHalt::NotStochastic { state, identity }
         }
-        TimedSampleStop::TimeLockedSample { state } => SampleHalt::TimeLockedSample { state },
         TimedSampleStop::Race(TimedRaceStop::Timed(TimedStop::Expansion(stop))) => {
             SampleHalt::Expansion(stop)
         }
@@ -1302,15 +1301,18 @@ fn timed_halt(stop: TimedSampleStop) -> Ended {
 }
 
 impl ModelWalk<'_, '_, '_> {
-    /// The next position of a delay-weighted walk: `P` at the position, then
+    /// The next position of a timed long-run walk: `P` at the position, then
     /// the next race, the position weighed by the delay of the step that
-    /// leaves it.
+    /// leaves it, or by 1 for an unweighted fraction. A time-lock ends the
+    /// behaviour with value 0 (FSpec FR-420-AC-19).
+    #[implements("FSpec-FR-420-AC-19")]
     fn timed_step(&mut self) -> Result<WalkStep, Ended> {
         let mut shared = self.shared.borrow_mut();
-        let Reading::LongRun { predicate, .. } = &shared.reading else {
+        let Reading::LongRun { predicate, weight } = &shared.reading else {
             return Err(broken().into());
         };
         let predicate = *predicate;
+        let weighting = (*weight).cloned();
         let Shared {
             system,
             workload,
@@ -1400,9 +1402,16 @@ impl ModelWalk<'_, '_, '_> {
                 step: u64::try_from(walk.steps.len()).map_err(|_| broken())?,
                 choice: 0,
             };
-            match advance_timed(timed, &walk.state, workload, at, timed_sampling.q)
-                .map_err(timed_halt)?
-            {
+            let advance = match advance_timed(timed, &walk.state, workload, at, timed_sampling.q) {
+                Ok(advance) => advance,
+                // The behaviour ends in a time-lock and counts 0 (FR-420-AC-19).
+                Err(TimedSampleStop::TimeLockedSample { .. }) => {
+                    self.timed = Some(walk);
+                    return Ok(WalkStep::TimeLocked);
+                }
+                Err(stop) => return Err(timed_halt(stop).into()),
+            };
+            match advance {
                 TimedAdvance::Terminal => {
                     self.timed = Some(walk);
                     return Ok(WalkStep::Terminal { holds });
@@ -1413,18 +1422,33 @@ impl ModelWalk<'_, '_, '_> {
             }
         }
         let leaving = walk.pending.pop_front().ok_or_else(broken)?;
-        let weight = leaving.delay.clone();
-        walk.stamp = walk.stamp.add(&weight);
+        // Every weighting walks the timed run, so that it meets a time-lock
+        // (FR-420-AC-19); an unweighted position weighs 1.
+        let rewards = match &weighting {
+            Some(Weighting::Reward(_)) => step_rewards(timed, &walk.state, &leaving.transition)
+                .map_err(|stop| match stop {
+                    TimedSampleStop::Step(stop) => Ended::from(*stop),
+                    other => timed_halt(other).into(),
+                })?,
+            _ => Vec::new(),
+        };
+        walk.stamp = walk.stamp.add(&leaving.delay);
         let post = timed.state_key(&leaving.state).map_err(|_| broken())?;
-        walk.steps.push(SampledStep {
+        let step = SampledStep {
             transition: TransitionId::Operation(leaving.transition),
-            delay: Some(leaving.delay),
+            delay: Some(leaving.delay.clone()),
             post_state: post.clone(),
             choices: leaving.choices,
             random: Vec::new(),
             probability: leaving.probability,
-            rewards: Vec::new(),
-        });
+            rewards,
+        };
+        let weight = match &weighting {
+            Some(Weighting::Delay) => leaving.delay,
+            Some(Weighting::Reward(name)) => magnitude(&step, name)?,
+            None => Rational::from_integer(Integer::one()),
+        };
+        walk.steps.push(step);
         let returned = walk.pending.is_empty() && post == walk.initial;
         walk.state = leaving.state;
         walk.taken = walk.taken.checked_add(1).ok_or_else(broken)?;
@@ -1442,7 +1466,7 @@ impl ModelWalk<'_, '_, '_> {
             return Err(broken().into());
         };
         let (predicate, weight) = (*predicate, *weight);
-        if matches!(weight, Some(Weighting::Delay)) {
+        if shared.timed_system.is_some() {
             drop(shared);
             return self.timed_step();
         }
@@ -1617,7 +1641,6 @@ impl From<SampleHalt> for WitnessReadStop {
             SampleHalt::NotStochastic { .. }
             | SampleHalt::NotStochasticIdleTail { .. }
             | SampleHalt::IdleTailUndecided(_)
-            | SampleHalt::TimeLockedSample { .. }
             | SampleHalt::MaxSampleSteps { .. } => {
                 return Self::Sample(Box::new(SampleStop::Expansion(ExpansionStop {
                     cause: CatalogCode::new("runtime_invariant", "established-invariant-broken"),
@@ -1663,7 +1686,11 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                         });
                     }
                     Ok(WalkStep::Position { .. }) => {}
-                    Ok(WalkStep::UndecidedSuccessor | WalkStep::Terminal { .. })
+                    Ok(
+                        WalkStep::UndecidedSuccessor
+                        | WalkStep::Terminal { .. }
+                        | WalkStep::TimeLocked,
+                    )
                     | Err(Ended::Undecided | Ended::Contract(_)) => break,
                     Err(Ended::Halt(halt)) => return Err(halt.into()),
                 }
@@ -1701,7 +1728,6 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                 .map_err(|halt| match halt {
                     SampleHalt::NotStochastic { .. }
                     | SampleHalt::NotStochasticIdleTail { .. }
-                    | SampleHalt::TimeLockedSample { .. }
                     | SampleHalt::MaxSampleSteps { .. } => WitnessReadStop::TimedNotRegenerated,
                     other => WitnessReadStop::from(other),
                 })?;

@@ -243,13 +243,13 @@ pub use timed::admission::{
     ReadFrom, RegionCause, RouteConditions, SearchItem, EN1_DIGITAL, EN5_DIGITAL, STRICT_GRID_WALK,
 };
 pub use timed::{
-    advance_timed, sample_timed, sample_timed_from, sample_timed_race, BehaviourLetters,
-    BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, GuardedSteps,
-    MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding,
-    TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw,
-    TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd,
-    TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal,
-    TimedSystem, TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
+    advance_timed, sample_timed, sample_timed_from, sample_timed_race, step_rewards,
+    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep,
+    GuardedSteps, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
+    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
+    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
 };
 pub(crate) use walk::{Applied, CandidateCount};
 

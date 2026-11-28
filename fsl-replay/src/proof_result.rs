@@ -730,11 +730,6 @@ pub enum UnavailabilityCause {
         /// The canonical timed-state key at the idle tail's first position.
         state: fsl_eval::simulation::StateKey,
     },
-    /// A timed fraction or long-run sample reached a time-lock (FR-254).
-    TimeLockedSample {
-        /// The canonical timed-state key.
-        state: fsl_eval::simulation::StateKey,
-    },
     /// FR-192: `min(α', β')` has no normal-quantile bound for the
     /// regenerative method (FSpec FR-408 Admission). Wire cause
     /// `confidence-beyond-precision`.
@@ -860,7 +855,6 @@ impl UnavailabilityCause {
             Self::NotMarkov(_) => "not-markov",
             Self::TotalAboveDrawRange { .. } => "total-above-draw-range",
             Self::NotStochastic { .. } | Self::NotStochasticIdleTail { .. } => "not-stochastic",
-            Self::TimeLockedSample { .. } => "time-locked-sample",
             Self::ConfidenceBeyondPrecision => "confidence-beyond-precision",
             Self::WeakAccessShape { .. } => "weak-access-shape",
             Self::RecoveryView { .. } => "recovery-view",
@@ -889,7 +883,6 @@ impl UnavailabilityCause {
             | Self::TotalAboveDrawRange { .. }
             | Self::NotStochastic { .. }
             | Self::NotStochasticIdleTail { .. }
-            | Self::TimeLockedSample { .. }
             | Self::ConfidenceBeyondPrecision
             | Self::WeakAccessShape { .. }
             | Self::RecoveryView { .. }
