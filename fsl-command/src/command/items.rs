@@ -1285,7 +1285,7 @@ mod tests {
     }
 
     fn admission_record(
-        code: &str,
+        code: &'static str,
         cause: &'static str,
     ) -> Box<filament_semantic_value::admission::AdmissionRecord> {
         Box::new(filament_semantic_value::admission::AdmissionRecord {
@@ -1374,10 +1374,12 @@ mod tests {
     #[trace("FR-267-AC-8")]
     #[test]
     fn a_violated_item_is_the_fr_352_violation_form_and_reads_back() {
-        let mut usage = fsl_semantics::model::observation::AdmissionUsage::default();
-        usage.document_bytes = 7;
-        usage.objects = 2;
-        usage.values = 3;
+        let usage = fsl_semantics::model::observation::AdmissionUsage {
+            document_bytes: 7,
+            objects: 2,
+            values: 3,
+            ..Default::default()
+        };
         let document = item_document(&fsl_replay::spine::ItemRunOutcome::Settled(false), &usage)
             .expect("document");
         assert_eq!(
