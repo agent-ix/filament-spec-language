@@ -770,3 +770,70 @@ fn a_contract_at_an_earlier_position_is_read_before_a_later_atom() {
     assert!(matches!(locus, ClosedLocus::Atom(_)), "{locus:?}");
     assert_eq!(position, 2);
 }
+
+/// FR-177 reads every existential partner of a universal tuple: one whose
+/// atom has no value at position 1 refutes, and a partner that holds does not
+/// witness the tuple, wherever it stands in the list. The clause reads
+/// `quotient(1 - w.l @ b)` from position 1: the partner that never leaves
+/// `l = 0` holds there, the partner that takes `step(1)` reaches `l = 1`,
+/// where the quotient has no value.
+fn partner_search(partners_first: bool) -> (usize, u64) {
+    use fsl_eval::hyper::{search_partner, PartnerSearch};
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        &forall_exists(
+            "ep",
+            "",
+            "eventually [1, 3] holds(quotient(1 - v.l @ b) >= 1)",
+        ),
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[0, 0]);
+    let holding = walk(systems[1], &[0, 0]);
+    let undefined = walk(systems[1], &[1]);
+    let partners = if partners_first {
+        vec![holding, undefined]
+    } else {
+        vec![undefined, holding]
+    };
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &seams,
+        matcher: &seams,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    match search_partner(&inputs, &[&a], &[partners.as_slice()], 100) {
+        PartnerSearch::Undefined {
+            found,
+            existentials,
+        } => {
+            assert!(
+                matches!(found.locus, ClosedLocus::Atom(_)),
+                "{:?}",
+                found.locus
+            );
+            (existentials[0], found.position)
+        }
+        other => panic!("expected an undefined partner, got {other:?}"),
+    }
+}
+
+#[trace("TC-2243", "FR-177-AC-13")]
+#[test]
+fn a_holding_partner_before_an_undefined_one_does_not_witness() {
+    assert_eq!(partner_search(true), (1, 1));
+}
+
+#[trace("TC-2243", "FR-177-AC-13")]
+#[test]
+fn a_holding_partner_after_an_undefined_one_does_not_witness() {
+    assert_eq!(partner_search(false), (0, 1));
+}

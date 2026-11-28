@@ -255,7 +255,7 @@ pub fn closed_executions(
                     // The shortest prefix with such a state is the first refuting
                     // evidence (ADR-018 UE-4), not the first the depth-first walk meets.
                     let (prefix, contract) =
-                        shortest_undefined(system, depth, skips, cancel, &execution)
+                        shortest_undefined(system, depth, limit, skips, cancel, &execution)?
                             .unwrap_or((execution, contract));
                     return Err(ClosedStop::Undefined { prefix, contract });
                 }
@@ -307,73 +307,149 @@ pub fn closed_executions(
     Ok(complete)
 }
 
-/// The shortest execution of `system` whose last state has an undefined contract
-/// conjunction and that is shorter than `found`, each level in the order of
-/// the transition and state keys; the first of its length from the first
-/// initial state that has one. `None` when `found` is the shortest, or when a
-/// state cannot be expanded or encoded (the depth-first walk reports that).
+/// The execution of `system` with the earliest visible position whose last
+/// state has an undefined contract conjunction, when that position is earlier
+/// than `found`'s (ADR-018 UE-4: the first refuting evidence, shortest prefix
+/// first). The search is over states, each expanded once by its state key,
+/// with a parent pointer to the path that reached it, level by visible
+/// position: a skipped step stays in its level (ADR-023 PA-2), a level is read
+/// in the order its states were reached, and a state's successors come in the
+/// order of their transition and state keys. A state whose contract
+/// conjunction is refused is not entered. `Ok(None)` when `found` is already
+/// the earliest.
+///
+/// # Errors
+///
+/// [`ClosedStop::Executions`] when the search expands more than `limit`
+/// states (each is charged as the walk charges an execution), and the walk's
+/// own stops for a state it cannot expand or encode or a cancelled run.
 fn shortest_undefined(
     system: &ModelSystem<'_>,
     depth: usize,
+    limit: usize,
     skips: &BTreeSet<String>,
     cancel: &Cancel,
     found: &ClosedExecution,
-) -> Option<(ClosedExecution, crate::simulation::model::UndefinedContract)> {
-    let mut level: Vec<ClosedExecution> = system
-        .initial()
-        .into_iter()
-        .enumerate()
-        .map(|(initial, state)| ClosedExecution {
+) -> Result<Option<(ClosedExecution, crate::simulation::model::UndefinedContract)>, ClosedStop> {
+    /// A state reached, and the step that reached it.
+    struct Reached {
+        parent: Option<usize>,
+        step: Option<ClosedStep>,
+        state: ModelSimState,
+        initial: usize,
+        key: Vec<u8>,
+    }
+    let ceiling = found.visible_steps().min(depth.saturating_add(1));
+    let mut nodes: Vec<Reached> = Vec::new();
+    let mut expanded_keys = BTreeSet::new();
+    // The nodes of each visible level, in the order they were reached.
+    let mut levels: Vec<Vec<usize>> = vec![Vec::new()];
+    for (initial, state) in system.initial().into_iter().enumerate() {
+        let (key, _) = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .map_err(ClosedStop::Encoding)?;
+        levels.first_mut().map(|level| level.push(nodes.len()));
+        nodes.push(Reached {
+            parent: None,
+            step: None,
+            state,
             initial,
-            states: vec![state],
-            steps: Vec::new(),
-        })
-        .collect();
-    while !level.is_empty() && level.first()?.steps.len() < found.steps.len() {
-        let mut next_level = Vec::new();
-        for execution in level {
+            key,
+        });
+    }
+    let mut expanded = 0_usize;
+    for level in 0..ceiling {
+        let mut cursor = 0_usize;
+        while let Some(&index) = levels.get(level).and_then(|reached| reached.get(cursor)) {
+            cursor += 1;
             if cancel.poll() {
-                return None;
+                return Err(ClosedStop::Cancelled);
             }
-            if execution.visible_steps() >= depth {
+            let Some(node) = nodes.get(index) else {
+                return Ok(None);
+            };
+            if !expanded_keys.insert(node.key.clone()) {
                 continue;
             }
-            let expansion = system.successors(execution.states.last()?).ok()?;
+            expanded += 1;
+            if expanded > limit {
+                return Err(ClosedStop::Executions { limit });
+            }
+            let expansion = system
+                .successors(&node.state)
+                .map_err(ClosedStop::Expansion)?;
             if let Some(contract) = expansion
                 .findings
                 .iter()
                 .find_map(crate::simulation::model::ModelFinding::undefined_contract)
             {
-                return Some((execution, contract));
+                let mut chain = vec![index];
+                while let Some(parent) = chain
+                    .last()
+                    .and_then(|last| nodes.get(*last))
+                    .and_then(|node| node.parent)
+                {
+                    chain.push(parent);
+                }
+                chain.reverse();
+                let mut states = Vec::with_capacity(chain.len());
+                let mut steps = Vec::with_capacity(chain.len());
+                for link in &chain {
+                    if let Some(node) = nodes.get(*link) {
+                        states.push(node.state.clone());
+                        steps.extend(node.step.clone());
+                    }
+                }
+                let reached = ClosedExecution {
+                    initial: node.initial,
+                    states,
+                    steps,
+                };
+                return Ok(Some((reached, contract)));
             }
+            if expansion
+                .findings
+                .iter()
+                .any(crate::simulation::model::ModelFinding::is_refused_contract)
+            {
+                continue;
+            }
+            let initial = node.initial;
             let mut keyed = Vec::with_capacity(expansion.successors.len());
             for (transition, next) in expansion.successors {
                 let (key, post_state) = system
                     .state_key(&next, fsl_foundation::IdentityLimits::default())
-                    .ok()?;
-                let order = system.transition_key(&transition).ok()?;
-                keyed.push(((order, key), transition, next, post_state));
+                    .map_err(ClosedStop::Encoding)?;
+                let order = system
+                    .transition_key(&transition)
+                    .map_err(ClosedStop::Encoding)?;
+                keyed.push(((order, key.clone()), key, transition, next, post_state));
             }
             keyed.sort_by(|left, right| left.0.cmp(&right.0));
-            for (_, transition, next, post_state) in keyed {
-                let mut states = execution.states.clone();
-                states.push(next);
-                let mut steps = execution.steps.clone();
-                steps.push(ClosedStep {
-                    skipped: skips.contains(transition.operation()),
-                    transition,
-                    post_state,
-                });
-                next_level.push(ClosedExecution {
-                    initial: execution.initial,
-                    states,
-                    steps,
+            for (_, key, transition, next, post_state) in keyed {
+                let skipped = skips.contains(transition.operation());
+                let into = if skipped { level } else { level + 1 };
+                while levels.len() <= into {
+                    levels.push(Vec::new());
+                }
+                levels
+                    .get_mut(into)
+                    .map(|reached| reached.push(nodes.len()));
+                nodes.push(Reached {
+                    parent: Some(index),
+                    step: Some(ClosedStep {
+                        skipped,
+                        transition,
+                        post_state,
+                    }),
+                    state: next,
+                    initial,
+                    key,
                 });
             }
         }
-        level = next_level;
     }
-    None
+    Ok(None)
 }
 
 /// What reading a tuple of closed executions settles (FR-173 "Event-position
@@ -731,8 +807,11 @@ pub enum PartnerSearch {
 /// Search the product of `existentials`, one list of closed executions per
 /// existential variable in quantifier order, for a partner of `universal`,
 /// one execution per universal variable. At most `limit` existential tuples.
-/// When partners have an expression with no value, the one whose position is
-/// earliest is reported, the first in list order on a tie (ADR-018 UE-4).
+/// Every partner is read: one with an expression with no value refutes, and the
+/// one whose position is earliest is reported, the first in list order on a
+/// tie (ADR-018 UE-4, ADR-023 HV-8, FR-177), whatever holding partner comes
+/// before or after it. Only when none is undefined does a holding partner
+/// witness.
 pub fn search_partner(
     inputs: &ClosedInputs<'_>,
     universal: &[&ClosedExecution],
@@ -750,8 +829,9 @@ pub fn search_partner(
         return PartnerSearch::TooMany { limit };
     }
     let mut position = 0_u64;
+    let mut witnessed = false;
     // The earliest undefined partner so far; a shorter one replaces it, a tie
-    // keeps the first in list order (ADR-018 UE-4: shortest prefix first).
+    // keeps the first in list order.
     let mut earliest: Option<(Box<ClosedUndefined>, Vec<usize>)> = None;
     for picked in Tuples::over(lens) {
         if inputs.cancel.poll() {
@@ -765,25 +845,26 @@ pub fn search_partner(
             }
         }
         let verdict = judge_closed_tuple(inputs, &tuple);
-        if let Some((best, _)) = &earliest {
-            // An undefined partner refutes whatever the rest holds; only a
-            // shorter one changes which is reported.
-            if let ClosedVerdict::Undefined(found) = verdict {
-                if found.position < best.position {
-                    earliest = Some((found, picked));
-                }
-            }
-            continue;
-        }
         match verdict {
-            ClosedVerdict::Holds => return PartnerSearch::Witnessed,
+            ClosedVerdict::Holds => witnessed = true,
             ClosedVerdict::UniversalUnmatched => return PartnerSearch::UniversalUnmatched,
             ClosedVerdict::ExistentialUnmatched => {}
             ClosedVerdict::Violated { at } => position = position.max(at),
-            ClosedVerdict::Undefined(found) => earliest = Some((found, picked)),
+            ClosedVerdict::Undefined(found) => {
+                if earliest
+                    .as_ref()
+                    .map_or(true, |(best, _)| found.position < best.position)
+                {
+                    earliest = Some((found, picked));
+                }
+            }
             stopped @ (ClosedVerdict::MatchUndetermined
             | ClosedVerdict::Incomplete(_)
-            | ClosedVerdict::Fault(_)) => return PartnerSearch::Stopped(stopped),
+            | ClosedVerdict::Fault(_)) => {
+                if earliest.is_none() {
+                    return PartnerSearch::Stopped(stopped);
+                }
+            }
         }
     }
     match earliest {
@@ -791,6 +872,7 @@ pub fn search_partner(
             found,
             existentials,
         },
+        None if witnessed => PartnerSearch::Witnessed,
         None => PartnerSearch::Exhausted { position },
     }
 }
