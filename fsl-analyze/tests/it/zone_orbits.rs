@@ -217,6 +217,27 @@ fn an_orbit_is_bound_to_its_first_member_in_instance_order() {
     assert_eq!(receivers(&counterexample), ["t2"]);
 }
 
+/// FR-239-AC-12: `max_symbolic_states` is one budget for the run. The orbit
+/// of `t1` stores 6 or 7 of the 7 states (3 in the search, 3 or 4 in its
+/// admitted-behaviour check) and ends undecided; the orbit of `t3` is denied
+/// its second state, which ends the run, so the item is the first not-proved
+/// orbit's `Undecided`, not the `Violated` `t3` gives under a budget of its
+/// own.
+#[trace("TC-694", "FR-239-AC-12", "FSpec-TC-290", "FSpec-FR-361-AC-10")]
+#[test]
+fn the_symbolic_state_budget_is_shared_by_the_orbits() {
+    let world = orbits(Shape::Shallow, "not t.late", &["t1", "t2", "t3"], &["t3"]);
+    let limits = ZoneCheckLimits {
+        max_symbolic_states: 7,
+        ..ZoneCheckLimits::default()
+    };
+    let outcome = decide(&world, limits, &symmetry(&["t1", "t2"]));
+    assert!(
+        undecided_clause(&outcome).contains("\"Probe\""),
+        "{outcome:?}"
+    );
+}
+
 /// FR-239-AC-13: the search meets the undecided `aprobe` successor first in
 /// breadth-first order, leaves it unexpanded and goes on; the `lag`
 /// successor expands to the quiescent `finish` successor, where `t3.late`

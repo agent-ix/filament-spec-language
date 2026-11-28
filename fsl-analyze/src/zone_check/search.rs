@@ -872,6 +872,7 @@ pub fn check_timed_model<S: Clone>(
     };
     let mut fold = InstanceFold::new(count);
     let mut total = ZoneStats::default();
+    let mut spent = Spent::default();
     for plan in plans {
         let (judged, window, live) = judge_plan(&request, plan.instances)?;
         let automaton_constants = live
@@ -888,12 +889,14 @@ pub fn check_timed_model<S: Clone>(
         run.live = live;
         run.group = plan.group.clone();
         run.reduced = symmetric;
+        run.carry(spent);
         let liveness_product = matches!(&run.judged, Judged::Liveness(_));
         let searched = match run.search() {
             Ok(searched) => searched,
             Err(Halt::Outcome(searched)) => *searched,
             Err(Halt::Refusal(refusal)) => return Err(refusal),
         };
+        spent = run.spent();
         let verdict = match searched {
             Searched::Graph { .. } => {
                 return Err(ZoneCheckRefusal::Fault("unexpected-state-graph"));
@@ -950,6 +953,16 @@ pub fn check_timed_model<S: Clone>(
         .finish()
         .map_err(|_| ZoneCheckRefusal::Fault("instance-fold"))?;
     settle_plans(combined, total, request.obligation, symmetric)
+}
+
+/// What an item's searches have charged against `max_symbolic_states`,
+/// `max_symbolic_transitions` and `max_zone_bytes`, which are one budget for
+/// the whole run (FR-239 "Instances and orbits").
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Spent {
+    states: u64,
+    edges: u64,
+    bytes: u64,
 }
 
 /// One plan's end, before the item's outcome is settled over every plan.
@@ -1303,6 +1316,9 @@ pub(super) struct Run<'r, 's, 'a> {
     /// The bytes of every zone stored, by the search and by its divergence
     /// checks.
     zone_bytes: u64,
+    /// What the item's earlier searches charged against the budgets this one
+    /// shares with them (FR-239 "Instances and orbits").
+    carried: Spent,
     /// The symbolic states and transitions the divergence checks stored,
     /// charged with the search's own against the same budgets.
     escape_states: u64,
@@ -1373,6 +1389,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             out: Vec::new(),
             passed: BTreeMap::new(),
             zone_bytes: 0,
+            carried: Spent::default(),
             escape_states: 0,
             escape_edges: 0,
             steps: BTreeMap::new(),
@@ -1963,7 +1980,9 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     /// Charge one stored symbolic state of `bytes` zone bytes against
     /// `max_symbolic_states` and `max_zone_bytes`.
     pub(super) fn charge_vertex(&mut self, bytes: u64) -> Result<(), Halt> {
-        let states = widen(self.nodes.len()).saturating_add(self.escape_states);
+        let states = widen(self.nodes.len())
+            .saturating_add(self.escape_states)
+            .saturating_add(self.carried.states);
         if states >= self.limits.max_symbolic_states {
             return Err(
                 self.stop(ZoneStop::LimitReached(ZoneCheckLimit::MaxSymbolicStates(
@@ -1976,7 +1995,8 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
 
     /// Charge `bytes` of stored zones against `max_zone_bytes`.
     pub(super) fn charge_bytes(&mut self, bytes: u64) -> Result<(), Halt> {
-        if self.zone_bytes.saturating_add(bytes) > self.limits.max_zone_bytes {
+        let held = self.zone_bytes.saturating_add(self.carried.bytes);
+        if held.saturating_add(bytes) > self.limits.max_zone_bytes {
             return Err(
                 self.stop(ZoneStop::LimitReached(ZoneCheckLimit::MaxZoneBytes(
                     self.limits.max_zone_bytes,
@@ -1990,7 +2010,9 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     /// Charge one symbolic transition against `max_symbolic_transitions`,
     /// the search's and every divergence check's together.
     pub(super) fn charge_edge(&mut self) -> Result<(), Halt> {
-        let edges = widen(self.edges.len()).saturating_add(self.escape_edges);
+        let edges = widen(self.edges.len())
+            .saturating_add(self.escape_edges)
+            .saturating_add(self.carried.edges);
         if edges >= self.limits.max_symbolic_transitions {
             return Err(self.stop(ZoneStop::LimitReached(
                 ZoneCheckLimit::MaxSymbolicTransitions(self.limits.max_symbolic_transitions),
@@ -2002,8 +2024,30 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     /// The symbolic transitions `max_symbolic_transitions` leaves, which
     /// FR-241's loop elimination may keep as constraints at once.
     pub(super) fn transitions_left(&self) -> u64 {
-        let used = widen(self.edges.len()).saturating_add(self.escape_edges);
+        let used = widen(self.edges.len())
+            .saturating_add(self.escape_edges)
+            .saturating_add(self.carried.edges);
         self.limits.max_symbolic_transitions.saturating_sub(used)
+    }
+
+    /// Charge against the shared budgets what the item's earlier searches
+    /// charged.
+    pub(super) fn carry(&mut self, spent: Spent) {
+        self.carried = spent;
+    }
+
+    /// What the item has charged against the shared budgets, this search's
+    /// and the earlier ones' together.
+    pub(super) fn spent(&self) -> Spent {
+        Spent {
+            states: widen(self.nodes.len())
+                .saturating_add(self.escape_states)
+                .saturating_add(self.carried.states),
+            edges: widen(self.edges.len())
+                .saturating_add(self.escape_edges)
+                .saturating_add(self.carried.edges),
+            bytes: self.zone_bytes.saturating_add(self.carried.bytes),
+        }
     }
 
     /// Count a state a divergence check stored, once charged.
