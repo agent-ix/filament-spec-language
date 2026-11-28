@@ -202,6 +202,45 @@ edges, automaton states and stored zone bytes.
 - An expansion that stops on an undecided contract conjunction SHALL return
   `Undecided(UndecidedSuccessor)`; a subject with no initial state,
   `Undecided(NoInitialState)`.
+- **Undecided nodes in one search.** Within one search, a node whose
+  expansion or reading ends `Undecided(UndecidedSuccessor)` or
+  `Undecided(InsufficientData)` SHALL stay unexpanded, and the search SHALL
+  keep the first such cause in breadth-first order and go on. A violation a
+  later node gives SHALL end the search with `Violated`. When no violation
+  is found, the search SHALL end `Undecided` with the kept first cause and
+  never `Holds`. `Undecided(LassoNotConcretized)`,
+  `Undecided(NoAdmittedBehaviour)` and `Undecided(DeadlockAfterDelay)` SHALL
+  end the search with their own cause as they do without a node of that kind.
+  This rule applies to a clause and to the deadlock-freedom item, whose
+  search judges each node alone; the time-lock-freedom item and the
+  liveness product read the whole graph and end at such a node.
+
+### Instances and orbits
+
+- A clause's instances SHALL be those of FR-125 in canonical instance order.
+  Without a selected symmetry, one search SHALL hold every instance, each
+  with its own monitor state, and the rule of "Undecided nodes in one
+  search" is its combination of instances. With a selected symmetry
+  (FSpec FR-430, FR-151 "Instances"), EN-6 SHALL run one search for each
+  orbit of the `over` binding in the order of its first member in the
+  instance order, bound to that first member and run under its stabiliser,
+  and SHALL combine the searches as FR-126 "TP-4 items" and FSpec FR-361
+  "Instancing" state for bindings: a refuted orbit refutes the item and ends
+  the combination; an orbit that ends `Undecided(..)` or on
+  `max_automaton_states` does not end it, and the next orbit is decided; a
+  run-level end ends it, and after an earlier orbit that is not proved gives
+  that orbit's outcome (otherwise its own); otherwise the first orbit that is
+  not proved gives the outcome, and the item holds reduced only when every
+  orbit is proved.
+- The run-level ends SHALL be `max_symbolic_states`,
+  `max_symbolic_transitions`, `max_zone_bytes`, `max_clocks` and cancellation.
+  `max_symbolic_states`, `max_symbolic_transitions` and `max_zone_bytes` SHALL
+  each be one budget for the item's whole run, charged by every orbit's
+  search and its divergence checks together. `max_clocks` is a property of
+  the subject, the same for every orbit. `max_automaton_states` SHALL count
+  the automaton states of one orbit's search and end only that orbit. A
+  cancellation SHALL give `Stopped(Cancelled, …)` whatever an earlier orbit
+  gave.
 - An unbounded population root SHALL refuse `RequiresBound` before any
   state is explored, as FR-126 states.
 - **Vacuity.** Before returning `Holds`, the engine SHALL check that some
@@ -231,6 +270,9 @@ edges, automaton states and stored zone bytes.
 | FR-239-AC-8 | Over a task set of one task with period 2, worst-case execution time 1 and deadline 2, the task-product symbolic pass with `max_symbolic_states` 1 stops with `LimitReached{limit: max_symbolic_states, value: 1, setting: zone_check.max_symbolic_states}` having stored at most one symbolic state. | Test |
 | FR-239-AC-9 | An `analyze` request over a timed item accepts `--limit zone_check.max_symbolic_states=2` and `--limit zone_check.max_check_work=2`, and each bounds that item; either setting given twice is refused before any item runs. | Test |
 | FR-239-AC-10 | On the closed timed subject with one `Call` initially at `phase = 0`, operations `block` (`phase = 0` to `phase = 2`) and `go` (`phase = 0` to `phase = 1`), clock `x`, and invariant `Locked when phase = 2 { x <= 0 ms }`, the claim `always holds(c.phase = 1)` with `options.method` absent routes to EN-6 and returns `refuted` at `trace_position: 0`. Its finite bad-prefix counterexample has empty `prefix` and `loop`, and its replay is reproduced; it carries no terminal-stutter marker. | Test |
+| FR-239-AC-11 | A refuted orbit is reported past an earlier undecided orbit. Over the timed subject of `Call` objects `t1`, `t2`, `t3` (population `symmetric`, class `[[t1, t2]]`; only `t3` initially `inflight`; every `phase` 0; no time invariant) with operation `probe` (guard `self.inflight` and a pure function that is undefined at `phase = 1`; post `phase = 1`) declared before `lag` (guard `self.inflight`, post `not self.inflight and self.late`), the claim `always holds(not t.late)` over `t` returns `Violated` bound to `t3` with the one-step prefix `lag`: the orbit of `t1` expands the initial state to the `probe` successor, whose expansion is undecided, and ends `Undecided(UndecidedSuccessor)`; the orbit of `t3` reaches the quiescent `lag` successor, where `t3.late` holds. With `t1` the inflight object and the class `[[t2, t3]]` it returns `Violated` bound to `t1`; with `t2` and `t3` both inflight and the class declared `[t3, t2]` it returns `Violated` bound to `t2`, the orbit's first member in instance order. | Test (TC-694) |
+| FR-239-AC-12 | The symbolic-state budget is one budget for the run. On AC-11's subject with `max_symbolic_states` 7 the orbit of `t1` stores between 6 and 7 symbolic states (3 in the search and 3 or 4 in its admitted-behaviour check) and ends `Undecided(UndecidedSuccessor)`; the orbit of `t3` is then denied its second state by the budget, the run ends, and the item returns the first not-proved orbit's `Undecided(UndecidedSuccessor)`, not the `Violated` that `t3` would give under a budget of its own. | Test (TC-694) |
+| FR-239-AC-13 | An undecided node does not end the search while a violation can follow. Over AC-11's subject with every instance in one search (no symmetry) and `lag` giving `not self.inflight and self.phase = 2` followed by `finish` (guard `self.phase = 2`, post `self.phase = 3 and self.late`), `always holds(not t.late)` returns `Violated` with the prefix `lag`, `finish` bound to `t3`, though the search meets the undecided expansion of the `probe` successor first in breadth-first order. With the claim `always holds(not t.retried)`, which no state falsifies, it returns `Undecided(UndecidedSuccessor)` after storing the four symbolic states `R`, `probe`-successor, `lag`-successor and `finish`-successor; with a second operation `peek` whose guard is undefined at the `lag` successor it names the guard of `probe`, the first cause in breadth-first order. | Test (TC-694) |
 
 ## Dependencies
 
