@@ -77,6 +77,7 @@ fn fixture_of(source: &str, document: &serde_json::Value, fields: serde_json::Va
     let domain = serde_json::to_vec(document).expect("domain fixture serializes");
     let packages = package_input([domain.as_slice()]).expect("domain package admitted");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("qsl-2220", "unit.native"),
         "unit.native",
         source.as_bytes(),

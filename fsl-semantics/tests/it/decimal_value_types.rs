@@ -51,6 +51,7 @@ fn check(document: &[u8], unit: &str) -> Checked {
 fn check_result(document: &[u8], unit: &str) -> Result<Checked, Vec<SemanticCheckRefusal>> {
     let packages = package_input([document]).expect("byte admission");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "decimal-value-types"),
         "decimal.native",
         unit.as_bytes(),
@@ -164,6 +165,7 @@ fn intake_refusals(document: &Value) -> Vec<Refused> {
     let packages = package_input([bytes.as_slice()]).expect("byte admission");
     let unit = unit_text(PACKAGE, "Config", "");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "decimal-value-types"),
         "decimal.native",
         unit.as_bytes(),
@@ -360,6 +362,7 @@ fn target_bound_cash_without_policy_is_operator_ineligible() {
         "invariant CashEquality using v on Config::Meter at current { self.cash = self.cash }\n";
     let unit = unit_text(PACKAGE, "Config", body);
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "decimal-cash"),
         "cash.native",
         unit.as_bytes(),
@@ -845,6 +848,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         "pre B using v on Config::Meter::adjust { by >= 0.00 }\n",
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "decimal-value-types"),
         "decimal.native",
         invalid_source.as_bytes(),

@@ -392,6 +392,12 @@ impl PopulationProvenance {
 /// here, in the same environment already threaded through
 /// `CheckedPackage::call`/`evaluate` and `Machine`, before constructing the
 /// `Value::Population(population_id)` argument that names it.
+///
+/// An admitted-value contract. The type is public and a host can build one by
+/// hand, and nothing that reads it repeats the unit bounds of FSpec FR-154
+/// "Unit bounds". Whoever builds one from external input (a package read, the
+/// command line, a wire document) must admit that input first, which is where
+/// the bounds are checked; a hand-built value is taken as already admitted.
 #[derive(Clone, Debug, Default)]
 pub struct ObjectEnvironment {
     /// Immutable admitted object data, shared by cloned observations.

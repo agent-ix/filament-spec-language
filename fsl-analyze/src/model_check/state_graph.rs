@@ -33,7 +33,9 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{check_model_bounds, ModelSystem, PredicateReading};
+use fsl_eval::simulation::model::{
+    check_model_bounds, ModelSystem, NoClaimInstances, PredicateReading,
+};
 use fsl_eval::simulation::{
     ExpansionLimit, ExpansionStop, NotSimulated, Permutation, StateKey, SymmetryGroup,
 };
@@ -289,6 +291,7 @@ struct InstanceView<'a> {
 
 /// The instances of `items`, item by item, derived from `system`'s
 /// universes (FR-125 Instancing).
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
 fn instances<'a>(
     items: &[StateGraphItem<'a>],
     system: &ModelSystem<'_>,
@@ -304,17 +307,26 @@ fn instances<'a>(
             let mut bindings: Vec<(Option<ObjectReference>, Option<ModelInstance>)> =
                 match entry.claim.over() {
                     None => vec![(None, None)],
-                    Some(over) => system
-                        .instances(&ValueType::Reference(over.object.clone()))
-                        .map_err(bounds_refusal)?
-                        .iter()
-                        .map(|instance| {
-                            system
-                                .written_reference(over.object.clone(), instance)
-                                .map(|reference| (Some(reference), Some(instance.clone())))
-                                .map_err(|_| fault("state-graph-instance-references"))
-                        })
-                        .collect::<Result<_, _>>()?,
+                    Some(over) => {
+                        match system.claim_instances(&ValueType::Reference(over.object.clone())) {
+                            Ok(instances) => instances
+                                .as_slice()
+                                .iter()
+                                .map(|instance| {
+                                    system
+                                        .written_reference(over.object.clone(), instance)
+                                        .map(|reference| (Some(reference), Some(instance.clone())))
+                                        .map_err(|_| fault("state-graph-instance-references"))
+                                })
+                                .collect::<Result<_, _>>()?,
+                            Err(NoClaimInstances::NotSimulated(refusal)) => {
+                                return Err(super::check::not_simulated(refusal));
+                            }
+                            Err(
+                                NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance,
+                            ) => Vec::new(),
+                        }
+                    }
                 };
             if let Some(selected) = &entry.binding {
                 bindings.retain(|(_, binding)| binding.as_ref() == Some(selected));
@@ -404,16 +416,6 @@ fn common_stabiliser(views: &[Vec<InstanceView<'_>>], declared: &SymmetryGroup) 
                 (class.keys.len() >= 2).then_some(class)
             })
             .collect(),
-    }
-}
-
-/// The refusal of an unbounded or unclassifiable subject.
-fn bounds_refusal(refusal: NotSimulated) -> ModelCheckRefusal {
-    match refusal {
-        NotSimulated::RequiresBound(roots) => ModelCheckRefusal::RequiresBound(roots),
-        NotSimulated::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
-        NotSimulated::Extent(failure) => ModelCheckRefusal::Extent(Box::new(failure)),
-        _ => fault("bounds-precheck-returns-only-requires-bound-or-extent"),
     }
 }
 
@@ -550,7 +552,7 @@ pub fn check_state_graph(
     let no_initial = request.subject.simulation.initial.is_empty();
     let system = ModelSystem::new(request.subject.simulation)
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
-    check_model_bounds(&system, BOUND_POSITIONS).map_err(bounds_refusal)?;
+    check_model_bounds(&system, BOUND_POSITIONS).map_err(super::check::not_simulated)?;
     // FR-158 "Resolution": before any expansion.
     if let Some(name) = &request.reductions.constraint {
         if !system.has_constraint(name) {

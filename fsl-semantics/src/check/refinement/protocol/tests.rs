@@ -212,6 +212,7 @@ fn check_over(
     internals: Option<serde_json::Value>,
 ) -> Result<CheckedGraph, Vec<Refused>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -2446,6 +2447,7 @@ fn effect_commit_and_cend_classes_are_catalogued() {
 /// constructs, so a protocol's clause key is as production resolves it.
 fn check_written(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

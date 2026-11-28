@@ -103,6 +103,7 @@ fn check_under(
          satisfies {{ {goal} }};\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "plan-value"),
         "unit.native",
         text.as_bytes(),

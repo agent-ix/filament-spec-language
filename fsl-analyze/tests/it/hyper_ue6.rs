@@ -966,14 +966,416 @@ fn partner_search_with_incomplete(incomplete_first: bool) -> (usize, u64) {
     }
 }
 
-#[trace("TC-2243", "FR-177-AC-13")]
+#[trace("TC-2243", "FR-177-AC-14")]
 #[test]
 fn an_incomplete_partner_before_an_undefined_one_does_not_hide_it() {
     assert_eq!(partner_search_with_incomplete(true), (1, 1));
 }
 
-#[trace("TC-2243", "FR-177-AC-13")]
+#[trace("TC-2243", "FR-177-AC-14")]
 #[test]
 fn an_incomplete_partner_after_an_undefined_one_does_not_hide_it() {
     assert_eq!(partner_search_with_incomplete(false), (0, 1));
+}
+
+/// A `match` that refuses `μ_E` at a joint step whose existential input is 1
+/// unless the previous step read was input 0: a partner `[1]` is refused at
+/// joint 1, a partner `[0, 1]` is read through to joint 2.
+struct RefusedAtOne<'w> {
+    seams: crate::hyper_world::Seams<'w>,
+    last: std::cell::Cell<Option<i64>>,
+}
+
+impl StepMatch for RefusedAtOne<'_> {
+    fn universal(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        self.seams.universal(instance, steps, meter)
+    }
+
+    fn existential(
+        &self,
+        _instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        let input = steps.get(1).and_then(crate::hyper_world::input_of);
+        let previous = self.last.replace(input);
+        if input == Some(1) && previous != Some(0) {
+            filament_exact::Meter::new(crate::counter::ZERO)
+                .charge(filament_exact::Charge::new(
+                    filament_exact::ChargePoint::GraphExpand,
+                ))
+                .map_err(|incomplete| fsl_eval::hyper::MatchIncomplete {
+                    conjunct: 0,
+                    incomplete,
+                })?;
+        }
+        Ok(MatchReading::Holds)
+    }
+}
+
+/// ADR-023 HV-8 HP-3 and FR-177 "Ranking findings": the finding at the least
+/// joint position is the tuple's. Partner `[1]` is refused at joint 1 and
+/// partner `[0, 1]` has an atom with no value at position 2 (`l = 1` there),
+/// so by hand the refused stop ranks first and the tuple is `Undecided`,
+/// whichever partner is listed first.
+fn partner_search_refused_before_undefined(refused_first: bool) -> String {
+    use fsl_eval::hyper::search_partner;
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        "hyper Part using ep over behaviours (v: V::Vault) \
+         forall trace a of V exists trace b of V \
+         match { a.step.Vault::step.i = b.step.Vault::step.i } \
+         { eventually [2, 3] holds(quotient(1 - v.l @ b) >= 1) }",
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let refused = walk(systems[1], &[1]);
+    let undefined = walk(systems[1], &[0, 1]);
+    let partners = if refused_first {
+        vec![refused, undefined]
+    } else {
+        vec![undefined, refused]
+    };
+    let matcher = RefusedAtOne {
+        seams: world.seams(),
+        last: std::cell::Cell::new(None),
+    };
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &seams,
+        matcher: &matcher,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    format!(
+        "{:?}",
+        search_partner(&inputs, &[&a], &[partners.as_slice()], 100)
+    )
+}
+
+#[trace("TC-2243", "FR-177-AC-14")]
+#[test]
+fn a_partner_refused_at_joint_1_ranks_before_an_undefined_one_at_joint_2() {
+    let settled = partner_search_refused_before_undefined(true);
+    assert!(
+        settled.starts_with("Stopped(MatchUndetermined") && settled.contains("position: 1"),
+        "{settled}"
+    );
+}
+
+#[trace("TC-2243", "FR-177-AC-14")]
+#[test]
+fn an_undefined_partner_at_joint_2_listed_first_does_not_outrank_a_refusal_at_joint_1() {
+    let settled = partner_search_refused_before_undefined(false);
+    assert!(
+        settled.starts_with("Stopped(MatchUndetermined") && settled.contains("position: 1"),
+        "{settled}"
+    );
+}
+
+/// FR-177 "Ranking findings": a refused `match` at joint 1 does not hide a
+/// body atom with no value at position 0 (`l = 0` at the initial state, so
+/// `1 div l` has no value). By hand the atom at 0 is the least finding.
+#[trace("TC-2243", "FR-177-AC-14")]
+#[test]
+fn a_refused_match_does_not_hide_a_body_atom_undefined_at_an_earlier_position() {
+    use fsl_eval::hyper::search_partner;
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        &forall_exists(
+            "ep",
+            "match { a.step.Vault::step.i = b.step.Vault::step.i }",
+            "eventually [0, 3] holds(quotient(v.l @ b) >= 0)",
+        ),
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let partners = vec![walk(systems[1], &[0])];
+    let matcher = IncompleteOnZero(world.seams());
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &seams,
+        matcher: &matcher,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    let settled = format!(
+        "{:?}",
+        search_partner(&inputs, &[&a], &[partners.as_slice()], 100)
+    );
+    assert!(
+        settled.starts_with("Undefined") && settled.contains("position: 0"),
+        "{settled}"
+    );
+}
+
+/// `μ_E` refused at input 1 whatever the previous step: partner `[0, 1]`
+/// stops at joint 2, partner `[1]` at joint 1.
+struct RefusedAtEveryOne<'w>(crate::hyper_world::Seams<'w>);
+
+impl StepMatch for RefusedAtEveryOne<'_> {
+    fn universal(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        self.0.universal(instance, steps, meter)
+    }
+
+    fn existential(
+        &self,
+        _instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        if steps.get(1).and_then(crate::hyper_world::input_of) == Some(1) {
+            filament_exact::Meter::new(crate::counter::ZERO)
+                .charge(filament_exact::Charge::new(
+                    filament_exact::ChargePoint::GraphExpand,
+                ))
+                .map_err(|incomplete| fsl_eval::hyper::MatchIncomplete {
+                    conjunct: 0,
+                    incomplete,
+                })?;
+        }
+        Ok(MatchReading::Holds)
+    }
+}
+
+/// With two stopped partners the one that stopped at the least joint position
+/// settles, whichever is listed first (a keep-first search settles joint 2
+/// when `[0, 1]` is listed first).
+fn two_stopped_partners(late_first: bool) -> String {
+    use fsl_eval::hyper::search_partner;
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        &forall_exists(
+            "ep",
+            "match { a.step.Vault::step.i = b.step.Vault::step.i }",
+            "holds(v.l @ b >= 0)",
+        ),
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let late = walk(systems[1], &[0, 1]);
+    let early = walk(systems[1], &[1]);
+    let partners = if late_first {
+        vec![late, early]
+    } else {
+        vec![early, late]
+    };
+    let matcher = RefusedAtEveryOne(world.seams());
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &seams,
+        matcher: &matcher,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    format!(
+        "{:?}",
+        search_partner(&inputs, &[&a], &[partners.as_slice()], 100)
+    )
+}
+
+#[trace("TC-2243", "FR-177-AC-14")]
+#[test]
+fn of_two_stopped_partners_the_earlier_stop_settles_whichever_is_listed_first() {
+    for late_first in [true, false] {
+        let settled = two_stopped_partners(late_first);
+        assert!(
+            settled.starts_with("Stopped(MatchUndetermined") && settled.contains("position: 1"),
+            "{late_first}: {settled}"
+        );
+    }
+}
+
+/// The body's `holds` atom runs out of meter on every state of the wrapped
+/// execution (the stand-in for a body whose evaluation stops where the
+/// evaluator reports no position).
+struct IncompleteOn<'w> {
+    seams: crate::hyper_world::Seams<'w>,
+    states: &'w [fsl_eval::simulation::model::ModelSimState],
+}
+
+impl fsl_eval::hyper::HyperLetters for IncompleteOn<'_> {
+    fn atom(
+        &self,
+        atom: fsl_semantics::check::FormulaNodeId,
+        instance: &[ParameterBinding],
+        states: &[&fsl_eval::simulation::model::ModelSimState],
+        meter: &mut filament_exact::Meter,
+    ) -> Result<fsl_eval::temporal::AtomReading, fsl_eval::model_subject::AtomStop> {
+        if states
+            .get(1)
+            .is_some_and(|state| self.states.iter().any(|own| std::ptr::eq(own, *state)))
+        {
+            filament_exact::Meter::new(crate::counter::ZERO)
+                .charge(filament_exact::Charge::new(
+                    filament_exact::ChargePoint::GraphExpand,
+                ))
+                .map_err(fsl_eval::model_subject::AtomStop::Incomplete)?;
+        }
+        self.seams.atom(atom, instance, states, meter)
+    }
+}
+
+/// FR-177 "Ranking findings": a body stop at no reported position ranks at 0,
+/// so it leaves the tuple `Undecided` against an undefined partner at
+/// position 2, whichever is listed first, and is never a refutation.
+fn body_stop_before_later_undefined(stopped_first: bool) -> String {
+    use fsl_eval::hyper::search_partner;
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        &forall_exists(
+            "ep",
+            "",
+            "eventually [2, 3] holds(quotient(1 - v.l @ b) >= 1)",
+        ),
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let stopped = walk(systems[1], &[0, 0, 0]);
+    let undefined = walk(systems[1], &[0, 1]);
+    let partners = if stopped_first {
+        vec![stopped, undefined]
+    } else {
+        vec![undefined, stopped]
+    };
+    let index = if stopped_first { 0 } else { 1 };
+    let letters = IncompleteOn {
+        seams: world.seams(),
+        states: &partners[index].states,
+    };
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &letters,
+        matcher: &seams,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    format!(
+        "{:?}",
+        search_partner(&inputs, &[&a], &[partners.as_slice()], 100)
+    )
+}
+
+#[trace("TC-2243", "FR-177-AC-14")]
+#[test]
+fn a_body_meter_stop_ranks_first_and_never_yields_to_a_later_undefined_partner() {
+    for stopped_first in [true, false] {
+        let settled = body_stop_before_later_undefined(stopped_first);
+        assert!(
+            settled.starts_with("Stopped(Incomplete") && settled.contains("position: 0"),
+            "{stopped_first}: {settled}"
+        );
+    }
+}
+
+/// `μ_E` has no value on every joint step.
+struct UndefinedMatch<'w>(crate::hyper_world::Seams<'w>);
+
+impl StepMatch for UndefinedMatch<'_> {
+    fn universal(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        self.0.universal(instance, steps, meter)
+    }
+
+    fn existential(
+        &self,
+        _instance: &[ParameterBinding],
+        _steps: &[StepLabel<'_>],
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        Ok(MatchReading::Undefined {
+            conjunct: 0,
+            cause: DIVISION,
+        })
+    }
+}
+
+/// FR-177 "Ranking findings": `μ_E` has no value at joint 1 and the body's
+/// evaluation then runs out of meter at no reported position (rank 0). By hand
+/// the stop at position 0 is before the undefined `match` at position 1, so the
+/// tuple is `Undecided`, never refuted at joint 1.
+#[trace("TC-2243", "FR-177-AC-14")]
+#[test]
+fn a_body_meter_stop_ranks_before_an_undefined_match_at_joint_1() {
+    use fsl_eval::hyper::search_partner;
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        &forall_exists(
+            "ep",
+            "match { a.step.Vault::step.i = b.step.Vault::step.i }",
+            "holds(v.l @ b >= 0)",
+        ),
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let partners = vec![walk(systems[1], &[0])];
+    let matcher = UndefinedMatch(world.seams());
+    let letters = IncompleteOn {
+        seams: world.seams(),
+        states: &partners[0].states,
+    };
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &letters,
+        matcher: &matcher,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    let settled = format!(
+        "{:?}",
+        search_partner(&inputs, &[&a], &[partners.as_slice()], 100)
+    );
+    assert!(
+        settled.starts_with("Stopped(Incomplete") && settled.contains("position: 0"),
+        "{settled}"
+    );
 }

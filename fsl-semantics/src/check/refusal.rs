@@ -3190,6 +3190,19 @@ pub enum CheckCause {
         /// Every source unit in the admitted package, in canonical order.
         sources: Vec<fsl_foundation::source::provenance::RawSourceRef>,
     },
+    /// `refused { code: ill_typed, cause: type-mismatch }`: a constant
+    /// written into a record or tuple slot violates a unit bound on the slot
+    /// (FSpec FR-154 "Unit bounds").
+    UnitBound {
+        /// The bounded field or tuple position.
+        member: filament_checked::key::DeclarationKey,
+        /// The violated constraint.
+        constraint: filament_checked::key::DeclarationKey,
+        /// `max` or `min`.
+        keyword: &'static str,
+        /// The bound, spelled canonically.
+        bound: String,
+    },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
     /// FR-986: `null` outside a record field value is never a value.
@@ -3993,7 +4006,8 @@ impl CheckCause {
             | Self::MalformedUuidLiteral { .. }
             | Self::TextLiteralOutsideBounds { .. }
             | Self::UnknownField { .. }
-            | Self::ReferenceLiteralTypeMismatch { .. } => Code::IllTyped,
+            | Self::ReferenceLiteralTypeMismatch { .. }
+            | Self::UnitBound { .. } => Code::IllTyped,
             Self::WrongSnapshot(_) | Self::UnanchoredResult { .. } => Code::WrongSnapshot,
             Self::MissingName(_)
             | Self::MissingQualifiedName(_)
@@ -4096,6 +4110,7 @@ impl CheckCause {
             | Self::MalformedUuidLiteral { .. }
             | Self::TextLiteralOutsideBounds { .. }
             | Self::UnknownField { .. }
+            | Self::UnitBound { .. }
             | Self::ReferenceLiteralTypeMismatch { .. } => Some("type-mismatch"),
             Self::UnanchoredResult { .. } => Some("wrong-anchor"),
             Self::MissingName(_)

@@ -266,7 +266,7 @@ fn world_with_edited_graph(
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&fsl_cst::ParserContext::new(), text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let mut graph = PackageDeclarations::assemble(

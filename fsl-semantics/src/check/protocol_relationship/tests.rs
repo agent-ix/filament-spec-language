@@ -197,6 +197,7 @@ fn connection_protocol(channel: &str) -> String {
 
 fn check_connection_protocol(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -364,6 +365,7 @@ fn pipeline(members: &str, related: &str) -> String {
 
 fn check(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

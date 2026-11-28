@@ -40,6 +40,7 @@ fn unit_text(declarations: &str) -> String {
 fn assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> {
     let text = unit_text(declarations);
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "type-decisions"),
         "type-decisions.native",
         text.as_bytes(),
@@ -75,6 +76,7 @@ fn check_selected(
 ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = unit_text(declarations);
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "type-decisions"),
         "type-decisions.native",
         text.as_bytes(),
@@ -220,6 +222,7 @@ fn a_dotted_tuple_position_is_a_syntax_error() {
          function f using v(p: Pair): Boolean pure { p.0 }",
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "type-decisions"),
         "type-decisions.native",
         text.as_bytes(),

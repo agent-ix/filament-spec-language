@@ -418,10 +418,22 @@ fn malformed_nested_values_refuse_at_the_first_declared_parameter() {
 /// Trace: FR-106-AC-3, FR-106-AC-12
 #[test]
 fn malformed_results_refuse_after_valid_composite_parameters() {
-    for (wire, cause) in [
-        (json!({"present": {"boolean": true}}), "wrong-value-kind"),
-        (json!({"present": {"integer": "-0"}}), "invalid-value"),
-        (json!({"present": {"integer": "10"}}), "invalid-value"),
+    for (wire, cause, path) in [
+        (
+            json!({"present": {"boolean": true}}),
+            "wrong-value-kind",
+            "/result/present",
+        ),
+        (
+            json!({"present": {"integer": "-0"}}),
+            "invalid-value",
+            "/result/present",
+        ),
+        (
+            json!({"present": {"integer": "10"}}),
+            "invalid-value",
+            "/result/present",
+        ),
     ] {
         let mut case = Case::new(
             ValueType::option(ValueType::Integer),
@@ -433,7 +445,12 @@ fn malformed_results_refuse_after_valid_composite_parameters() {
         )));
         case.result = wire;
         case.limits.post_state = PostStateRange::Witness;
-        assert_refused(case, Code::InvalidRuntimeInput, cause, Some("result"));
+        let record = assert_refused(case, Code::InvalidRuntimeInput, cause, Some("result"));
+        assert_eq!(
+            record.fields.get("path").map(String::as_str),
+            Some(path),
+            "{cause}"
+        );
     }
 }
 
@@ -469,15 +486,21 @@ fn missing_unknown_and_null_remain_distinct_from_absent_values() {
     );
     let mut null = make();
     null.result = serde_json::Value::Null;
-    assert_refused(null, Code::InvalidRuntimeInput, "missing-member", None);
     let mut unexpected = make();
     unexpected.result_type = None;
-    assert_refused(
-        unexpected,
-        Code::InvalidRuntimeInput,
-        "unknown-member",
-        None,
-    );
+    for (case, cause) in [(null, "missing-member"), (unexpected, "unknown-member")] {
+        let record = assert_refused(case, Code::InvalidRuntimeInput, cause, Some("result"));
+        assert_eq!(
+            record.fields.get("member").map(String::as_str),
+            Some("result"),
+            "{cause}"
+        );
+        assert_eq!(
+            record.fields.get("path").map(String::as_str),
+            Some("/result"),
+            "{cause}"
+        );
+    }
     let mut no_result = make();
     no_result.result_type = None;
     no_result.result = serde_json::Value::Null;
@@ -548,7 +571,7 @@ fn nested_references_resolve_parameters_in_pre_and_results_in_post() {
         make("after"),
         Code::DanglingReference,
         "absent-target-in-complete-population",
-        None,
+        Some("arg"),
     );
     assert_eq!(
         record.fields.get("population").map(String::as_str),
@@ -558,17 +581,25 @@ fn nested_references_resolve_parameters_in_pre_and_results_in_post() {
         record.fields.get("object").map(String::as_str),
         Some("after")
     );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/arg")
+    );
     let mut wrong_post = make("before");
     wrong_post.result = json!({"present": {"sequence": [{"reference": {"population": POPULATION, "key": "before"}}]}});
     let record = assert_refused(
         wrong_post,
         Code::DanglingReference,
         "absent-target-in-complete-population",
-        None,
+        Some("result"),
     );
     assert_eq!(
         record.fields.get("object").map(String::as_str),
         Some("before")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/result")
     );
     let mut incomplete = make("ghost");
     incomplete.pre_call = true;

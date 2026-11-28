@@ -17,6 +17,7 @@ fn check_in(
 ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{header}{declarations}\n");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "w17"),
         "w17.native",
         text.as_bytes(),
@@ -123,6 +124,7 @@ fn a_formatted_annotated_let_checks_as_the_original() {
     let body = "function f using v(y: Int[0,2]): Integer pure { let x:Int[0,3]=y+1 in x }";
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{V}{body}\n");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "w17"),
         "w17.native",
         text.as_bytes(),

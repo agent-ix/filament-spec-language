@@ -46,6 +46,7 @@ fn package(protocols: &[(&str, usize)]) -> String {
 
 fn check(text: &str, limits: CheckingLimits) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

@@ -647,8 +647,8 @@ impl<'a> ModelSystem<'a> {
     ///
     /// # Errors
     ///
-    /// As [`Self::new`] for records of one universe key with different types.
-    #[implements("FR-125-AC-9")]
+    /// As [`Self::new`] for an initial record with no reference.
+    #[implements("FR-125-AC-9", "FR-125-AC-23")]
     pub fn with_initial_states(
         mut self,
         states: impl IntoIterator<
@@ -662,7 +662,13 @@ impl<'a> ModelSystem<'a> {
             .into_iter()
             .map(|(state, anchor)| ModelSimState::anchored(state, anchor))
             .collect();
-        self.admitted_types = admitted_types(&self.model, &self.universes, &self.initial_base)?;
+        let (admitted_types, conflicting_identity) =
+            admitted_types(&self.model, &self.universes, &self.initial_base)?;
+        self.admitted_types = admitted_types;
+        self.conflicting_identity = conflicting_identity;
+        if self.conflicting_identity.is_some() {
+            self.reference_bindings = super::ReferenceBindings::default();
+        }
         self.initial_stages.clear();
         self.initial_all = std::sync::OnceLock::new();
         Ok(self)

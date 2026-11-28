@@ -6004,7 +6004,7 @@ mod tests {
     use super::DataLiteral;
 
     /// The data literal that the clause text `text` spells.
-    fn literal(parser: &fsl_forms::cst::ParserContext, text: &str) -> (DataLiteral, bool) {
+    fn literal(parser: &fsl_cst::ParserContext, text: &str) -> (DataLiteral, bool) {
         let expression = parse_clause_text(parser, text, fsl_cst::Limits::default()).expect("one clause");
         let spans = ExpressionSpans::at_point(&expression, 0).expect("spans fit");
         (
@@ -6019,7 +6019,7 @@ mod tests {
     #[trace("FR-091-AC-70", "TC-1052", "NFR-141-AC-10")]
     #[test]
     fn two_spellings_of_one_text_dedup_to_one_data_literal() {
-        let parser = fsl_forms::cst::ParserContext::new();
+        let parser = fsl_cst::ParserContext::new();
         let mut same = vec![literal(&parser, "x = \"\u{e9}\""), literal(&parser, "x = \"\\u00e9\"")];
         same.dedup();
         assert_eq!(same.len(), 1);

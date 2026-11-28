@@ -468,50 +468,33 @@ fn complete_hyper_scope(
 ) -> Result<(), ProductClosureRefusal> {
     let clause = request.hyper_clause()?;
     let systems = alias_systems(request)?;
-    let mut domains = Vec::new();
+    let mut requests = Vec::with_capacity(clause.parameters().len());
     for parameter in clause.parameters() {
-        let slot = request
-            .hyper_clause()?
+        let slot = clause
             .aliases()
             .iter()
-            .position(|alias| alias == &parameter.alias)
+            .position(|alias| alias.as_str() == parameter.alias.as_str())
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
         let system = systems
             .get(slot)
             .ok_or(ProductClosureRefusal::Input("parameter-subject"))?;
-        let instances = system
-            .instances(&filament_exact::ValueType::Reference(
-                parameter.object.clone(),
-            ))
-            .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
-        domains.push(
-            instances
-                .into_iter()
-                .map(|instance| (parameter.name.clone(), instance.key))
-                .collect::<Vec<_>>(),
-        );
+        requests.push(fsl_eval::hyper::ParameterRequest {
+            name: parameter.name.as_str(),
+            object: &parameter.object,
+            system,
+        });
     }
-    let count = domains
-        .iter()
-        .try_fold(1_usize, |count, domain| count.checked_mul(domain.len()))
-        .ok_or(ProductClosureRefusal::Input("instance-count"))?;
-    if count == 0 || count != certificates.len() {
+    let subjects: Vec<_> = systems.iter().collect();
+    let tuples = fsl_eval::hyper::claim_instance_tuples(&subjects, &requests)
+        .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
+    if tuples.len() != certificates.len() {
         return Err(ProductClosureRefusal::Input("certificate-scope"));
     }
-    for (index, certificate) in certificates.iter().enumerate() {
-        let mut ordinal = index;
-        let mut expected = Vec::with_capacity(domains.len());
-        for domain in domains.iter().rev() {
-            let position = ordinal % domain.len();
-            ordinal /= domain.len();
-            expected.push(
-                domain
-                    .get(position)
-                    .ok_or(ProductClosureRefusal::Input("instance-index"))?
-                    .clone(),
-            );
-        }
-        expected.reverse();
+    for (tuple, certificate) in tuples.iter().zip(certificates) {
+        let expected: Vec<(String, String)> = tuple
+            .iter()
+            .map(|binding| (binding.parameter.clone(), binding.instance.key.clone()))
+            .collect();
         if expected != certificate.instance {
             return Err(ProductClosureRefusal::Input("certificate-scope"));
         }
@@ -640,27 +623,44 @@ fn check(
     if certificate.instance.len() != clause.parameters().len() {
         return Err(ProductClosureRefusal::Input("instance"));
     }
+    // FR-125 "Instancing" orders the refusals once for every parameter: the
+    // bound, no initial state, a conflicting identity, then no instance. Over
+    // an empty `initial` list the declared universe keys are bindable, so the
+    // item reaches `no-initial-state` instead of refusing the key.
+    let mut requests = Vec::with_capacity(clause.parameters().len());
+    for parameter in clause.parameters() {
+        requests.push(fsl_eval::hyper::ParameterRequest {
+            name: parameter.name.as_str(),
+            object: &parameter.object,
+            system: systems
+                .get(slot(parameter.alias.as_str())?)
+                .ok_or(ProductClosureRefusal::Input("parameter-alias"))?,
+        });
+    }
+    let subjects: Vec<&ModelSystem<'_>> = systems.iter().collect();
+    let tuples = fsl_eval::hyper::claim_instance_tuples(&subjects, &requests).map_err(
+        |refusal| match refusal {
+            fsl_eval::simulation::model::NoClaimInstances::NoInitialState => {
+                ProductClosureRefusal::Input("no-initial-state")
+            }
+            fsl_eval::simulation::model::NoClaimInstances::NoInstance => {
+                ProductClosureRefusal::Input("instance-key")
+            }
+            fsl_eval::simulation::model::NoClaimInstances::NotSimulated(_) => {
+                ProductClosureRefusal::Input("parameter-universe")
+            }
+        },
+    )?;
     for (parameter, (name, key)) in clause.parameters().iter().zip(&certificate.instance) {
         if name != &parameter.name {
             return Err(ProductClosureRefusal::Input("parameter"));
         }
-        let system = systems
-            .get(slot(parameter.alias.as_str())?)
-            .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
-        // FR-125-AC-21: over an empty `initial` list the declared universe
-        // keys are bindable, so the item reaches `no-initial-state` instead
-        // of refusing the key.
-        let admitted = system
-            .hyper_bindable(&parameter.object)
-            .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
-        let found = admitted
-            .into_iter()
-            .find(|instance| &instance.key == key)
+        let found = tuples
+            .iter()
+            .flatten()
+            .find(|binding| &binding.parameter == name && &binding.instance.key == key)
             .ok_or(ProductClosureRefusal::Input("instance-key"))?;
-        instance.push(ParameterBinding {
-            parameter: name.clone(),
-            instance: found,
-        });
+        instance.push(found.clone());
     }
     let letters =
         CheckedHyperLetters::for_evaluator(request.evaluator, clause, variable_systems.clone())

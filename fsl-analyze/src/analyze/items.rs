@@ -1131,6 +1131,52 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
     }
 }
 
+/// The refusal of two records of one universe key with different types,
+/// naming the key and both types (FR-125-AC-13, AC-23).
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
+pub(crate) fn conflicting_identity(
+    conflict: &fsl_eval::simulation::ConflictingIdentity,
+) -> Refusal {
+    admission(&conflict.admission_failure())
+}
+
+/// What a claim with no admitted instance does with its item (FR-125
+/// "Instancing"): settle `inconclusive` with a cause, or refuse. The one
+/// mapping of [`fsl_eval::simulation::model::NoClaimInstances`] to an item
+/// outcome, in FR-125's order, for the routes that settle through this module;
+/// the model-check, statistical, SMT and product-checker routes keep their own
+/// matches over their own refusal types.
+pub(crate) enum InstanceStop {
+    /// The item settles `inconclusive` with this cause.
+    Inconclusive(fsl_replay::InconclusiveCause),
+    /// The item is refused.
+    Refused(Refusal),
+}
+
+/// The outcome of a claim with no admitted instance.
+#[implements("FR-125-AC-13", "FR-125-AC-23")]
+pub(crate) fn instance_stop(
+    failure: fsl_eval::simulation::model::NoClaimInstances,
+) -> InstanceStop {
+    use fsl_eval::simulation::model::NoClaimInstances;
+    use fsl_eval::simulation::NotSimulated;
+    match failure {
+        NoClaimInstances::NoInitialState => {
+            InstanceStop::Inconclusive(fsl_replay::InconclusiveCause::NoInitialState)
+        }
+        NoClaimInstances::NoInstance => {
+            InstanceStop::Inconclusive(fsl_replay::InconclusiveCause::NoInstance)
+        }
+        NoClaimInstances::NotSimulated(
+            NotSimulated::RequiresBound(_) | NotSimulated::UnboundCapacity(_),
+        ) => InstanceStop::Refused(Refusal::RequiresBound),
+        NoClaimInstances::NotSimulated(NotSimulated::ConflictingIdentity(conflict)) => {
+            InstanceStop::Refused(conflicting_identity(&conflict))
+        }
+        NoClaimInstances::NotSimulated(_) => InstanceStop::Refused(Refusal::Failed(BROKEN)),
+    }
+}
+
 pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
     let declined = |cause, record: &fsl_semantics::model::observation::AdmissionRecord| {
         let decline = DeclineCode::Fsl(

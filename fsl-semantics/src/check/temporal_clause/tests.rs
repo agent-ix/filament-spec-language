@@ -51,6 +51,7 @@ fn timestamped_source(formula: &str) -> String {
 
 fn assemble(text: &str) -> PackageDeclarations {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -658,6 +659,7 @@ fn a_window_aggregate_over_a_package_unit_keeps_that_unit() {
 record Counter",
             );
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

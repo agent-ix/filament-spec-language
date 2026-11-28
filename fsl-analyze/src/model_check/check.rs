@@ -2217,6 +2217,9 @@ pub(super) fn precheck(
 /// universe, is `RequiresBound`; a stopped classification is `Extent`.
 pub(super) fn not_simulated(refusal: NotSimulated) -> ModelCheckRefusal {
     match refusal {
+        NotSimulated::ConflictingIdentity(conflict) => {
+            ModelCheckRefusal::Admission(Box::new(conflict.admission_failure()))
+        }
         NotSimulated::RequiresBound(roots) => ModelCheckRefusal::RequiresBound(roots),
         NotSimulated::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
         NotSimulated::Extent(failure) => ModelCheckRefusal::Extent(Box::new(failure)),

@@ -30,6 +30,7 @@ const MAX: &str = "170141183460469231731687303715884105727";
 fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("{HEADER}{declarations}\n");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "literals"),
         "literals.native",
         text.as_bytes(),

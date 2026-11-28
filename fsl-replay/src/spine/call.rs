@@ -38,11 +38,12 @@ use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::refusal::OfferedSelection;
+use fsl_semantics::model::state::CompositeBounds;
 use fsl_semantics::value::environment_stage::membership_failure_code;
 use ix_trace_rs::implements;
 
 use super::lifecycle as front_end;
-use super::run_value::{ArgumentDefect, Forms, ReadStop};
+use super::run_value::{ArgumentDefect, Forms, ReadStop, unit_bound_defect};
 use super::{
     AdmittedModels, CheckedUnit, CompileRefusal, DependencyInput, EmittedUnit, ProfileCatalogInput,
     SpineLimits,
@@ -716,7 +717,13 @@ impl RunRefusal {
             | Self::DuplicateArgument { parameter }
             | Self::UnboundParameter { parameter } => object(json!({"parameter": parameter})),
             Self::Argument { position, defect } => {
-                object(json!({"position": position, "path": defect.path}))
+                let mut details = json!({"position": position, "path": defect.path});
+                if let Some(violated) = &defect.unit_bound {
+                    details["constraint"] = json!(violated.constraint);
+                    details["keyword"] = json!(violated.keyword);
+                    details["bound"] = json!(violated.bound);
+                }
+                object(details)
             }
             Self::UnsupportedParameter { position }
             | Self::WrongValueKind { position }
@@ -1432,14 +1439,25 @@ pub(crate) fn with_admitted_call<T>(
     )
     .with_canonical_writer(&encode_value)
     .in_world(own_package, world.as_ref());
-    let supplied = admit_wire_arguments(&forms, selected.parameters, call, &supplied_run)?;
-    let arguments = bind_arguments(selected.parameters, &supplied)?;
+    let read = admit_wire_arguments(&forms, selected.parameters, call, &supplied_run)?;
+    let arguments = bind_arguments(selected.parameters, &read.arguments)?;
     admit_model_arguments(
         models.models(),
         package.graph().scope().types(),
         selected.parameters,
         &arguments,
         objects,
+    )?;
+    admit_unit_bounds(
+        &CompositeBounds::of(models.models().iter().map(|model| &model.view)),
+        package.graph().scope().types(),
+        selected.parameters,
+        &arguments,
+        Some(SuppliedForms {
+            forms: &forms,
+            wire: &call.wire_arguments,
+            canonical: &read.canonical,
+        }),
     )?;
 
     complete(&forms, arguments, objects, &supplied_run)
@@ -1965,14 +1983,18 @@ pub(crate) fn is_identifier(segment: &str) -> bool {
 /// parameter's declared type, after the binding-name checks of FR-100 and in
 /// declared parameter order, stopping at the first defect. Returns every
 /// argument as a typed one.
+#[implements("FR-650-AC-25")]
 pub(crate) fn admit_wire_arguments(
     forms: &Forms<'_>,
     parameters: &[(String, ValueType)],
     call: &Call,
     run: &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
-) -> Result<Vec<CallArgument>, Box<RunRefusal>> {
+) -> Result<ReadArguments, Box<RunRefusal>> {
     if call.wire_arguments.is_empty() {
-        return Ok(call.arguments.clone());
+        return Ok(ReadArguments {
+            arguments: call.arguments.clone(),
+            canonical: BTreeMap::new(),
+        });
     }
     let mut bound = vec![false; parameters.len()];
     let names = call
@@ -2005,6 +2027,7 @@ pub(crate) fn admit_wire_arguments(
         }));
     }
     let mut supplied = call.arguments.clone();
+    let mut canonical = BTreeMap::new();
     for (position, (name, value_type)) in parameters.iter().enumerate() {
         let Some(wire) = call
             .wire_arguments
@@ -2020,7 +2043,12 @@ pub(crate) fn admit_wire_arguments(
         let read = if let Some(selected) = &wire.selected_object {
             forms.read(&serde_json::json!({"reference": {"population": selected.population, "key": selected.key}}), value_type)
         } else if call.canonical_values {
-            forms.read_canonical(&wire.value, value_type, position, run)
+            forms
+                .read_canonical_with_form(&wire.value, value_type, position, run)
+                .map(|(value, form)| {
+                    canonical.insert(name.clone(), form);
+                    value
+                })
         } else {
             match &wire.value {
                 serde_json::Value::Number(number) => match number.as_i64() {
@@ -2029,6 +2057,7 @@ pub(crate) fn admit_wire_arguments(
                         code: Code::InvalidRuntimeInput,
                         cause: "wrong-value-kind",
                         path: String::new(),
+                        unit_bound: None,
                     })),
                 },
                 form => forms.read(form, value_type),
@@ -2058,7 +2087,10 @@ pub(crate) fn admit_wire_arguments(
             value,
         });
     }
-    Ok(supplied)
+    Ok(ReadArguments {
+        arguments: supplied,
+        canonical,
+    })
 }
 
 /// Join each argument to the parameter of the same declared name (refusing
@@ -2209,6 +2241,50 @@ pub(crate) fn argument_value(
             _ => Err(wrong()),
         },
     }
+}
+
+/// A call's arguments as read, with the run form each canonical wire argument
+/// was read as, by parameter name.
+pub(crate) struct ReadArguments {
+    pub(crate) arguments: Vec<CallArgument>,
+    pub(crate) canonical: BTreeMap<String, serde_json::Value>,
+}
+
+/// What a call supplied as wire arguments, and how it was read.
+pub(crate) struct SuppliedForms<'a, 'f> {
+    pub(crate) forms: &'a Forms<'f>,
+    pub(crate) wire: &'a [WireArgument],
+    pub(crate) canonical: &'a BTreeMap<String, serde_json::Value>,
+}
+
+/// Refuse an argument holding a quantity beyond a unit bound on the slot of
+/// a model composite (FSpec FR-154 "Unit bounds"), naming the argument's
+/// position and the path inside its value as the caller wrote it.
+#[implements("FR-650-AC-24")]
+pub(crate) fn admit_unit_bounds(
+    bounds: &CompositeBounds,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    parameters: &[(String, ValueType)],
+    arguments: &[Value],
+    supplied: Option<SuppliedForms<'_, '_>>,
+) -> Result<(), Box<RunRefusal>> {
+    for (position, ((parameter, _), argument)) in parameters.iter().zip(arguments).enumerate() {
+        let wire = supplied.as_ref().and_then(|supplied| {
+            let written = &supplied
+                .wire
+                .iter()
+                .find(|wire| wire.parameter == *parameter)?
+                .value;
+            Some(match supplied.canonical.get(parameter) {
+                Some(read) => (supplied.forms, read, Some(written)),
+                None => (supplied.forms, written, None),
+            })
+        });
+        if let Some(defect) = unit_bound_defect(bounds, types, argument, wire) {
+            return Err(Box::new(RunRefusal::Argument { position, defect }));
+        }
+    }
+    Ok(())
 }
 
 /// Check the parts of model-reference admission that the public call facade

@@ -1403,3 +1403,65 @@ fn admitted_unit_ids_are_the_units_replay_converts_against() {
         );
     }
 }
+
+/// FR-098-AC-35 (TC-906): a replayed value holding a quantity beyond a unit
+/// bound on a model record's field refuses before the call, on both arms.
+#[trace("TC-906", "FR-098-AC-35")]
+#[test]
+fn tc_906_a_replayed_value_beyond_a_unit_bound_refuses_before_the_call() {
+    let model = crate::spine::bounded_record_fixture(
+        "function span using v(r: M::Span): Boolean pure { false }",
+    );
+    let compiled = spine(&model.source, &model.packages);
+    let fixture = Fixture {
+        source: model.source,
+        compiled,
+        provision: vec![model.document],
+    };
+    let declared = fixture.declared("span");
+    let ValueType::Composite(span) = &declared else {
+        panic!("`span` takes a record");
+    };
+    let types = fixture.compiled.package.graph().scope().types();
+    let shape = types
+        .composite(span.clone())
+        .expect("a declared record")
+        .shape();
+    let filament_semantic_value::declaration::CompositeShape::Record(fields) = shape else {
+        panic!("`Span` is a record");
+    };
+    let ValueType::Quantity(ms) = fields[0].value_type() else {
+        panic!("`Span.d` is a quantity");
+    };
+    let holding = |magnitude: i64| WitnessValue::Record {
+        declaration: span.clone(),
+        fields: vec![present(
+            "d",
+            WitnessValue::Quantity {
+                magnitude: QuantityMagnitude::Rational {
+                    numerator: Integer::from(magnitude),
+                    denominator: Integer::from(1_i64),
+                },
+                unit: ms.clone(),
+            },
+        )],
+    };
+    for result in fixture.both("span", holding(3)) {
+        assert_reproduced(result);
+    }
+    for result in fixture.both("span", holding(4)) {
+        let refusal = result.expect_err("4 ms exceeds the bound");
+        assert_eq!(refusal.code(), Code::InvalidRuntimeInput);
+        assert_eq!(refusal.cause(), Some("invalid-value"));
+        let ReplayRefusal::UnitBound { position, defect } = refusal else {
+            panic!("a unit-bound refusal: {refusal:?}");
+        };
+        assert_eq!(position, 0);
+        assert_eq!(defect.path, "/record/fields/d");
+        let bound = defect.unit_bound.expect("the violated bound is named");
+        let named = format!("{bound:?}");
+        for expected in ["ix://acme/orders/Delay/max", "max", "\"3\""] {
+            assert!(named.contains(expected), "{expected}: {named}");
+        }
+    }
+}

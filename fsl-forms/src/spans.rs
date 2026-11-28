@@ -755,6 +755,7 @@ mod tests {
             "language \"ix:native\" edition \"1-draft\";\nprofile p = \"filament.value.complete/v1\";\npre C using p on M::T::op {{ {body} }}\n"
         );
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("binder-spans", "u"),
             "u.native",
             text.as_bytes(),

@@ -9,6 +9,7 @@ use ix_trace_rs::trace;
 fn check(source: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{source}");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "narrowing"),
         "narrowing.native",
         text.as_bytes(),

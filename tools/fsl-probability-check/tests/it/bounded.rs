@@ -115,7 +115,7 @@ fn try_compile_with_mode(
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let packages = package_input([domain]).unwrap();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse_with_context(
         &ParseRequest {
             source: &identity,
             path: "bounded.native",
@@ -123,10 +123,11 @@ fn try_compile_with_mode(
         },
         limits.source,
         &cancel,
+        &qsl3309_parser_context,
     )
     .unwrap()
     .into_value();
-    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .unwrap()
         .into_value();
     let checked = spine::check_with_execution_points_and_source_inputs(

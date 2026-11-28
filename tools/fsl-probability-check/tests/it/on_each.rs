@@ -468,3 +468,25 @@ fn an_on_each_document_offered_against_a_timed_domain_is_refused() {
     assert_ne!(code, 0, "{output}");
     assert_ne!(output["status"], "accepted", "{output}");
 }
+
+/// FR-201-AC-85: over a subject with an empty `initial` list the checker, given
+/// the claim's own document, settles `no-initial-state`; over an initial state
+/// with no admitted key it settles `no-instance`. Neither is `accepted` or
+/// `rejected`.
+#[trace("TC-3241", "FR-201-AC-85")]
+#[test]
+fn a_subject_with_no_initial_state_or_no_instance_is_neither_accepted_nor_rejected() {
+    let request = certified(&[("m", false), ("n", true)]);
+    let mut no_initial = request.clone();
+    no_initial["initial"] = json!([]);
+    let (code, output) = run(&no_initial);
+    assert_eq!(output["status"], "no-initial-state", "{output}");
+    assert_eq!(code, 2, "{output}");
+    // The same claim over a start snapshot that holds no message at all.
+    let mut no_instance = request.clone();
+    no_instance["documents"][1] = json!(snapshot(&[]));
+    no_instance["universes"][0]["keys"] = json!([]);
+    let (code, output) = run(&no_instance);
+    assert_eq!(output["status"], "no-instance", "{output}");
+    assert_eq!(code, 2, "{output}");
+}

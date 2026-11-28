@@ -46,6 +46,7 @@ fn check_with_limits(
 ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let assembled = || {
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

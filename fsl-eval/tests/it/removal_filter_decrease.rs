@@ -37,6 +37,7 @@ fn check(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>
          {declarations}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

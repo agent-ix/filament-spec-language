@@ -75,6 +75,7 @@ fn compile_with_models(
          profile v = \"filament.value.complete/v1\";\n{source}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("qsl-2241", "text-to-number"),
         "text-to-number.native",
         text.as_bytes(),

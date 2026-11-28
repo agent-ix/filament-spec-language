@@ -1203,6 +1203,7 @@ fn default_and_caller_forms_preserve_parser_outputs() {
         )
         .unwrap();
         let with_empty_forms = fsl_cst::parse_with_extensions(
+            &qsl3309_parser_context,
             identity,
             format!("{id}.native"),
             text.as_bytes(),
@@ -1231,6 +1232,7 @@ fn default_and_caller_forms_preserve_parser_outputs() {
     let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by"])]);
     let text = source("deploy Instance { by: \"team/service\" }");
     let parsed = fsl_cst::parse_with_extensions(
+        &qsl3309_parser_context,
         SourceIdentity {
             authority: "test".into(),
             identity: "test:caller-forms".into(),
@@ -1252,4 +1254,33 @@ fn default_and_caller_forms_preserve_parser_outputs() {
         .nodes()
         .iter()
         .any(|node| node.production() == Production::ExtensionDeclaration));
+}
+
+#[trace("FR-611-AC-1", "NFR-141-AC-8")]
+#[test]
+fn extension_keyword_expectations_preserve_derived_form_messages() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let forms = ExtensionForms::new([ExtensionProduction::new("once", ["by"])]);
+    let text = source("temporal T using Complete over (s: Integer) on origin { previous true }");
+    let parsed = fsl_cst::parse_with_extensions(
+        &qsl3309_parser_context,
+        SourceIdentity {
+            authority: "test".into(),
+            identity: "test:extension-keyword-expectation".into(),
+        },
+        "extension-keyword-expectation.native",
+        text.as_bytes(),
+        Limits::default(),
+        &forms,
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap();
+
+    assert!(
+        parsed.diagnostics().iter().any(|diagnostic| diagnostic
+            .message
+            .contains("strong previous is written `once[1,1] p`")),
+        "{:?}",
+        parsed.diagnostics()
+    );
 }

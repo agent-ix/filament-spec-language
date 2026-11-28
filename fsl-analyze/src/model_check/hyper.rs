@@ -114,14 +114,14 @@ use fsl_eval::fairness::{
     analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::hyper::{
-    cartesian, copy_symmetry, BodySense, ComponentStep, CopySwapInputs, Halt, HyperFinding,
-    HyperInputs, HyperLetters, HyperProduct, HyperState, HyperTransition, ParameterBinding,
-    Partner, PartnerStep, ProjectedInputs, ProjectedProduct, Property, StepMatch, WitnessInputs,
+    copy_symmetry, BodySense, ComponentStep, CopySwapInputs, Halt, HyperFinding, HyperInputs,
+    HyperLetters, HyperProduct, HyperState, HyperTransition, ParameterBinding, Partner,
+    PartnerStep, ProjectedInputs, ProjectedProduct, Property, StepMatch, WitnessInputs,
     WitnessProduct,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem,
+    check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem, NoClaimInstances,
 };
 use fsl_eval::simulation::{
     Expansion, ExpansionLimit, ExpansionStop, Limit, Limits, Outcome, SymmetryClass, SymmetryGroup,
@@ -487,32 +487,31 @@ fn orbit_representatives(
 
 /// The instances of the clause's object parameters: one binding of each
 /// parameter to a key of its population's universe, over the product of the
-/// universes in parameter order (ADR-023 HS-3).
+/// universes in parameter order (ADR-023 HS-3), through the one rule of
+/// FR-125 "Instancing". A subject with no initial state and a clause with no
+/// instance give no tuple here: `decide` settles them, in that order.
 fn instances(
     clause: &CheckedHyperClause,
     systems: &[ModelSystem<'_>],
     slot_of: &impl Fn(&str) -> Result<usize, ModelCheckRefusal>,
 ) -> Result<Vec<Vec<ParameterBinding>>, ModelCheckRefusal> {
-    let mut lists = Vec::with_capacity(clause.parameters().len());
+    let mut requests = Vec::with_capacity(clause.parameters().len());
     for parameter in clause.parameters() {
         let system = systems
             .get(slot_of(parameter.alias.as_str())?)
             .ok_or_else(|| fault("a-parameter-names-an-alias-of-the-clause"))?;
-        let keys = system
-            .instances(&filament_exact::ValueType::Reference(
-                parameter.object.clone(),
-            ))
-            .map_err(not_simulated)?;
-        lists.push(
-            keys.into_iter()
-                .map(|instance| ParameterBinding {
-                    parameter: parameter.name.clone(),
-                    instance,
-                })
-                .collect::<Vec<_>>(),
-        );
+        requests.push(fsl_eval::hyper::ParameterRequest {
+            name: parameter.name.as_str(),
+            object: &parameter.object,
+            system,
+        });
     }
-    Ok(cartesian(&lists))
+    let subjects: Vec<&ModelSystem<'_>> = systems.iter().collect();
+    match fsl_eval::hyper::claim_instance_tuples(&subjects, &requests) {
+        Ok(tuples) => Ok(tuples),
+        Err(NoClaimInstances::NotSimulated(refusal)) => Err(not_simulated(refusal)),
+        Err(NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance) => Ok(Vec::new()),
+    }
 }
 
 /// The counts of the products explored so far.

@@ -1798,9 +1798,9 @@ fn closed(
                 }));
             }
             ClosedVerdict::Fault(_) => return Err(fault("the-closed-tuple-evaluates")),
-            ClosedVerdict::MatchUndetermined
+            ClosedVerdict::MatchUndetermined { .. }
             | ClosedVerdict::Undefined(_)
-            | ClosedVerdict::Incomplete(_) => no_value(),
+            | ClosedVerdict::Incomplete { .. } => no_value(),
         });
     }
     let mut lists = Vec::new();

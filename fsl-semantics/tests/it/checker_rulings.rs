@@ -41,6 +41,7 @@ fn check_source(temporal: bool, body: &str) -> Result<CheckedGraph, Vec<Semantic
          profile v = \"filament.value.complete/v1\";\n{temporal}{body}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "checker-rulings"),
         "unit.native",
         text.as_bytes(),

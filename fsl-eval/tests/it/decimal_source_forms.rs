@@ -66,6 +66,7 @@ fn compile_limited(
          profile v = \"filament.value.complete/v1\";\n{declarations}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1067,6 +1068,7 @@ fn a_float_converts_to_no_decimal() {
          function f using v(a: Float64[nearest-even]): Decimal[0, 100; 0, 3; nearest-even] pure \
          { convert<Decimal[0, 100; 0, 3; nearest-even]>(a) }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1113,6 +1115,7 @@ fn a_unit_declarations_scale_is_limited_by_the_assembly_setting() {
          dimension Length;\nunit m : Length = rational(1, 1);\n\
          unit c : Length = decimal(1, 5000) * m;\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1153,6 +1156,7 @@ fn an_ambiguous_comparison_is_refused_at_its_first_literal() {
          function f using v(): Boolean pure {{ {body} }}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

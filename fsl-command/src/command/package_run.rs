@@ -1260,6 +1260,10 @@ fn execute_inner(
             &bare,
             &call,
             &objects,
+            fsl_replay::spine::DomainPackages {
+                packages: &packages,
+                limits: model_limits,
+            },
             &mut budget,
             &sources,
             &cancel,

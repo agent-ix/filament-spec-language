@@ -288,7 +288,11 @@ certificate checks to those FSpec values.
 - A V-7 record SHALL name its limit, its value and the request setting that
   raises it.
 - A verdict SHALL hold for exactly its subject; the obligation identity
-  binds the subject, the claim and the instance (ADR-013 O-09).
+  binds the model subject (its initial states, universes and proof bounds),
+  the claim kind, the `from` and `target` predicates and the `over`
+  parameter, and binds no instance: one item covers every instance, and the
+  universe lists fix the instances and their order, so changing a list or its
+  order changes the identity (ADR-013 O-09; FSpec FR-475).
 
 ## Acceptance Criteria
 

@@ -12,7 +12,7 @@ fn check(source: &str) -> Result<(), FrontEndFailure> {
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "property-generators");
     let limits = SpineLimits::default();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse_with_context(
         &ParseRequest {
             source: &identity,
             path: "generated.native",
@@ -20,9 +20,10 @@ fn check(source: &str) -> Result<(), FrontEndFailure> {
         },
         limits.source,
         &cancel,
+        &qsl3309_parser_context,
     )?
     .into_value();
-    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
+    let models = spine::select( &parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
     spine::check(
         &parsed,
         "property-generators".into(),
@@ -214,7 +215,7 @@ fn package_generator_emits_checked_units() {
             let cancel = Cancel::new();
             let identity = SourceIdentity::new("agent-ix", "property-generators");
             let limits = SpineLimits::default();
-            let parsed = spine::parse(&qsl3309_parser_context,
+            let parsed = spine::parse_with_context(
                 &ParseRequest {
                     source: &identity,
                     path: "generated.native",
@@ -222,10 +223,11 @@ fn package_generator_emits_checked_units() {
                 },
                 limits.source,
                 &cancel,
+                &qsl3309_parser_context,
             )
             .map_err(|error| TestCaseError::fail(format!("{error:?}")))?
             .into_value();
-            let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)
+            let models = spine::select( &parsed, &BTreeMap::new(), limits.model, &cancel)
                 .map_err(|error| TestCaseError::fail(format!("{error:?}")))?
                 .into_value();
             let checked = spine::check(

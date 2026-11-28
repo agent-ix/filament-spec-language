@@ -212,6 +212,7 @@ fn model_package_with(
         body,
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "tc235-m15"),
         "tc235-m15.native",
         unit.as_bytes(),
@@ -231,7 +232,7 @@ fn model_package_with(
     )
     .expect("M15 model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&fsl_cst::ParserContext::new(), text, fsl_cst::Limits::default())
     })
     .expect("M15 kept operation clauses parse");
     let declarations = PackageDeclarations::assemble(

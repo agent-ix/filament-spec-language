@@ -33,6 +33,7 @@ pub(crate) fn compile(
     imports: Vec<AdmittedImport>,
 ) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "imported-call"),
         "imported-call.native",
         source.as_bytes(),

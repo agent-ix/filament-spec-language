@@ -72,6 +72,7 @@ fn check_quantity_scale_source(
          {functions}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "quantity-scale"),
         "quantity-scale.native",
         source.as_bytes(),

@@ -18,7 +18,8 @@ and 11.6 for a context, and that admission is deterministic over reordered
 documents.
 
 Scope: FR-106-AC-41, FR-106-AC-42, FR-106-AC-43, FR-106-AC-44,
-FR-106-AC-45, FR-106-AC-46 and FR-106-AC-47. TC-1040 steps 6 to 8 use the
+FR-106-AC-45, FR-106-AC-46, FR-106-AC-47, FR-106-AC-86, FR-106-AC-87 and
+FR-106-AC-88. TC-1040 steps 6 to 8 use the
 documents of step 1: `P1` is TC-1040's `p1` and `Q2` its `q1`.
 
 ## Preconditions
@@ -96,6 +97,17 @@ Snapshots hold `"populations": []` unless a step says otherwise. Tag the tests
    the `P1` document, and one less. A replay environment document (FR-098) that
    holds `contexts`.
 
+8. `Pump` gains `max` `3` on `ms`, and `expedite` of `ExpressLifecycle` the parameter
+   `q: ms` and the result `ms`. `Consistent` selected by `Context` side `post`
+   over `i2`, with `q` and the result `3 ms`, then `q` `4 ms`, then the result
+   `4 ms`.
+
+9. `ExpressLifecycle` gains the context field `delay: ms` under `Pump`'s `max`
+   `3`. `Bounded` selected by `Context` over `i2`, side `pre` with `delay`
+   `4 ms` in `E1`, then side `post` with `4 ms` in `E2`; both admit at `3 ms`.
+10. `ExpressLifecycle` itself carries `max` `3` on `ms` in place of `Pump`;
+   repeat step 8.
+
 ## Expected Results
 
 - Step 1: side `pre` over `P1` admits one observation: the pre context, `i1`'s
@@ -127,7 +139,11 @@ Snapshots hold `"populations": []` unless a step says otherwise. Tag the tests
   `unknown-member` naming `state`; `unknown-member` naming `transitions`;
   `wrong-value-kind` at the path `OrderLifecycle`, `placed`. The object defect
   is reported before the context defect, and the first entry's defect before
-  the second's.
+  the second's. The missing `cancelled` refusal carries `path`
+  `/contexts/0/fields/cancelled`, the absent member, and `member`
+  `cancelled`; an unknown field `extra` carries `/contexts/0/fields/extra`
+  and `member` `extra`; and the `placed` refusal carries
+  `/contexts/0/fields/placed` (FR-663-AC-6).
 - Step 5: side `post` under `Witness`: the frame holds, the post context
   admits and the post observation reports one `OutOfRange` naming `ExpressLifecycle`, `retries`, the range
   `[0, 5]` and the observed `-1`; under `Refuse`, and for the `pre` context
@@ -153,3 +169,11 @@ Snapshots hold `"populations": []` unless a step says otherwise. Tag the tests
   exact bound admits and one less returns `stage_limit_exceeded`/
   `node-count-exceeded` naming `observation.values`. The environment document
   refuses `invalid_runtime_input`/`unknown-member` naming `contexts`.
+- Step 8: both `3 ms` admit; `q` `4 ms` refuses `invalid_runtime_input`/
+  `invalid-value` at `/parameters/q`, and the result `4 ms` at `/result`, each
+  with keyword `max` and bound `3` (FR-106-AC-86).
+- Step 9: `3 ms` admits on each side; `4 ms` refuses `invalid_runtime_input`/
+  `invalid-value` naming the snapshot, entry `0`, `ExpressLifecycle`, `delay`,
+  `Pump`'s constraint, `max` and `3`, at `/contexts/0/fields/delay`
+  (FR-106-AC-87).
+- Step 10: as step 8, naming `ExpressLifecycle`'s constraint (FR-106-AC-88).

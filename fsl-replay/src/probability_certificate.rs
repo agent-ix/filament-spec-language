@@ -882,6 +882,13 @@ pub enum ExactProbabilityCertificateCheck {
     AcceptedInfinite(ProbabilityValueFreeAcceptance),
     /// The certificate fails a checked condition.
     Rejected(ProbabilityCertificateRejection),
+    /// The checked subject has an empty `initial` list (FR-201 "Instancing
+    /// outcomes", FR-125). Neither an acceptance, a rejection nor a refusal.
+    NoInitialState,
+    /// The checked subject has an initial state and no admitted key for the
+    /// claim's `over` parameter or `on each` activation type (FR-201
+    /// "Instancing outcomes", FR-125).
+    NoInstance,
 }
 
 /// Why the exact Bellman-check core could not check a graph.
@@ -1639,15 +1646,7 @@ pub fn claim_binding(
     };
     let mut instances = system
         .instances(&over.value_type)
-        .map_err(|error| match error {
-            fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
-                ExactProbabilityGraphError::RequiresBound
-            }
-            fsl_eval::simulation::NotSimulated::Extent(
-                fsl_semantics::family::ClassifyFailure::Limit(_),
-            ) => ExactProbabilityGraphError::ExtentLimit,
-            _ => ExactProbabilityGraphError::ExpansionRefused,
-        })?;
+        .map_err(instance_graph_error)?;
     let (Some(instance), None) = (instances.pop(), instances.pop()) else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
@@ -1658,6 +1657,68 @@ pub fn claim_binding(
         instance,
         reference,
     }))
+}
+
+/// The checker's refusal for an instance set the subject could not list.
+pub(crate) fn instance_graph_error(
+    error: fsl_eval::simulation::NotSimulated,
+) -> ExactProbabilityGraphError {
+    match error {
+        fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
+            ExactProbabilityGraphError::RequiresBound
+        }
+        fsl_eval::simulation::NotSimulated::Extent(
+            fsl_semantics::family::ClassifyFailure::Limit(_),
+        ) => ExactProbabilityGraphError::ExtentLimit,
+        _ => ExactProbabilityGraphError::ExpansionRefused,
+    }
+}
+
+/// FR-201 "Instancing outcomes": the zero-instance outcome of `claim` over
+/// `system`, `NoInitialState` or `NoInstance`, from the one
+/// [`ModelSystem::claim_instances`] every route shares, in FR-125's order
+/// (a missing universe first, then no initial state, then no instance), or
+/// `None` when the claim has instances to check.
+///
+/// # Errors
+///
+/// [`ExactProbabilityGraphError::RequiresBound`],
+/// [`ExactProbabilityGraphError::ExtentLimit`] or
+/// [`ExactProbabilityGraphError::ExpansionRefused`] when a claim's object
+/// type has no listable instance set.
+#[implements("FR-201-AC-85")]
+pub(crate) fn instancing_outcome(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+) -> Result<Option<ExactProbabilityCertificateCheck>, ExactProbabilityGraphError> {
+    use fsl_eval::simulation::model::NoClaimInstances;
+    let each = match &claim.activation {
+        fsl_semantics::check::ClaimActivation::Each { value_type, .. } => Some(&**value_type),
+        _ => None,
+    };
+    let mut no_initial = false;
+    let mut no_instance = false;
+    let mut typed = false;
+    for value_type in claim.over.iter().map(|over| &over.value_type).chain(each) {
+        typed = true;
+        match system.claim_instances(value_type) {
+            Ok(_) => {}
+            Err(NoClaimInstances::NotSimulated(error)) => return Err(instance_graph_error(error)),
+            Err(NoClaimInstances::NoInitialState) => no_initial = true,
+            Err(NoClaimInstances::NoInstance) => no_instance = true,
+        }
+    }
+    // A claim over no object type has no instance to miss, only an initial state.
+    if !typed {
+        no_initial = system.initial_iter().next().is_none();
+    }
+    Ok(if no_initial {
+        Some(ExactProbabilityCertificateCheck::NoInitialState)
+    } else if no_instance {
+        Some(ExactProbabilityCertificateCheck::NoInstance)
+    } else {
+        None
+    })
 }
 
 /// The scheduler objective the claim itself fixes (FR-198): a claim `under
