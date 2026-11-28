@@ -2267,3 +2267,104 @@ fn a_cycle_state_identity_names_the_bound_instance_by_key_alone() {
     assert_eq!(identity("first", "m"), identity("second", "m"));
     assert_ne!(identity("first", "m"), identity("first", "n"));
 }
+
+/// A one-clock subject with no time invariant, so every state is quiescent:
+/// `send` needs `x > 1 ms` (a strict guard, so the region route) and sets
+/// `late`.
+fn quiescent_strict_world(claims: &str) -> World {
+    let document = timed_world::document(&["x"], &[("send", &["late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Send using v on M::Call::send {{ not self.late and self.x > 1 ms }}\n\
+         post Sent using v on M::Call::send {{ self.late = true and self.x = 0 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    timed_world::world(&document, PROFILES, &body)
+}
+
+fn tail_claims() -> String {
+    format!(
+        "{}{}",
+        deadline_claim("Eventually", "under every scheduler", "<= 0.5", "eventually"),
+        claim_over(
+            "Always",
+            "under every scheduler",
+            ">= 0.5",
+            "always[0 ms, 4 ms] holds(not c.late)"
+        ),
+    )
+}
+
+fn tail_entries(built: &ProbProduct) -> Vec<&fsl_analyze::exact_probabilistic::ProbEdge> {
+    built
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge.choice, ProductAction::EnterIdleTail))
+        .collect()
+}
+
+/// FR-196 item 1 (FR-196-AC-20): a quiescent state of a plain deadline claim
+/// on the region route takes one `EnterIdleTail` move, probability 1 and
+/// elapsed 0, to a decided `idle-entry` state with no successor, and builds
+/// no `idle-ready` or `idle-delayed` state.
+#[trace("TC-631", "FR-196-AC-20")]
+#[test]
+fn a_quiescent_region_state_enters_the_idle_tail_in_one_move() {
+    let world = quiescent_strict_world(&tail_claims());
+    let built = product(&world, "Eventually");
+    let entries = tail_entries(&built);
+    assert!(!entries.is_empty(), "a quiescent state offers the tail");
+    for edge in entries {
+        assert_eq!(edge.probability, ratio(1, 1));
+        assert_eq!(edge.elapsed, ratio(0, 1));
+        assert!(built.outgoing(edge.to).is_empty(), "entry has no successor");
+        assert!(built.decided.iter().any(|(state, _)| *state == edge.to));
+        let key: serde_json::Value =
+            serde_json::from_slice(&built.states[edge.to.index()].model).expect("a key");
+        assert_eq!(key[4][1][0], "region");
+        assert_eq!(key[4][1][6], "idle-entry");
+        let source: serde_json::Value =
+            serde_json::from_slice(&built.states[edge.from.index()].model).expect("a key");
+        assert_eq!(source[4][1][6], "running");
+        // Every other member is the source's, byte for byte.
+        for member in [1, 2, 3, 4, 5] {
+            assert_eq!(key[4][1][member], source[4][1][member]);
+        }
+    }
+    assert!(built.edges.iter().all(|edge| !matches!(
+        edge.choice,
+        ProductAction::EnterIdleDelay | ProductAction::IdleDelay | ProductAction::IdleObserve
+    )));
+    // The tail is offered beside the other moves of the state.
+    let first = tail_entries(&built)[0].from;
+    assert!(built
+        .outgoing(first)
+        .iter()
+        .any(|edge| matches!(edge.choice, ProductAction::UnitDelay)));
+}
+
+/// FR-196-AC-20: at a pending `eventually` state `B` fails at `q` (else the
+/// monitor accepted), so the tail rejects; at a pending `always` state `B`
+/// holds at `q`, so the tail accepts, on either side of the bound.
+#[trace("TC-631", "FR-196-AC-20")]
+#[test]
+fn the_idle_entry_verdict_follows_the_tail_table() {
+    let world = quiescent_strict_world(&tail_claims());
+    for (claim, verdict) in [
+        ("Eventually", MonitorVerdict::Reject),
+        ("Always", MonitorVerdict::Accept),
+    ] {
+        let built = product(&world, claim);
+        let entries = tail_entries(&built);
+        assert!(!entries.is_empty(), "{claim}");
+        for edge in entries {
+            let found = built
+                .decided
+                .iter()
+                .find(|(state, _)| *state == edge.to)
+                .map(|(_, verdict)| *verdict);
+            assert_eq!(found, Some(verdict), "{claim}");
+        }
+    }
+}

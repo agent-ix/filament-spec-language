@@ -2525,8 +2525,16 @@ fn enumerate_region_deadline(
         // A tail-entry state is decided: its value is the checker's own
         // table reading of the key (FR-196-AC-20), never a stated value.
         if current.tail == DigitalTail::IdleEntry {
-            let value = tail_entry_value(system, watch, binding, &current, tail_maximises, cancel)?
-                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let value = tail_entry_value(
+                system,
+                watch,
+                binding,
+                &current,
+                deadline,
+                tail_maximises,
+                cancel,
+            )?
+            .ok_or(ProbabilityDocumentError::Malformed)?;
             insert_checker_state(
                 key,
                 CheckerState {
@@ -2739,7 +2747,17 @@ fn enumerate_region_deadline(
                 tail: DigitalTail::IdleEntry,
                 ..current.clone()
             };
-            if tail_entry_value(system, watch, binding, &entry, tail_maximises, cancel)?.is_some() {
+            if tail_entry_value(
+                system,
+                watch,
+                binding,
+                &entry,
+                deadline,
+                tail_maximises,
+                cancel,
+            )?
+            .is_some()
+            {
                 let entry_key = region_key(
                     system,
                     timed,
@@ -2798,10 +2816,32 @@ fn tail_entry_value(
     watch: &Watch<'_>,
     binding: Option<&filament_exact::ObjectReference>,
     state: &RegionState,
+    deadline: u64,
     maximise: bool,
     cancel: &Cancel,
 ) -> Result<Option<bool>, ProbabilityDocumentError> {
-    use fsl_eval::probabilistic::DeadlineKind;
+    use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase};
+    // A plain `eventually[0, D]` read through the witness path's single
+    // predicate watch: the same key, the same monitor, the same tail.
+    if let (Watch::Deadline(predicate), Phase::Pending) = (watch, &state.phase) {
+        let truths = read_truths(
+            system,
+            &[predicate],
+            binding,
+            state.timed.discrete(),
+            cancel,
+        )?;
+        let [body] = truths.as_slice() else {
+            return Ok(None);
+        };
+        return Ok(Some(tail::tail_accepts(
+            DeadlineKind::Eventually,
+            DeadlinePhase::Pending,
+            state.elapsed <= deadline,
+            *body,
+            maximise,
+        )));
+    }
     let (Watch::Bounded { predicates, .. }, Phase::Bounded(operator)) = (watch, &state.phase)
     else {
         return Ok(None);

@@ -13,6 +13,7 @@ mod elapsed;
 mod instances;
 mod long_run;
 mod measure;
+mod region_walk;
 mod subsystem;
 mod undefined;
 
@@ -47,6 +48,8 @@ use fsl_semantics::check::{
 };
 use ix_trace_rs::implements;
 use num_bigint::BigInt;
+
+use region_walk::initial_walk;
 
 use super::items::{admission, BROKEN, NOT_YET};
 use super::timed_item::subject_refusal;
@@ -4500,12 +4503,21 @@ fn replay_timed_paths(
         Ok(key) => key,
         Err(error) => return document_failure(error, subject),
     };
+    let region = region_walk::is_region_key(&initial_key);
     let mut paths = Vec::with_capacity(produced.paths.len());
     for path in produced.paths {
         let mut previous_key = initial_key.clone();
         let mut state = first.clone();
+        let mut walk = if region {
+            match initial_walk(system, claim) {
+                Some(walk) => Some(walk),
+                None => return not_yet(),
+            }
+        } else {
+            None
+        };
         let mut steps = Vec::with_capacity(path.steps.len());
-        for step in path.steps {
+        for mut step in path.steps {
             if cancel.poll() {
                 if let Some(cause) = cancel.tripped() {
                     return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
@@ -4518,6 +4530,15 @@ fn replay_timed_paths(
                 Ok(key) => key,
                 Err(error) => return document_failure(error, subject),
             };
+            // A region delay edge has no fixed delay: the realiser gives it the
+            // exact delay that puts the threaded valuation in the target region.
+            if let Some(walk) = walk.as_ref() {
+                match walk.elapsed_of(system, claim, &step.action, &post_key, &step.elapsed) {
+                    Some(elapsed) => step.elapsed = elapsed,
+                    None => return not_yet(),
+                }
+            }
+            let mut stepped = None;
             let choice = match canonical_action(system, product, &step.action, &key_of) {
                 Ok(choice) => choice,
                 Err(error) => return document_failure(error, subject),
@@ -4558,7 +4579,7 @@ fn replay_timed_paths(
                                     .then(|| (transition, draw.random.clone(), post))
                             })
                         });
-                    match found {
+                    match found.filter(|_| walk.is_none()) {
                         Some((transition, random, post)) => {
                             let resume = post.clone();
                             (
@@ -4573,11 +4594,12 @@ fn replay_timed_paths(
                             // A clock-guarded operation is not enabled at the bare
                             // model state; take its step from the timed state the
                             // previous key names.
-                            let (transition, post, resume) = match timed_step_for(
+                            let (transition, post, resume, clocks) = match timed_step_for(
                                 system,
                                 claim,
                                 &state,
                                 &previous_key,
+                                walk.as_ref().map(|walk| &walk.clocks),
                                 Some(identity),
                                 &step.elapsed,
                                 wanted.as_ref(),
@@ -4587,6 +4609,7 @@ fn replay_timed_paths(
                                     return timed_step_failure(failure, cancel, subject);
                                 }
                             };
+                            stepped = Some(clocks);
                             (
                                 Some(identity.clone()),
                                 Some(transition),
@@ -4602,11 +4625,12 @@ fn replay_timed_paths(
                     // instant, so its model state may be several transitions
                     // beyond the source state's discrete value.
                     let wanted = timed_key_discrete(&post_key);
-                    let (_, post, resume) = match timed_step_for(
+                    let (_, post, resume, clocks) = match timed_step_for(
                         system,
                         claim,
                         &state,
                         &previous_key,
+                        walk.as_ref().map(|walk| &walk.clocks),
                         None,
                         &step.elapsed,
                         wanted.as_ref(),
@@ -4614,10 +4638,14 @@ fn replay_timed_paths(
                         Ok(found) => found,
                         Err(failure) => return timed_step_failure(failure, cancel, subject),
                     };
+                    stepped = Some(clocks);
                     (None, None, None, post, resume)
                 }
                 _ => (None, None, None, state.clone(), state.clone()),
             };
+            if let Some(walk) = walk.as_mut() {
+                walk.advance(&step.elapsed, stepped);
+            }
             let next_key = post_key.clone();
             steps.push(ProbabilityWitnessStep {
                 choice,
@@ -4695,16 +4723,19 @@ fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> 
 /// returns that operation's transition, the model state right after it (what a
 /// single recorded transition produces) and the model state at the end of the
 /// chain (what the product key names, and where the next step starts).
-/// A previous key that is a region key, or a chain still open after `CHAIN`
-/// operations, is [`TimedStepFailure::Unbuilt`] (a region refutation through a
-/// clock-guarded step therefore settles not-yet); a step expansion or key
+/// A region key names a region, not a valuation (D-001): the caller threads the
+/// valuation itself through `threaded`, recomputed from the stated delays. A
+/// previous digital key is read as before. A chain still open after `CHAIN`
+/// operations is [`TimedStepFailure::Unbuilt`]; a step expansion or key
 /// encoding that stops names its stop; only a search that exhausted every
 /// chain without reaching the wanted state is a fault.
+#[allow(clippy::too_many_arguments)]
 fn timed_step_for(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
     state: &fsl_eval::simulation::model::ModelSimState,
     previous: &ProbabilityProductKey,
+    threaded: Option<&fsl_eval::simulation::model::ClockValuation>,
     identity: Option<&fsl_eval::simulation::model::ScheduledIdentity>,
     elapsed: &Rational,
     wanted: Option<&serde_json::Value>,
@@ -4713,12 +4744,16 @@ fn timed_step_for(
         filament_semantic_value::model_transition::ModelTransition,
         fsl_eval::simulation::model::ModelSimState,
         fsl_eval::simulation::model::ModelSimState,
+        fsl_eval::simulation::model::ClockValuation,
     ),
     TimedStepFailure,
 > {
     use fsl_eval::simulation::model::{TimedState, TimedSystem};
-    let valuation =
-        fsl_replay::digital_key_clocks(system, claim, previous).ok_or(TimedStepFailure::Unbuilt)?;
+    let valuation = match threaded {
+        Some(threaded) => threaded.clone(),
+        None => fsl_replay::digital_key_clocks(system, claim, previous)
+            .ok_or(TimedStepFailure::Unbuilt)?,
+    };
     let timed = TimedSystem::new(system, claim.subject.alias.as_str())
         .map_err(TimedStepFailure::Subject)?;
     // A tie among the zero-time operations of one instant: the product never
@@ -4733,6 +4768,7 @@ fn timed_step_for(
         filament_semantic_value::model_transition::ModelTransition,
         fsl_eval::simulation::model::ModelSimState,
         fsl_eval::simulation::model::ModelSimState,
+        fsl_eval::simulation::model::ClockValuation,
     );
     // The chain found, or whether the search stopped with chains still open.
     let reaches = |from: TimedState| -> Result<Result<Found, bool>, TimedStepFailure> {
@@ -4763,7 +4799,12 @@ fn timed_step_for(
                         serde_json::from_slice(&key).map_err(|_| TimedStepFailure::Fault)?;
                     if Some(&discrete) == wanted {
                         let (transition, after_first) = first.ok_or(TimedStepFailure::Fault)?;
-                        return Ok(Ok((transition, after_first, post.discrete().clone())));
+                        return Ok(Ok((
+                            transition,
+                            after_first,
+                            post.discrete().clone(),
+                            post.clocks().clone(),
+                        )));
                     }
                     next.push((post, first));
                 }

@@ -148,8 +148,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .expect("emit package")
         .into_value();
     let floor_identity = fsl_replay::DefinitionRole::IntegerDivisionFloor.identity();
-    let alternate_identity =
-        fsl_replay::DefinitionRole::IntegerDivisionTruncating.identity();
+    let alternate_identity = fsl_replay::DefinitionRole::IntegerDivisionTruncating.identity();
     let unlisted_identity = "filament.value.integer-division.ceiling/v1";
     let original: serde_json::Value =
         serde_json::from_slice(emitted.package().bytes()).expect("emitted JSON");

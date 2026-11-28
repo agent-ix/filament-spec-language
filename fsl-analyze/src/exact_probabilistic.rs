@@ -37,6 +37,7 @@ mod reward_interval;
 mod route;
 mod rows;
 mod settle;
+mod tail;
 mod unbounded;
 mod witness;
 

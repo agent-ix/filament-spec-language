@@ -20,7 +20,9 @@ use fsl_semantics::check::{
     Weighting,
 };
 
+use super::region::CheckerRegion;
 use super::*;
+use crate::ClockPlace;
 
 /// The route a certificate for `claim` must name: `region` for a strict
 /// constraint, interval or `M < c`, and `digital` where the table admits the
@@ -277,19 +279,15 @@ fn steps_only(formula: &CheckedTemporalFormula) -> bool {
     }
     counted
 }
-
-/// A node of the region graph: the model state and one representative of the
-/// clock region, the last clock the one that measures divergence.
-type RegionNode = (Vec<u8>, Vec<(BigInt, BigInt)>);
-
-/// The region partition of one model: constants are multiples of
-/// `1 / scale`, and no clock is compared above `largest` such units.
-struct Regions {
+/// The integer grid of one model's region partition: constants are
+/// multiples of `1 / scale`, and no clock is compared above `largest` such
+/// units. The regions themselves are the checker's [`CheckerRegion`].
+struct Grid {
     scale: u64,
     largest: u64,
 }
 
-impl Regions {
+impl Grid {
     fn of(timed: &TimedSystem<'_, '_>) -> Result<Self, ProbabilityDocumentError> {
         let mut constants: Vec<Rational> = super::clock_constraints(timed)
             .into_iter()
@@ -318,88 +316,124 @@ impl Regions {
         Ok(Self { scale, largest })
     }
 
-    /// The clock `index` of `count` cap in units: one unit for the divergence
-    /// clock, which comes last.
-    fn cap(&self, index: usize, count: usize) -> u64 {
-        if index + 1 == count {
-            1
-        } else {
-            self.largest
-        }
-    }
-
-    /// The representative of the region of `values`: a clock above its cap
-    /// reads one unit above it, and the other fractional parts keep only
-    /// their order and which are zero.
-    fn canonical(&self, values: &[Rational]) -> Result<Vec<Rational>, ProbabilityDocumentError> {
-        let split = |value: &Rational| {
-            let units = value.numerator().as_big() * BigInt::from(self.scale);
-            units.div_rem(value.denominator().as_big())
-        };
-        let mut fractions = Vec::new();
-        for (index, value) in values.iter().enumerate() {
-            let (whole, rest) = split(value);
-            let cap = BigInt::from(self.cap(index, values.len()));
-            if (whole < cap) && rest != BigInt::from(0) {
-                fractions.push(rational(rest, value.denominator().as_big().clone())?);
-            }
-        }
-        fractions.sort();
-        fractions.dedup();
-        let parts = BigInt::from(fractions.len() + 1);
-        values
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let (whole, rest) = split(value);
-                let cap = BigInt::from(self.cap(index, values.len()));
-                let scale = BigInt::from(self.scale);
-                if whole > cap || (whole == cap && rest != BigInt::from(0)) {
-                    return rational(cap + 1, scale);
+    /// The caps of `count` clocks: the model clocks cap one above the largest
+    /// constant, the divergence clock (the last) at two, for its constant 1.
+    fn caps(&self, count: usize) -> Vec<u64> {
+        (0..count)
+            .map(|index| {
+                if index + 1 == count {
+                    2
+                } else {
+                    self.largest.saturating_add(1)
                 }
-                if rest == BigInt::from(0) {
-                    return rational(whole, scale);
-                }
-                let fraction = rational(rest, value.denominator().as_big().clone())?;
-                let rank = fractions
-                    .iter()
-                    .position(|held| held == &fraction)
-                    .ok_or(ProbabilityDocumentError::Unsupported)?;
-                rational(whole * &parts + BigInt::from(rank + 1), scale * &parts)
             })
             .collect()
     }
 
-    /// The delay from the representative `values` into the next region, or
-    /// `None` when every clock is above its cap.
+    /// The region of the clock `values`, the divergence clock last.
+    fn region_of(&self, values: &[Rational]) -> Result<CheckerRegion, ProbabilityDocumentError> {
+        let caps = self.caps(values.len());
+        let mut split = Vec::with_capacity(values.len());
+        let mut fractions = Vec::new();
+        for (value, cap) in values.iter().zip(&caps) {
+            let numerator = value.numerator().as_big() * BigInt::from(self.scale);
+            let denominator = value.denominator().as_big().clone();
+            let (whole, rest) = numerator.div_mod_floor(&denominator);
+            let saturated = numerator > BigInt::from(cap - 1) * &denominator;
+            if !saturated && rest != BigInt::from(0) {
+                fractions.push(rational(rest.clone(), denominator.clone())?);
+            }
+            split.push((whole, rest, saturated));
+        }
+        fractions.sort();
+        fractions.dedup();
+        let mut places = Vec::with_capacity(values.len());
+        for ((value, (whole, rest, saturated)), _) in values.iter().zip(split).zip(&caps) {
+            places.push(if saturated {
+                ClockPlace::Saturated
+            } else {
+                let whole = whole
+                    .to_u64()
+                    .ok_or(ProbabilityDocumentError::Unsupported)?;
+                if rest == BigInt::from(0) {
+                    ClockPlace::Integer(whole)
+                } else {
+                    let fraction = rational(rest, value.denominator().as_big().clone())?;
+                    let class = fractions
+                        .iter()
+                        .position(|held| held == &fraction)
+                        .and_then(|position| u32::try_from(position + 1).ok())
+                        .ok_or(ProbabilityDocumentError::Unsupported)?;
+                    ClockPlace::Open {
+                        integer: whole,
+                        class,
+                    }
+                }
+            });
+        }
+        CheckerRegion::from_places(&caps, &places).ok_or(ProbabilityDocumentError::Unsupported)
+    }
+
+    /// The number of fraction classes of `places`.
+    fn classes(places: &[ClockPlace]) -> u32 {
+        places
+            .iter()
+            .filter_map(|place| match place {
+                ClockPlace::Open { class, .. } => Some(*class),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// A clock valuation inside `region`: fraction class `k` of `K` reads
+    /// `k / (K + 1)` of a unit.
+    fn representative(
+        &self,
+        region: &CheckerRegion,
+    ) -> Result<Vec<Rational>, ProbabilityDocumentError> {
+        let places = region.places();
+        let caps = self.caps(places.len());
+        let parts = BigInt::from(Self::classes(&places) + 1);
+        places
+            .iter()
+            .zip(&caps)
+            .map(|(place, cap)| match place {
+                ClockPlace::Integer(whole) => {
+                    rational(BigInt::from(*whole), BigInt::from(self.scale))
+                }
+                ClockPlace::Open { integer, class } => rational(
+                    BigInt::from(*integer) * &parts + BigInt::from(*class),
+                    &parts * BigInt::from(self.scale),
+                ),
+                ClockPlace::Saturated => rational(BigInt::from(*cap), BigInt::from(self.scale)),
+            })
+            .collect()
+    }
+
+    /// A delay from the representative of `region` into its successor, or
+    /// `None` when every clock is saturated.
     fn successor_delay(
         &self,
-        values: &[Rational],
+        region: &CheckerRegion,
     ) -> Result<Option<Rational>, ProbabilityDocumentError> {
-        let mut greatest = None::<Rational>;
-        let mut on_boundary = false;
-        for (index, value) in values.iter().enumerate() {
-            let units = value.numerator().as_big() * BigInt::from(self.scale);
-            let (whole, rest) = units.div_rem(value.denominator().as_big());
-            if whole > BigInt::from(self.cap(index, values.len())) {
-                continue;
-            }
-            on_boundary |= rest == BigInt::from(0);
-            let fraction = rational(rest, value.denominator().as_big().clone())?;
-            if greatest.as_ref().is_none_or(|held| &fraction > held) {
-                greatest = Some(fraction);
-            }
-        }
-        let Some(greatest) = greatest else {
+        let places = region.places();
+        let live = places
+            .iter()
+            .any(|place| !matches!(place, ClockPlace::Saturated));
+        if !live {
             return Ok(None);
-        };
-        let (numerator, denominator) = (
-            greatest.numerator().as_big().clone(),
-            greatest.denominator().as_big().clone(),
-        );
-        let rest = &denominator - &numerator;
+        }
+        let on_boundary = places
+            .iter()
+            .any(|place| matches!(place, ClockPlace::Integer(_)));
         let halves = if on_boundary { 2 } else { 1 };
-        rational(rest, denominator * halves * BigInt::from(self.scale)).map(Some)
+        let parts = BigInt::from(Self::classes(&places) + 1);
+        rational(
+            BigInt::one(),
+            parts * BigInt::from(halves) * BigInt::from(self.scale),
+        )
+        .map(Some)
     }
 }
 
@@ -421,6 +455,7 @@ struct RegionEdge {
 /// graph with one added clock that is reset each time it reaches a unit
 /// (Tripakis). A state diverges when it has a path with ticks for ever:
 /// the greatest set from whose states a tick back into the set is reachable.
+/// The regions are the checker's own [`CheckerRegion`].
 #[implements("FR-921-AC-5")]
 fn time_lock_reachable(
     system: &ModelSystem<'_>,
@@ -428,28 +463,20 @@ fn time_lock_reachable(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<bool, ProbabilityDocumentError> {
-    let regions = Regions::of(timed)?;
+    let grid = Grid::of(timed)?;
     let zero = Rational::from_integer(Integer::from(0_i64));
-    let unit = rational(BigInt::one(), BigInt::from(regions.scale))?;
-    let mut index = BTreeMap::<RegionNode, usize>::new();
-    let mut states = Vec::<(TimedState, Vec<Rational>)>::new();
+    let mut index = BTreeMap::<(Vec<u8>, String), usize>::new();
+    let mut states = Vec::<(ModelSimState, CheckerRegion)>::new();
     let mut edges = Vec::<RegionEdge>::new();
     let mut visit = |discrete: &ModelSimState,
-                     values: Vec<Rational>,
-                     states: &mut Vec<(TimedState, Vec<Rational>)>|
+                     region: CheckerRegion,
+                     states: &mut Vec<(ModelSimState, CheckerRegion)>|
      -> Result<usize, ProbabilityDocumentError> {
         let key = system
             .state_key(discrete, fsl_foundation::IdentityLimits::default())
             .map_err(ProbabilityDocumentError::KeyEncoding)?
             .0;
-        let values = regions.canonical(&values)?;
-        let exact = values.iter().map(|value| {
-            (
-                value.numerator().as_big().clone(),
-                value.denominator().as_big().clone(),
-            )
-        });
-        let node = (key.to_vec(), exact.collect());
+        let node = (key.to_vec(), format!("{:?}", region.places()));
         if let Some(found) = index.get(&node) {
             return Ok(*found);
         }
@@ -462,32 +489,26 @@ fn time_lock_reachable(
                     .saturating_add(1),
             ));
         }
-        let clocks = values
-            .get(..values.len().saturating_sub(1))
-            .ok_or(ProbabilityDocumentError::Unsupported)?
-            .to_vec();
         index.insert(node, states.len());
-        states.push((
-            TimedState::new(discrete.clone(), ClockValuation::new(clocks)),
-            values,
-        ));
+        states.push((discrete.clone(), region));
         Ok(states.len() - 1)
     };
     for initial in timed.initial() {
         let mut values = initial.clocks().values().to_vec();
         values.push(zero.clone());
-        visit(initial.discrete(), values, &mut states)?;
+        visit(initial.discrete(), grid.region_of(&values)?, &mut states)?;
     }
     let stopped = |_| ProbabilityDocumentError::Unsupported;
     let mut next = 0;
-    while let Some((state, values)) = states.get(next).cloned() {
+    while let Some((discrete, region)) = states.get(next).cloned() {
         poll(cancel)?;
         let from = next;
         next += 1;
-        let elapsed = values
-            .last()
-            .cloned()
+        let values = grid.representative(&region)?;
+        let (tick, clocks) = values
+            .split_last()
             .ok_or(ProbabilityDocumentError::Unsupported)?;
+        let state = TimedState::new(discrete.clone(), ClockValuation::new(clocks.to_vec()));
         let mut push = |to: usize, tick: bool| {
             if edges.len() >= limits.edges {
                 return Err(exceeded(
@@ -501,24 +522,29 @@ fn time_lock_reachable(
             edges.push(RegionEdge { from, to, tick });
             Ok(())
         };
-        if elapsed >= unit {
-            let mut reset = values.clone();
-            if let Some(last) = reset.last_mut() {
-                *last = zero.clone();
-            }
-            push(visit(state.discrete(), reset, &mut states)?, true)?;
+        // The divergence clock has reached a unit: it is reset.
+        let unit = rational(BigInt::one(), BigInt::from(grid.scale))?;
+        if tick >= &unit {
+            let reset = region.reset(clocks.len(), 0);
+            push(visit(&discrete, reset, &mut states)?, true)?;
         }
-        if let Some(delay) = regions.successor_delay(&values)? {
-            if let Some(delayed) = timed.delay(&state, &delay).map_err(stopped)? {
-                let mut after = delayed.clocks().values().to_vec();
-                after.push(elapsed.add(&delay));
-                push(visit(state.discrete(), after, &mut states)?, false)?;
+        if !region.is_unbounded() {
+            if let Some(delay) = grid.successor_delay(&region)? {
+                if let Some(delayed) = timed.delay(&state, &delay).map_err(stopped)? {
+                    push(
+                        visit(delayed.discrete(), region.successor(), &mut states)?,
+                        false,
+                    )?;
+                }
             }
         }
         for (_, post) in timed.steps(&state).map_err(stopped)? {
             let mut after = post.clocks().values().to_vec();
-            after.push(elapsed.clone());
-            push(visit(post.discrete(), after, &mut states)?, false)?;
+            after.push(tick.clone());
+            push(
+                visit(post.discrete(), grid.region_of(&after)?, &mut states)?,
+                false,
+            )?;
         }
     }
     let mut before = vec![Vec::new(); states.len()];

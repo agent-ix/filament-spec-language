@@ -47,6 +47,7 @@ use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
 use serde_json::{json, Value as JsonValue};
 
+use super::region::Region;
 use super::unbounded::{maximal_end_components_from, same_action, Choice, Graph};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
@@ -114,6 +115,16 @@ pub(super) fn build<'s, 'a>(
                 .collect::<Result<Vec<_>, ProductRefusal>>()?
         }
     };
+    // A plain deadline form on the region route takes the symbolic tail
+    // (FR-196 item 1): one `EnterIdleTail` move to a decided entry state.
+    let plain_tail = subdivisions > 1 && matches!(form, Form::Deadline { .. });
+    let maximise = matches!(
+        &claim.form,
+        ProbForm::Probability {
+            bound: fsl_semantics::check::Bound::AtMost(_),
+            ..
+        }
+    );
     let builder = Builder {
         system,
         timed,
@@ -124,6 +135,8 @@ pub(super) fn build<'s, 'a>(
         subdivisions,
         caps,
         bindings,
+        plain_tail,
+        maximise,
         max_states: limits.model.limits.max_states,
         max_transitions: limits.model.limits.max_transitions,
         cancel,
@@ -649,6 +662,11 @@ pub(super) fn certificate_scale(
 ) -> Result<u64, ProductRefusal> {
     let form = Form::of(claim)?;
     let (base, subdivisions) = scale_of(system, timed, claim, &form)?;
+    // A plain deadline form states the plain LCD (FR-920 "Keys"); the grid the
+    // walk of the other forms refines is the producer's own representative.
+    if matches!(form, Form::Deadline { .. }) {
+        return Ok(base);
+    }
     base.checked_mul(subdivisions)
         .ok_or_else(|| fault("region-scale-fits-u64"))
 }
@@ -689,6 +707,8 @@ enum Tail {
     Running,
     IdleReady,
     IdleDelayed,
+    /// A region product's decided tail-entry state (FR-196 item 1).
+    IdleEntry,
 }
 
 /// A digital timed state.
@@ -925,6 +945,10 @@ struct Builder<'r, 'a, 'c> {
     subdivisions: u64,
     caps: Vec<u64>,
     bindings: Vec<(Option<ModelInstance>, Option<ObjectReference>)>,
+    /// Whether quiescent states take `EnterIdleTail` (plain deadline, region).
+    plain_tail: bool,
+    /// Whether the claim's bound makes the scheduler maximise acceptance.
+    maximise: bool,
     max_states: usize,
     max_transitions: usize,
     cancel: &'r Cancel,
@@ -1333,6 +1357,7 @@ impl<'c> Builder<'_, '_, 'c> {
             Tail::Running => DigitalTail::Running,
             Tail::IdleReady => DigitalTail::IdleReady,
             Tail::IdleDelayed => DigitalTail::IdleDelayed,
+            Tail::IdleEntry => DigitalTail::IdleEntry,
         };
         let key = if self.subdivisions == 1 {
             digital_probability_product_key(DigitalProductKeyInput {
@@ -1775,7 +1800,8 @@ impl<'c> Builder<'_, '_, 'c> {
         let initial = parent
             .map(|parent| self.nodes[parent].initial)
             .unwrap_or(initial);
-        let decided = target.key.monitor.is_some_and(MonitorState::is_decided);
+        let decided = target.key.monitor.is_some_and(MonitorState::is_decided)
+            || target.state.tail == Tail::IdleEntry;
         self.pending_keys.remove(&target.key);
         self.index.insert(target.key.clone(), id);
         self.nodes.push(Node {
@@ -2018,6 +2044,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 Some(workload) => self.workload_moves(at, &state, &local, workload),
             },
             Tail::IdleReady | Tail::IdleDelayed => self.idle_moves(at, &state),
+            // A tail-entry state is decided and has no move.
+            Tail::IdleEntry => Ok(Vec::new()),
         }
     }
 
@@ -2127,6 +2155,15 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Local,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
+        if self.plain_tail {
+            let state = &self.packed_representative(state)?;
+            self.region_delay(at, state, local, planned)?;
+            if local.quiescent {
+                let entry = self.enter_idle_tail(at, state, planned)?;
+                planned.push(entry);
+            }
+            return Ok(());
+        }
         let state = &self.packed_representative(state)?;
         if let Some(first_delay) = self.unit_delay(local, state)? {
             if self.subdivisions == 1 {
@@ -2167,6 +2204,147 @@ impl<'c> Builder<'_, '_, 'c> {
             }
         }
         Ok(())
+    }
+
+    /// The region of a packed grid state: the model clocks, then the deadline
+    /// clock. Packing leaves the fraction classes dense, so the grid value of
+    /// an open clock is its integer part times the grid plus its class.
+    fn region_of(&self, state: &DState) -> Step<Region> {
+        let parts = self.subdivisions;
+        let mut caps: Vec<u64> = self.caps.iter().map(|cap| (cap - 1) / parts + 1).collect();
+        let mut values = state.clocks.clone();
+        let mut grid_caps = self.caps.clone();
+        if let (Some(elapsed), Some(bound)) = (state.deadline, self.deadline_bound()?) {
+            caps.push(bound / parts + 1);
+            values.push(elapsed);
+            grid_caps.push(bound + 1);
+        }
+        let places: Vec<ClockPlace> = values
+            .iter()
+            .zip(&grid_caps)
+            .map(|(value, cap)| {
+                if value >= cap {
+                    ClockPlace::Saturated
+                } else if value % parts == 0 {
+                    ClockPlace::Integer(value / parts)
+                } else {
+                    ClockPlace::Open {
+                        integer: value / parts,
+                        class: u32::try_from(value % parts).unwrap_or(u32::MAX),
+                    }
+                }
+            })
+            .collect();
+        Region::of(&caps, &places).ok_or_else(|| fault("a-packed-grid-state-is-a-region").into())
+    }
+
+    /// The packed grid state of `region`, keeping `template`'s other members.
+    fn state_in(&self, region: &Region, template: &DState) -> DState {
+        let parts = self.subdivisions;
+        let mut grid_caps = self.caps.clone();
+        if let (Some(_), Ok(Some(bound))) = (template.deadline, self.deadline_bound()) {
+            grid_caps.push(bound + 1);
+        }
+        let mut values: Vec<u64> = region
+            .places()
+            .into_iter()
+            .zip(&grid_caps)
+            .map(|(place, cap)| match place {
+                ClockPlace::Integer(integer) => integer * parts,
+                ClockPlace::Open { integer, class } => integer * parts + u64::from(class),
+                ClockPlace::Saturated => *cap,
+            })
+            .collect();
+        let deadline = (template.deadline.is_some() && values.len() > self.caps.len())
+            .then(|| values.pop())
+            .flatten();
+        DState {
+            clocks: values,
+            deadline,
+            ..template.clone()
+        }
+    }
+
+    /// The plain deadline form's region delay (FR-922 "Behavior"): from the
+    /// state's region to its time successor, admissible when the state is not
+    /// urgent and the invariants hold on the successor. In an unbounded region
+    /// the successor is the region itself: a wait self-loop of one base unit.
+    #[implements("FR-922-AC-1")]
+    fn region_delay(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Local,
+        planned: &mut Vec<Planned>,
+    ) -> Step<()> {
+        if local.urgent {
+            return Ok(());
+        }
+        let region = self.region_of(state)?;
+        let next = region.successor();
+        let unbounded = next == region;
+        let reached = self.state_in(&next, state);
+        let valuation = self.valuation(&reached.clocks)?;
+        if !local.invariants.iter().all(|bound| bound.holds(&valuation)) {
+            return Ok(());
+        }
+        let elapsed_ticks = if unbounded {
+            self.subdivisions
+        } else {
+            reached
+                .deadline
+                .zip(state.deadline)
+                .and_then(|(after, before)| after.checked_sub(before))
+                .filter(|ticks| *ticks > 0)
+                .unwrap_or(1)
+        };
+        let moved = self.delay_move(DelayMove {
+            at,
+            state,
+            choice: ProductAction::UnitDelay,
+            delayed: (reached.clocks, reached.deadline),
+            tail: Tail::Running,
+            elapsed_ticks,
+            planned,
+            omit_unchanged: !unbounded,
+        })?;
+        if unbounded || moved.target.key != self.nodes[at].key {
+            planned.push(moved);
+        }
+        Ok(())
+    }
+
+    /// FR-196 item 1: the quiescent state's one move to its decided
+    /// tail-entry state, probability 1, elapsed 0, the key of `state` with the
+    /// tail `idle-entry`.
+    fn enter_idle_tail(
+        &mut self,
+        at: usize,
+        state: &DState,
+        planned: &[Planned],
+    ) -> Step<Planned> {
+        let reached = DState {
+            tail: Tail::IdleEntry,
+            ..state.clone()
+        };
+        let taken = TraceStep {
+            action: None,
+            draw: None,
+            probability: one(),
+        };
+        let target = self.arrive(at, reached, &[], Some(&taken), planned, |_| false)?;
+        super::observe_edge_construction();
+        Ok(Planned {
+            choice: ProductAction::EnterIdleTail,
+            action: None,
+            draw: None,
+            target,
+            probability: one(),
+            rewards: self.system.zero_rewards(),
+            elapsed_ticks: 0,
+            step: Some(taken),
+            zero_delay: true,
+        })
     }
 
     /// The region route's delay, taken to the time successor (FR-922): the
@@ -3335,6 +3513,35 @@ impl<'c> Builder<'_, '_, 'c> {
                 _ => None,
             })
             .collect();
+        // FR-196 item 2: a tail-entry state is valued from its key alone.
+        let tail_bound = self.deadline_bound().map_err(|halt| match halt {
+            Halt::Refusal(refusal) => refusal,
+            Halt::Undefined(_) => fault("deadline-bound-scales"),
+        })?;
+        for (index, node) in self.nodes.iter().enumerate() {
+            let Some(MonitorState::Deadline { kind, phase }) = node.key.monitor else {
+                continue;
+            };
+            if node.state.tail != Tail::IdleEntry {
+                continue;
+            }
+            let reachable = node
+                .state
+                .deadline
+                .zip(tail_bound)
+                .is_some_and(|(elapsed, bound)| elapsed <= bound);
+            let body = node.truths.last().copied().unwrap_or(false);
+            let accepts =
+                super::tail::plain_deadline_tail_accepts(kind, phase, reachable, body, self.maximise);
+            decided.push((
+                ProbStateId(index),
+                if accepts {
+                    MonitorVerdict::Accept
+                } else {
+                    MonitorVerdict::Reject
+                },
+            ));
+        }
         // A pending event at a state with no move at all (a time-lock) closes
         // as FSpec FR-416 "How claims read a time-lock" reads it: an `always`
         // holds, an `eventually` or `until` is refuted (ADR-026 TD-2 reports
