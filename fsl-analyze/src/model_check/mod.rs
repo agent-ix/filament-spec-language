@@ -22,7 +22,7 @@ pub(crate) mod false_extension;
 mod graph;
 mod hyper;
 mod initial;
-mod instance_end;
+pub(crate) mod instance_end;
 mod liveness;
 pub mod manifest;
 mod product;

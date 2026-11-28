@@ -317,6 +317,29 @@ pub(crate) fn world_armed(
     world_built(document, profiles, body, keys, armed, &json!({}))
 }
 
+/// [`world_armed`] checked under `mode`, for runtime undefinedness fixtures
+/// over several objects.
+pub(crate) fn world_armed_with_mode(
+    document: &[u8],
+    profiles: &str,
+    body: &str,
+    keys: &[&str],
+    armed: &[&str],
+    mode: CheckMode,
+) -> World {
+    world_built_in_with_protocol_selection(
+        PACKAGE,
+        &[document],
+        profiles,
+        body,
+        keys,
+        armed,
+        &json!({}),
+        true,
+        mode,
+    )
+}
+
 /// [`world_armed`] whose objects also hold the fields `extra`.
 pub(crate) fn world_built(
     document: &[u8],

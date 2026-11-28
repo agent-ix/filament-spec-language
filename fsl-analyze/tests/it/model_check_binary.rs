@@ -75,6 +75,7 @@ mod value_validity_support;
 mod weak_memory_support;
 mod zone_dense;
 mod zone_liveness;
+mod zone_orbits;
 mod zone_replay;
 mod zone_search;
 #[path = "zone_support.rs"]

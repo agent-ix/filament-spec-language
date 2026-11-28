@@ -31,6 +31,7 @@
 //! states through the permutations, as FR-161 lifts EN-1's.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::num::NonZeroUsize;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Meter, Rational};
@@ -45,9 +46,9 @@ use fsl_eval::simulation::{
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::{ReductionKind, Setting};
 use fsl_replay::{
-    AppliedReduction, CounterexampleKind, Lasso, NonZeno, ReductionCause, SymmetryBrokenCause,
-    SymmetryRefusal, TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus,
-    UndefinedSite,
+    AppliedReduction, Combined, CounterexampleKind, InstanceFold, InstanceVerdict, Lasso, NonZeno,
+    ReductionCause, Step, SymmetryBrokenCause, SymmetryRefusal, TemporalCounterexample, TimedPoint,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{
     CheckedTemporalClause, ClockOp, FormulaNodeId, TemporalProfile, TimedPropertyForm,
@@ -62,6 +63,7 @@ use super::concretise::{concretise, Concrete, Target};
 use super::divergence::Escape;
 use super::liveness::Liveness;
 use super::{scale_constants, Bound, Dbm, DbmError};
+use crate::model_check::instance_end::End;
 use crate::model_check::{admit, closure_under_limit, instance_groups, ClosureRefusal};
 use fsl_eval::automaton::{
     position_automaton, AutomatonError, PositionAutomaton, Read, Stamp, WindowClaim, WindowFault,
@@ -787,7 +789,7 @@ pub fn check_timed_model<S: Clone>(
     }
     // FR-239's bound check ran when the timed subject was built.
     let system = request.subject.system();
-    let mut symmetric = !reductions.symmetry.is_empty();
+    let symmetric = !reductions.symmetry.is_empty();
     // EN-6 applies symmetry to its search only: the time-lock search and
     // the liveness product read the unreduced graph's edges, so an item
     // decided by either settles V-8 naming symmetry, as an unapplied
@@ -863,9 +865,13 @@ pub fn check_timed_model<S: Clone>(
             orbit: Vec::new(),
         }],
     };
-    let mut applied = Vec::new();
+    // FR-239 "Instances and orbits": one verdict for each plan in canonical
+    // order, settled by the one fold of FR-126 "TP-4 items".
+    let Some(count) = NonZeroUsize::new(plans.len()) else {
+        return Err(ZoneCheckRefusal::Fault("zone-plan"));
+    };
+    let mut fold = InstanceFold::new(count);
     let mut total = ZoneStats::default();
-    let mut proved = None;
     for plan in plans {
         let (judged, window, live) = judge_plan(&request, plan.instances)?;
         let automaton_constants = live
@@ -888,67 +894,153 @@ pub fn check_timed_model<S: Clone>(
             Err(Halt::Outcome(searched)) => *searched,
             Err(Halt::Refusal(refusal)) => return Err(refusal),
         };
-        match searched {
+        let verdict = match searched {
             Searched::Graph { .. } => {
                 return Err(ZoneCheckRefusal::Fault("unexpected-state-graph"));
             }
             Searched::Holds { proof, stats } => {
                 total = total.plus(stats);
-                proved = Some(proof);
+                InstanceVerdict::Proved(PlanEnd::Proof(proof))
             }
             Searched::HoldsReduced { stats } => {
                 total = total.plus(stats);
-                applied.push(AppliedReduction::Symmetry {
+                InstanceVerdict::Proved(PlanEnd::Reduced(AppliedReduction::Symmetry {
                     groups: group.classes.clone(),
                     orbit: plan.orbit,
                     stabiliser: plan.group.classes,
-                });
+                }))
             }
             Searched::Violated {
                 counterexample,
                 stats,
             } => {
+                total = total.plus(stats);
                 let non_zeno = (liveness_product
                     && matches!(&counterexample.kind, CounterexampleKind::Formula)
                     && counterexample.lasso.is_some())
                 .then_some(NonZeno::Checked);
-                return Ok(ZoneCheckOutcome::Violated {
+                InstanceVerdict::Refuted(PlanEnd::Violated {
                     counterexample,
                     non_zeno,
-                    stats: total.plus(stats),
-                });
+                })
             }
             Searched::Undecided { cause, stats } => {
+                total = total.plus(stats);
                 let non_zeno = (liveness_product
                     && matches!(&cause, ZoneUndecided::NoAdmittedBehaviour))
                 .then_some(NonZeno::Refuted);
-                return Ok(ZoneCheckOutcome::Undecided {
-                    cause,
-                    non_zeno,
-                    stats: total.plus(stats),
-                });
+                InstanceVerdict::NotProved(PlanEnd::Undecided { cause, non_zeno })
             }
             Searched::Stopped { cause, stats } => {
-                return Ok(ZoneCheckOutcome::Stopped {
-                    cause,
-                    stats: total.plus(stats),
-                });
+                total = total.plus(stats);
+                match zone_end(&cause) {
+                    End::Run { cancel } => InstanceVerdict::RunStop {
+                        outcome: PlanEnd::Stopped(cause),
+                        cancel,
+                    },
+                    End::Instance => InstanceVerdict::NotProved(PlanEnd::Stopped(cause)),
+                }
             }
+        };
+        if fold.push(verdict) == Step::Stop {
+            break;
         }
     }
-    Ok(match proved {
-        Some(proof) if !symmetric => ZoneCheckOutcome::Holds {
-            certificate: Box::new(proof.proving(request.obligation)),
-            stats: total,
+    let combined = fold
+        .finish()
+        .map_err(|_| ZoneCheckRefusal::Fault("instance-fold"))?;
+    settle_plans(combined, total, request.obligation, symmetric)
+}
+
+/// One plan's end, before the item's outcome is settled over every plan.
+enum PlanEnd {
+    /// The plan holds, with the certificate of its run.
+    Proof(Box<Proof>),
+    /// The plan holds in a symmetry-reduced graph.
+    Reduced(AppliedReduction),
+    Violated {
+        counterexample: Box<TemporalCounterexample>,
+        non_zeno: Option<NonZeno>,
+    },
+    Undecided {
+        cause: ZoneUndecided,
+        non_zeno: Option<NonZeno>,
+    },
+    Stopped(ZoneStop),
+}
+
+/// FR-239 "Instances and orbits": which stop ends the run and which only its
+/// orbit. `max_clocks` is a property of the subject, the same for every
+/// orbit; `max_automaton_states` counts one orbit's automaton.
+fn zone_end(cause: &ZoneStop) -> End {
+    match cause {
+        ZoneStop::Cancelled => End::Run { cancel: true },
+        ZoneStop::LimitReached(
+            ZoneCheckLimit::MaxSymbolicStates(_)
+            | ZoneCheckLimit::MaxSymbolicTransitions(_)
+            | ZoneCheckLimit::MaxZoneBytes(_)
+            | ZoneCheckLimit::MaxClocks(_),
+        ) => End::Run { cancel: false },
+        ZoneStop::LimitReached(ZoneCheckLimit::MaxAutomatonStates(_)) => End::Instance,
+    }
+}
+
+/// The item's outcome over its plans' ends, with the run's counts.
+fn settle_plans<S>(
+    combined: Combined<PlanEnd>,
+    stats: ZoneStats,
+    obligation: ItemObligation<S>,
+    symmetric: bool,
+) -> Result<ZoneCheckOutcome<S>, ZoneCheckRefusal> {
+    match combined {
+        Combined::Refuted { outcome, .. }
+        | Combined::Stopped { outcome, .. }
+        | Combined::NotProved { outcome, .. } => match outcome {
+            PlanEnd::Violated {
+                counterexample,
+                non_zeno,
+            } => Ok(ZoneCheckOutcome::Violated {
+                counterexample,
+                non_zeno,
+                stats,
+            }),
+            PlanEnd::Undecided { cause, non_zeno } => Ok(ZoneCheckOutcome::Undecided {
+                cause,
+                non_zeno,
+                stats,
+            }),
+            PlanEnd::Stopped(cause) => Ok(ZoneCheckOutcome::Stopped { cause, stats }),
+            PlanEnd::Proof(_) | PlanEnd::Reduced(_) => {
+                Err(ZoneCheckRefusal::Fault("instance-fold"))
+            }
         },
-        // Unreachable by design: a run under a selected symmetry sets
-        // `reduced`, whose proof is always `HoldsReduced`.
-        Some(_) => return Err(ZoneCheckRefusal::Fault("reduced-certificate")),
-        None => ZoneCheckOutcome::HoldsReduced {
-            reductions: applied,
-            stats: total,
-        },
-    })
+        Combined::Proved { proofs } => {
+            let mut proof = None;
+            let mut applied = Vec::new();
+            for end in proofs {
+                match end {
+                    PlanEnd::Proof(own) => proof = Some(own),
+                    PlanEnd::Reduced(reduction) => applied.push(reduction),
+                    PlanEnd::Violated { .. } | PlanEnd::Undecided { .. } | PlanEnd::Stopped(_) => {
+                        return Err(ZoneCheckRefusal::Fault("instance-fold"));
+                    }
+                }
+            }
+            Ok(match proof {
+                Some(proof) if !symmetric => ZoneCheckOutcome::Holds {
+                    certificate: Box::new(proof.proving(obligation)),
+                    stats,
+                },
+                // Unreachable by design: a run under a selected symmetry sets
+                // `reduced`, whose proof is always `HoldsReduced`.
+                Some(_) => return Err(ZoneCheckRefusal::Fault("reduced-certificate")),
+                None => ZoneCheckOutcome::HoldsReduced {
+                    reductions: applied,
+                    stats,
+                },
+            })
+        }
+    }
 }
 
 /// Whether `request`'s item is decided on a graph EN-6 does not reduce:
@@ -1219,8 +1311,11 @@ pub(super) struct Run<'r, 's, 'a> {
     steps: BTreeMap<Vec<u8>, Vec<GuardedStep>>,
     /// Undefined timed guards retained by state-graph exploration.
     undefined: Vec<(Vec<u8>, UndecidedReading)>,
-    /// The first instance an admitted behaviour read short of data for.
-    insufficient: Option<ModelInstance>,
+    /// The first cause, in breadth-first order, for which a node stayed
+    /// unexpanded and the search went on (FR-239 "Undecided nodes in one
+    /// search"): an expansion or reading with no value, or the first
+    /// instance an admitted behaviour read short of data for.
+    first_undecided: Option<ZoneUndecided>,
     /// The group the run's states are canonicalised under (FSpec FR-430).
     pub(super) group: SymmetryGroup,
     /// Whether the request selected symmetry, so a proof is `Reduced`.
@@ -1282,7 +1377,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             escape_edges: 0,
             steps: BTreeMap::new(),
             undefined: Vec::new(),
-            insufficient: None,
+            first_undecided: None,
             group: SymmetryGroup::default(),
             reduced: false,
         }
@@ -1635,7 +1730,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             } else if let Some(node) = self.insert(discrete, q, zone, Some(index), None)? {
                 roots.push(node);
                 queue.push_back(node);
-                delayed_deadlock |= self.judge(node)?;
+                delayed_deadlock |= self.judged(node)?;
             }
         }
         if roots.is_empty() {
@@ -1643,9 +1738,13 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         }
         while let Some(node) = queue.pop_front() {
             self.poll()?;
-            for created in self.expand(node)? {
-                queue.push_back(created);
-                delayed_deadlock |= self.judge(created)?;
+            let mut created = Vec::new();
+            if let Err(halt) = self.expand(node, &mut created) {
+                self.keep_undecided(halt)?;
+            }
+            for new in created {
+                queue.push_back(new);
+                delayed_deadlock |= self.judged(new)?;
             }
         }
         if matches!(self.judged, Judged::StateGraph) {
@@ -1668,7 +1767,19 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         // behaviour.
         let mut admitted = None;
         for &root in &roots {
-            let escape = self.node_escape(root)?;
+            let escape = match self.node_escape(root) {
+                Ok(escape) => escape,
+                Err(halt) => {
+                    // The check meets a node the search left unexpanded: the
+                    // item is undecided by the first cause.
+                    self.keep_undecided(halt)?;
+                    let cause = self
+                        .first_undecided
+                        .take()
+                        .ok_or(ZoneCheckRefusal::Fault("undecided-cause"))?;
+                    return Err(self.undecided(cause));
+                }
+            };
             if escape.diverges {
                 admitted = Some((root, escape.witness));
                 break;
@@ -1682,11 +1793,12 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             Some(_) if delayed_deadlock => Err(self.undecided(ZoneUndecided::DeadlockAfterDelay)),
             // ADR-024 WA-4: an admitted behaviour read a window short of
             // data, which the evaluator reports `InsufficientData`.
-            Some(_) if self.insufficient.is_some() => {
-                let instance = self.insufficient.take();
-                Err(self.undecided(ZoneUndecided::InsufficientData(
-                    instance.ok_or(ZoneCheckRefusal::Fault("insufficient-instance"))?,
-                )))
+            Some(_) if self.first_undecided.is_some() => {
+                let cause = self
+                    .first_undecided
+                    .take()
+                    .ok_or(ZoneCheckRefusal::Fault("undecided-cause"))?;
+                Err(self.undecided(cause))
             }
             // FR-160: a symmetry-reduced graph has no certificate.
             Some(_) if self.reduced => Ok(Searched::HoldsReduced {
@@ -1949,17 +2061,17 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             .map_err(|_| ZoneCheckRefusal::Fault("state-key").into())
     }
 
-    /// Expand `node` once: the nodes it creates, in canonical order.
-    fn expand(&mut self, node: usize) -> Result<Vec<usize>, Halt> {
+    /// Expand `node` once, pushing the nodes it creates onto `created` in
+    /// canonical order: those pushed before a halt are kept.
+    fn expand(&mut self, node: usize, created: &mut Vec<usize>) -> Result<(), Halt> {
         if self.expanded[node] {
-            return Ok(Vec::new());
+            return Ok(());
         }
         self.expanded[node] = true;
         let state = self.nodes[node].state.clone();
         let zone = self.nodes[node].zone.clone();
         let q = self.nodes[node].q;
         let scale = self.scale.clone();
-        let mut created = Vec::new();
         // With no automaton, and once a TT-2 automaton state has decided
         // every obligation, past the formula's horizon (FR-242, ADR-026
         // EZ-9), a step reads no position: the automaton state stays, no
@@ -1985,7 +2097,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     created.push(new);
                 }
             }
-            return Ok(created);
+            return Ok(());
         }
         let Some(window) = self.window.as_ref() else {
             return Err(ZoneCheckRefusal::Fault("window").into());
@@ -2067,7 +2179,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 }
             }
         }
-        Ok(created)
+        Ok(())
     }
 
     /// The automaton state a position reads from `q`.
@@ -2131,6 +2243,43 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         }
     }
 
+    /// [`Self::judge`], where a node that ends undecided stays unexpanded and
+    /// the search goes on (FR-239 "Undecided nodes in one search").
+    fn judged(&mut self, node: usize) -> Result<bool, Halt> {
+        match self.judge(node) {
+            Ok(delayed) => Ok(delayed),
+            Err(halt) => {
+                self.keep_undecided(halt)?;
+                self.expanded[node] = true;
+                Ok(false)
+            }
+        }
+    }
+
+    /// Keep the first cause of an undecided node of a search that judges
+    /// each node alone, and let the search go on. Any other halt, and every
+    /// halt of a search that reads its whole graph, ends the search.
+    fn keep_undecided(&mut self, halt: Halt) -> Result<(), Halt> {
+        if !matches!(self.judged, Judged::Claim(_) | Judged::DeadlockFreedom) {
+            return Err(halt);
+        }
+        match halt {
+            Halt::Outcome(searched) => match *searched {
+                Searched::Undecided {
+                    cause:
+                        cause @ (ZoneUndecided::UndecidedSuccessor(_)
+                        | ZoneUndecided::InsufficientData(_)),
+                    ..
+                } => {
+                    self.first_undecided.get_or_insert(cause);
+                    Ok(())
+                }
+                other => Err(Halt::Outcome(Box::new(other))),
+            },
+            refusal @ Halt::Refusal(_) => Err(refusal),
+        }
+    }
+
     /// Judge a new node: end the run on an admitted violation, mark a locked
     /// one. `true` when the node is a deadlock reached only after a delay.
     fn judge(&mut self, node: usize) -> Result<bool, Halt> {
@@ -2174,13 +2323,13 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             self.nodes[node].locked = true;
             return Ok(());
         }
-        if self.insufficient.is_none() {
+        if self.first_undecided.is_none() {
             let instance = self
                 .claim()
                 .and_then(|claim| claim.instances.get(at))
                 .cloned()
                 .ok_or(ZoneCheckRefusal::Fault("window-instance"))?;
-            self.insufficient = Some(instance);
+            self.first_undecided = Some(ZoneUndecided::InsufficientData(instance));
         }
         Ok(())
     }
@@ -3121,5 +3270,35 @@ fn flat_window(
         Ok(claim) => Ok(Some(claim)),
         Err(WindowRefusal::NestedWindow) => Ok(None),
         Err(refusal) => Err(refusal.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    /// FR-239-AC-12: the run-level ends are the symbolic-state,
+    /// symbolic-transition and zone-byte budgets, `max_clocks` and
+    /// cancellation; `max_automaton_states` ends its orbit only.
+    #[trace("FR-239-AC-11", "FR-239-AC-12")]
+    #[test]
+    fn only_the_shared_budgets_the_clock_bound_and_cancellation_end_the_run() {
+        for run in [
+            ZoneStop::LimitReached(ZoneCheckLimit::MaxSymbolicStates(1)),
+            ZoneStop::LimitReached(ZoneCheckLimit::MaxSymbolicTransitions(1)),
+            ZoneStop::LimitReached(ZoneCheckLimit::MaxZoneBytes(1)),
+            ZoneStop::LimitReached(ZoneCheckLimit::MaxClocks(1)),
+        ] {
+            assert_eq!(zone_end(&run), End::Run { cancel: false }, "{run:?}");
+        }
+        assert_eq!(zone_end(&ZoneStop::Cancelled), End::Run { cancel: true });
+        assert_eq!(
+            zone_end(&ZoneStop::LimitReached(ZoneCheckLimit::MaxAutomatonStates(
+                1
+            ))),
+            End::Instance
+        );
     }
 }
