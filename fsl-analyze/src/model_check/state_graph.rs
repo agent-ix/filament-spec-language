@@ -54,6 +54,8 @@ use fsl_semantics::model::observation::AdmissionFailure;
 
 use super::check::{fault, BOUND_POSITIONS};
 use super::ModelCheckRefusal;
+use crate::analyze::EngineBounds;
+use fsl_foundation::budget::Budget;
 
 /// One state-graph item of a request: a checked claim. Its instances are
 /// derived from the subject's universes (FR-125 Instancing): one per key of
@@ -109,6 +111,9 @@ pub struct StateGraphRequest<'a> {
     pub limits: ModelCheckLimits,
     /// Phase 0's seed; `None` runs under [`DEFAULT_WITNESS_SEED`].
     pub seed: Option<u64>,
+    /// The item's `analysis.retained_bytes` allowance (FR-255 "Retained
+    /// bytes"); `None` runs on the published default.
+    pub retained: Option<&'a Budget>,
 }
 
 /// A node handle of an [`ExploredStateGraph`], in discovery order.
@@ -327,6 +332,7 @@ fn instances<'a>(
 }
 
 /// Collapse symmetry-equivalent claim instances to their least binding.
+#[implements("FR-151-AC-5")]
 fn symmetry_instances<'a>(
     views: Vec<Vec<InstanceView<'a>>>,
     declared: &SymmetryGroup,
@@ -334,6 +340,11 @@ fn symmetry_instances<'a>(
     views
         .into_iter()
         .map(|instances| {
+            let bound: BTreeSet<_> = instances
+                .iter()
+                .filter_map(|view| view.model_instance.as_ref())
+                .map(|binding| (binding.population.clone(), binding.key.clone()))
+                .collect();
             let mut result = Vec::new();
             for view in instances {
                 let Some(binding) = view.model_instance.clone() else {
@@ -345,6 +356,9 @@ fn symmetry_instances<'a>(
                 let mut orbit = declared
                     .class_of(&binding.population, &binding.key)
                     .map_or_else(|| vec![binding.key.clone()], |class| class.keys.clone());
+                // A key that is no instance here is in no orbit (FR-151
+                // "Instances").
+                orbit.retain(|key| bound.contains(&(binding.population.clone(), key.clone())));
                 orbit.sort();
                 let representative = orbit
                     .first()
@@ -692,6 +706,10 @@ pub fn check_state_graph(
     } else {
         None
     };
+    let retained = request
+        .retained
+        .cloned()
+        .unwrap_or_else(|| EngineBounds::default().item_budget(budgets.meter, cancel));
     let explored = explore::Exploration {
         system: &system,
         limits: &request.limits,
@@ -704,6 +722,7 @@ pub fn check_state_graph(
         por: por.as_ref(),
         declared_symmetry: &declared_symmetry,
         symmetry: &symmetry_group,
+        retained: &retained,
     }
     .run(initial)?;
     let items = views

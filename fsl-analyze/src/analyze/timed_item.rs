@@ -15,11 +15,11 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::NotSimulated;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::RequestIndex;
+use fsl_foundation::{RequestIndex, Setting, SettingLimits};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertificateCheckLimits, CertifiedItem, ReplayTargetMembers, RequestTargetWire, TimedReplay,
-    ZoneCertificateRequest,
+    CertificateCheckLimits, CertifiedItem, ModelCheckLimit, ReplayTargetMembers, RequestTargetWire,
+    TimedReplay, ZoneCertificateRequest,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
@@ -27,6 +27,7 @@ use fsl_route::request::ItemKind;
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 use fsl_semantics::family::ClassifyFailure;
+use ix_trace_rs::implements;
 
 use super::clause_item::{clause_name, replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
 use super::derived_item::{derived_target, NoLetters, DEADLOCK_TRANSCRIPT};
@@ -35,8 +36,8 @@ use super::items::{
     NOT_YET,
 };
 use super::{
-    AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SourceProvision, SubjectBinding,
-    TemporalItem,
+    AnalyzeItem, AnalyzeLimits, EngineBounds, EngineReport, Refusal, SourceProvision,
+    SubjectBinding, TemporalItem, ENGINE_SETTINGS,
 };
 use crate::zone_check::{manifest as en6, ZoneCheckItem, ZoneCheckLimits, ZoneCheckRequest};
 
@@ -179,7 +180,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
                 kind: ObligationKind::Authored(fsl_replay::node_occurrence(node)),
                 reductions: ObligationReductions::default(),
             },
-            limits: zone_limits(form),
+            limits: zone_limits(&zone_bounds(form, limits.engines)),
             reductions: &reductions,
         },
         certificate: ZoneCertificateRequest {
@@ -191,7 +192,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
                 letters: &letters,
             },
         },
-        certificate_limits: CertificateCheckLimits::default(),
+        certificate_limits: certificate_limits(&limits.engines),
         replay: Box::new(|payload| {
             replay_over(
                 &inputs,
@@ -232,17 +233,92 @@ pub(super) fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
     }
 }
 
-/// EN-6's budgets under the item's `max_states` and `max_transitions`, which
-/// bound the symbolic states and edges (FSpec FR-368 "Negotiation").
-pub(super) fn zone_limits(form: &TemporalItem) -> ZoneCheckLimits {
-    let mut limits = ZoneCheckLimits::default();
-    if let Ok(states) = u64::try_from(form.limits.limits.max_states) {
-        limits.max_symbolic_states = states;
+/// The caller's settings as a budget reads them: only the rows it set.
+impl SettingLimits for EngineBounds {
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        ENGINE_SETTINGS
+            .iter()
+            .filter_map(|setting| self.get(*setting).map(|bound| (*setting, bound)))
+            .collect()
     }
-    if let Ok(edges) = u64::try_from(form.limits.limits.max_transitions) {
-        limits.max_symbolic_transitions = edges;
+
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        self.set(setting, bound)
     }
-    limits
+}
+
+/// EN-6's bounds for one item: the caller's `zone_check.*` settings, with
+/// each member the item states in place of its setting (FR-239 "Budget
+/// sources", FSpec FR-368 "Negotiation"). `model_check.*` bounds never
+/// reach them.
+#[implements("FR-239-AC-7")]
+pub(super) fn zone_bounds(form: &TemporalItem, engines: EngineBounds) -> EngineBounds {
+    let stated = |limit, value: usize| {
+        form.requested_limits
+            .contains(&limit)
+            .then(|| u64::try_from(value).unwrap_or(u64::MAX))
+    };
+    with_stated(
+        engines,
+        stated(ModelCheckLimit::MaxStates, form.limits.limits.max_states),
+        stated(
+            ModelCheckLimit::MaxTransitions,
+            form.limits.limits.max_transitions,
+        ),
+    )
+}
+
+/// `engines` with an item's stated `max_states` and `max_transitions` as its
+/// symbolic-state and symbolic-edge bounds.
+pub(super) fn with_stated(
+    mut engines: EngineBounds,
+    max_states: Option<u64>,
+    max_transitions: Option<u64>,
+) -> EngineBounds {
+    for (setting, stated) in [
+        (Setting::ZoneCheckMaxSymbolicStates, max_states),
+        (Setting::ZoneCheckMaxSymbolicTransitions, max_transitions),
+    ] {
+        if let Some(bound) = stated {
+            engines.set(setting, bound);
+        }
+    }
+    engines
+}
+
+/// The zone search's limits under `bounds`, each unset one at its FR-255
+/// default.
+#[implements("FR-239-AC-7")]
+pub(super) fn zone_limits(bounds: &EngineBounds) -> ZoneCheckLimits {
+    let default = ZoneCheckLimits::default();
+    let bound = |setting, default| bounds.get(setting).unwrap_or(default);
+    ZoneCheckLimits {
+        max_symbolic_states: bound(
+            Setting::ZoneCheckMaxSymbolicStates,
+            default.max_symbolic_states,
+        ),
+        max_symbolic_transitions: bound(
+            Setting::ZoneCheckMaxSymbolicTransitions,
+            default.max_symbolic_transitions,
+        ),
+        max_automaton_states: bound(
+            Setting::ZoneCheckMaxAutomatonStates,
+            default.max_automaton_states,
+        ),
+        max_zone_bytes: bound(Setting::ZoneCheckMaxZoneBytes, default.max_zone_bytes),
+    }
+}
+
+/// The certificate checker's limits under `bounds`: its work is
+/// `zone_check.max_check_work`.
+pub(super) fn certificate_limits(bounds: &EngineBounds) -> CertificateCheckLimits {
+    let default = CertificateCheckLimits::default();
+    CertificateCheckLimits {
+        max_check_work: bounds
+            .get(Setting::ZoneCheckMaxCheckWork)
+            .unwrap_or(default.max_check_work),
+        ..default
+    }
 }
 
 pub(super) fn certificate_simulation<'a>(
@@ -348,7 +424,7 @@ pub(super) fn zone_derived_item<'a>(
                             kind: obligation,
                             reductions: ObligationReductions::default(),
                         },
-                        limits: zone_limits(&form),
+                        limits: zone_limits(&zone_bounds(&form, limits.engines)),
                         reductions: &reductions,
                     },
                     certificate: ZoneCertificateRequest {
@@ -357,7 +433,7 @@ pub(super) fn zone_derived_item<'a>(
                         max_clocks,
                         item: certified,
                     },
-                    certificate_limits: CertificateCheckLimits::default(),
+                    certificate_limits: certificate_limits(&limits.engines),
                     replay: joined_replay(
                         Box::new(|payload| {
                             replay_over(
@@ -391,6 +467,45 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+
+    /// FR-239-AC-7: an item that states no limit, under no caller setting,
+    /// runs EN-6 with the FR-255 `zone_check.*` defaults, and EN-1's bounds
+    /// do not reach it. A caller setting and a stated member each replace
+    /// only their own bound.
+    #[trace("FR-239-AC-7")]
+    #[test]
+    fn an_unstated_item_runs_under_the_zone_check_defaults() {
+        let mut form = TemporalItem::default();
+        // EN-1's published 10^7 states and 10^8 transitions, which the item
+        // did not state.
+        form.limits.limits.max_states = 10_000_000;
+        form.limits.limits.max_transitions = 100_000_000;
+        let published = ZoneCheckLimits {
+            max_symbolic_states: 1_048_576,
+            max_symbolic_transitions: 16_777_216,
+            max_automaton_states: 1_048_576,
+            max_zone_bytes: 1_073_741_824,
+        };
+        let silent = zone_bounds(&form, EngineBounds::default());
+        assert_eq!(zone_limits(&silent), published);
+        assert_eq!(certificate_limits(&silent).max_check_work, 100_000_000);
+
+        let mut caller = EngineBounds::default();
+        assert!(caller.set(Setting::ZoneCheckMaxSymbolicStates, 2));
+        assert!(caller.set(Setting::ZoneCheckMaxCheckWork, 3));
+        form.limits.limits.max_transitions = 5;
+        form.requested_limits = vec![ModelCheckLimit::MaxTransitions];
+        let bounds = zone_bounds(&form, caller);
+        assert_eq!(
+            zone_limits(&bounds),
+            ZoneCheckLimits {
+                max_symbolic_states: 2,
+                max_symbolic_transitions: 5,
+                ..published
+            }
+        );
+        assert_eq!(certificate_limits(&bounds).max_check_work, 3);
+    }
 
     /// A clock owner with no universe is a defect of the request's binding,
     /// never an engine fault; the model-intrinsic forms EN-6 does not read are

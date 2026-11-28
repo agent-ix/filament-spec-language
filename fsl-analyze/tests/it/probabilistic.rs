@@ -26,6 +26,8 @@ mod relation_claims_support;
 mod source_value_support;
 mod statistical_witness_support;
 mod timed_world;
+mod ue6_exact;
+mod ue6_statistical;
 mod units;
 
 mod bounded_closure;
@@ -52,6 +54,7 @@ mod hyper_replay;
 mod hyper_settle;
 mod hyper_single;
 mod hyper_swap;
+mod hyper_ue6;
 mod hyper_wire;
 mod hyper_witness;
 mod long_run_certificate;

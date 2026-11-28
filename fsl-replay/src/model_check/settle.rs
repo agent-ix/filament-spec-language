@@ -77,6 +77,17 @@ pub enum ResultLabel {
 }
 
 impl ResultLabel {
+    /// The result's FSpec FR-360 spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Proved => "proved",
+            Self::Refuted => "refuted",
+            Self::Inconclusive => "inconclusive",
+            Self::Unsupported => "unsupported",
+            Self::Failed => "failed",
+        }
+    }
+
     /// The ADR-013 O-16 category a backend's result settles in (FR-332,
     /// ADR-014 A-5): `proved` is success, `refuted` violation, `inconclusive`
     /// inconclusive, `unsupported` unsupported, `failed` with execution
@@ -577,24 +588,23 @@ fn load_buffering_warnings(
         ProtocolDefinition::Package(form) => {
             let package = PackageProtocolProgram::with_memory(input, *form, subject.memory.clone())
                 .map_err(|_| None)?;
-            let ValueType::Reference(object_type) = &package.over_type else {
-                return Err(None);
-            };
-            let reference = model
-                .written_reference(object_type.clone(), &subject.over)
-                .map_err(|_| None)?;
             let capacities = fsl_eval::simulation::protocol::Capacities::admit_input(
                 input,
                 &subject.protocol,
                 &subject.capacities,
             )
             .map_err(|_| None)?;
-            package_load_buffering_shapes(
-                &model,
-                &package,
-                &Value::Reference(reference),
-                &capacities,
-            )
+            // FR-882-AC-3: a scalar `over` ranges over its bounded domain, so
+            // the engine enumerates it; a reference `over` is the subject's own.
+            let over = match &package.over_type {
+                ValueType::Reference(object_type) => Some(Value::Reference(
+                    model
+                        .written_reference(object_type.clone(), &subject.over)
+                        .map_err(|_| None)?,
+                )),
+                _ => None,
+            };
+            package_load_buffering_shapes(&model, &package, over.as_ref(), &capacities)
         }
     }
     .map_err(|refusal| match refusal {
@@ -960,7 +970,8 @@ impl Row {
                     | IncompleteCause::ResourceExhausted
                     | IncompleteCause::UnresolvedDynamics
                     | IncompleteCause::CertificateUnchecked
-                    | IncompleteCause::PrecisionBudget { .. } => None,
+                    | IncompleteCause::PrecisionBudget { .. }
+                    | IncompleteCause::IdleTailUndecided(_) => None,
                 };
                 Self::incomplete(cause, limit_reached)
             }

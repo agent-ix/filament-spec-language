@@ -154,8 +154,8 @@ The FR-331 terminal record of the claim.
 
 | Provider result | FSpec FR-360 label | FSpec FR-243 basis | `TerminalValue` | O-16 category |
 | --- | --- | --- | --- | --- |
-| A sound `Bounded{horizon, jumps, exhaustive}` result that covers the claim | `proved`, labelled `certified` when FR-751 accepts its FSpec FR-652 certificate and `uncertified` otherwise | `closed-scope` | `Proved{basis: BoundedSolver{method, horizon, jumps, exhaustive}, certification}`, `certification` `Certified` or `Uncertified` by that rule | success |
-| A sound `Inductive` result | `proved`, labelled `certified` when FR-751 accepts its FSpec FR-652 certificate and `uncertified` otherwise | `closed-scope` | `Proved{basis: InductiveSolver{method}, certification}`, `certification` `Certified` or `Uncertified` by that rule | success |
+| A sound `Bounded{horizon, jumps, exhaustive}` result that covers the claim | `proved`, labelled `certified` when FR-751 accepts its FSpec FR-652 certificate and `uncertified` when it carries none; a certificate FR-751 rejects settles `inconclusive`, `CertificateRejected{rule, at}` instead (FR-751) | `closed-scope` | `Proved{basis: BoundedSolver{method, horizon, jumps, exhaustive}, certification}`, `certification` `Certified` or `Uncertified` by that rule | success |
+| A sound `Inductive` result | `proved`, labelled `certified` when FR-751 accepts its FSpec FR-652 certificate and `uncertified` when it carries none; a certificate FR-751 rejects settles `inconclusive`, `CertificateRejected{rule, at}` instead (FR-751) | `closed-scope` | `Proved{basis: InductiveSolver{method}, certification}`, `certification` `Certified` or `Uncertified` by that rule | success |
 | A sound `Bounded{horizon, jumps, exhaustive}` result that does not cover the claim | `inconclusive` | `unsettled` | `Inconclusive(InsufficientHorizon{horizon, jumps, exhaustive})`, never `Proved` | inconclusive |
 | `DeltaSat`, `EnclosureMeetsUnsafe`, `Unknown`, or a result that is not sound | `inconclusive` | `unsettled` | `Inconclusive(SolverInconclusive{trace, replay})`, `trace` the outcome's `Option<HybridTrace>`, `None` for an outcome that carries none, and `replay` its FR-450 static replay outcome, `None` with no trace | inconclusive |
 | `NoInitialState` | `inconclusive` | `unsettled` | `Inconclusive(NoInitialState)`, never `Proved`: a model with no behaviour proves nothing (FSpec FR-193 "Initial states") | inconclusive |
@@ -187,8 +187,11 @@ The FR-331 terminal record of the claim.
 - A `BoundedSolver` or `InductiveSolver` proof SHALL carry the label
   `certified` when the provider returned an FSpec FR-652 certificate that
   FR-751's core checker accepted, and `uncertified` otherwise: with no
-  certificate, with a rejected one (recorded as `certificate-rejected`,
-  FR-751), or from a solver whose method has no certificate form. The
+  certificate, or from a solver whose method has no certificate form. A
+  proof whose certificate FR-751 rejects is not `proved`: it settles
+  `inconclusive`, `CertificateRejected{rule, at}`, and one whose check the
+  work meter stops settles `incomplete`, `LimitReached{limit: work_units}`
+  (FR-751, ADR-026 CF-4). The
   solver itself is a native engine outside the core (ADR-018 PC-1, ADR-026
   HY-2), so only the core check of its certificate makes the proof
   `certified`, and the solver's word alone never does.
@@ -212,8 +215,10 @@ The FR-331 terminal record of the claim.
 - A first-party provider's `bounded-solver` or `inductive-solver` entry
   SHALL carry `uncertified`, as FSpec FR-331 "Certification" fixes for the
   provider's own word, and the record's `certification` SHALL be the
-  reader's: `certified` once FR-751 accepts the entry's certificate,
-  otherwise the entry's `uncertified`. The entry and the record therefore
+  reader's: `certified` once FR-751 accepts the entry's certificate, and the
+  entry's `uncertified` when the entry carries no certificate. An entry
+  whose certificate FR-751 rejects leaves no `proved` record, so it has no
+  record `certification` (FR-751). The entry and a `proved` record therefore
   differ exactly when a certificate was accepted.
 - A hybrid item SHALL carry its budgets as `hybrid.limits.max_solver_steps`
   and `hybrid.limits.max_solver_time`, each a whole positive count, and their

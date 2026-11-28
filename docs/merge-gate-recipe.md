@@ -1,18 +1,81 @@
 # Merge gate recipe
 
-Run `cargo run --locked -p xtask -- merge-gate-recipe [--preflight]
-<changed-path>...` from the workspace for a PR head that already contains
-current `origin/main`. Pass
-changed paths relative to the workspace root. The command fetches `origin/main`,
-verifies ancestry, and prints both commit IDs in its header. By default it only
-prints the recipe and does not invoke Cargo. Add `--preflight` before the paths
-to check each name filter with normal and ignored `cargo test -- --list` output;
-an explicit filter with no non-ignored matches then fails closed. A local
-library-module filter with no matches is reported as a note.
+For ordinary PRs, use a clean tool checkout on `origin/main` history, separate
+from the per-PR checkout. It can lag unrelated `origin/main` commits. Run
+Cargo there before invoking the recipe executable:
+
+```text
+CARGO_INCREMENTAL=0 cargo build --locked -p xtask
+```
+
+Cargo's normal freshness checks reuse the existing build and rebuild only when
+the tool checkout's inputs require it. The tool checkout may lag unrelated
+`origin/main` changes; it must be on the current main history. Invoke its
+executable and explicitly select the PR checkout. Pass changed paths relative
+to the selected workspace root:
+
+```text
+cargo xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
+```
+
+The same explicit workspace selection is required when calling from elsewhere:
+
+```text
+/path/to/tool-checkout/target/debug/xtask merge-gate-recipe --workspace /path/to/pr-worktree --preflight <changed-path>...
+```
+
+The command requires a clean tool checkout and clean relevant source paths in
+the selected PR checkout. It fetches current `origin/main` in both checkouts
+and requires the tool checkout `HEAD` to be an ancestor of its fetched main.
+The PR checkout may lag `origin/main` when its changed paths, the package
+footprints selected by the recipe, and the exact selected integration-test
+module files do not overlap main's changed paths since their merge-base. A
+change to `Cargo.toml`, `Cargo.lock`, `.cargo/**`, `rust-toolchain.toml`, or
+`xtask/**` on either side always requires merging main. For a selected package,
+any main change within that package footprint counts as overlap, including a
+sibling file. The recipe prints the PR-head, fetched-main, and merge-base SHAs,
+the sorted overlapping paths, and an accept or merge-required verdict. It uses
+Git's changed-path output to refuse reuse when xtask recipe sources or Cargo
+build inputs differ between the tool checkout and PR head. If those inputs
+differ, update the tool checkout to a revision containing those changes and
+build there before retrying.
+
+Path non-overlap checks textual paths and cannot prove semantic compatibility
+between independent changes. The rolling merge-gate check on the current main
+head covers this limitation by evaluating the integrated tree.
+
+For a tooling PR that changes xtask recipe or build inputs, build and invoke
+from the same clean PR checkout instead. Cargo's freshness check builds the
+PR's executable in that checkout, and the command checks the PR's relevant
+build paths are clean and applies the same overlap check against its fetched
+`origin/main`. It skips the separate stable-tool comparison, which would
+correctly reject the new tooling changes:
+
+```text
+CARGO_INCREMENTAL=0 cargo build --locked -p xtask
+target/debug/xtask merge-gate-recipe --workspace /path/to/this-pr-worktree --preflight <changed-path>...
+```
+
+By default the command only prints the recipe and does not invoke Cargo. Add
+`--preflight` before the paths to build selected test targets once per package
+with Cargo JSON artifact output, then check each name filter by running its
+resolved test binary with `--list` in normal and ignored modes. Package build
+and selector listing durations are reported on stderr. An explicit filter with
+no non-ignored matches fails closed. A local library-module filter with no
+matches is reported as a note.
+
+Every non-spec recipe includes the repository's static checks:
+
+```text
+cargo fmt --all -- --check
+cargo run --locked -p xtask -- string-edge
+cargo run --locked -p xtask -- canonical-types
+```
 
 The output is one command per line, with target `--no-run` compilation commands
-first, named-filter test commands next, any external driver note after those,
-and `cargo check --locked --workspace --all-targets` last. Every test command
+first, named-filter test commands next, these three static checks after them,
+any external driver note after those, and `cargo check --locked --workspace
+--all-targets` last. Every test command
 has a named module or test filter; the recipe never runs an unfiltered library
 or crate test target. Run the printed commands in that order. The recipe itself
 only lists tests; it does not execute them. For spec-only changes it prints

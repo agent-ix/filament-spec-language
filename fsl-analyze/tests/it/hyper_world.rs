@@ -94,12 +94,16 @@ pub(crate) enum Vault {
     /// [`Self::Busy`] whose `step` leaks as [`Self::Leaky`] does:
     /// `l = (i + h) mod 2`.
     BusyLeaky,
+    /// [`Self::Busy`] whose `step` also requires `quotient(1 - self.l + self.h)
+    /// >= 0`, which has no value at `(h, l) = (0, 1)` (needs the `quotient`
+    /// function of a Kernel world).
+    BusyUndefined,
 }
 
 impl Vault {
     /// Whether the vault has the `busy` field and the `mix` operation.
     fn busy(self) -> bool {
-        matches!(self, Self::Busy | Self::BusyLeaky)
+        matches!(self, Self::Busy | Self::BusyLeaky | Self::BusyUndefined)
     }
 
     fn contracts(self, reset: bool) -> String {
@@ -118,6 +122,13 @@ impl Vault {
             Self::Busy => {
                 "pre Idle using v on V::Vault::step { self.busy = 0 }\n\
                  post Step using v on V::Vault::step { self.l = i and self.busy = self.h }\n\
+                 pre Busy using v on V::Vault::mix { self.busy = 1 }\n\
+                 post Mixed using v on V::Vault::mix { self.busy = 0 }\n"
+            }
+            Self::BusyUndefined => {
+                "pre Idle using v on V::Vault::step { self.busy = 0 }\n\
+                 pre Guard using v on V::Vault::step { quotient(1 - self.l + self.h) >= 0 }\n\
+                 post Step using v on V::Vault::step { ((i = self.h and self.l = 0) or (i != self.h and self.l = 1)) and self.busy = self.h }\n\
                  pre Busy using v on V::Vault::mix { self.busy = 1 }\n\
                  post Mixed using v on V::Vault::mix { self.busy = 0 }\n"
             }
@@ -590,6 +601,30 @@ impl World {
         )
     }
 
+    /// [`Self::with_second_model`] with an additional function declaration
+    /// checked under `CheckMode::Kernel`; clauses and contracts remain Linked.
+    pub(crate) fn with_second_model_kernel_function(
+        vault: Vault,
+        starts: &[(i64, i64)],
+        declaration: &str,
+        function: &str,
+    ) -> Self {
+        let snapshots: Vec<_> = starts.iter().map(|start| vec![(KEY, *start)]).collect();
+        let mut world = Self::assemble_with_mode(
+            vault,
+            false,
+            snapshots.clone(),
+            Some(snapshots),
+            Vec::new(),
+            vec![KEY.to_owned()],
+            declaration,
+            function,
+            CheckMode::Kernel,
+        );
+        world.other_universe = Some(vec![KEY.to_owned()]);
+        world
+    }
+
     /// [`Self::with_second_model`] from one initial state that holds the
     /// vaults `first` in the first model and `second` in the second model,
     /// `(key, (h, l))`, each of which is also its model's universe.
@@ -882,6 +917,7 @@ impl World {
                 limits: ModelCheckLimits::default(),
                 meter: UNLIMITED,
                 reductions,
+                retained: None,
                 max_depth: self.max_depth,
             },
             &Cancel::new(),
@@ -921,6 +957,28 @@ impl World {
         )
     }
 
+    /// The run of the clause storing its product states on `retained`.
+    pub(crate) fn run_retaining(
+        &self,
+        retained: &fsl_foundation::budget::Budget,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let seams = self.seams();
+        check_hyper(
+            HyperCheckRequest {
+                clause: &self.clause,
+                subjects: vec![self.subject()],
+                letters: &seams,
+                matcher: &seams,
+                limits: ModelCheckLimits::default(),
+                max_depth: self.max_depth,
+                meter: UNLIMITED,
+                reductions: Reductions::default(),
+                retained: Some(retained),
+            },
+            &Cancel::new(),
+        )
+    }
+
     /// The run of the clause reading its atoms through `letters` and its
     /// `match` through `matcher`.
     pub(crate) fn run_through(
@@ -940,6 +998,7 @@ impl World {
                 max_depth: self.max_depth,
                 meter: UNLIMITED,
                 reductions: Reductions::default(),
+                retained: None,
             },
             cancel,
         )

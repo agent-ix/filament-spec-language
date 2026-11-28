@@ -4158,6 +4158,17 @@ pub enum TemporalNodeForm {
     Operator(TemporalOperatorForm),
 }
 
+impl TemporalNodeForm {
+    /// The node's whole source span: for an operator, the whole application.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Constant { span, .. } | Self::Holds { span, .. } => *span,
+            Self::AggregateAtom(atom) => atom.span,
+            Self::Operator(operator) => operator.span,
+        }
+    }
+}
+
 /// A temporal formula: an arena of nodes naming their operands by id, so
 /// building, comparing, cloning and dropping one never recurses however
 /// deep the formula (ADR-030 D-4.2).
@@ -5452,11 +5463,9 @@ mod tests {
         let listed = field_read(10);
         let guard = field_read(40);
         assert!(listed.root().same_tree(guard.root()));
-        assert!(
-            !listed
-                .root()
-                .same_tree(Expression::field(Expression::name("got"), "ready").root())
-        );
+        assert!(!listed
+            .root()
+            .same_tree(Expression::field(Expression::name("got"), "ready").root()));
     }
 
     /// A 100,000-deep tree, alternating single-, two- and many-operand

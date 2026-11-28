@@ -9,21 +9,22 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
     CheckedHyperLetters, ExpansionLimits, ModelSimulationRequest, ModelSystem,
 };
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    BoundCovers, HyperOutcome, HyperReplay, IncompleteCause, RunStats, UndecidedCause,
-    replay_hyper_trace_tuple, settle_hyper_check,
+    replay_hyper_trace_tuple, settle_hyper_check, BoundCovers, HyperOutcome, HyperReplay,
+    IncompleteCause, InconclusiveCause, RunStats, UndecidedCause,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::implements;
 
-use super::items::{BROKEN, admission, model_refusal};
+use super::instance_records::{decisive, undecided};
+use super::items::{admission, model_refusal, BROKEN};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
 use crate::model_check::{
-    HyperCheckRequest, ModelRelationOutcome, ModelRelationRefusal, ModelRelationStats,
-    alias_provisions, alias_system, check_hyper, manifest,
+    alias_provisions, alias_system, check_hyper, manifest, HyperCheckRequest, ModelRelationOutcome,
+    ModelRelationRefusal, ModelRelationStats,
 };
 
 /// The item that runs the checked hyper clause `key` names, or none when the
@@ -127,6 +128,7 @@ pub(super) fn hyper_item<'a>(
                         },
                     );
                 }
+                let retained = limits.engines.item_budget(limits.accounting, cancel);
                 let outcome = match check_hyper(
                     HyperCheckRequest {
                         clause,
@@ -144,6 +146,7 @@ pub(super) fn hyper_item<'a>(
                         max_depth: form.max_depth,
                         meter: limits.accounting,
                         reductions: form.reductions.clone(),
+                        retained: Some(&retained),
                     },
                     cancel,
                 ) {
@@ -196,7 +199,9 @@ pub(super) fn hyper_item<'a>(
                                 .and_then(|slot| owned.get(slot))
                                 .ok_or_else(|| fault("parameter-alias"))?;
                             let admitted = system
-                                .hyper_instances(&parameter.population)
+                                .instances(&filament_exact::ValueType::Reference(
+                                    parameter.object.clone(),
+                                ))
                                 .map_err(|_| fault("parameter-universe"))?;
                             let bound = admitted
                                 .into_iter()
@@ -240,7 +245,9 @@ struct SingleControl<'a> {
     cancel: &'a Cancel,
 }
 
-#[implements("FR-125-AC-13", "FR-125-AC-21")]
+/// Decide and settle an HP-5 item, instance by instance, and report the record
+/// of the instance that decides it.
+#[implements("FR-181-AC-8", "FR-181-AC-11", "FR-181-AC-12")]
 fn single(
     package: &fsl_package::CheckedPackage,
     clause: &fsl_semantics::check::CheckedHyperClause,
@@ -249,12 +256,17 @@ fn single(
     letters: &CheckedHyperLetters<'_, '_>,
     control: SingleControl<'_>,
 ) -> EngineReport {
-    use fsl_replay::{GraphEvidence, StateGraphMethod, StateGraphPropertyForm, TerminalValue};
+    use fsl_replay::{StateGraphMethod, StateGraphPropertyForm, TerminalValue};
     let SingleControl {
         form,
         limits,
         cancel,
     } = control;
+    // FSpec FR-393's evidence instance names one parameter, so a clause with
+    // more has no way to write what its instances settle from.
+    if clause.parameters().len() > 1 {
+        return EngineReport::Refused(Refusal::Unsupported(super::items::NOT_YET));
+    }
     let mut budgets = form.limits;
     if let Some(samples) = form.witness_samples {
         budgets.witness_samples = samples;
@@ -278,14 +290,6 @@ fn single(
         Ok(run) => run,
         Err(refusal) => return EngineReport::Refused(model_refusal(&refusal)),
     };
-    if run.instances.is_empty() {
-        let cause = if simulation.initial.is_empty() {
-            fsl_replay::InconclusiveCause::NoInitialState
-        } else {
-            fsl_replay::InconclusiveCause::NoInstance
-        };
-        return super::state_graph_item::no_graph_decision(form, cause);
-    }
     let subjects = [ModelSubject {
         simulation,
         proof_bounds: form.proof_bounds.clone(),
@@ -305,7 +309,7 @@ fn single(
         max_depth,
         seed: run.seed,
     };
-    let mut chosen = None;
+    let mut reports = Vec::with_capacity(run.instances.len());
     for instance in &run.instances {
         let settled = match fsl_replay::settle_existential(&request, instance, &method, cancel) {
             Ok(settled) => settled,
@@ -313,13 +317,7 @@ fn single(
         };
         let mut wire = None;
         if let Some(evidence) = settled.evidence.as_ref() {
-            let over = match evidence {
-                GraphEvidence::Witness { over, .. }
-                | GraphEvidence::Trap { over, .. }
-                | GraphEvidence::PathPair { over, .. }
-                | GraphEvidence::Undefined { over, .. } => over.as_ref(),
-            };
-            let reference = match (clause.parameter_object_type(0), over) {
+            let reference = match (clause.parameter_object_type(0), evidence.over().first()) {
                 (Some(declared), Some(instance)) => {
                     match system.written_reference(declared.clone(), instance) {
                         Ok(reference) => Some(reference),
@@ -354,12 +352,23 @@ fn single(
             certificate_document: None,
             checker: proved.then_some(fsl_replay::CertificateChecker::ProductClosure),
         };
-        if !proved {
-            return EngineReport::StateGraph(Box::new(report));
+        reports.push(report);
+        // A refutation decides the item whatever the earlier instances gave.
+        if refuted {
+            break;
         }
-        chosen = Some(report);
     }
-    match chosen {
+    if reports.is_empty() {
+        // FR-125 "Instancing": no initial state settles before no instance.
+        let cause = if subjects[0].simulation.initial.is_empty() {
+            InconclusiveCause::NoInitialState
+        } else {
+            InconclusiveCause::NoInstance
+        };
+        return undecided(cause, &method, budgets.witness_samples);
+    }
+    let records: Vec<_> = reports.iter().map(|report| report.record.clone()).collect();
+    match reports.into_iter().nth(decisive(&records)) {
         Some(report) => EngineReport::StateGraph(Box::new(report)),
         None => EngineReport::Refused(Refusal::Failed(BROKEN)),
     }

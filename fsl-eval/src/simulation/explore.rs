@@ -7,7 +7,7 @@ use std::collections::{HashSet, VecDeque};
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::declaration::TypeEnvironment;
-use fsl_foundation::diagnostic::category_of;
+use fsl_foundation::diagnostic::exit_category_of;
 use quire_canonical::Encode;
 
 use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
@@ -310,17 +310,13 @@ impl Outcome {
     }
 }
 
-/// The O-16 category of an expansion stop's cause. `resource_exhausted` is
-/// an exhausted execution budget, incomplete (ADR-014 B-2); every other code
-/// takes the catalog's category, and a code the catalog does not define is
-/// an internal failure: the system stopped for a reason the engine cannot
-/// classify. The only site that reads a stop cause's code spelling.
-#[ix_trace_rs::string_edge]
+/// The O-16 category of an expansion stop's cause: its exit category
+/// (`exit_category_of`: an unsupported code is 21, and `resource_exhausted`,
+/// an exhausted execution budget, is incomplete, ADR-014 B-2), and a code the
+/// catalog does not define is an internal failure: the system stopped for a
+/// reason the engine cannot classify.
 fn stop_category(cause: &CatalogCode) -> Category {
-    if cause.code() == "resource_exhausted" {
-        return Category::Incomplete;
-    }
-    category_of(cause).unwrap_or(Category::InternalFailure)
+    exit_category_of(cause).unwrap_or(Category::InternalFailure)
 }
 
 /// The result of one exploration run: its outcome and the findings of every
@@ -570,5 +566,22 @@ mod stop_category_tests {
             stop_category(&CatalogCode::new("wrong_snapshot", "x")),
             Category::Refusal
         );
+    }
+
+    /// FR-285-AC-1: a stop whose cause is an unsupported code (such as
+    /// `unsupported_construct`, a write to a collection) is category
+    /// `unsupported`, exit 21, not the record map's `Refusal` (20).
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn a_stop_for_an_unsupported_code_is_unsupported_exit_21() {
+        for code in [
+            "unsupported_construct",
+            "unsupported_projection",
+            "unknown_required_feature",
+        ] {
+            let category = stop_category(&CatalogCode::new(code, "x"));
+            assert_eq!(category, Category::Unsupported, "{code}");
+            assert_eq!(category.exit_code(), 21, "{code}");
+        }
     }
 }

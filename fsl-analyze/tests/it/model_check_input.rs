@@ -14,6 +14,8 @@ use crate::counter::{document, package_with_clauses, subject, Documents, CONTRAC
 const DIRECT_DENSE: &str =
     "dimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n";
 
+mod mutation;
+
 /// Dense delay tables preserve the original clock identities and exact valuations.
 #[trace("FR-940-AC-6", "FR-120")]
 #[test]
@@ -380,7 +382,7 @@ fn dense_replay_rejects_incomplete_certificate_coverage() {
                     steps: Vec::new(),
                 },
                 closure: TrapClosure::StateGraph,
-                over: Some(instance.clone()),
+                over: vec![instance.clone()],
             },
         )
         .with_zone_certificate(certificate);
@@ -1076,6 +1078,7 @@ fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal()
 /// routes, which must agree; the source replay's settlement.
 fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
     use filament_exact::Cancel;
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{
         analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
         PackageDeadlockSubject, RunInput, TemporalItem,
@@ -1097,7 +1100,7 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
         deadlock_model_item(
             &run,
             &world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &world.provision,
             derived.occurrence(),
             &form,
@@ -1118,7 +1121,7 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
             &handoff.bytes,
             handoff.supply(),
             world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             derived.occurrence(),
             &form,
         )
@@ -1131,7 +1134,12 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
         .expect("one engine");
     let settled = |item: fsl_analyze::analyze::ModelItem<'_>| {
         let item = derived_model_item(derived, obligation, item).expect("the join admits");
-        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        let mut records = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         format!("{:?}", records.remove(0))
     };
     let from_source = settled(source_item());
@@ -1198,6 +1206,7 @@ fn a_package_route_deadlock_item_joins_a_terminal_declaration_as_the_source_does
 #[trace("TC-1142", "FR-411-AC-5")]
 #[test]
 fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_source_is() {
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::DerivedItemMismatch;
     use fsl_analyze::analyze::{
         derived_model_item, AnalyzeLimits, PackageDeadlockSubject, TemporalItem,
@@ -1233,7 +1242,7 @@ fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_sourc
             &handoff.bytes,
             handoff.supply(),
             world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             derived.occurrence(),
             &form,
         )
@@ -1374,4 +1383,114 @@ fn a_package_route_terminal_self_is_the_populations_canonical_member() {
     };
     assert_eq!(classes(&over_bytes), classes(&over_source));
     assert!(classes(&over_source).contains(&TerminalClass::Intended));
+}
+
+/// Digital-clock replay refuses the two state-graph forms its integer-clock
+/// graph does not preserve (FSL FR-243), whatever evidence it is given, and
+/// still reads `possible`.
+#[trace("TC-2412")]
+#[test]
+fn digital_replay_refuses_always_possible_and_unique_path() {
+    use fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS;
+    use fsl_replay::ModelTraceRefusal;
+    use fsl_replay::{
+        GraphEvidence, ModelPath, NotDigitisable, NotDigitisableRule, ReplayRefusal, TrapClosure,
+    };
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x"], &[("send", &["phase"])]),
+        "",
+        &format!(
+            "{DIRECT_DENSE}\
+            pre Enabled using v on M::Call::send {{ self.phase = 0 }}\n\
+            post SetPhase using v on M::Call::send {{ self.phase = 1 }}\n\
+            possible Reach using v over (c: M::Call) {{ c.phase = 1 }}\n\
+            always possible Back using v over (c: M::Call) {{ c.phase = 0 }}\n\
+            unique path Only using v over (c: M::Call) from (c.phase = 0) to (c.phase = 1);\n"
+        ),
+    );
+    let request = world.request();
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: request.universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let replay = |name: &str| {
+        let claim = world
+            .package
+            .graph()
+            .state_graph_claim(name)
+            .expect("claim");
+        let occurrence = claim.occurrence().expect("occurrence").clone();
+        let obligation = fsl_package::ObligationIdentity::new(occurrence.node().clone(), None, 0);
+        let envelope = fsl_replay::GraphEvidenceEnvelope::new(
+            obligation.clone(),
+            occurrence.clone(),
+            occurrence.node().clone(),
+            Vec::new(),
+            request.meter,
+            Vec::new(),
+            fsl_foundation::BackendId::new("en-1"),
+            GraphEvidence::Trap {
+                stem: ModelPath {
+                    initial: 0,
+                    steps: Vec::new(),
+                },
+                closure: TrapClosure::StateGraph,
+                over: vec![instance.clone()],
+            },
+        );
+        let mut wire = crate::model_settle_support::request(
+            &world.package,
+            &[],
+            &world.document,
+            world.snapshots.iter(),
+            &world.unit,
+        );
+        wire.replay_target = fsl_replay::RequestTargetWire::default();
+        wire.obligation_identity = obligation;
+        wire.backend = "en-1".to_owned();
+        wire.accounting_limits = request.meter;
+        wire.source = fsl_replay::ReplaySource::ModelGraph(Box::new(envelope));
+        let replayed = fsl_replay::replay_model_graph(
+            wire,
+            &fsl_replay::ModelTraceSubject {
+                timed: Some(fsl_replay::TimedReplay {
+                    model: "M".to_owned(),
+                    exploration: Default::default(),
+                    max_clocks: DEFAULT_MAX_CLOCKS,
+                    digital: true,
+                }),
+                initial: request.initial.clone(),
+                universes: request.universes.clone(),
+                expansion: request.expansion,
+                stutter_closure: false,
+            },
+            fsl_replay::ReplayLimits::default(),
+        );
+        (claim.span(), replayed)
+    };
+    for (name, rule) in [
+        ("Back", NotDigitisableRule::AlwaysPossible),
+        ("Only", NotDigitisableRule::UniquePath),
+    ] {
+        let (span, replayed) = replay(name);
+        let expected = NotDigitisable { rule, span };
+        assert!(
+            matches!(
+                &replayed,
+                Err(ReplayRefusal::ModelTrace(refusal))
+                    if matches!(**refusal, ModelTraceRefusal::NotDigitisable(declined)
+                        if declined == expected)
+            ),
+            "{name}: {replayed:?}"
+        );
+    }
+    let (_, replayed) = replay("Reach");
+    assert!(
+        !matches!(
+            &replayed,
+            Err(ReplayRefusal::ModelTrace(refusal))
+                if matches!(**refusal, ModelTraceRefusal::NotDigitisable(_))
+        ),
+        "`possible` is read under digital timing: {replayed:?}"
+    );
 }

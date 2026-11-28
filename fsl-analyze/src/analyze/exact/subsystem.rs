@@ -6,13 +6,14 @@
 //! certificate over that chain and settles `refuted` only after the core's
 //! independent replay reproduces it.
 
-use super::candidate::{CandidateBudget, rational_bytes, sort};
+use super::candidate::{rational_bytes, sort, CandidateBudget};
 use super::*;
 use crate::exact_probabilistic::{
-    ExactProbLimits, ProbStateId, ProductAction, avoiding_policy, bottom_components, induced_chain,
-    policy_action,
+    avoiding_policy, bottom_components, induced_chain, policy_action, ExactProbLimits, ProbStateId,
+    ProductAction,
 };
 use fsl_replay::{ProbabilitySubsystemCertificate, SubsystemBoundKind};
+use ix_trace_rs::implements;
 
 enum Role {
     /// A failing `>=` unwindowed state event: a lower bound on its violation.
@@ -29,6 +30,8 @@ struct Evidence {
     ranks: Option<Vec<(usize, u64)>>,
 }
 
+#[implements("FR-203-AC-31")]
+#[implements("FR-203-AC-32")]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn refute(
     system: &ModelSystem<'_>,
@@ -44,6 +47,8 @@ pub(super) fn refute(
     budget: &mut CandidateBudget<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    let work = budget.work_scope().clone();
+    record_work_checkpoint(ExactWorkPhase::WitnessProduction, &work, false);
     let label = |state: usize, at: usize| {
         product
             .labels
@@ -146,7 +151,9 @@ pub(super) fn refute(
     let every = matches!(claim.scheduler, ProbScheduler::Every);
     // Where the optimum is already extreme the solver's choice may be any
     // value-preserving action; keep the witness inside that region so the
-    // undecided bottom component it reaches realizes the extreme.
+    // undecided bottom component it reaches realizes the extreme. Under a
+    // fairness set the caller's policy is already the checked fair one
+    // (FR-200), and another value-preserving action may be unfair.
     let region = |extreme: i64| {
         let extreme = Rational::from_integer(filament_exact::Integer::from(extreme));
         values
@@ -159,7 +166,11 @@ pub(super) fn refute(
         Stop::Document(error) => document_failure(error, subject),
     };
     let selected = match &role {
-        Role::Avoidance(boundary) if every && boundary.accepting == boundary.undecided_accepts => {
+        Role::Avoidance(boundary)
+            if every
+                && claim.fairness.is_empty()
+                && boundary.accepting == boundary.undecided_accepts =>
+        {
             avoiding_policy(
                 product,
                 &region(i64::from(boundary.accepting)),
@@ -309,7 +320,7 @@ pub(super) fn refute(
         Err(error) => return graph_failure(error, limits, subject),
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let subsystem = match ProbabilitySubsystemCertificate::value_bound(
+    let subsystem = match ProbabilitySubsystemCertificate::value_bound_with_work_scope(
         system,
         system.input().probabilistic.claims(),
         &item,
@@ -322,6 +333,7 @@ pub(super) fn refute(
         ranking.as_deref(),
         document_limits,
         cancel,
+        budget.work_scope(),
     ) {
         Ok(subsystem) => subsystem,
         Err(error) => return document_failure(error, subject),
@@ -347,15 +359,23 @@ pub(super) fn refute(
     if let Some(tamper) = tamper {
         tamper(&mut witness);
     }
-    finish_replay(
-        replay_witness(system, &item, &witness, limits, cancel),
+    record_work_checkpoint(ExactWorkPhase::WitnessProduction, &work, true);
+    record_work_checkpoint(ExactWorkPhase::WitnessReplay, &work, false);
+    let report = finish_replay(
+        replay_witness_with_work_scope(system, &item, &witness, limits, cancel, &work),
         claim,
         system,
         &witness,
         &spelled,
         limits,
         subject,
-    )
+    );
+    record_work_checkpoint(
+        ExactWorkPhase::WitnessReplay,
+        &work,
+        matches!(&report, EngineReport::Exact(report) if matches!(report.as_ref(), ExactReport::Refuted(..))),
+    );
+    report
 }
 
 /// Why producing a subsystem counterexample stopped.

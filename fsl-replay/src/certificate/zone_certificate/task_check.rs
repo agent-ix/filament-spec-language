@@ -447,8 +447,8 @@ impl Explorer<'_, '_, '_, '_> {
 
     fn pin_dead(&self, zone: &mut Zone, info: &LocationInfo) -> Explored<()> {
         let zero = Integer::zero();
-        for clock in 1..self.dim {
-            if !info.live[clock] {
+        for (clock, live) in info.live[..self.dim].iter().enumerate().skip(1) {
+            if !live {
                 zone.reset(clock, &zero)?;
             }
         }
@@ -541,8 +541,8 @@ impl Explorer<'_, '_, '_, '_> {
                 post.assign_clocks(&carries, &resets)?;
                 let (target_key, target) = self.data(&edge.target)?;
                 let zero = Integer::zero();
-                for clock in 1..self.dim {
-                    if !target.info.live[clock] {
+                for (clock, live) in target.info.live[..self.dim].iter().enumerate().skip(1) {
+                    if !live {
                         post.reset(clock, &zero)?;
                     }
                 }
@@ -908,6 +908,7 @@ fn shape<O>(certificate: &ZoneCertificate<O>, dim: usize) -> Step<(), O> {
 }
 
 /// The static part of the `task_product` member against its recompilation.
+#[ix_trace_rs::string_edge]
 fn compare_member<O>(
     automaton: &TaskAutomaton<'_, '_, '_>,
     certificate: &ZoneCertificate<O>,
@@ -1552,6 +1553,7 @@ pub(super) enum Route {
 
 /// FR-418: reads the `task_product` member's method and, for the no-release
 /// closure, compares the member with its recomputation (ZC-27, ZC-29).
+#[ix_trace_rs::string_edge]
 pub(super) fn route<O>(
     timed: &TimedSystem<'_, '_>,
     claim: &CheckedScheduleClaim,

@@ -1,0 +1,619 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! ADR-038 RL-7: the route admission table, declared once.
+//!
+//! The table is data: its rows and the names of the conditions each row
+//! tests, as FSpec FR-421 "Closed and strict conditions" and ADR-038's table
+//! give them. EN-5 and EN-5's certificate checker both read it, and EN-1
+//! reads its own rows. Nothing here reads a model, a claim or a state: each
+//! side establishes every condition with its own code and then looks the
+//! row up, so a wrong condition on one side is caught by the other and a
+//! wrong row is a specification defect. The one exception is
+//! [`workload_mean_time`], read from the claim shape by both sides.
+
+use fsl_semantics::check::{CheckedProbabilisticClaim, ProbForm, ProbScheduler};
+use ix_trace_rs::implements;
+
+/// Whether `claim` is an expected elapsed time under a workload, the one
+/// claim shape a mixed subject keeps on the product route (ADR-038
+/// "Workload-resolved infinite mean time", FR-204-AC-24). Both sides call this
+/// one function so the exemption cannot drift between producer and checker;
+/// every other condition each side still reads for itself.
+#[implements("FR-204-AC-24")]
+pub fn workload_mean_time(claim: &CheckedProbabilisticClaim) -> bool {
+    matches!(claim.form, ProbForm::MeanTime { .. })
+        && matches!(claim.scheduler, ProbScheduler::Workload(_))
+}
+
+/// How a subject's delays are given.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DelayClass {
+    /// Every delay is given by a `discrete` distribution.
+    Given,
+    /// No delay is given.
+    Free,
+    /// Some delays are given and others are not.
+    Mixed,
+}
+
+/// The claim forms the table names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClaimForm {
+    /// Reachability or until over state predicates, or its `always` dual.
+    Reachability,
+    /// `expected accumulate ... until`.
+    ExpectedAccumulate,
+    /// A step-bounded or long-run measure that reads only the sequence of
+    /// discrete steps.
+    DiscreteStepMeasure,
+    /// `expected elapsed until holds(B)`.
+    ExpectedElapsed,
+    /// `eventually[0, D]`, `until[0, D]` over state predicates, or the
+    /// `always[0, D]` complement.
+    DeadlineEvent,
+    /// A `steps` or `accumulate` measure within a time horizon, or a
+    /// `fraction` over `[0, h]` `weighted by R`, `R` reading no clock.
+    TimeHorizonMeasure,
+    /// `M <= c` of an elapsed measure.
+    ElapsedAtMost,
+    /// A `weighted by delay` fraction.
+    DelayWeightedFraction,
+    /// Any other bounded-window or temporal formula.
+    OtherFormula,
+    /// An unweighted fraction over a time window.
+    UnweightedTimeFraction,
+    /// Any other `elapsed` form.
+    OtherElapsed,
+}
+
+/// Where the claim is read from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadFrom {
+    /// `on origin`; for an elapsed measure, its first position is position 0
+    /// on every run.
+    Origin,
+    /// `on each`; for an elapsed measure, its first position can follow
+    /// position 0.
+    Later,
+}
+
+/// The conditions one claim over one subject is looked up with. A side
+/// fills every member from its own reading of the checked subject and claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RouteConditions {
+    /// Every clock constraint and every timed interval of the claim, `M < c`
+    /// included, is non-strict. No constraint compares two clocks.
+    pub closed: bool,
+    /// The subject's delay class.
+    pub delays: DelayClass,
+    /// Whether the claim states a fairness set.
+    pub fairness: bool,
+    /// The claim form.
+    pub form: ClaimForm,
+    /// The position the claim is read from.
+    pub read_from: ReadFrom,
+    /// Whether the value the item takes is the maximum of the probability of
+    /// the reach, until or deadline event, which is the minimum of the
+    /// matching `always`: a `<=` bound on `eventually` or `until`, or a `>=`
+    /// bound on `always`.
+    pub takes_event_maximum: bool,
+    /// Whether the claim is an expected elapsed time under a workload
+    /// ([`workload_mean_time`]). ADR-038 "Workload-resolved infinite mean time"
+    /// and FR-204-AC-24 admit it over a mixed subject, where the product
+    /// decides the infinite value and refuses a delay-dependent one. FSpec
+    /// FR-421-AC-8 (the `Split` row) does not state this exemption.
+    pub workload_mean_time: bool,
+}
+
+/// What a row admits for a `free` subject.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FreeSubject {
+    /// No `free` subject.
+    Never,
+    /// A `free` subject with no reachable time-lock.
+    NoTimeLock,
+    /// A `free` subject with no reachable time-lock, and with one for the
+    /// maximum of the event alone.
+    MaximumUnderTimeLock,
+}
+
+/// One row of EN-5's digital admission: the forms it covers at the positions
+/// it covers them from. Every row admits a `given` subject and a `free` one
+/// as `free` states; every row needs a closed subject and no fairness set.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdmissionRow {
+    /// The claim forms.
+    pub forms: &'static [ClaimForm],
+    /// The positions.
+    pub read_from: &'static [ReadFrom],
+    /// What the row admits for a `free` subject.
+    pub free: FreeSubject,
+}
+
+const ANY_POSITION: &[ReadFrom] = &[ReadFrom::Origin, ReadFrom::Later];
+
+/// FSpec FR-421 "Closed and strict conditions", EN-5's digital rows.
+pub const EN5_DIGITAL: &[AdmissionRow] = &[
+    AdmissionRow {
+        forms: &[ClaimForm::Reachability],
+        read_from: ANY_POSITION,
+        free: FreeSubject::MaximumUnderTimeLock,
+    },
+    AdmissionRow {
+        forms: &[
+            ClaimForm::ExpectedAccumulate,
+            ClaimForm::DiscreteStepMeasure,
+            ClaimForm::ExpectedElapsed,
+        ],
+        read_from: ANY_POSITION,
+        free: FreeSubject::NoTimeLock,
+    },
+    AdmissionRow {
+        forms: &[ClaimForm::DeadlineEvent],
+        read_from: &[ReadFrom::Origin],
+        free: FreeSubject::MaximumUnderTimeLock,
+    },
+    AdmissionRow {
+        forms: &[ClaimForm::TimeHorizonMeasure, ClaimForm::ElapsedAtMost],
+        read_from: &[ReadFrom::Origin],
+        free: FreeSubject::NoTimeLock,
+    },
+    AdmissionRow {
+        forms: &[
+            ClaimForm::DeadlineEvent,
+            ClaimForm::TimeHorizonMeasure,
+            ClaimForm::ElapsedAtMost,
+        ],
+        read_from: &[ReadFrom::Later],
+        free: FreeSubject::Never,
+    },
+    AdmissionRow {
+        forms: &[ClaimForm::DelayWeightedFraction],
+        read_from: ANY_POSITION,
+        free: FreeSubject::Never,
+    },
+];
+
+/// Why a claim leaves digital clocks.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RegionCause {
+    /// A strict constraint or interval.
+    Strict,
+    /// Some delays are given and others are not.
+    MixedDelays,
+    /// The claim states a fairness set.
+    Fairness,
+    /// A time-lock is reachable in a `free` subject, or its absence is not
+    /// established, and the form needs it absent.
+    TimeLock,
+    /// A `free` subject read from a later position.
+    LaterPosition,
+    /// A bounded-window or temporal formula other than a deadline event.
+    OtherFormula,
+    /// An unweighted fraction over a time window.
+    UnweightedTimeFraction,
+    /// A `weighted by delay` fraction over a `free` subject.
+    DelayWeightedFraction,
+    /// An `elapsed` form other than `M <= c`.
+    OtherElapsed,
+}
+
+impl RegionCause {
+    /// The name a result states the cause by.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict-constraint",
+            Self::MixedDelays => "mixed-delays",
+            Self::Fairness => "fairness",
+            Self::TimeLock => "time-lock",
+            Self::LaterPosition => "later-position",
+            Self::OtherFormula => "other-formula",
+            Self::UnweightedTimeFraction => "unweighted-time-fraction",
+            Self::DelayWeightedFraction => "delay-weighted-fraction",
+            Self::OtherElapsed => "other-elapsed",
+        }
+    }
+}
+
+/// What the table says of one set of conditions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Admission {
+    /// Digital clocks decide the claim.
+    Digital,
+    /// Digital clocks decide it only where no time-lock is reachable over the
+    /// subject's dense runs; the caller establishes that and otherwise reads
+    /// [`RegionCause::TimeLock`].
+    DigitalIfNoTimeLock,
+    /// Clock regions decide it.
+    Region(RegionCause),
+}
+
+/// The strict claims whose second cause the grid walk decides, each with the
+/// dense-oracle rows that pin its verdict (FR-922 interim, QSL-3495). A strict
+/// claim with any other second cause takes that cause's outcome.
+pub const STRICT_GRID_WALK: [(RegionCause, &[&str]); 3] = [
+    (
+        RegionCause::TimeLock,
+        &[
+            "row_3444_two_clock_regions_bounded_minimum_routes",
+            "a_delay_reaches_the_region_between_two_clocks_integer_crossings",
+        ],
+    ),
+    (
+        RegionCause::OtherFormula,
+        &[
+            "row_3468_time_lock_strict_routes",
+            "a_region_delay_instant_is_not_a_predicate_position",
+        ],
+    ),
+    (
+        RegionCause::OtherElapsed,
+        &[
+            "elapsed_quantile_altered_upper_value_is_rejected",
+            "elapsed_quantile_at_least_is_certified_over_regions",
+            "elapsed_quantile_tight_search_refutes",
+        ],
+    ),
+];
+
+/// The row of [`EN5_DIGITAL`] that admits `conditions`, or why none does.
+/// A strict claim takes the grid walk when strictness is its only cause or
+/// its second cause is one of [`STRICT_GRID_WALK`]; any other second cause
+/// takes its own outcome.
+#[implements("FSpec-FR-421-AC-8", "FR-921-AC-5")]
+pub fn en5_admission(conditions: RouteConditions) -> Admission {
+    let open = closed_admission(conditions);
+    if conditions.closed {
+        return open;
+    }
+    let walks = |cause| {
+        STRICT_GRID_WALK
+            .iter()
+            .any(|(covered, _)| *covered == cause)
+    };
+    match open {
+        Admission::Digital => Admission::Region(RegionCause::Strict),
+        Admission::DigitalIfNoTimeLock if walks(RegionCause::TimeLock) => {
+            Admission::Region(RegionCause::Strict)
+        }
+        Admission::DigitalIfNoTimeLock => open,
+        Admission::Region(cause) if walks(cause) => Admission::Region(RegionCause::Strict),
+        Admission::Region(_) => open,
+    }
+}
+
+/// [`en5_admission`] of the claim read as closed.
+#[implements("FR-204-AC-24")]
+fn closed_admission(conditions: RouteConditions) -> Admission {
+    let RouteConditions {
+        closed: _,
+        delays,
+        fairness,
+        form,
+        read_from,
+        takes_event_maximum,
+        workload_mean_time,
+    } = conditions;
+    if delays == DelayClass::Mixed && !workload_mean_time {
+        return Admission::Region(RegionCause::MixedDelays);
+    }
+    if fairness {
+        return Admission::Region(RegionCause::Fairness);
+    }
+    let row = EN5_DIGITAL
+        .iter()
+        .find(|row| row.forms.contains(&form) && row.read_from.contains(&read_from));
+    let Some(row) = row else {
+        return Admission::Region(match form {
+            ClaimForm::UnweightedTimeFraction => RegionCause::UnweightedTimeFraction,
+            ClaimForm::OtherElapsed => RegionCause::OtherElapsed,
+            ClaimForm::OtherFormula
+            | ClaimForm::Reachability
+            | ClaimForm::ExpectedAccumulate
+            | ClaimForm::DiscreteStepMeasure
+            | ClaimForm::ExpectedElapsed
+            | ClaimForm::DeadlineEvent
+            | ClaimForm::TimeHorizonMeasure
+            | ClaimForm::ElapsedAtMost
+            | ClaimForm::DelayWeightedFraction => RegionCause::OtherFormula,
+        });
+    };
+    if delays == DelayClass::Given {
+        return Admission::Digital;
+    }
+    match row.free {
+        FreeSubject::Never => Admission::Region(if form == ClaimForm::DelayWeightedFraction {
+            RegionCause::DelayWeightedFraction
+        } else {
+            RegionCause::LaterPosition
+        }),
+        FreeSubject::MaximumUnderTimeLock if takes_event_maximum => Admission::Digital,
+        FreeSubject::NoTimeLock | FreeSubject::MaximumUnderTimeLock => {
+            Admission::DigitalIfNoTimeLock
+        }
+    }
+}
+
+/// The items of EN-1's `digital-clocks` method the table names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SearchItem {
+    /// A temporal claim that is digitisable by FSL FR-243 (a) to (f).
+    DigitisableTemporalClaim,
+    /// `possible`: location reachability.
+    Possible,
+    /// Deadlock freedom.
+    DeadlockFreedom,
+    /// `always possible`.
+    AlwaysPossible,
+    /// `unique path`.
+    UniquePath,
+}
+
+/// ADR-038's EN-1 rows: what `digital-clocks` admits over a closed subject.
+pub const EN1_DIGITAL: &[SearchItem] = &[
+    SearchItem::DigitisableTemporalClaim,
+    SearchItem::Possible,
+    SearchItem::DeadlockFreedom,
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    use Admission::{Digital, DigitalIfNoTimeLock, Region};
+    use ClaimForm as F;
+    use ReadFrom::{Later, Origin};
+
+    fn closed(delays: DelayClass, form: ClaimForm, read_from: ReadFrom) -> RouteConditions {
+        RouteConditions {
+            closed: true,
+            delays,
+            fairness: false,
+            form,
+            read_from,
+            takes_event_maximum: false,
+            workload_mean_time: false,
+        }
+    }
+
+    /// Each row of FSpec FR-421's table, written out by form and position:
+    /// what a given subject gets, what a free one gets for the value that is
+    /// not the event's maximum, and what it gets for the maximum.
+    #[trace("FSpec-FR-421-AC-8")]
+    #[test]
+    fn every_row_gives_its_hand_route() {
+        let later = Region(RegionCause::LaterPosition);
+        let other = Region(RegionCause::OtherFormula);
+        let fraction = Region(RegionCause::UnweightedTimeFraction);
+        let elapsed = Region(RegionCause::OtherElapsed);
+        let weighted = Region(RegionCause::DelayWeightedFraction);
+        let rows = [
+            (
+                F::Reachability,
+                Origin,
+                Digital,
+                DigitalIfNoTimeLock,
+                Digital,
+            ),
+            (
+                F::Reachability,
+                Later,
+                Digital,
+                DigitalIfNoTimeLock,
+                Digital,
+            ),
+            (
+                F::ExpectedAccumulate,
+                Origin,
+                Digital,
+                DigitalIfNoTimeLock,
+                DigitalIfNoTimeLock,
+            ),
+            (
+                F::DiscreteStepMeasure,
+                Later,
+                Digital,
+                DigitalIfNoTimeLock,
+                DigitalIfNoTimeLock,
+            ),
+            (
+                F::ExpectedElapsed,
+                Origin,
+                Digital,
+                DigitalIfNoTimeLock,
+                DigitalIfNoTimeLock,
+            ),
+            (
+                F::DeadlineEvent,
+                Origin,
+                Digital,
+                DigitalIfNoTimeLock,
+                Digital,
+            ),
+            (F::DeadlineEvent, Later, Digital, later, later),
+            (
+                F::TimeHorizonMeasure,
+                Origin,
+                Digital,
+                DigitalIfNoTimeLock,
+                DigitalIfNoTimeLock,
+            ),
+            (F::TimeHorizonMeasure, Later, Digital, later, later),
+            (
+                F::ElapsedAtMost,
+                Origin,
+                Digital,
+                DigitalIfNoTimeLock,
+                DigitalIfNoTimeLock,
+            ),
+            (F::ElapsedAtMost, Later, Digital, later, later),
+            (
+                F::DelayWeightedFraction,
+                Origin,
+                Digital,
+                weighted,
+                weighted,
+            ),
+            (F::DelayWeightedFraction, Later, Digital, weighted, weighted),
+            (F::OtherFormula, Origin, other, other, other),
+            (
+                F::UnweightedTimeFraction,
+                Origin,
+                fraction,
+                fraction,
+                fraction,
+            ),
+            (F::OtherElapsed, Origin, elapsed, elapsed, elapsed),
+        ];
+        for (form, from, given, free, maximum) in rows {
+            let given_case = closed(DelayClass::Given, form, from);
+            assert_eq!(en5_admission(given_case), given, "given {form:?} {from:?}");
+            let free_case = closed(DelayClass::Free, form, from);
+            assert_eq!(en5_admission(free_case), free, "free {form:?} {from:?}");
+            let top = RouteConditions {
+                takes_event_maximum: true,
+                workload_mean_time: false,
+                ..free_case
+            };
+            assert_eq!(en5_admission(top), maximum, "maximum {form:?} {from:?}");
+        }
+    }
+
+    /// A strict claim takes the grid walk when strictness is its only cause or
+    /// its second cause is one a green oracle row pins ([`STRICT_GRID_WALK`]:
+    /// a time-lock, another formula, another elapsed measure). Every other
+    /// second cause (mixed delays, fairness, an unweighted fraction, a delay
+    /// weight, a later position) takes its own outcome.
+    #[trace("FSpec-FR-421-AC-10", "FSpec-FR-421-AC-13")]
+    #[test]
+    fn strictness_is_read_after_every_other_cause() {
+        let strict = |conditions: RouteConditions| RouteConditions {
+            closed: false,
+            ..conditions
+        };
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Given, F::DeadlineEvent, Origin))),
+            Region(RegionCause::Strict)
+        );
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Free, F::Reachability, Origin))),
+            Region(RegionCause::Strict)
+        );
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Mixed, F::Reachability, Origin))),
+            Region(RegionCause::MixedDelays)
+        );
+        for delays in [DelayClass::Given, DelayClass::Free] {
+            assert_eq!(
+                en5_admission(strict(RouteConditions {
+                    fairness: true,
+                    ..closed(delays, F::Reachability, Origin)
+                })),
+                Region(RegionCause::Fairness)
+            );
+        }
+        assert_eq!(
+            en5_admission(strict(closed(
+                DelayClass::Given,
+                F::UnweightedTimeFraction,
+                Origin
+            ))),
+            Region(RegionCause::UnweightedTimeFraction)
+        );
+        // The causes a green oracle row pins take the grid walk.
+        for (cause, form) in [
+            (RegionCause::OtherFormula, F::OtherFormula),
+            (RegionCause::OtherElapsed, F::OtherElapsed),
+        ] {
+            assert!(STRICT_GRID_WALK
+                .iter()
+                .any(|(covered, _)| *covered == cause));
+            assert_eq!(
+                en5_admission(strict(closed(DelayClass::Given, form, Origin))),
+                Region(RegionCause::Strict)
+            );
+        }
+        assert_eq!(
+            en5_admission(strict(closed(
+                DelayClass::Free,
+                F::DelayWeightedFraction,
+                Origin
+            ))),
+            Region(RegionCause::DelayWeightedFraction)
+        );
+        assert_eq!(
+            en5_admission(strict(closed(DelayClass::Free, F::DeadlineEvent, Later))),
+            Region(RegionCause::LaterPosition)
+        );
+    }
+
+    /// Closedness, the delay class and fairness leave digital clocks for
+    /// every form.
+    #[trace("FSpec-FR-421-AC-10", "FSpec-FR-421-AC-13")]
+    #[test]
+    fn strict_mixed_and_fair_claims_are_not_digital() {
+        let deadline = closed(DelayClass::Given, F::DeadlineEvent, Origin);
+        assert_eq!(
+            en5_admission(RouteConditions {
+                closed: false,
+                ..deadline
+            }),
+            Region(RegionCause::Strict)
+        );
+        assert_eq!(
+            en5_admission(closed(DelayClass::Mixed, F::Reachability, Origin)),
+            Region(RegionCause::MixedDelays)
+        );
+        for delays in [DelayClass::Given, DelayClass::Free] {
+            assert_eq!(
+                en5_admission(RouteConditions {
+                    fairness: true,
+                    ..closed(delays, F::Reachability, Origin)
+                }),
+                Region(RegionCause::Fairness)
+            );
+        }
+    }
+
+    /// FR-204-AC-24, ADR-038 "Workload-resolved infinite mean time": over a
+    /// mixed subject, an expected elapsed time under a workload leaves the
+    /// region route (the product then decides the infinite value or refuses a
+    /// delay-dependent one), while the same claim without the workload and
+    /// every other form stay on `MixedDelays`.
+    #[trace("FR-204-AC-24")]
+    #[test]
+    fn a_workload_mean_time_over_mixed_delays_takes_the_product_route_only() {
+        let mixed = closed(DelayClass::Mixed, F::ExpectedElapsed, Origin);
+        // Hand values: the ExpectedElapsed row admits a free subject only
+        // without a reachable time-lock.
+        assert_eq!(
+            en5_admission(RouteConditions {
+                workload_mean_time: true,
+                ..mixed
+            }),
+            DigitalIfNoTimeLock
+        );
+        assert_eq!(en5_admission(mixed), Region(RegionCause::MixedDelays));
+        // A finite mixed claim of another form never takes the exemption.
+        let reach = closed(DelayClass::Mixed, F::Reachability, Origin);
+        assert_eq!(en5_admission(reach), Region(RegionCause::MixedDelays));
+        // Fairness still declines it.
+        assert_eq!(
+            en5_admission(RouteConditions {
+                workload_mean_time: true,
+                fairness: true,
+                ..mixed
+            }),
+            Region(RegionCause::Fairness)
+        );
+    }
+
+    #[trace("FR-243-AC-5")]
+    #[test]
+    fn en1_admits_possible_and_deadlock_freedom_only_of_the_state_forms() {
+        assert!(EN1_DIGITAL.contains(&SearchItem::Possible));
+        assert!(EN1_DIGITAL.contains(&SearchItem::DeadlockFreedom));
+        assert!(!EN1_DIGITAL.contains(&SearchItem::AlwaysPossible));
+        assert!(!EN1_DIGITAL.contains(&SearchItem::UniquePath));
+    }
+}

@@ -3,7 +3,10 @@
 //! bare-package join and a package replay refuse an artifact that repeats a
 //! name, and a source compile refuses an import of the root's name.
 
-use filament_contract_model::{CheckedPackageV2, NativeJoinBudget};
+use filament_contract_model::{
+    encode_checked_package_v2, CheckedDependencySelection, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, NativeJoinBudget,
+};
 use filament_exact::{NodeKey, PathSegment, ScalarLimits};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::simulation::model::ExpansionLimits;
@@ -52,10 +55,17 @@ fn join_budget() -> NativeJoinBudget {
 /// One content of the package `name`, whose unit `ms` is `1/divisor` of a
 /// second, with its witness files.
 fn package(name: &str, divisor: u32) -> DependencyArtifact {
-    let source = format!(
-        "{HEADER}dimension Time;\nunit s : Time = rational(1, 1);\n\
-         unit ms : Time = rational(1, {divisor}) * s;\n{FUNCTIONS}"
-    );
+    artifact_of(
+        name,
+        &format!(
+            "{HEADER}dimension Time;\nunit s : Time = rational(1, 1);\n\
+             unit ms : Time = rational(1, {divisor}) * s;\n{FUNCTIONS}"
+        ),
+    )
+}
+
+/// The package `name` of `source`, with its witness files.
+fn artifact_of(name: &str, source: &str) -> DependencyArtifact {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("fixture", name),
         "unit.native",
@@ -224,7 +234,7 @@ fn replay(root: &DependencyArtifact, dependencies: &[DependencyArtifact]) -> Rep
         BackendId::new("test-backend".to_owned()),
         GraphEvidence::Witness {
             paths: Vec::new(),
-            over: None,
+            over: Vec::new(),
         },
     );
     let wire = ReplayRequestWire {
@@ -464,5 +474,138 @@ fn an_unsupplied_selection_of_the_root_name_is_a_missing_selection() {
         refusal.pointer.as_deref(),
         Some("/lock/dependency_selections/0"),
         "{refusal:?}"
+    );
+}
+
+/// The bytes of `artifact` with its lock selecting each of `selected` in order.
+fn selecting(artifact: &DependencyArtifact, selected: &[&str]) -> Vec<u8> {
+    let package = &artifact.package;
+    let mut lock = package.lock().clone();
+    for identity in selected {
+        lock.dependency_selections.push(CheckedDependencySelection {
+            identity: (*identity).into(),
+        });
+    }
+    encode_checked_package_v2(
+        package.name(),
+        &lock,
+        package.graph(),
+        CheckedPackageSourceCorrespondenceRef {
+            source_map: package.source_map(),
+            refinement_step_rows: None,
+        },
+        CheckedPackageSidecarsRef {
+            checked_term_data: package.checked_term_data(),
+            temporal_bindings: package.temporal_bindings(),
+            temporal_clause_names: package.temporal_clause_names(),
+            claim_names: package.claim_names(),
+            schedulability_claims: None,
+            operation_effects: None,
+            operation_bodies: None,
+        },
+        package.capability_report(),
+        package.diagnostics(),
+        quire_canonical::Limits::new(1 << 32),
+    )
+    .expect("the package encodes with its selections")
+}
+
+/// Strict admission of `bytes` with `supplied` packages by identity.
+fn read(
+    bytes: &[u8],
+    supplied: &[(&str, &Arc<CheckedPackageV2>)],
+) -> Result<CheckedPackageV2, fsl_package::PackageAdmissionRefusal> {
+    let dependencies = supplied
+        .iter()
+        .map(|(identity, package)| ((*identity).to_owned(), Arc::clone(package)))
+        .collect();
+    fsl_package::admit_checked_package_with_dependencies(
+        bytes,
+        &Default::default(),
+        &dependencies,
+        read_limits(),
+    )
+}
+
+/// A library `name` selecting `selected`, admitted with `supplied`.
+fn library_selecting(
+    name: &str,
+    selected: &[&str],
+    supplied: &[(&str, &Arc<CheckedPackageV2>)],
+) -> Arc<CheckedPackageV2> {
+    let plain = artifact_of(
+        name,
+        &format!("{HEADER}dimension Beat;\nunit beat : Beat = rational(1, 1);\n"),
+    );
+    let bytes = selecting(&plain, selected);
+    Arc::new(read(&bytes, supplied).expect("the library admits on its own read"))
+}
+
+/// `outcome` refuses `invalid_package`/`definition-cycle` at `pointer`.
+fn assert_cycle(
+    outcome: Result<CheckedPackageV2, fsl_package::PackageAdmissionRefusal>,
+    pointer: &str,
+    case: &str,
+) {
+    let refusal = outcome.expect_err(case);
+    assert_eq!(refusal.code, Code::InvalidPackage, "{case}: {refusal:?}");
+    assert_eq!(
+        refusal.cause.as_deref(),
+        Some("definition-cycle"),
+        "{case}: {refusal:?}"
+    );
+    assert_eq!(
+        refusal.pointer.as_deref(),
+        Some(pointer),
+        "{case}: {refusal:?}"
+    );
+}
+
+const ENTRY: &str = "/lock/dependency_selections/0";
+
+/// A package whose closure holds its own name refuses `definition-cycle`
+/// at the selection path, whatever content the supplied namesake has.
+#[trace("TC-1331", "FR-531-AC-63")]
+#[test]
+fn a_selected_root_name_is_a_definition_cycle_directly_and_through_a_library() {
+    let root = package("dep", 1000);
+    // Direct: supplied the root's own content, then another.
+    for divisor in [1000, 2000] {
+        let namesake = package("dep", divisor).package;
+        let bytes = selecting(&root, &["dep"]);
+        assert_cycle(
+            read(&bytes, &[("dep", &namesake)]),
+            ENTRY,
+            &format!("direct, divisor {divisor}"),
+        );
+    }
+    // Through a library `l` whose lock selects the namesake.
+    for divisor in [1000, 2000] {
+        let namesake = package("dep", divisor).package;
+        let through = library_selecting("l", &["dep"], &[("dep", &namesake)]);
+        let bytes = selecting(&root, &["l"]);
+        assert_cycle(
+            read(&bytes, &[("l", &through)]),
+            &format!("{ENTRY}{ENTRY}"),
+            &format!("through a library, divisor {divisor}"),
+        );
+    }
+}
+
+/// A root cycle beside a diamond conflict is a cycle, never a conflicting
+/// definition: two libraries select unequal packages under the root's name.
+#[trace("TC-1331", "FR-531-AC-63")]
+#[test]
+fn a_root_cycle_beside_a_diamond_conflict_is_a_definition_cycle() {
+    let root = package("dep", 1000);
+    let one = package("dep", 1000).package;
+    let other = package("dep", 2000).package;
+    let first = library_selecting("l1", &["dep"], &[("dep", &one)]);
+    let second = library_selecting("l2", &["dep"], &[("dep", &other)]);
+    let bytes = selecting(&root, &["l1", "l2"]);
+    assert_cycle(
+        read(&bytes, &[("l1", &first), ("l2", &second)]),
+        &format!("{ENTRY}{ENTRY}"),
+        "unequal namesakes under two libraries",
     );
 }

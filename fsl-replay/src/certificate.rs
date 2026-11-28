@@ -21,7 +21,7 @@ use fsl_eval::simulation::StateKey;
 
 use crate::certificate::closure::ProductStateRef;
 use crate::certificate::simulation::FailedStep;
-use crate::outcome::TimedStateWire;
+use crate::shared_wire::{state_key_from_text, StateLocus};
 
 /// FR-314's part of an SMT proof obligation.
 ///
@@ -120,6 +120,10 @@ pub enum CertificateRule {
     /// A task-product certificate edge the checker's recomputation does not
     /// produce (FSpec FR-418).
     ExtraEdge,
+    /// A rule of a hybrid solver's certificate (FSpec FR-652 "Rule
+    /// names"), written with that spelling.
+    #[serde(untagged)]
+    Hybrid(crate::hybrid_replay::HybridCertificateRule),
 }
 
 /// FR-338 and FR-314: where a certificate rejection occurred.
@@ -208,6 +212,9 @@ pub enum CertificateLocus {
         /// The component's index.
         component: u64,
     },
+    /// A hybrid certificate member, by its RFC 6901 pointer rooted at
+    /// `/certificate` (FR-751), written as that string.
+    CertificatePointer(String),
 }
 
 /// Writes each state key in `tuple`'s `states` as FSpec FR-331's State locus,
@@ -217,7 +224,9 @@ fn write_state_loci(tuple: &mut serde_json::Value) {
         .get_mut("states")
         .and_then(serde_json::Value::as_array_mut);
     for state in states.into_iter().flatten() {
-        *state = serde_json::json!({"key": state.take()});
+        if let Some(key) = state.as_str().and_then(state_key_from_text) {
+            *state = serde_json::json!(StateLocus::from(key));
+        }
     }
 }
 
@@ -244,7 +253,7 @@ impl Serialize for CertificateLocus {
                 use base64::Engine as _;
                 let engine = &base64::engine::general_purpose::URL_SAFE_NO_PAD;
                 let mut object = serializer.serialize_struct("CertificateLocus", 2)?;
-                let model_state = TimedStateWire::from(&state.model_state);
+                let model_state = StateLocus::from(&state.model_state);
                 object.serialize_field("model_state", &model_state)?;
                 let automaton_state = engine.encode(state.automaton_state.as_bytes());
                 object.serialize_field("automaton_state", &automaton_state)?;
@@ -262,12 +271,12 @@ impl Serialize for CertificateLocus {
             }
             Self::HyperState(state) => {
                 let mut object = serializer.serialize_struct("HyperState", 1)?;
-                object.serialize_field("states", &[TimedStateWire::from(state)])?;
+                object.serialize_field("states", &[StateLocus::from(state)])?;
                 object.end()
             }
             Self::HyperTransitionTuple(tuple) => tuple.serialize(serializer),
             Self::ModelState(state) | Self::ModelKey(state) => {
-                TimedStateWire::from(state).serialize(serializer)
+                StateLocus::from(state).serialize(serializer)
             }
             Self::Entry { index } => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
@@ -289,6 +298,7 @@ impl Serialize for CertificateLocus {
                 object.end()
             }
             Self::Query { part } => part.serialize(serializer),
+            Self::CertificatePointer(pointer) => serializer.serialize_str(pointer),
             Self::CertificateMember(member) => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
                 object.serialize_field("member", member.as_str())?;

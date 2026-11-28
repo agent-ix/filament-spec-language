@@ -33,7 +33,9 @@ use std::sync::Arc;
 
 use filament_exact::{EffectiveId, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::UndefinedReason;
+use filament_semantic_value::location::ExpressionLocation;
 use filament_semantic_value::model_transition::ModelTransition;
+use ix_trace_rs::implements;
 
 use fsl_semantics::check::{
     CheckedTimedPredicate, ClockConstraint, ClockId, ClockOp, ElementBinding, ModelTimeSource,
@@ -56,11 +58,12 @@ use crate::value::Provenance;
 
 mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
+pub mod admission;
 mod race;
 pub use race::{
-    TimedAdvance, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
-    TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice,
-    advance_timed, replay_timed_sample, sample_timed, sample_timed_race,
+    advance_timed, sample_timed, sample_timed_from, sample_timed_race, TimedAdvance, TimedRace,
+    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.
@@ -345,6 +348,40 @@ impl PlaceConstraint {
     }
 }
 
+/// The guarded steps of a state and the first undefined finding of its
+/// expansion (ADR-018 UE-6).
+#[derive(Clone, Debug)]
+pub struct GuardedSteps {
+    /// The steps, in canonical transition order.
+    pub steps: Vec<GuardedStep>,
+    /// The first contract conjunction or protocol expression the expansion
+    /// evaluated undefined.
+    pub undefined: Option<super::ModelFinding>,
+}
+
+impl GuardedSteps {
+    /// The transition whose precondition guard the first undefined finding
+    /// is, when it is one (ADR-018 UE-6): the `where` transition a replay
+    /// rebuilds the undefined site with.
+    pub fn undefined_guard_of(&self) -> Option<ModelTransition> {
+        self.undefined
+            .as_ref()
+            .and_then(super::ModelFinding::undefined_contract)
+            .and_then(|contract| contract.guard_of)
+    }
+}
+
+/// The first finding of an expansion that evaluated undefined.
+fn first_undefined(findings: &[super::ModelFinding]) -> Option<super::ModelFinding> {
+    findings
+        .iter()
+        .find(|finding| {
+            finding.undefined_contract().is_some()
+                || finding.undefined_protocol_expression().is_some()
+        })
+        .cloned()
+}
+
 /// One discrete step enabled at a model state by its data precondition,
 /// with the clock part of its guard over places.
 #[derive(Clone, Debug)]
@@ -455,6 +492,11 @@ pub enum TimedSite {
         /// The postcondition's name.
         clause: String,
     },
+    /// A `terminal when` predicate.
+    Terminal {
+        /// The model declaration's selection identity.
+        model: String,
+    },
 }
 
 /// Why a timed move could not be decided.
@@ -480,6 +522,11 @@ pub enum TimedStop {
         /// Those with a place.
         placed: u64,
     },
+    /// An expansion of the state evaluated a contract conjunction or a
+    /// protocol expression undefined (ADR-018 UE-6): the step set the state
+    /// yields reads it as a disabled step, so no verdict may be drawn from
+    /// that set. The finding is the expansion's first undefined one.
+    Undefined(Box<super::ModelFinding>),
 }
 
 /// What a time invariant's or an `urgent when`'s alternatives hold of at a
@@ -503,6 +550,12 @@ pub struct UndecidedReading {
     pub object: Option<ObjectReference>,
     /// Why it had none, when it was undefined.
     pub cause: Option<UndefinedCause>,
+    /// The transition whose data contract was undefined, when the finding
+    /// came from model expansion.
+    pub transition: Option<ModelTransition>,
+    /// The source expression that had no value, when its checker retained a
+    /// source location.
+    pub location: Option<ExpressionLocation>,
 }
 
 impl TimedStop {
@@ -515,6 +568,23 @@ impl TimedStop {
             site,
             object,
             cause,
+            transition: None,
+            location: None,
+        }))
+    }
+
+    fn undecided_at(
+        site: TimedSite,
+        object: Option<ObjectReference>,
+        cause: UndefinedCause,
+        location: Option<ExpressionLocation>,
+    ) -> Self {
+        Self::Undecided(Box::new(UndecidedReading {
+            site,
+            object,
+            cause: Some(cause),
+            transition: None,
+            location,
         }))
     }
 }
@@ -549,7 +619,7 @@ pub enum TimedSubjectRefusal {
         /// The clock place's name.
         clock: String,
     },
-    /// A clock owner's population has no universe, so its clocks cannot be
+    /// A clock owner's objects cannot be named, so its clocks cannot be
     /// listed.
     #[error("the clocks of `{clock}` have no universe to range over")]
     Unbounded {
@@ -689,6 +759,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     ///
     /// As [`Self::new`], and [`TimedSubjectRefusal::NestedUnboundedCollection`]
     /// for a clock under two collections with no declared maximum.
+    #[implements("FR-125-AC-13")]
     pub fn with_max_clocks(
         system: &'s ModelSystem<'a>,
         model: &str,
@@ -743,7 +814,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             let unbounded = || TimedSubjectRefusal::Unbounded {
                 clock: name.to_owned(),
             };
-            let members = system.universe_members(&owner).map_err(|_| unbounded())?;
+            // A population with no universe refuses `RequiresBound`, naming
+            // it (FR-239, FR-230).
+            let members = system.universe_members(&owner)?;
             // Overlapping populations can list the same object key. Keep
             // one placement and allow its object to be held in any of them.
             let mut by_key = std::collections::BTreeMap::new();
@@ -1590,9 +1663,12 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             PredicateReading::True => Ok(true),
             PredicateReading::False => Ok(false),
             PredicateReading::Undefined { cause, .. } if absent(&cause) => Ok(false),
-            PredicateReading::Undefined { cause, .. } => {
-                Err(TimedStop::undecided(site(), object.cloned(), Some(cause)))
-            }
+            PredicateReading::Undefined { cause, location } => Err(TimedStop::undecided_at(
+                site(),
+                object.cloned(),
+                cause,
+                location,
+            )),
             PredicateReading::Refused(_) => {
                 Err(TimedStop::undecided(site(), object.cloned(), None))
             }
@@ -1837,7 +1913,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         if self.urgent_operations.is_empty() {
             return Ok(false);
         }
-        Ok(self.guarded_steps(state)?.iter().any(|step| {
+        // An undefined guard reads as a disabled step here; the route that
+        // verdicts the state refutes it (ADR-018 UE-6).
+        Ok(self.guarded_expansion(state)?.steps.iter().any(|step| {
             !step.parts.is_empty()
                 && self
                     .urgent_operations
@@ -1864,7 +1942,47 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     ///
     /// [`TimedStop`] when the state cannot be expanded or a guard part's
     /// predicate has no truth value.
+    #[implements("FR-852-AC-9", "FR-852-AC-13")]
     pub fn guarded_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
+        let GuardedSteps { steps, undefined } = self.guarded_expansion(state)?;
+        match undefined {
+            Some(finding) => Err(self.undefined_stop(finding)),
+            None => Ok(steps),
+        }
+    }
+
+    /// The stop an undefined finding of an expansion is. A contract
+    /// conjunction with no value is an `Undecided` reading naming the
+    /// clause, the cause and the guarded transition (the one definition
+    /// every route reads); any other undefined finding is
+    /// [`TimedStop::Undefined`].
+    #[must_use]
+    pub fn undefined_stop(&self, finding: super::ModelFinding) -> TimedStop {
+        match finding.undefined_contract() {
+            Some(contract) => TimedStop::Undecided(Box::new(UndecidedReading {
+                site: TimedSite::Guard {
+                    clause: contract.clause.clone(),
+                },
+                object: None,
+                cause: Some(contract.cause),
+                transition: contract.guard_of,
+                location: self.system.state_clause_locus(&contract.clause),
+            })),
+            None => TimedStop::Undefined(Box::new(finding)),
+        }
+    }
+
+    /// The steps [`Self::guarded_steps`] returns, with the first contract
+    /// conjunction or protocol expression the expansion of `state`
+    /// evaluated undefined (ADR-018 UE-6). An undefined conjunct is read as
+    /// a disabled step, so a route that expands `state` to reach a verdict
+    /// refutes it as an undefined evaluation and never settles it from
+    /// `steps` alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::guarded_steps`], except for an undefined finding.
+    pub fn guarded_expansion(&self, state: &ModelSimState) -> Result<GuardedSteps, TimedStop> {
         self.within_max_clocks(state)?;
         if self.free_delay {
             return self.free_delay_steps(state);
@@ -1878,6 +1996,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             Some(&post_presence),
             Some(&self.clock_selectors),
         )?;
+        let undefined = first_undefined(&expansion.findings);
         let mut steps = Vec::new();
         for vector in enabled {
             // Each binding of the operation's `Clock` parameters to places
@@ -2104,7 +2223,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             .collect::<Result<Vec<_>, ExpansionStop>>()?;
         keyed.sort_by(|left, right| left.0.cmp(&right.0));
         let steps = keyed.into_iter().map(|(_, step)| step).collect();
-        Ok(steps)
+        Ok(GuardedSteps { steps, undefined })
     }
 
     fn task_releases_for(&self, operation: &str) -> Result<Vec<TaskReleaseBinding>, TimedStop> {
@@ -2122,13 +2241,14 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
 
     /// Data-enabled steps of an untimed subject: no concrete clock guards,
     /// resets, carries or placements.
-    fn free_delay_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
+    fn free_delay_steps(&self, state: &ModelSimState) -> Result<GuardedSteps, TimedStop> {
         let (expansion, enabled) = expand_enabled_with_clock_selectors(
             self.system,
             state,
             None,
             Some(&self.clock_selectors),
         )?;
+        let undefined = first_undefined(&expansion.findings);
         let mut steps = Vec::new();
         for vector in enabled {
             for position in vector.successors.clone() {
@@ -2164,7 +2284,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             })
             .collect::<Result<Vec<_>, ExpansionStop>>()?;
         keyed.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(keyed.into_iter().map(|(_, step)| step).collect())
+        Ok(GuardedSteps {
+            steps: keyed.into_iter().map(|(_, step)| step).collect(),
+            undefined,
+        })
     }
 
     /// Each binding of `vector`'s operation's `Clock` parameters to places
@@ -2893,10 +3016,11 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         match reading {
             PredicateReading::True => Ok(true),
             PredicateReading::False => Ok(false),
-            PredicateReading::Undefined { cause, .. } => Err(TimedStop::undecided(
+            PredicateReading::Undefined { cause, location } => Err(TimedStop::undecided_at(
                 site(),
                 Some(object.clone()),
-                Some(cause.clone()),
+                cause.clone(),
+                location.clone(),
             )),
             PredicateReading::Refused(_) => {
                 Err(TimedStop::undecided(site(), Some(object.clone()), None))
@@ -2944,8 +3068,32 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     ///
     /// As [`Self::guarded_steps`] and [`Self::invariants`].
     pub fn steps(&self, state: &TimedState) -> Result<Vec<(GuardedStep, TimedState)>, TimedStop> {
+        let guarded = self.guarded_steps(&state.discrete)?;
+        self.steps_over(guarded, state)
+    }
+
+    /// [`Self::steps`] reading an undefined guard as a disabled step: for a
+    /// route that refutes the undefined guard where it enters `state`
+    /// (ADR-018 UE-6) and reads the steps after only for divergence.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::steps`], except for an undefined finding.
+    pub fn steps_reading_undefined_as_disabled(
+        &self,
+        state: &TimedState,
+    ) -> Result<Vec<(GuardedStep, TimedState)>, TimedStop> {
+        let guarded = self.guarded_expansion(&state.discrete)?.steps;
+        self.steps_over(guarded, state)
+    }
+
+    fn steps_over(
+        &self,
+        guarded: Vec<GuardedStep>,
+        state: &TimedState,
+    ) -> Result<Vec<(GuardedStep, TimedState)>, TimedStop> {
         let mut found = Vec::new();
-        for step in self.guarded_steps(&state.discrete)? {
+        for step in guarded {
             if !step
                 .parts
                 .iter()
@@ -3061,6 +3209,11 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             Some((tick, period)) if tick == operation => period.clone(),
             _ => zero(),
         }
+    }
+
+    /// The model system the subject is read over.
+    pub(crate) fn model_system(&self) -> &'s ModelSystem<'a> {
+        self.system
     }
 
     /// A tick source's period, the stamp its terminal stutter step adds

@@ -38,7 +38,7 @@ use filament_semantic_value::fairness::{
 };
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::quantity::{
-    ConvertedValue, QuantityTarget, QuantityUnit, UnitQuantity, convert_quantity,
+    convert_quantity, ConvertedValue, QuantityTarget, QuantityUnit, UnitQuantity,
 };
 use fsl_forms::{
     ActivationForm, BoundOp, ClauseKind, EventForm, ExactValueForm, ExactValueKind,
@@ -47,26 +47,27 @@ use fsl_forms::{
     TemporalFormulaForm, TemporalNodeForm, TemporalNodeId, TemporalOperator, TemporalOperatorForm,
     WeightingForm,
 };
-use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 use super::super::capability::Capability;
-use super::super::check::{Scope, StateContext, Typer, bind_parameters};
+use super::super::check::{bind_parameters, Scope, StateContext, Typer};
 use super::super::facts::Definedness;
 use super::super::hyper_clause::{encode_event, encode_predicate, node_bytes};
 use super::super::ir::{CheckedBody, CheckedNode};
 use super::super::observation::Observations;
-use super::super::profile::{CLAUSE_PROFILE_AUTHORITY, TemporalProfile};
-use super::super::refusal::{CheckCause, CheckRefusal, KeyFault, TemporalCause};
+use super::super::profile::{TemporalProfile, CLAUSE_PROFILE_AUTHORITY};
+use super::super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal, TemporalCause};
 use super::super::state_graph_claim::StatePredicate;
 use super::super::temporal_clause::{
-    CheckedFormula, CheckedInterval, FormulaNode, HorizonFault, IntervalReading, build_formula,
-    checked_constraint, checked_operators, horizon,
+    build_formula, checked_constraint, checked_operators, horizon, CheckedFormula, CheckedInterval,
+    FormulaNode, HorizonFault, IntervalReading,
 };
-use super::model::{Pass, Site, literal, site_location};
-use super::{ProbabilisticCause, TimeTypeMismatchReason, exact, exact_refusal, refusal};
+use super::model::{literal, site_location, Pass, Site};
+use super::{exact, exact_refusal, refusal, ProbabilisticCause, TimeTypeMismatchReason};
 use crate::family::CheckContext;
 use crate::family::{ClaimEvidence, ClaimExtent, Requirements};
 use crate::model::clause_observation::Observation;
@@ -187,7 +188,7 @@ impl CheckedPredicate {
         &self.slot_names
     }
 
-    fn normal_form_bytes(&self) -> Result<Vec<u8>, CheckRefusal> {
+    fn normal_form_bytes(&self) -> Result<Vec<u8>, SemanticCheckRefusal> {
         self.normal_form
             .clone()
             .ok_or_else(|| broken("a-package-predicate-has-no-source-normal-form"))
@@ -869,7 +870,7 @@ impl ClaimCx<'_> {
     }
 
     /// The location of `expression`, one of this claim's own.
-    fn location(&self, expression: &ExpressionForm) -> Result<Location, CheckRefusal> {
+    fn location(&self, expression: &ExpressionForm) -> Result<Location, SemanticCheckRefusal> {
         let position = self
             .expressions
             .iter()
@@ -879,7 +880,7 @@ impl ClaimCx<'_> {
     }
 
     /// The location of `value`, one of this claim's own exact values.
-    fn exact_location(&self, value: &ExactValueForm) -> Result<Location, CheckRefusal> {
+    fn exact_location(&self, value: &ExactValueForm) -> Result<Location, SemanticCheckRefusal> {
         let position = self
             .exact_values
             .iter()
@@ -895,13 +896,16 @@ impl ClaimCx<'_> {
 }
 
 /// `result`'s value, recording its refusal on `refusals`.
-fn keep<T>(refusals: &mut Vec<CheckRefusal>, result: Result<T, CheckRefusal>) -> Option<T> {
+fn keep<T>(
+    refusals: &mut Vec<SemanticCheckRefusal>,
+    result: Result<T, SemanticCheckRefusal>,
+) -> Option<T> {
     result.map_err(|refused| refusals.push(refused)).ok()
 }
 
 /// A refusal that is a broken invariant of this check, never of the input.
-fn broken(invariant: &'static str) -> CheckRefusal {
-    CheckRefusal {
+fn broken(invariant: &'static str) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(filament_semantic_value::location::ExpressionOwner::Expression),
         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new("S3", invariant),
@@ -909,8 +913,8 @@ fn broken(invariant: &'static str) -> CheckRefusal {
     }
 }
 
-fn temporal_refusal(cause: TemporalCause) -> CheckRefusal {
-    CheckRefusal {
+fn temporal_refusal(cause: TemporalCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(filament_semantic_value::location::ExpressionOwner::Expression),
         cause: Box::new(CheckCause::Temporal(Box::new(cause))),
     }
@@ -1007,7 +1011,7 @@ impl Pass<'_, '_> {
                     .iter()
                     .find(|earlier| earlier.name == checked.name)
                 {
-                    self.refusals.push(CheckRefusal {
+                    self.refusals.push(SemanticCheckRefusal {
                         location: checked.declaration_location(),
                         cause: Box::new(CheckCause::AmbiguousName {
                             name: checked.name.clone(),
@@ -1031,7 +1035,7 @@ impl Pass<'_, '_> {
         form: &ProbabilisticForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-        refusals: &mut Vec<CheckRefusal>,
+        refusals: &mut Vec<SemanticCheckRefusal>,
     ) -> Option<CheckedProbabilisticClaim> {
         let subject = keep(refusals, self.subject(form));
         let profile = keep(refusals, self.profile(form));
@@ -1116,7 +1120,7 @@ impl Pass<'_, '_> {
         form: &ActivationForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<ClaimActivation, CheckRefusal> {
+    ) -> Result<ClaimActivation, SemanticCheckRefusal> {
         let ActivationForm::Each { parameter, when } = form else {
             return Ok(ClaimActivation::Origin);
         };
@@ -1190,7 +1194,7 @@ impl Pass<'_, '_> {
         });
         let body = typer.infer(&guard.expression, Some(&ValueType::Boolean), &location)?;
         if body.root().value_type() != &ValueType::Boolean {
-            return Err(CheckRefusal::ill_typed(
+            return Err(SemanticCheckRefusal::ill_typed(
                 &location,
                 IllTypedCause::TypeMismatch,
             ));
@@ -1221,7 +1225,7 @@ impl Pass<'_, '_> {
     /// The model the claim is over (FR-186 "Kind and subject"). A name that
     /// is no `model` alias but declares a type is a trace subject, whose
     /// observed statistics are window aggregates (FR-194).
-    fn subject(&self, form: &ProbabilisticForm) -> Result<ModelSubjectRef, CheckRefusal> {
+    fn subject(&self, form: &ProbabilisticForm) -> Result<ModelSubjectRef, SemanticCheckRefusal> {
         let alias = form.subject.name.as_str();
         let claim = form.name.name.clone();
         let span = form.subject.span;
@@ -1252,7 +1256,7 @@ impl Pass<'_, '_> {
     }
 
     /// The temporal profile the claim's `using` alias selects.
-    fn profile(&self, form: &ProbabilisticForm) -> Result<DefinitionRef, CheckRefusal> {
+    fn profile(&self, form: &ProbabilisticForm) -> Result<DefinitionRef, SemanticCheckRefusal> {
         let claim = form.name.name.clone();
         let span = form.profile.span;
         let selection = self
@@ -1285,7 +1289,7 @@ impl Pass<'_, '_> {
         index: usize,
         form: &ProbabilisticForm,
         subject: &ModelSubjectRef,
-    ) -> Result<SchedulerCheck, CheckRefusal> {
+    ) -> Result<SchedulerCheck, SemanticCheckRefusal> {
         let claim = form.name.name.clone();
         match &form.scheduler {
             SchedulerForm::Workload(name) => {
@@ -1350,7 +1354,7 @@ impl Pass<'_, '_> {
     }
 
     /// The claim's `over` binding, its type resolved.
-    fn over(&self, form: &ProbabilisticForm) -> Result<Option<OverBinding>, CheckRefusal> {
+    fn over(&self, form: &ProbabilisticForm) -> Result<Option<OverBinding>, SemanticCheckRefusal> {
         let Some(parameter) = &form.over else {
             return Ok(None);
         };
@@ -1382,7 +1386,7 @@ impl Pass<'_, '_> {
     /// The confidence parameters the claim states, each an exact rational
     /// under the written-value bound; their ranges were checked with the
     /// form.
-    fn confidence(&self, claim: &ClaimCx<'_>) -> Result<Option<Confidence>, CheckRefusal> {
+    fn confidence(&self, claim: &ClaimCx<'_>) -> Result<Option<Confidence>, SemanticCheckRefusal> {
         use fsl_forms::ConfidenceKey::{Alpha, Beta, Indifference};
         let form = claim.form;
         if form.confidence.is_empty() {
@@ -1404,7 +1408,11 @@ impl Pass<'_, '_> {
     }
 
     /// `value` reduced under the written-value bound (FR-185 "Exact values").
-    fn exact(&self, claim: &ClaimCx<'_>, value: &ExactValueForm) -> Result<Rational, CheckRefusal> {
+    fn exact(
+        &self,
+        claim: &ClaimCx<'_>,
+        value: &ExactValueForm,
+    ) -> Result<Rational, SemanticCheckRefusal> {
         let location = claim.exact_location(value)?;
         let ceiling = self.input.limits.rational_bits();
         exact::value(value, ceiling)
@@ -1418,7 +1426,7 @@ impl Pass<'_, '_> {
         profile: Option<&DefinitionRef>,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-        refusals: &mut Vec<CheckRefusal>,
+        refusals: &mut Vec<SemanticCheckRefusal>,
     ) -> Option<ProbForm> {
         match &claim.form.body {
             ProbabilisticBody::Probability {
@@ -1566,7 +1574,7 @@ impl Pass<'_, '_> {
         shape: ReachShape,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-        refusals: &mut Vec<CheckRefusal>,
+        refusals: &mut Vec<SemanticCheckRefusal>,
     ) -> Option<ReachTarget> {
         let mut predicates = Vec::with_capacity(shape.operands.len());
         for operand in shape.operands {
@@ -1616,7 +1624,7 @@ impl Pass<'_, '_> {
         event: &EventForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-        refusals: &mut Vec<CheckRefusal>,
+        refusals: &mut Vec<SemanticCheckRefusal>,
     ) -> Option<Event> {
         match event {
             EventForm::Temporal(formula) => {
@@ -1694,6 +1702,7 @@ impl Pass<'_, '_> {
     /// A temporal event: bounded, with only interval operators (ADR-018
     /// TP-2), its horizon and the predicate of each `holds` atom.
     #[allow(clippy::too_many_arguments)] // these are the checker inputs and output accumulators
+    #[implements("FR-194-AC-4")]
     fn formula(
         &mut self,
         claim: &ClaimCx<'_>,
@@ -1702,7 +1711,7 @@ impl Pass<'_, '_> {
         timed_reader: Option<&super::super::temporal_clause::timed::TimedReader<'_>>,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-        refusals: &mut Vec<CheckRefusal>,
+        refusals: &mut Vec<SemanticCheckRefusal>,
     ) -> Option<(CheckedTemporalFormula, u64, Option<Rational>)> {
         let mut causes: Vec<TemporalCause> = Vec::new();
         if timed_reader.is_some() {
@@ -1743,6 +1752,17 @@ impl Pass<'_, '_> {
                 return None;
             }
         };
+        for (_, node) in formula.iter() {
+            if let TemporalNodeForm::AggregateAtom(atom) = node {
+                // A probabilistic event is checked over its model subject.
+                // Aggregates over that subject have no checked aggregate
+                // payload for package emission; refuse them here instead of
+                // letting the lowerer report a missing typed term.
+                causes.push(TemporalCause::AggregateModelSubject {
+                    span: atom.term.span,
+                });
+            }
+        }
         if timed_reader.is_some() && formula.iter().any(|(_, node)| {
             matches!(
                 node,
@@ -1928,7 +1948,7 @@ impl Pass<'_, '_> {
         measure: &MeasureForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<(BoundedMeasure, Measured), CheckRefusal> {
+    ) -> Result<(BoundedMeasure, Measured), SemanticCheckRefusal> {
         match measure {
             MeasureForm::Accumulate {
                 reward,
@@ -2033,7 +2053,8 @@ impl Pass<'_, '_> {
         window: &MeasureWindowForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<(CheckedPredicate, CheckedPredicate, u64, Option<Rational>), CheckRefusal> {
+    ) -> Result<(CheckedPredicate, CheckedPredicate, u64, Option<Rational>), SemanticCheckRefusal>
+    {
         let from = self.predicate(claim, &window.from, cx, nodes);
         let until = self.predicate(claim, &window.until, cx, nodes);
         let within = self.steps(claim, &window.within);
@@ -2048,7 +2069,7 @@ impl Pass<'_, '_> {
         fraction: &FractionForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<FractionMeasure, CheckRefusal> {
+    ) -> Result<FractionMeasure, SemanticCheckRefusal> {
         let predicate = self.predicate(claim, &fraction.predicate, cx, nodes);
         let window = self.steps(claim, &fraction.horizon);
         let weight = self.weight(claim, fraction.weighting.as_ref());
@@ -2066,7 +2087,7 @@ impl Pass<'_, '_> {
         &self,
         claim: &ClaimCx<'_>,
         horizon: &HorizonForm,
-    ) -> Result<(u64, Option<Rational>), CheckRefusal> {
+    ) -> Result<(u64, Option<Rational>), SemanticCheckRefusal> {
         match horizon {
             // FSpec FR-640 rule 7.3: a window over a timed subject is a time
             // quantity, so a step count there has no spelling.
@@ -2128,11 +2149,12 @@ impl Pass<'_, '_> {
     ///
     /// `delay` is a time weighting only for a subject with a model-time
     /// binding; resolve it before looking for a reward with that name.
+    #[ix_trace_rs::string_edge]
     fn weight(
         &self,
         claim: &ClaimCx<'_>,
         weighting: Option<&WeightingForm>,
-    ) -> Result<Option<Weighting>, CheckRefusal> {
+    ) -> Result<Option<Weighting>, SemanticCheckRefusal> {
         weighting
             .map(|weighting| {
                 if weighting.name.name == "delay" {
@@ -2161,7 +2183,7 @@ impl Pass<'_, '_> {
         claim: &ClaimCx<'_>,
         name: &str,
         span: Span,
-    ) -> Result<(Identifier, RewardValue), CheckRefusal> {
+    ) -> Result<(Identifier, RewardValue), SemanticCheckRefusal> {
         let mut declared = self
             .model
             .rewards
@@ -2199,7 +2221,7 @@ impl Pass<'_, '_> {
         expression: &ExpressionForm,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<CheckedPredicate, CheckRefusal> {
+    ) -> Result<CheckedPredicate, SemanticCheckRefusal> {
         let location = claim.location(expression)?;
         let bound: Vec<(String, ValueType)> = claim
             .over
@@ -2234,7 +2256,7 @@ impl Pass<'_, '_> {
         });
         let body = typer.infer(&expression.expression, Some(&ValueType::Boolean), &location)?;
         if body.root().value_type() != &ValueType::Boolean {
-            return Err(CheckRefusal {
+            return Err(SemanticCheckRefusal {
                 location,
                 cause: Box::new(CheckCause::NonBooleanRoot),
             });
@@ -2268,7 +2290,7 @@ impl Pass<'_, '_> {
         measured: Measured,
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
-    ) -> Result<Rational, CheckRefusal> {
+    ) -> Result<Rational, SemanticCheckRefusal> {
         let location = claim.location(expression)?;
         let span = root_span(expression, claim.form.span);
         let input = self.input;
@@ -2307,11 +2329,11 @@ impl Pass<'_, '_> {
             // not a fraction: that is a threshold of the wrong type.
             .map_err(|refused| match refused.cause.as_ref() {
                 CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral) => {
-                    CheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch)
+                    SemanticCheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch)
                 }
                 _ => refused,
             })?;
-        let mismatch = || CheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch);
+        let mismatch = || SemanticCheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch);
         let Some(literal) = literal(body.root()) else {
             return Err(refusal(ProbabilisticCause::ThresholdNotLiteral {
                 claim: claim.claim().to_owned(),
@@ -2395,7 +2417,7 @@ impl Pass<'_, '_> {
         span: Span,
         cx: &mut CheckContext<'_, Scope>,
         location: &Location,
-    ) -> Result<Rational, CheckRefusal> {
+    ) -> Result<Rational, SemanticCheckRefusal> {
         let units = self.input.scope.types().units();
         let (Some(from), Some(target)) = (units.resolve(quantity), units.get(unit.clone())) else {
             return Err(broken("threshold-units-declared"));
@@ -2413,7 +2435,7 @@ impl Pass<'_, '_> {
         threshold: UnitId,
         reward: Option<UnitId>,
         span: Span,
-    ) -> CheckRefusal {
+    ) -> SemanticCheckRefusal {
         refusal(ProbabilisticCause::UnitMismatch {
             claim: claim.claim().to_owned(),
             threshold: self.dimension_name(Some(threshold)),
@@ -2444,7 +2466,7 @@ impl Pass<'_, '_> {
         (fairness, activation): (&[FairnessConstraint], &ClaimActivation),
         form: &ProbForm,
         confidence: Option<&Confidence>,
-    ) -> Result<ClaimNormalForm, CheckRefusal> {
+    ) -> Result<ClaimNormalForm, SemanticCheckRefusal> {
         let subject = &claim.subject.package;
         let text = |text: &str| text.as_bytes().to_vec();
         let subject = node_bytes(
@@ -2517,7 +2539,7 @@ impl Pass<'_, '_> {
     /// A workload's content: its name, its model and each weight, the
     /// weights in operation order (the order they are written in is not
     /// content).
-    fn workload_bytes(&self, name: &str) -> Result<Vec<u8>, CheckRefusal> {
+    fn workload_bytes(&self, name: &str) -> Result<Vec<u8>, SemanticCheckRefusal> {
         let workload = self
             .model
             .workload(name)
@@ -2550,7 +2572,7 @@ impl Pass<'_, '_> {
         &self,
         subject: &ModelSubjectRef,
         constraint: &FairnessConstraint,
-    ) -> Result<Vec<u8>, CheckRefusal> {
+    ) -> Result<Vec<u8>, SemanticCheckRefusal> {
         let operation = constraint.operation();
         let declaring = self
             .input
@@ -2583,7 +2605,7 @@ impl Pass<'_, '_> {
 
     /// An `over` type's content: an object type, by its declaration in its
     /// model. No other type has an encoding ([`Self::over`] refuses it).
-    fn type_bytes(&self, value_type: &ValueType) -> Result<Vec<u8>, CheckRefusal> {
+    fn type_bytes(&self, value_type: &ValueType) -> Result<Vec<u8>, SemanticCheckRefusal> {
         let ValueType::Reference(object) = value_type else {
             return Err(broken("over-type-is-an-object-type"));
         };
@@ -2628,7 +2650,7 @@ impl Pass<'_, '_> {
         &self,
         subject: &str,
         fraction: &FractionMeasure,
-    ) -> Result<Vec<u8>, CheckRefusal> {
+    ) -> Result<Vec<u8>, SemanticCheckRefusal> {
         let window = fraction.timed_window.as_ref().map_or_else(
             || node_bytes(b"steps", &[fraction.window.to_be_bytes().to_vec()]),
             |time| node_bytes(b"time", &[rational_bytes(time)]),
@@ -2647,7 +2669,7 @@ impl Pass<'_, '_> {
         &self,
         subject: &str,
         measure: &BoundedMeasure,
-    ) -> Result<Vec<u8>, CheckRefusal> {
+    ) -> Result<Vec<u8>, SemanticCheckRefusal> {
         Ok(match measure {
             BoundedMeasure::Accumulate {
                 reward,
@@ -2700,7 +2722,7 @@ impl Pass<'_, '_> {
         })
     }
 
-    fn form_bytes(&self, subject: &str, form: &ProbForm) -> Result<Vec<u8>, CheckRefusal> {
+    fn form_bytes(&self, subject: &str, form: &ProbForm) -> Result<Vec<u8>, SemanticCheckRefusal> {
         Ok(match form {
             ProbForm::Probability { bound, event } => {
                 let event = match event {
@@ -2784,7 +2806,7 @@ fn normalized_quantity_threshold(
     target: &QuantityUnit,
     meter: &mut Meter,
     location: &Location,
-) -> Result<Rational, CheckRefusal> {
+) -> Result<Rational, SemanticCheckRefusal> {
     let outcome = convert_quantity(from, target, &QuantityTarget::Exact, meter)
         .map_err(|_| broken("threshold-converts-within-its-dimension"))?;
     match outcome {
@@ -2805,7 +2827,10 @@ fn normalized_quantity_threshold(
     }
 }
 
-fn conversion_limit(location: &Location, incomplete: &filament_exact::Incomplete) -> CheckRefusal {
+fn conversion_limit(
+    location: &Location,
+    incomplete: &filament_exact::Incomplete,
+) -> SemanticCheckRefusal {
     use super::super::refusal::{CheckingLimitKind, CheckingStage, StageLimitCause};
     let kind = match incomplete.limit_kind {
         filament_exact::LimitKind::IntegerBits => CheckingLimitKind::RationalBits,
@@ -2831,7 +2856,7 @@ fn conversion_limit(location: &Location, incomplete: &filament_exact::Incomplete
     let Some(actual) = actual else {
         return broken("threshold-conversion-denial-is-representable");
     };
-    CheckRefusal {
+    SemanticCheckRefusal {
         location: location.clone(),
         cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,

@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! HP-5 settlement with independently checked closure and replayed lassos.
 
-use filament_exact::Cancel;
-use fsl_eval::simulation::model::ModelSystem;
+use filament_exact::{Cancel, ValueType};
+use fsl_eval::model_subject::ModelSubject;
+use fsl_eval::simulation::model::{ModelEvaluator, ModelSystem};
+use fsl_semantics::check::CheckedHyperClause;
+use ix_trace_rs::implements;
 
 use super::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
+use super::graph_hyper::atom_location;
 use super::graph_settle::{GraphReplaySettlement, StateGraphMethod, StateGraphRecord};
 use super::settle::Row;
 use super::state_graph::{
@@ -12,7 +16,7 @@ use super::state_graph::{
 };
 use crate::{
     Certification, IncompleteCause, InconclusiveCause, ProductClosureCheck, ProductClosureRefusal,
-    ProductClosureRequest, ProofBasis, SettlementBasis, TerminalValue,
+    ProductClosureRequest, ProofBasis, SettlementBasis, TerminalValue, UndefinedLocus,
 };
 
 /// A single-existential settlement and the evidence that its replay reproduced.
@@ -28,14 +32,122 @@ pub struct ExistentialRecord {
 /// # Errors
 ///
 /// Refuses an inconsistent subject, binding or missing proof certificate.
+#[implements("FR-181-AC-5", "FR-181-AC-12")]
 pub fn settle_existential(
     request: &ProductClosureRequest<'_>,
     instance: &ExistentialInstanceOutcome,
     method: &StateGraphMethod,
     cancel: &Cancel,
 ) -> Result<ExistentialRecord, ProductClosureRefusal> {
-    let clause = request.hyper_clause()?;
-    let [subject] = request.subjects else {
+    settle_existential_from(
+        ExistentialRequest::Source(request),
+        instance,
+        method,
+        cancel,
+    )
+}
+
+/// Settle an HP-5 binding from admitted package bytes and package model facts.
+///
+/// # Errors
+/// Refuses an inconsistent package form, binding or missing proof certificate.
+#[implements("FR-940-AC-17")]
+pub fn settle_package_existential(
+    request: &crate::PackageHyperClosureRequest<'_>,
+    instance: &ExistentialInstanceOutcome,
+    method: &StateGraphMethod,
+    cancel: &Cancel,
+) -> Result<ExistentialRecord, ProductClosureRefusal> {
+    settle_existential_from(
+        ExistentialRequest::Package(request),
+        instance,
+        method,
+        cancel,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ExistentialRequest<'a> {
+    Source(&'a ProductClosureRequest<'a>),
+    Package(&'a crate::PackageHyperClosureRequest<'a>),
+}
+
+impl ExistentialRequest<'_> {
+    fn clause(&self) -> Result<&CheckedHyperClause, ProductClosureRefusal> {
+        match self {
+            Self::Source(request) => request.hyper_clause(),
+            Self::Package(request) => Ok(request.clause()),
+        }
+    }
+
+    fn subjects(&self) -> &[ModelSubject<'_>] {
+        match self {
+            Self::Source(request) => request.subjects,
+            Self::Package(request) => request.subjects(),
+        }
+    }
+
+    fn evaluator(&self) -> &dyn ModelEvaluator {
+        match self {
+            Self::Source(request) => request.package,
+            Self::Package(request) => request.evaluator(),
+        }
+    }
+
+    fn checked_package(&self) -> Option<&fsl_package::CheckedPackage> {
+        match self {
+            Self::Source(request) => Some(request.package),
+            Self::Package(_) => None,
+        }
+    }
+
+    fn meter(&self) -> filament_exact::ScalarLimits {
+        match self {
+            Self::Source(request) => request.meter,
+            Self::Package(request) => request.meter(),
+        }
+    }
+
+    fn check_certificate(
+        &self,
+        certificate: &crate::ProductClosureCertificate,
+        limits: &crate::ModelCheckLimits,
+        cancel: &Cancel,
+    ) -> Result<crate::ProductClosureCheck, ProductClosureRefusal> {
+        match self {
+            Self::Source(request) => {
+                crate::check_product_closure(request, certificate, limits, cancel)
+            }
+            Self::Package(request) => request.check_certificate(certificate, limits, cancel),
+        }
+    }
+
+    fn contract_location(
+        &self,
+        name: &str,
+    ) -> Option<filament_semantic_value::location::ExpressionLocation> {
+        match self {
+            Self::Source(request) => request
+                .package
+                .graph()
+                .state_clauses()
+                .iter()
+                .find(|candidate| candidate.name() == name)
+                .map(|candidate| candidate.body().location().clone()),
+            Self::Package(_) => None,
+        }
+    }
+}
+
+#[implements("FR-181-AC-5", "FR-181-AC-12", "FR-940-AC-17")]
+fn settle_existential_from(
+    request: ExistentialRequest<'_>,
+    instance: &ExistentialInstanceOutcome,
+    method: &StateGraphMethod,
+    cancel: &Cancel,
+) -> Result<ExistentialRecord, ProductClosureRefusal> {
+    let clause = request.clause()?;
+    let [subject] = request.subjects() else {
         return Err(ProductClosureRefusal::Input("HP-5-subject"));
     };
     let alias = clause
@@ -44,18 +156,25 @@ pub fn settle_existential(
         .ok_or(ProductClosureRefusal::Input("HP-5-subject"))?;
     let system = ModelSystem::for_alias(subject.simulation.clone(), alias.as_str())
         .map_err(|_| ProductClosureRefusal::Input("HP-5-subject"))?;
-    let over = match (clause.parameters(), instance.instance.as_slice()) {
-        ([], []) => None,
-        ([parameter], [(name, key)]) if name == &parameter.name => Some(
+    if clause.parameters().len() != instance.instance.len() {
+        return Err(ProductClosureRefusal::Input("HP-5-instance"));
+    }
+    let over = clause
+        .parameters()
+        .iter()
+        .zip(&instance.instance)
+        .map(|(parameter, (name, key))| {
+            if name != &parameter.name {
+                return Err(ProductClosureRefusal::Input("HP-5-instance"));
+            }
             system
-                .hyper_instances(&parameter.population)
+                .instances(&ValueType::Reference(parameter.object.clone()))
                 .map_err(|_| ProductClosureRefusal::Input("HP-5-universe"))?
                 .into_iter()
                 .find(|instance| &instance.key == key)
-                .ok_or(ProductClosureRefusal::Input("HP-5-instance"))?,
-        ),
-        _ => return Err(ProductClosureRefusal::Input("HP-5-instance")),
-    };
+                .ok_or(ProductClosureRefusal::Input("HP-5-instance"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     if clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
         && matches!(
             instance.outcome,
@@ -67,17 +186,19 @@ pub fn settle_existential(
     let mut evidence = None;
     let mut undefined = None;
     let mut end = None;
-    let mut replay = |candidate: GraphEvidence, decided: Row| {
+    let mut replay = |candidate: GraphEvidence, decided: Row, contract_name: Option<&str>| {
         let replayed = super::graph_hyper::replay_evidence(
             &system,
-            request.package,
+            request.evaluator(),
+            request.checked_package(),
+            contract_name,
             clause,
             &candidate,
             method.limits.limits.max_states,
             method.limits.limits.max_transitions,
             method.limits.max_automaton_states,
             subject.simulation.expansion.max_candidates,
-            request.meter,
+            request.meter(),
             cancel,
         );
         match replayed {
@@ -105,7 +226,7 @@ pub fn settle_existential(
             if certificate.instance != instance.instance {
                 return Err(ProductClosureRefusal::Input("HP-5-certificate-instance"));
             }
-            match crate::check_product_closure(request, certificate, &method.limits, cancel)? {
+            match request.check_certificate(certificate, &method.limits, cancel)? {
                 ProductClosureCheck::Accepted => replay(
                     GraphEvidence::Witness {
                         paths: lassos
@@ -129,6 +250,7 @@ pub fn settle_existential(
                         Certification::Certified,
                         SettlementBasis::DecisiveWitness,
                     ),
+                    None,
                 ),
                 ProductClosureCheck::Rejected(rejection) => {
                     Row::inconclusive(InconclusiveCause::CertificateRejected {
@@ -164,6 +286,7 @@ pub fn settle_existential(
                         .map(|witness| witness.source.clone())
                         .collect(),
                 }),
+                None,
             )
         }
         ExistentialOutcome::ClosedWitnessed { .. } => {
@@ -176,16 +299,23 @@ pub fn settle_existential(
                 over: over.clone(),
             },
             Row::refuted(SettlementBasis::ClosedScope),
+            None,
         ),
         ExistentialOutcome::Undefined {
             stem,
             undefined: finding,
         } => {
+            let contract = matches!(finding.site.locus, UndefinedLocus::Contract(_));
             let found = GraphUndefined {
-                predicate: Some(fsl_semantics::check::PredicateRole::Target),
+                // A contract conjunction with no value is no claim predicate.
+                predicate: (!contract).then_some(fsl_semantics::check::PredicateRole::Target),
                 transition: finding.site.transition.clone(),
                 state_key: finding.site.state_key.clone(),
-                locus: None,
+                locus: match &finding.site.locus {
+                    UndefinedLocus::Atom(atom) => atom_location(clause, *atom).cloned(),
+                    UndefinedLocus::Contract(name) => request.contract_location(name),
+                    _ => None,
+                },
                 cause: finding.cause.clone(),
             };
             undefined = Some(found.clone());
@@ -196,6 +326,10 @@ pub fn settle_existential(
                     over: over.clone(),
                 },
                 Row::refuted(SettlementBasis::DecisiveCounterexample),
+                match &finding.site.locus {
+                    UndefinedLocus::Contract(name) => Some(name.as_str()),
+                    _ => None,
+                },
             )
         }
         ExistentialOutcome::NoInitialState => Row::inconclusive(InconclusiveCause::NoInitialState),
@@ -245,10 +379,11 @@ pub fn settle_existential(
 /// closed-tuple judgement, so a witness counts only when its own execution is
 /// found and holds the body, and a trap only when no execution from the initial
 /// state does.
+#[implements("FR-181-AC-12", "FR-940-AC-17")]
 fn settle_closed(
-    request: &ProductClosureRequest<'_>,
+    request: ExistentialRequest<'_>,
     system: &ModelSystem<'_>,
-    over: Option<fsl_eval::model_subject::ModelInstance>,
+    over: Vec<fsl_eval::model_subject::ModelInstance>,
     instance: &ExistentialInstanceOutcome,
     method: &StateGraphMethod,
     cancel: &Cancel,
@@ -257,17 +392,19 @@ fn settle_closed(
         closed_executions, horizon, judge_closed_tuple, CheckedHyperLetters, CheckedStepMatch,
         ClosedInputs, ClosedStop, ClosedVerdict, ParameterBinding,
     };
-    let clause = request.hyper_clause()?;
-    let binding: Vec<ParameterBinding> = match (clause.parameters(), &over) {
-        ([parameter], Some(found)) => vec![ParameterBinding {
+    let clause = request.clause()?;
+    let binding: Vec<ParameterBinding> = clause
+        .parameters()
+        .iter()
+        .zip(&over)
+        .map(|(parameter, found)| ParameterBinding {
             parameter: parameter.name.clone(),
             instance: found.clone(),
-        }],
-        _ => Vec::new(),
-    };
-    let letters = CheckedHyperLetters::new(request.package, clause, vec![system])
+        })
+        .collect();
+    let letters = CheckedHyperLetters::for_evaluator(request.evaluator(), clause, vec![system])
         .map_err(|_| ProductClosureRefusal::Input("HP-5-letters"))?;
-    let matcher = CheckedStepMatch::new(request.package, clause);
+    let matcher = CheckedStepMatch::for_evaluator(request.evaluator(), clause);
     let depth = horizon(clause.body()).ok_or(ProductClosureRefusal::Input("HP-5-horizon"))?;
     let mut evidence = None;
     let row = match closed_executions(
@@ -278,6 +415,11 @@ fn settle_closed(
         cancel,
     ) {
         Err(ClosedStop::Encoding(_)) => Row::failed(),
+        // A witness or trap past a contract conjunction with no value is no
+        // result (ADR-018 UE-6): the engine's outcome disagrees with this
+        // recomputation.
+        Err(ClosedStop::Undefined { .. }) => Row::failed(),
+        Err(ClosedStop::Refused) => Row::inconclusive(InconclusiveCause::UndecidedSuccessor),
         // A state that cannot be expanded leaves the successor relation unknown.
         Err(ClosedStop::Expansion(_)) => Row::inconclusive(InconclusiveCause::UndecidedSuccessor),
         Err(ClosedStop::Executions { limit }) => Row::stopped_run(
@@ -300,7 +442,7 @@ fn settle_closed(
                 instance: &binding,
                 letters: &letters,
                 matcher: &matcher,
-                meter: request.meter,
+                meter: request.meter(),
                 cancel,
             };
             let judged = |initial: usize, steps: Option<&[super::counterexample::ModelStep]>| {

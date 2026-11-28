@@ -70,6 +70,7 @@ fn run(world: &World) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -376,7 +377,9 @@ fn each_corrupted_field_is_rejected() {
                 Taken::Abstract(_) => Taken::Stutter,
                 Taken::CandidateSteps(_) => Taken::Stutter,
                 Taken::Protocol(_) => Taken::Stutter,
-                Taken::ProtocolTraces(_) | Taken::Failing => Taken::Stutter,
+                Taken::ProtocolTraces(_) | Taken::ProtocolPathRefs(_) | Taken::Failing => {
+                    Taken::Stutter
+                }
             };
             let (rule, _) = rejected(check(&world, &tampered));
             assert_eq!(rule, CertificateRule::PostDiffers);
@@ -765,6 +768,7 @@ fn run_to(world: &World, max_depth: Option<usize>) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -1005,8 +1009,9 @@ fn a_position_reached_only_from_a_later_position_is_malformed() {
 }
 
 /// FR-149-AC-8 (TC-556): the locus of AC-3's rejection and AC-2's, and one
-/// verdict of each other kind, serialize as the wire-form table lists.
-#[trace("TC-556", "FR-149-AC-8")]
+/// verdict of each other kind, serialize as the wire-form table lists, and
+/// FR-120-AC-40: a name identity is written as the bare name.
+#[trace("TC-556", "FR-149-AC-8", "TC-471", "FR-120-AC-40")]
 #[test]
 fn a_rejection_serializes_its_locus_and_verdict() {
     let world = World::with(Variant::LOST_UPDATE, &lost_update_refinement());
@@ -1080,7 +1085,7 @@ fn a_rejection_serializes_its_locus_and_verdict() {
                 "position": "3",
                 "transition": {
                     "type": "transition",
-                    "operation": "\"commitA\"",
+                    "operation": "commitA",
                     "receiver": null,
                     "arguments": []
                 }

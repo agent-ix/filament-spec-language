@@ -8,18 +8,18 @@ use ix_trace_rs::trace;
 
 use super::assemble;
 use crate::check::refusal::ProtocolAnchorCause;
-use crate::check::{CheckCause, CheckRefusal};
+use crate::check::{CheckCause, SemanticCheckRefusal};
 
-fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
+fn catalog(refusal: &SemanticCheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
 }
 
 /// The S3 refusals of `declarations`, each with its catalog pair and the
 /// source text of its refusal region (`PackageDeclarations::regions`).
-pub(super) fn located_refusals(declarations: &str) -> Vec<(CheckRefusal, String)> {
+pub(super) fn located_refusals(declarations: &str) -> Vec<(SemanticCheckRefusal, String)> {
     let (text, assembled) = assemble(declarations);
     let regions = assembled.regions();
-    let refusals: Vec<CheckRefusal> = match assembled.check_with_protocol_results(
+    let refusals: Vec<SemanticCheckRefusal> = match assembled.check_with_protocol_results(
         CheckMode::Linked,
         CheckingLimits::default(),
         &crate::check::test_support::ZeroRewardEvaluator,

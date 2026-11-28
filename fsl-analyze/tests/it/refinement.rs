@@ -65,4 +65,5 @@ mod ring_world;
 mod smt_query;
 mod source_model_boundaries;
 mod tied_item_resolution;
+mod ue6_ref;
 mod weak_memory;

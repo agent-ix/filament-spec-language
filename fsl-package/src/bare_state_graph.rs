@@ -137,6 +137,7 @@ impl<'p> BarePackage<'p> {
         Ok(None)
     }
 
+    #[ix_trace_rs::string_edge]
     fn predicate_shape(&self, node: &CheckedSemanticNodeV2) -> Option<Shape> {
         if &*node.node_tag == "expression" {
             return Some(Shape::Expression);

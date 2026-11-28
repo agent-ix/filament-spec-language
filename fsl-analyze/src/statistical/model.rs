@@ -24,25 +24,24 @@ use std::rc::Rc;
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Value, ValueType};
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
-use fsl_eval::automaton::{
-    bounded_formula_verdict, translate_body, AutomatonError, Monitor, PropertyAutomaton, StateId,
-};
+use fsl_eval::automaton::{translate_body, AutomatonError, Monitor, PropertyAutomaton, StateId};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    advance_timed, ModelSimState, ModelSystem, PredicateReading, TimedAdvance, TimedRaceStep,
-    TimedRaceStop, TimedSampleStop, TimedState, TimedStop, TimedSystem, TransitionId,
+    advance_timed, ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading,
+    TimedAdvance, TimedRaceStep, TimedRaceStop, TimedSampleStop, TimedState, TimedStop,
+    TimedSystem, TransitionId, UndefinedContract,
 };
 use fsl_eval::simulation::{
     ExpansionStop, NotSimulated, Permutation, ProbabilisticSampler, SampleStop, SampledPosition,
     SampledStep, StepAt, SymmetryGroup, TotalAboveDrawRange, TransitionSystem,
 };
-use fsl_eval::temporal::{AtomReading, TemporalOutcome, UndefinedCause};
+use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::{
-    ClaimForm, Confidence, MeasureValue, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
-    StatisticalRefusal, TestProvenance, TimedSampling, WitnessReadStop, WitnessReader,
-    WitnessReading, WitnessValue,
+    ClaimForm, Confidence, MeasureValue, OnEachRead, StatisticalLimits, StatisticalMethod,
+    StatisticalOutcome, StatisticalRefusal, TestProvenance, TimedSampling, WitnessReadStop,
+    WitnessReader, WitnessReading, WitnessValue,
 };
 use fsl_replay::{
     ClaimPredicate, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
@@ -50,8 +49,8 @@ use fsl_replay::{
 };
 use fsl_semantics::check::{
     Bound as CheckedBound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim,
-    CheckedTemporalFormula, Event, FractionMeasure, ProbForm, ProbScheduler, TemporalProfile,
-    Weighting, Workload,
+    CheckedTemporalFormula, ClaimActivation, Event, FractionMeasure, ProbForm, ProbScheduler,
+    TemporalProfile, Weighting, Workload,
 };
 use ix_trace_rs::implements;
 
@@ -66,6 +65,8 @@ use crate::exact_probabilistic::{FormulaState, MonitorVerdict};
 use crate::model_check::admit;
 use crate::model_check::false_extension::false_extension_rejects;
 use fsl_route::reductions::SymmetryDeclaration;
+
+mod window;
 
 /// FR-189's statistical request over a model subject.
 pub struct StatisticalRequest<'a> {
@@ -102,6 +103,34 @@ fn fault(invariant: &'static str) -> StatisticalRefusal {
     StatisticalRefusal::Internal(InternalFault::new("statistical", invariant))
 }
 
+/// FR-875 "Profile boundary": read the instance set of an `on each` claim
+/// requested with statistical evidence. No sample is drawn.
+#[implements("FR-875-AC-1", "FR-875-AC-5")]
+fn read_on_each(
+    simulation: ModelSimulationRequest<'_>,
+    claim: &CheckedProbabilisticClaim,
+    cancel: &Cancel,
+) -> OnEachRead {
+    let probabilistic = simulation.input.probabilistic;
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return OnEachRead::Document(error.into()),
+    };
+    let admitted = ModelSystem::new_with_cancel(simulation, cancel);
+    if let Some(cause) = cancel.tripped() {
+        return OnEachRead::Cancelled(cause);
+    }
+    let system = match admitted {
+        Ok(system) => system,
+        Err(failure) => return OnEachRead::Admission(Box::new(failure)),
+    };
+    match fsl_replay::on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
+        Ok(false) => OnEachRead::NoInstance,
+        Ok(true) => OnEachRead::Unimplemented,
+        Err(error) => OnEachRead::Document(error),
+    }
+}
+
 /// FR-189: decide `request`'s claim over its subject, polling `cancel`
 /// before each draw and each step.
 ///
@@ -136,6 +165,12 @@ pub fn check_statistical(
         symmetry,
         timed_sampling,
     } = request;
+    // The one gate for an `on each` claim, before any check that assumes a
+    // claim a sample can decide.
+    if matches!(claim.activation, ClaimActivation::Each { .. }) {
+        let read = read_on_each(subject.simulation, claim, cancel);
+        return Err(StatisticalRefusal::OnEach(Box::new(read)));
+    }
     if workers == 0 {
         return Err(StatisticalRefusal::Workers);
     }
@@ -501,6 +536,9 @@ struct Measure<'c> {
     until: &'c CheckedPredicate,
     within: u64,
     timed_within: Option<Rational>,
+    /// Whether the measure is `elapsed`, which FSpec FR-407 "Elapsed" reads
+    /// by its own rule.
+    elapsed: bool,
 }
 
 /// How a measured sample becomes the sample the statistics count.
@@ -534,13 +572,14 @@ fn measure_of(measure: &BoundedMeasure) -> Option<Measure<'_>> {
             from,
             until,
             within,
-            ..
+            timed_within,
         } => Some(Measure {
             reward: Some(reward),
             from,
             until,
             within: *within,
-            timed_within: None,
+            timed_within: timed_within.clone(),
+            elapsed: false,
         }),
         BoundedMeasure::Elapsed {
             from,
@@ -553,18 +592,20 @@ fn measure_of(measure: &BoundedMeasure) -> Option<Measure<'_>> {
             until,
             within: 0,
             timed_within: Some(within.clone()),
+            elapsed: true,
         }),
         BoundedMeasure::Steps {
             from,
             until,
             within,
-            ..
+            timed_within,
         } => Some(Measure {
             reward: None,
             from,
             until,
             within: *within,
-            timed_within: None,
+            timed_within: timed_within.clone(),
+            elapsed: false,
         }),
         BoundedMeasure::Fraction(_) => None,
     }
@@ -666,7 +707,7 @@ fn reduce(
         ),
         // `require_statistical` refused every exact-only form.
         ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. } | ProbForm::MeanTime { .. } => {
-            return Err(StatisticalRefusal::ExactOnlyForm)
+            return Err(StatisticalRefusal::ExactOnlyForm);
         }
     };
     let is_timed =
@@ -721,12 +762,28 @@ type Truths = Result<Vec<bool>, Box<UndefinedEvaluation>>;
 enum Ended {
     Halt(SampleHalt),
     Undecided,
+    /// A contract conjunction had no value at the state the step expanded
+    /// (ADR-018 UE-6): the caller knows the position and names the site.
+    Contract(Box<UndefinedContract>),
+}
+
+/// The undefined evaluation of `contract` at the state `key` at `position`
+/// (ADR-018 UE-6): the clause, with the guarded transition for a
+/// precondition.
+#[implements("FR-189-AC-21")]
+fn contract_evaluation(
+    position: u64,
+    key: &fsl_eval::simulation::StateKey,
+    contract: UndefinedContract,
+) -> UndefinedEvaluation {
+    UndefinedEvaluation::of_contract(position, key.clone(), contract)
 }
 
 impl From<SampleStop> for Ended {
     fn from(stop: SampleStop) -> Self {
         Self::Halt(match stop {
             SampleStop::UndecidedSuccessor => return Self::Undecided,
+            SampleStop::UndefinedContract(contract) => return Self::Contract(Box::new(contract)),
             SampleStop::GeneratorMismatch { supplied } => {
                 SampleHalt::GeneratorMismatch { supplied }
             }
@@ -863,11 +920,11 @@ impl Shared<'_, '_, '_> {
                             time: None,
                         },
                         cause,
-                    })))
+                    })));
                 }
                 // As EN-5 returns it (FR-196 `PredicateRefused`).
                 PredicateReading::Refused(outcome) => {
-                    return Err(SampleHalt::PredicateRefused(outcome))
+                    return Err(SampleHalt::PredicateRefused(outcome));
                 }
             }
         }
@@ -891,6 +948,42 @@ fn compares(bound: &CheckedBound, value: &MeasureValue) -> bool {
     }
 }
 
+/// The sample a bounded measure's reading counts: its value, censored where
+/// it was activated and never ended, or not activated.
+fn judged(judge: &MeasureJudge, value: Option<MeasureValue>, active: bool) -> Sample {
+    let value = match (value, judge) {
+        (Some(value), _) => value,
+        (None, _) if active => MeasureValue::Censored,
+        // ADR-024 PF-4, ST-6: a quantile is conditioned on activation.
+        (None, MeasureJudge::Quantile(_)) => return Sample::NotActivated,
+        // PF-3's probability is over every behaviour, and FR-189 gives the
+        // comparison no value on one that never activates: it is counted on
+        // the side that violates the bound, so it never helps the claim be
+        // accepted.
+        (None, MeasureJudge::Compare { claim, .. }) => {
+            return Sample::Event(match claim {
+                Comparison::AtLeast => false,
+                Comparison::AtMost | Comparison::Below => true,
+            });
+        }
+    };
+    match judge {
+        MeasureJudge::Compare { threshold, .. } => Sample::Event(compares(threshold, &value)),
+        MeasureJudge::Quantile(event) => Sample::Measured {
+            holds: event.holds(&value),
+            value,
+        },
+    }
+}
+
+/// A sample whose tick step has an undecided successor.
+fn undecided() -> Drawn {
+    Drawn {
+        sample: Sample::UndecidedSuccessor,
+        steps: Vec::new(),
+    }
+}
+
 impl<'c> Shared<'_, '_, 'c> {
     /// Draw and read one sample of `test` at `trace` (FR-189 "Per sample").
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt> {
@@ -905,18 +998,19 @@ impl<'c> Shared<'_, '_, 'c> {
         }
         if let Reading::Measure { measure, .. } = &self.reading {
             if let Some(horizon) = &measure.timed_within {
-                return self.timed_elapsed(test, binding, seed, trace, horizon);
+                return self.timed_measure(test, binding, seed, trace, horizon);
             }
         }
+        // A delay-weighted fraction has a time window too.
         if let Reading::Fraction { fraction, .. } = &self.reading {
-            if fraction.weight == Some(Weighting::Delay) {
-                return self.timed_fraction(test, binding, seed, trace);
+            if let Some(horizon) = &fraction.timed_window {
+                return self.timed_fraction(test, binding, seed, trace, horizon);
             }
         }
         let mut cursor = match self.cursor(start, seed, trace) {
             Ok(cursor) => cursor,
             Err(Ended::Halt(halt)) => return Err(halt),
-            Err(Ended::Undecided) => return Err(broken()),
+            Err(Ended::Undecided | Ended::Contract(_)) => return Err(broken()),
         };
         let read = match &self.reading {
             Reading::Formula { .. } => self.formula(binding, &mut cursor),
@@ -928,417 +1022,18 @@ impl<'c> Shared<'_, '_, 'c> {
             Ok(Read::Sample(sample)) => sample,
             Ok(Read::Undefined(evaluation)) => Sample::Undefined(*evaluation),
             Err(Ended::Undecided) => Sample::UndecidedSuccessor,
+            // The step out of the cursor's position failed: that state is the
+            // one whose guard has no value.
+            Err(Ended::Contract(contract)) => Sample::Undefined(contract_evaluation(
+                u64::try_from(cursor.steps.len()).map_err(|_| broken())?,
+                cursor.position.key(),
+                *contract,
+            )),
             Err(Ended::Halt(halt)) => return Err(halt),
         };
         Ok(Drawn {
             sample,
             steps: cursor.steps,
-        })
-    }
-
-    /// A delay-weighted fraction integrates each position through the next
-    /// timestamp, clipping the final residence interval to the horizon.
-    fn timed_fraction(
-        &self,
-        test: &TestSubject,
-        binding: usize,
-        seed: u64,
-        trace: u64,
-    ) -> Result<Drawn, SampleHalt> {
-        let Reading::Fraction { fraction, event } = &self.reading else {
-            return Err(broken());
-        };
-        let horizon = fraction.timed_window.as_ref().ok_or_else(broken)?;
-        let timed = self.timed_system.as_ref().ok_or_else(broken)?;
-        let initial = timed
-            .initial()
-            .into_iter()
-            .nth(usize::try_from(test.initial).unwrap_or(usize::MAX))
-            .ok_or_else(broken)?;
-        if let Some(cause) = self.cancel.cause() {
-            return Err(SampleHalt::Cancelled(cause));
-        }
-        let sample = fsl_eval::simulation::model::sample_timed(
-            timed,
-            &initial,
-            self.workload,
-            fsl_eval::simulation::ChoicePoint {
-                seed,
-                trace,
-                step: 0,
-                choice: 0,
-            },
-            self.timed_sampling.q,
-            horizon,
-            self.timed_sampling.max_sample_steps,
-        )
-        .map_err(|stop| match stop {
-            TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
-                SampleHalt::NotStochastic { state, identity }
-            }
-            TimedSampleStop::TimeLockedSample { state } => SampleHalt::TimeLockedSample { state },
-            TimedSampleStop::MaxSampleSteps => SampleHalt::MaxSampleSteps {
-                value: self.timed_sampling.max_sample_steps,
-            },
-            _ => broken(),
-        })?;
-        let over = self
-            .bindings
-            .get(binding)
-            .and_then(|(_, over)| over.as_ref());
-        let mut held = Rational::from_integer(Integer::zero());
-        let mut total = held.clone();
-        let mut last_site = None;
-        for (position, state) in sample.states.iter().enumerate() {
-            let stamp = sample.stamps.get(position).ok_or_else(broken)?;
-            let end = sample.stamps.get(position + 1).unwrap_or(horizon);
-            let weight = end.sub(stamp);
-            let site = UndefinedSite {
-                position: u64::try_from(position).unwrap_or(u64::MAX),
-                state_key: self
-                    .system
-                    .state_key(state.discrete(), fsl_foundation::IdentityLimits::default())
-                    .map_err(|_| broken())?
-                    .1,
-                locus: UndefinedLocus::ClaimPredicate(ClaimPredicate::Target),
-                transition: None,
-                time: Some(Box::new(fsl_replay::TimedPoint {
-                    stamp: stamp.clone(),
-                    clocks: state.clocks().values().to_vec(),
-                })),
-            };
-            let readings = self
-                .system
-                .state_predicates(state.discrete(), &[(&fraction.predicate, over)])
-                .map_err(SampleHalt::Expansion)?;
-            match readings.first().ok_or_else(broken)? {
-                PredicateReading::True => held = held.add(&weight),
-                PredicateReading::False => {}
-                PredicateReading::Undefined { cause, .. } => {
-                    return Ok(Drawn {
-                        sample: Sample::Undefined(UndefinedEvaluation {
-                            site,
-                            cause: cause.clone(),
-                        }),
-                        steps: sample.steps,
-                    })
-                }
-                PredicateReading::Refused(outcome) => {
-                    return Err(SampleHalt::PredicateRefused(outcome.clone()))
-                }
-            }
-            total = total.add(&weight);
-            last_site = Some(site);
-        }
-        let reading = match held.div(&total) {
-            Some(value) => match event {
-                Some(bound) => Sample::Event(compares(bound, &MeasureValue::Value(value))),
-                None => Sample::Fraction(UnitFraction::try_from(value).map_err(|_| broken())?),
-            },
-            None => Sample::Undefined(UndefinedEvaluation {
-                site: last_site.ok_or_else(broken)?,
-                cause: UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero),
-            }),
-        };
-        Ok(Drawn {
-            sample: reading,
-            steps: sample.steps,
-        })
-    }
-
-    fn timed_formula(
-        &self,
-        test: &TestSubject,
-        binding: usize,
-        seed: u64,
-        trace: u64,
-        formula: &CheckedTemporalFormula,
-        horizon: &Rational,
-    ) -> Result<Drawn, SampleHalt> {
-        let timed = self.timed_system.as_ref().ok_or_else(broken)?;
-        let initial = timed
-            .initial()
-            .into_iter()
-            .nth(usize::try_from(test.initial).unwrap_or(usize::MAX))
-            .ok_or_else(broken)?;
-        let sample = fsl_eval::simulation::model::sample_timed(
-            timed,
-            &initial,
-            self.workload,
-            fsl_eval::simulation::ChoicePoint {
-                seed,
-                trace,
-                step: 0,
-                choice: 0,
-            },
-            self.timed_sampling.q,
-            horizon,
-            self.timed_sampling.max_sample_steps,
-        )
-        .map_err(|stop| match stop {
-            TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
-                SampleHalt::NotStochastic { state, identity }
-            }
-            TimedSampleStop::TimeLockedSample { state } => SampleHalt::TimeLockedSample { state },
-            TimedSampleStop::MaxSampleSteps => SampleHalt::MaxSampleSteps {
-                value: self.timed_sampling.max_sample_steps,
-            },
-            _ => broken(),
-        })?;
-        // The reader reads the sample's own positions: a delay is not a
-        // position (FSpec FR-421, FR-416), so nothing is read at the horizon
-        // inside a delay. Only the idle tail of a quiescent state has stutter
-        // positions after the last step, and one is read at the horizon. The
-        // past-horizon marker lets open windows settle. Neither added entry
-        // is a sampled witness step.
-        let mut formula_states = sample.states.clone();
-        let mut formula_stamps = sample.stamps.clone();
-        let mut marker = sample.state.clone();
-        if sample.idle
-            && sample.stamp < *horizon
-            && timed
-                .is_quiescent(sample.state.discrete())
-                .map_err(|_| broken())?
-        {
-            let wait = horizon.sub(&sample.stamp);
-            marker = timed
-                .delay(&sample.state, &wait)
-                .map_err(|_| broken())?
-                .ok_or_else(broken)?;
-            formula_states.push(marker.clone());
-            formula_stamps.push(horizon.clone());
-        }
-        formula_states.push(marker);
-        formula_stamps.push(horizon.add(&Rational::from_integer(Integer::one())));
-        let mut failure = None;
-        let mut first_undefined = None;
-        let mut atoms = |atom: fsl_semantics::check::FormulaNodeId, position: usize| {
-            let Some(state) = formula_states.get(position) else {
-                failure = Some(broken());
-                return AtomReading::Undefined(UndefinedCause::Kernel(
-                    filament_exact::Undefined::DivisionByZero,
-                ));
-            };
-            let Some(predicate) = formula.condition(atom.index()) else {
-                failure = Some(broken());
-                return AtomReading::Undefined(UndefinedCause::Kernel(
-                    filament_exact::Undefined::DivisionByZero,
-                ));
-            };
-            let over = self
-                .bindings
-                .get(binding)
-                .and_then(|(_, over)| over.as_ref());
-            let readings = match self
-                .system
-                .state_predicates(state.discrete(), &[(predicate, over)])
-            {
-                Ok(readings) => readings,
-                Err(stop) => {
-                    failure = Some(SampleHalt::Expansion(stop));
-                    return AtomReading::Undefined(UndefinedCause::Kernel(
-                        filament_exact::Undefined::DivisionByZero,
-                    ));
-                }
-            };
-            match readings.first() {
-                Some(PredicateReading::True) => AtomReading::True,
-                Some(PredicateReading::False) => AtomReading::False,
-                Some(PredicateReading::Undefined { cause, .. }) => {
-                    first_undefined.get_or_insert((position, atom));
-                    AtomReading::Undefined(cause.clone())
-                }
-                Some(PredicateReading::Refused(outcome)) => {
-                    failure = Some(SampleHalt::PredicateRefused(outcome.clone()));
-                    AtomReading::Undefined(UndefinedCause::Kernel(
-                        filament_exact::Undefined::DivisionByZero,
-                    ))
-                }
-                None => {
-                    failure = Some(broken());
-                    AtomReading::Undefined(UndefinedCause::Kernel(
-                        filament_exact::Undefined::DivisionByZero,
-                    ))
-                }
-            }
-        };
-        let outcome = bounded_formula_verdict(formula.formula(), &formula_stamps, &mut atoms)
-            .map_err(|_| broken())?;
-        if let Some(failure) = failure {
-            return Err(failure);
-        }
-        let value = match outcome {
-            TemporalOutcome::Holds => Sample::Event(true),
-            TemporalOutcome::Violated { .. } => Sample::Event(false),
-            TemporalOutcome::Undefined(undefined) => {
-                let (position, atom) = first_undefined.ok_or_else(broken)?;
-                let state = formula_states.get(position).ok_or_else(broken)?;
-                let stamp = formula_stamps.get(position).ok_or_else(broken)?;
-                Sample::Undefined(UndefinedEvaluation {
-                    site: UndefinedSite {
-                        position: undefined.at.index(),
-                        state_key: self
-                            .system
-                            .state_key(state.discrete(), fsl_foundation::IdentityLimits::default())
-                            .map_err(|_| broken())?
-                            .1,
-                        locus: UndefinedLocus::Atom(atom),
-                        transition: None,
-                        time: Some(Box::new(fsl_replay::TimedPoint {
-                            stamp: stamp.clone(),
-                            clocks: state.clocks().values().to_vec(),
-                        })),
-                    },
-                    cause: undefined.cause,
-                })
-            }
-            TemporalOutcome::Pending
-            | TemporalOutcome::InsufficientData(_)
-            | TemporalOutcome::MissingFairnessPremise { .. }
-            | TemporalOutcome::Incomplete(_)
-            | TemporalOutcome::WindowLimitReached(_) => return Err(broken()),
-        };
-        Ok(Drawn {
-            sample: value,
-            steps: sample.steps,
-        })
-    }
-
-    /// Read a dense-time elapsed window from the exact timestamps of one
-    /// sampled trace (FR-254-AC-3).
-    fn timed_elapsed(
-        &self,
-        test: &TestSubject,
-        binding: usize,
-        seed: u64,
-        trace: u64,
-        horizon: &Rational,
-    ) -> Result<Drawn, SampleHalt> {
-        let Reading::Measure { measure, judge } = &self.reading else {
-            return Err(broken());
-        };
-        let timed = self.timed_system.as_ref().ok_or_else(broken)?;
-        let initial = timed
-            .initial()
-            .into_iter()
-            .nth(usize::try_from(test.initial).unwrap_or(usize::MAX))
-            .ok_or_else(broken)?;
-        let sample = fsl_eval::simulation::model::sample_timed(
-            timed,
-            &initial,
-            self.workload,
-            fsl_eval::simulation::ChoicePoint {
-                seed,
-                trace,
-                step: 0,
-                choice: 0,
-            },
-            self.timed_sampling.q,
-            horizon,
-            self.timed_sampling.max_sample_steps,
-        )
-        .map_err(|stop| match stop {
-            TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
-                SampleHalt::NotStochastic { state, identity }
-            }
-            TimedSampleStop::TimeLockedSample { state } => SampleHalt::TimeLockedSample { state },
-            TimedSampleStop::MaxSampleSteps => SampleHalt::MaxSampleSteps {
-                value: self.timed_sampling.max_sample_steps,
-            },
-            _ => broken(),
-        })?;
-        let over = self
-            .bindings
-            .get(binding)
-            .and_then(|(_, over)| over.as_ref());
-        let reads = [measure.from, measure.until];
-        let mut active_since = None;
-        let mut elapsed = None;
-        for (position, state) in sample.states.iter().enumerate() {
-            let readings = self
-                .system
-                .state_predicates(state.discrete(), &[(reads[0], over), (reads[1], over)])
-                .map_err(SampleHalt::Expansion)?;
-            let stamp = sample.stamps.get(position).ok_or_else(broken)?;
-            let [from_reading, until_reading] = readings.as_slice() else {
-                return Err(broken());
-            };
-            let mut truths = [false; 2];
-            for (index, reading) in [from_reading, until_reading].into_iter().enumerate() {
-                match reading {
-                    PredicateReading::True => truths[index] = true,
-                    PredicateReading::False => {}
-                    PredicateReading::Undefined { cause, .. } => {
-                        return Ok(Drawn {
-                            sample: Sample::Undefined(UndefinedEvaluation {
-                                site: UndefinedSite {
-                                    position: u64::try_from(position).unwrap_or(u64::MAX),
-                                    state_key: self
-                                        .system
-                                        .state_key(
-                                            state.discrete(),
-                                            fsl_foundation::IdentityLimits::default(),
-                                        )
-                                        .map_err(|_| broken())?
-                                        .1,
-                                    locus: UndefinedLocus::ClaimPredicate(if index == 0 {
-                                        ClaimPredicate::From
-                                    } else {
-                                        ClaimPredicate::Until
-                                    }),
-                                    transition: None,
-                                    time: Some(Box::new(fsl_replay::TimedPoint {
-                                        stamp: stamp.clone(),
-                                        clocks: state.clocks().values().to_vec(),
-                                    })),
-                                },
-                                cause: cause.clone(),
-                            }),
-                            steps: sample.steps,
-                        });
-                    }
-                    PredicateReading::Refused(outcome) => {
-                        return Err(SampleHalt::PredicateRefused(outcome.clone()))
-                    }
-                }
-            }
-            if truths[0] && active_since.is_none() {
-                active_since = Some(stamp.clone());
-            }
-            if truths[1] {
-                if let Some(start) = &active_since {
-                    elapsed = Some(MeasureValue::Value(stamp.sub(start)));
-                    break;
-                }
-            }
-        }
-        let value = match (elapsed, active_since.is_some(), judge) {
-            (Some(value), _, _) => value,
-            (None, true, _) => MeasureValue::Censored,
-            (None, false, MeasureJudge::Quantile(_)) => {
-                return Ok(Drawn {
-                    sample: Sample::NotActivated,
-                    steps: sample.steps,
-                })
-            }
-            (None, false, MeasureJudge::Compare { claim, .. }) => {
-                let violating = matches!(claim, Comparison::AtMost | Comparison::Below);
-                return Ok(Drawn {
-                    sample: Sample::Event(violating),
-                    steps: sample.steps,
-                });
-            }
-        };
-        let reading = match judge {
-            MeasureJudge::Compare { threshold, .. } => Sample::Event(compares(threshold, &value)),
-            MeasureJudge::Quantile(event) => Sample::Measured {
-                holds: event.holds(&value),
-                value,
-            },
-        };
-        Ok(Drawn {
-            sample: reading,
-            steps: sample.steps,
         })
     }
 
@@ -1380,7 +1075,7 @@ impl<'c> Shared<'_, '_, 'c> {
                 FormulaState::Decided(verdict) => {
                     return Ok(Read::Sample(Sample::Event(
                         verdict == MonitorVerdict::Accept,
-                    )))
+                    )));
                 }
                 FormulaState::Running(next) => next,
             };
@@ -1454,30 +1149,7 @@ impl<'c> Shared<'_, '_, 'c> {
         let Reading::Measure { judge, .. } = &self.reading else {
             return Err(broken().into());
         };
-        let value = match (value, judge) {
-            (Some(value), _) => value,
-            (None, _) if active => MeasureValue::Censored,
-            // ADR-024 PF-4, ST-6: a quantile is conditioned on activation.
-            (None, MeasureJudge::Quantile(_)) => return Ok(Read::Sample(Sample::NotActivated)),
-            // PF-3's probability is over every behaviour, and FR-189 gives
-            // the comparison no value on one that never activates: it is
-            // counted on the side that violates the bound, so it never helps
-            // the claim be accepted.
-            (None, MeasureJudge::Compare { claim, .. }) => {
-                let violating = match claim {
-                    Comparison::AtLeast => false,
-                    Comparison::AtMost | Comparison::Below => true,
-                };
-                return Ok(Read::Sample(Sample::Event(violating)));
-            }
-        };
-        Ok(Read::Sample(match judge {
-            MeasureJudge::Compare { threshold, .. } => Sample::Event(compares(threshold, &value)),
-            MeasureJudge::Quantile(event) => Sample::Measured {
-                holds: event.holds(&value),
-                value,
-            },
-        }))
+        Ok(Read::Sample(judged(judge, value, active)))
     }
 
     /// A fraction of the positions `[0, h]` (ADR-024 PF-2): unweighted over
@@ -1611,14 +1283,13 @@ struct TimedWalking {
     stamp: Rational,
     /// Positions read.
     taken: u64,
-    /// Delay advanced to an invariant boundary before the next race, owed to
-    /// the weight of the step leaving the current position.
-    owed: Rational,
 }
 
-/// The halt of a refused timed advance.
-fn timed_halt(stop: TimedSampleStop) -> SampleHalt {
-    match stop {
+/// The end of a refused timed advance: an undecided successor where an
+/// exponential delay's interval holds no grid multiple, else a halt.
+fn timed_halt(stop: TimedSampleStop) -> Ended {
+    Ended::Halt(match stop {
+        TimedSampleStop::Race(TimedRaceStop::NoGridDelay) => return Ended::Undecided,
         TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
             SampleHalt::NotStochastic { state, identity }
         }
@@ -1627,7 +1298,7 @@ fn timed_halt(stop: TimedSampleStop) -> SampleHalt {
             SampleHalt::Expansion(stop)
         }
         _ => broken(),
-    }
+    })
 }
 
 impl ModelWalk<'_, '_, '_> {
@@ -1671,7 +1342,6 @@ impl ModelWalk<'_, '_, '_> {
                     steps: Vec::new(),
                     stamp: Rational::from_integer(Integer::zero()),
                     taken: 0,
-                    owed: Rational::from_integer(Integer::zero()),
                 }
             }
         };
@@ -1714,10 +1384,10 @@ impl ModelWalk<'_, '_, '_> {
                         cause: cause.clone(),
                     },
                     steps: walk.steps,
-                })
+                });
             }
             PredicateReading::Refused(outcome) => {
-                return Err(SampleHalt::PredicateRefused(outcome.clone()).into())
+                return Err(SampleHalt::PredicateRefused(outcome.clone()).into());
             }
         };
         if let Some(cause) = cancel.cause() {
@@ -1737,15 +1407,13 @@ impl ModelWalk<'_, '_, '_> {
                     self.timed = Some(walk);
                     return Ok(WalkStep::Terminal { holds });
                 }
-                TimedAdvance::Race { elapsed, steps } => {
-                    walk.owed = elapsed;
+                TimedAdvance::Race(steps) => {
                     walk.pending = steps.into();
                 }
             }
         }
         let leaving = walk.pending.pop_front().ok_or_else(broken)?;
-        let weight = leaving.delay.add(&walk.owed);
-        walk.owed = Rational::from_integer(Integer::zero());
+        let weight = leaving.delay.clone();
         walk.stamp = walk.stamp.add(&weight);
         let post = timed.state_key(&leaving.state).map_err(|_| broken())?;
         walk.steps.push(SampledStep {
@@ -1818,7 +1486,23 @@ impl ModelWalk<'_, '_, '_> {
             trace: self.trace,
             step: walk.taken,
         };
-        let (position, step) = shared.generator.step(&walk.position, at)?;
+        let (position, step) = match shared.generator.step(&walk.position, at) {
+            Ok(stepped) => stepped,
+            Err(SampleStop::UndefinedContract(contract)) => {
+                // The state the walk expands has a guard with no value; the
+                // witness's steps are the walk again, to that position.
+                let evaluation = contract_evaluation(walk.taken, walk.position.key(), contract);
+                let mut cursor = shared.cursor(walk.start.clone(), self.seed, self.trace)?;
+                for _ in 0..walk.taken {
+                    shared.advance(&mut cursor)?;
+                }
+                return Ok(WalkStep::Undefined {
+                    evaluation,
+                    steps: cursor.steps,
+                });
+            }
+            Err(stop) => return Err(stop.into()),
+        };
         let weight = match weight {
             None => Rational::from_integer(Integer::one()),
             Some(Weighting::Reward(name)) => magnitude(&step, name)?,
@@ -1842,7 +1526,7 @@ impl RegenerationWalk for ModelWalk<'_, '_, '_> {
     fn step(&mut self) -> Result<WalkStep, SampleHalt> {
         match self.step_or_end() {
             Ok(step) => Ok(step),
-            Err(Ended::Undecided) => Ok(WalkStep::UndecidedSuccessor),
+            Err(Ended::Undecided | Ended::Contract(_)) => Ok(WalkStep::UndecidedSuccessor),
             Err(Ended::Halt(halt)) => Err(halt),
         }
     }
@@ -1931,6 +1615,8 @@ impl From<SampleHalt> for WitnessReadStop {
                 return Self::PredicateRefused(Box::new(outcome));
             }
             SampleHalt::NotStochastic { .. }
+            | SampleHalt::NotStochasticIdleTail { .. }
+            | SampleHalt::IdleTailUndecided(_)
             | SampleHalt::TimeLockedSample { .. }
             | SampleHalt::MaxSampleSteps { .. } => {
                 return Self::Sample(Box::new(SampleStop::Expansion(ExpansionStop {
@@ -1974,11 +1660,11 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                         return Ok(WitnessReading {
                             value: Some(WitnessValue::Undefined(evaluation)),
                             steps,
-                        })
+                        });
                     }
                     Ok(WalkStep::Position { .. }) => {}
                     Ok(WalkStep::UndecidedSuccessor | WalkStep::Terminal { .. })
-                    | Err(Ended::Undecided) => break,
+                    | Err(Ended::Undecided | Ended::Contract(_)) => break,
                     Err(Ended::Halt(halt)) => return Err(halt.into()),
                 }
             }
@@ -2000,21 +1686,25 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
         test: &TestProvenance,
         seed: u64,
         trace: u64,
-        record: &fsl_eval::simulation::model::TimedSample,
+        sampling: TimedSampling,
     ) -> Result<WitnessReading, WitnessReadStop> {
         let subject = TestSubject {
             initial: test.initial,
             binding: test.binding.clone(),
             reference: test.reference.clone(),
         };
-        let Drawn { sample, steps } = self
-            .shared
-            .borrow_mut()
-            .sample(&subject, seed, trace)
-            .map_err(WitnessReadStop::from)?;
-        if steps != record.steps {
-            return Err(WitnessReadStop::TimedUnsupported);
-        }
+        let mut shared = self.shared.borrow_mut();
+        shared.timed_sampling = sampling;
+        let Drawn { sample, steps } =
+            shared
+                .sample(&subject, seed, trace)
+                .map_err(|halt| match halt {
+                    SampleHalt::NotStochastic { .. }
+                    | SampleHalt::NotStochasticIdleTail { .. }
+                    | SampleHalt::TimeLockedSample { .. }
+                    | SampleHalt::MaxSampleSteps { .. } => WitnessReadStop::TimedNotRegenerated,
+                    other => WitnessReadStop::from(other),
+                })?;
         let value = match sample {
             Sample::Undefined(evaluation) => Some(WitnessValue::Undefined(evaluation)),
             other => violating(&self.bound, &other),

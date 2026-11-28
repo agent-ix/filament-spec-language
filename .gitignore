@@ -8,11 +8,7 @@ target-*/
 .fixtarget/
 .worktrees/
 
-# one-copy-deps: `make use-local` writes the config to patch first-party git
-# deps to sibling checkouts and snapshots Cargo.lock beside it; `make
-# use-remote` deletes the config and restores the lock. Never tracked -- the
-# config names absolute paths and would rewrite everyone else's build.
-/.cargo/config.toml
+# Cargo settings for this workspace are tracked in `.cargo/config.toml`.
 /.cargo/Cargo.lock.pre-local
 __pycache__/
 *.pyc

@@ -52,7 +52,7 @@ code. Scope: FR-068-AC-5.
 2. Run each fixture against the pre-move code (the commit immediately
    before this requirement's implementation) and record its full result:
    the `CheckedPackage` construction outcome (success, or the exact
-   `CheckRefusal` set); for a successfully checked package, each called
+   `SemanticCheckRefusal` set); for a successfully checked package, each called
    function's own `slots` count as `check`'s accessor reports it,
    recorded directly and separately from the `Evaluation` result (not
    inferred from whether `Evaluation` happens to expose it); and the

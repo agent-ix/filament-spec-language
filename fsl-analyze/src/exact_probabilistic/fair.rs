@@ -7,14 +7,17 @@ use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
 use fsl_replay::ExactProbLimits;
 use fsl_semantics::check::Bound;
+use ix_trace_rs::implements;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    Choice, ComponentValue, ExtRational, GainBias, Graph, LongRunResult, UnboundedError,
-    UnboundedObjective, decide_expected_reward, decide_reachability, decide_until,
-    maximal_end_components, maximal_end_components_from, optimize_mec_fraction, policy_iteration,
+    decide_expected_reward, decide_reachability, decide_until, maximal_end_components,
+    maximal_end_components_from, optimize_mec_fraction, policy_iteration, Choice, ComponentValue,
+    ExtRational, GainBias, Graph, LongRunResult, UnboundedError, UnboundedObjective,
 };
-use super::{FhError, FhResult, ProbProduct, ProbStateId, ProductKind, decide_bounded_event};
+use super::{
+    decide_bounded_event, FhError, FhResult, ProbProduct, ProbStateId, ProductAction, ProductKind,
+};
 
 /// One maximal fair end component and the scheduled identities that keep it
 /// closed. The action list is empty for a terminal-stutter-only component,
@@ -162,6 +165,35 @@ pub fn maximal_fair_end_components(
     fair_components(product, &graph, &graph, fairness)
 }
 
+/// The maximal fair end components of `graph` restricted to the `allowed`
+/// states, with a constraint's enabledness read from every action of the
+/// unrestricted graph. This is FR-200's `U` for an infimum: `allowed` holds the
+/// non-target states, so a component that runs through a target is none.
+#[implements("FR-200-AC-2", "FR-200-AC-5")]
+pub(super) fn fair_components_within(
+    product: &ProbProduct,
+    graph: &Graph<'_>,
+    allowed: &[bool],
+) -> Result<Vec<FairEndComponent>, FairProductError> {
+    let restricted = graph_restricted_to(graph, allowed);
+    fair_components(product, &restricted, graph, &product.fairness)
+}
+
+/// The maximal fair end components of `product` restricted to the `allowed`
+/// states, a constraint still being enabled by every action of the whole
+/// product. A fair infimum avoids its target by staying in one of these
+/// (FR-200): a component of the whole product that holds a target state is
+/// not one.
+#[implements("FR-200-AC-2", "FR-200-AC-5")]
+pub(super) fn maximal_fair_end_components_within(
+    product: &ProbProduct,
+    allowed: &[bool],
+) -> Result<Vec<FairEndComponent>, FairProductError> {
+    let graph = Graph::new(product)?;
+    fair_components_within(product, &graph, allowed)
+}
+
+#[implements("FR-200-AC-11")]
 fn fair_components(
     product: &ProbProduct,
     graph: &Graph<'_>,
@@ -179,10 +211,14 @@ fn fair_components(
         for fairness_action in &actions {
             let enabled = candidate
                 .iter()
+                .filter(|state| !is_row_dispatch_state(product, **state))
                 .map(|state| {
-                    enabled_graph.choices[*state]
-                        .iter()
-                        .any(|choice| choice_matches(choice, fairness_action))
+                    (
+                        *state,
+                        enabled_graph.choices[*state]
+                            .iter()
+                            .any(|choice| choice_matches(choice, fairness_action)),
+                    )
                 })
                 .collect::<Vec<_>>();
             let taken = candidate.iter().any(|state| {
@@ -198,15 +234,21 @@ fn fair_components(
                 continue;
             }
             match fairness_action.kind {
-                FairnessKind::Weak if enabled.iter().all(|value| *value) => {
+                FairnessKind::Weak
+                    if !enabled.is_empty() && enabled.iter().all(|(_, value)| *value) =>
+                {
                     discarded = true;
                     break;
                 }
-                FairnessKind::Strong if enabled.iter().any(|value| *value) => {
+                FairnessKind::Strong if enabled.iter().any(|(_, value)| *value) => {
                     let retained = candidate
                         .iter()
                         .copied()
-                        .filter(|state| !enabled[candidate_position(&candidate, *state)])
+                        .filter(|state| {
+                            !enabled
+                                .iter()
+                                .any(|(at, is_enabled)| at == state && *is_enabled)
+                        })
                         .collect::<BTreeSet<_>>();
                     if retained.is_empty() {
                         discarded = true;
@@ -254,6 +296,16 @@ fn fair_components(
     }
     components.sort_by_key(|component| component.states.first().copied());
     Ok(components)
+}
+
+/// Whether `state` is the transparent FreeDelays parent node inserted by
+/// [`Evaluation`]. Its outgoing empty-row choice is a probabilistic handoff,
+/// not a scheduler decision at which operation enabledness is tested.
+#[implements("FR-200-AC-11")]
+fn is_row_dispatch_state(product: &ProbProduct, state: usize) -> bool {
+    product.outgoing(ProbStateId(state)).first().is_some_and(
+        |edge| matches!(&edge.choice, ProductAction::FreeDelays(rows) if rows.is_empty()),
+    )
 }
 
 fn fairness_actions<'a>(
@@ -397,8 +449,7 @@ fn fair_reachability(
         .unwrap_or_else(|| all_non_target.clone());
     let allowed = &until_domain;
     let components = if objective == UnboundedObjective::Min {
-        let restricted = graph_restricted_to(&graph, allowed);
-        fair_components(product, &restricted, &graph, &product.fairness)?
+        fair_components_within(product, &graph, allowed)?
     } else {
         maximal_fair_end_components(product, &product.fairness)?
     };
@@ -420,7 +471,14 @@ fn fair_reachability(
                 }
             }
             let transformed = if let Some(from) = from {
-                decide_until(product, from, &fair_states, UnboundedObjective::Max, limits, cancel)?
+                decide_until(
+                    product,
+                    from,
+                    &fair_states,
+                    UnboundedObjective::Max,
+                    limits,
+                    cancel,
+                )?
             } else {
                 decide_until(
                     product,
@@ -492,8 +550,9 @@ pub fn decide_fair_long_run_mdp(
             .iter()
             .map(|state| state.index())
             .collect::<Vec<_>>();
-        let (rho, policy, bias, _) =
-            optimize_mec_fraction(&graph, &states, predicate, weight, objective, limits, cancel)?;
+        let (rho, policy, bias, _) = optimize_mec_fraction(
+            &graph, &states, predicate, weight, objective, limits, cancel,
+        )?;
         for state in &states {
             fixed[*state] = Some(rho.clone());
             selected_policy[*state] = policy[*state];
@@ -538,8 +597,9 @@ pub fn decide_fair_long_run_mdp(
         }) {
             continue;
         }
-        let (rho, policy, bias, _) =
-            optimize_mec_fraction(&graph, component, predicate, weight, objective, limits, cancel)?;
+        let (rho, policy, bias, _) = optimize_mec_fraction(
+            &graph, component, predicate, weight, objective, limits, cancel,
+        )?;
         for state in component {
             fixed[*state] = Some(rho.clone());
             selected_policy[*state] = policy[*state];
@@ -674,8 +734,14 @@ pub fn decide_fair_expected_reward(
     let target = evaluation
         .extend(target)
         .ok_or(FairProductError::InvalidForm)?;
-    let mut result =
-        fair_expected_reward(&evaluation.product, &target, reward, objective, limits, cancel)?;
+    let mut result = fair_expected_reward(
+        &evaluation.product,
+        &target,
+        reward,
+        objective,
+        limits,
+        cancel,
+    )?;
     result.values = evaluation.restrict(result.values);
     Ok(result)
 }
@@ -712,7 +778,10 @@ fn fair_expected_reward(
         limits,
         cancel,
     )?;
-    let mecs = maximal_end_components(&graph)?;
+    // Reward accumulates only before the target, so the end components that
+    // can hold a run in it, or collapse, are those of the non-target states.
+    let non_target = target.iter().map(|value| !value).collect::<Vec<_>>();
+    let mecs = maximal_end_components(&graph_restricted_to(&graph, &non_target))?;
     let mut positive_components = Vec::new();
     for component in &mecs {
         let members = component.iter().copied().collect::<BTreeSet<_>>();
@@ -739,8 +808,9 @@ fn fair_expected_reward(
         }
     }
     let positive_reach = if positive_states.iter().any(|value| *value) {
-        Some(decide_reachability(
+        Some(decide_until(
             product,
+            &non_target,
             &positive_states,
             UnboundedObjective::Max,
             limits,
@@ -1506,10 +1576,6 @@ fn choice_matches(choice: &Choice<'_>, constraint: &FairAction<'_>) -> bool {
             identity.operation == constraint.operation
                 && (constraint.whole || constraint.identity == Some(identity))
         })
-}
-
-fn candidate_position(candidate: &BTreeSet<usize>, state: usize) -> usize {
-    candidate.range(..state).count()
 }
 
 fn mecs_in(graph: &Graph<'_>, states: BTreeSet<usize>) -> Result<Vec<Vec<usize>>, UnboundedError> {

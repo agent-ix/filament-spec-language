@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-170's state-graph evidence checks over the admitted `ModelSystem`.
 
+use fsl_semantics::check::ClockOp;
 use ix_trace_rs::implements;
 use std::collections::{BTreeMap, VecDeque};
 
@@ -19,15 +20,17 @@ use fsl_semantics::check::{
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::{
     check_state_graph_certificate, CertificateItem, CertifiedItem, StateGraphCertificateDecision,
-    ZoneCertificateRequest,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use crate::execute::{recompile_with_temporal_selections, request_limits, ReplayRefusal};
 use crate::model_check::counterexample::ModelStep;
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::model_check::identity::StateGraphIdentity;
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
-use crate::model_check::replay::ModelTraceSubject;
-use crate::model_check::replay::{fault, handoff_join_refusal, refused, ModelTraceRefusal};
+use crate::model_check::replay::{
+    fault, handoff_identities_refusal, handoff_join_refusal, refused, ModelTraceRefusal,
+};
+use crate::model_check::replay::{ModelTraceSubject, TimedReplay};
 use crate::model_check::state_graph::{GraphEvidence, ModelPath, TrapClosure, WitnessPath};
 use crate::request::{ReplayRequest, ReplayRequestWire};
 use crate::result::{DisagreementCause, Verdict};
@@ -80,6 +83,7 @@ pub fn replay_model_graph_with_cancel(
 
 /// [`replay_model_graph_with_temporal_selections`] with the caller's
 /// cancellation handle.
+#[implements("FR-170-AC-5", "FR-170-AC-7")]
 pub fn replay_model_graph_with_cancel_and_temporal_selections(
     wire: ReplayRequestWire,
     subject: &ModelTraceSubject,
@@ -182,6 +186,16 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         }
     }
 
+    // FSL FR-243: the integer-clock graph does not preserve these forms, so
+    // no evidence for one is read under digital-clock timing.
+    if let (Some(claim), Some(timing)) = (claim, subject.timed.as_ref()) {
+        if timing.digital {
+            if let Some(declined) = crate::NotDigitisable::of_state_graph(claim) {
+                return Err(refused(ModelTraceRefusal::NotDigitisable(declined)));
+            }
+        }
+    }
+
     let documents = request.byte_provision().snapshots();
     let simulation = ModelSimulationRequest {
         input: fsl_eval::simulation::model::ModelCheckInput::source(package),
@@ -196,6 +210,13 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         emit: caller.spine.package.emit(),
     };
     let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
+    if claim.is_some() {
+        admit_graph_reading(
+            !simulation.input.time_sources.is_empty(),
+            subject.timed.as_ref(),
+            envelope.zone_certificate().is_some(),
+        )?;
+    }
     let timed = subject
         .timed
         .as_ref()
@@ -214,7 +235,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
                     member: "timed_subject",
                 })?;
             let over = graph_over(&system, claim, envelope.family_payload())?;
-            let (_, decision) = check_state_graph_certificate(
+            let (verdict, decision) = check_state_graph_certificate(
                 ZoneCertificateRequest {
                     simulation,
                     model: &reading.model,
@@ -238,9 +259,15 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             .map_err(|_| ReplayRefusal::ModelGraphMismatch {
                 member: "zone_certificate",
             })?;
-            match decision {
-                Some(StateGraphCertificateDecision::Holds) => Some(true),
-                Some(StateGraphCertificateDecision::Violated) => Some(false),
+            match (verdict, decision) {
+                (_, Some(StateGraphCertificateDecision::Holds)) => Some(true),
+                (_, Some(StateGraphCertificateDecision::Violated)) => Some(false),
+                (ZoneCertificateVerdict::Rejected(rejection), None)
+                    if rejection.rule == crate::CertificateRule::PredicateUndefined
+                        && matches!(envelope.family_payload(), GraphEvidence::Undefined { .. }) =>
+                {
+                    None
+                }
                 _ => {
                     return Err(ReplayRefusal::ModelGraphMismatch {
                         member: "zone_certificate",
@@ -251,15 +278,19 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             (claim, subject.timed.as_ref(), timed.as_ref())
         {
             if timed_replay.digital {
-                Some(digital_state_graph_truth(
-                    &system,
-                    timed,
-                    claim,
-                    envelope.family_payload(),
-                    u64::try_from(model_limits.limits.max_states).unwrap_or(u64::MAX),
-                    u64::try_from(model_limits.limits.max_transitions).unwrap_or(u64::MAX),
-                    cancel,
-                )?)
+                if matches!(envelope.family_payload(), GraphEvidence::Undefined { .. }) {
+                    None
+                } else {
+                    Some(digital_state_graph_truth(
+                        &system,
+                        timed,
+                        claim,
+                        envelope.family_payload(),
+                        u64::try_from(model_limits.limits.max_states).unwrap_or(u64::MAX),
+                        u64::try_from(model_limits.limits.max_transitions).unwrap_or(u64::MAX),
+                        cancel,
+                    )?)
+                }
             } else {
                 None
             }
@@ -281,6 +312,8 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
         super::graph_hyper::replay_evidence(
             &system,
             package,
+            Some(package),
+            None,
             clause,
             envelope.family_payload(),
             model_limits.limits.max_states,
@@ -371,7 +404,7 @@ pub fn replay_model_graph_from_package(
         &mut budget,
     )?;
     let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
-        .map_err(|_| fault("handoff-identities-admit"))?;
+        .map_err(|refusal| handoff_identities_refusal(refusal, &budget))?;
     let equality = supply
         .equality
         .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
@@ -390,7 +423,7 @@ pub fn replay_model_graph_from_package(
                 )
                 .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(handoff_join_refusal)?;
+        .map_err(|refusal| handoff_join_refusal(refusal, &budget))?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, caller.spine.model)
             .map_err(|_| fault("package-route-input"))?;
@@ -416,6 +449,11 @@ pub fn replay_model_graph_from_package(
         emit: caller.spine.package.emit(),
     };
     let system = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
+    admit_graph_reading(
+        !input.input().time_sources.is_empty(),
+        subject.timed.as_ref(),
+        envelope.zone_certificate().is_some(),
+    )?;
     let timed = subject
         .timed
         .as_ref()
@@ -430,11 +468,6 @@ pub fn replay_model_graph_from_package(
             })
         })
         .transpose()?;
-    if timed.is_some() != !input.input().time_sources.is_empty()
-        || (timed.is_none() && envelope.zone_certificate().is_some())
-    {
-        return Err(ReplayRefusal::ModelGraphMismatch { member: "timing" });
-    }
     let state_graph_truth = if let Some(timing) = subject.timed.as_ref() {
         let over = graph_over(&system, &claim, envelope.family_payload())?;
         let certificate = envelope
@@ -492,6 +525,26 @@ pub fn replay_model_graph_from_package(
 }
 
 pub(super) type Position = (ModelSimState, StateKey);
+
+/// FR-170 "Timed subject": the reading a state-graph claim is replayed with,
+/// from source and from package bytes. A timed subject is read with its
+/// clocks, and a zone reading with its certificate.
+#[implements("FR-170-AC-9")]
+fn admit_graph_reading(
+    timed_subject: bool,
+    reading: Option<&TimedReplay>,
+    certificate: bool,
+) -> Result<(), ReplayRefusal> {
+    if reading.is_some() != timed_subject || (!timed_subject && certificate) {
+        return Err(ReplayRefusal::ModelGraphMismatch { member: "timing" });
+    }
+    if reading.is_some_and(|reading| !reading.digital) && !certificate {
+        return Err(ReplayRefusal::ModelGraphMismatch {
+            member: "zone_certificate",
+        });
+    }
+    Ok(())
+}
 
 struct GraphPathReplay {
     positions: Vec<Position>,
@@ -877,23 +930,14 @@ fn replay_claim_undefined(
     Ok(false)
 }
 
-fn evidence_over(evidence: &GraphEvidence) -> Option<&fsl_eval::model_subject::ModelInstance> {
-    match evidence {
-        GraphEvidence::Witness { over, .. }
-        | GraphEvidence::Trap { over, .. }
-        | GraphEvidence::PathPair { over, .. }
-        | GraphEvidence::Undefined { over, .. } => over.as_ref(),
-    }
-}
-
 fn graph_over(
     system: &ModelSystem<'_>,
     claim: &CheckedStateGraphClaim,
     evidence: &GraphEvidence,
 ) -> Result<Option<ObjectReference>, ReplayRefusal> {
-    match (claim.over(), evidence_over(evidence)) {
-        (None, None) => Ok(None),
-        (Some(parameter), Some(instance)) => {
+    match (claim.over(), evidence.over()) {
+        (None, []) => Ok(None),
+        (Some(parameter), [instance]) => {
             let model_instance = system
                 .instances(&filament_exact::ValueType::Reference(
                     parameter.object.clone(),
@@ -913,6 +957,7 @@ fn graph_over(
     }
 }
 
+#[implements("FR-170-AC-10")]
 fn digital_state_graph_truth(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -922,6 +967,15 @@ fn digital_state_graph_truth(
     max_transitions: u64,
     cancel: &Cancel,
 ) -> Result<bool, ReplayRefusal> {
+    // The integer grid stands for dense time only over a closed subject.
+    if crate::probability_certificate::clock_constraints(timed)
+        .iter()
+        .any(|constraint| matches!(constraint.op(), ClockOp::Less | ClockOp::Greater))
+    {
+        return Err(ReplayRefusal::ModelGraphMismatch {
+            member: "digital_subject",
+        });
+    }
     let graph = crate::explore_digital_state_graph(timed, max_states, max_transitions, cancel)
         .map_err(|_| ReplayRefusal::ModelGraphMismatch {
             member: "digital_state_graph",
@@ -955,25 +1009,16 @@ fn digital_state_graph_truth(
             })
             .collect::<Result<Vec<_>, _>>()
     };
-    let (source, target) = match claim.form() {
-        StateGraphForm::Possible { target } => (None, target),
-        StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
-        StateGraphForm::UniquePath { from, to } => (Some(from), to),
+    // The only form read here: the others are refused before replay (FR-243).
+    let StateGraphForm::Possible { target } = claim.form() else {
+        return Err(ReplayRefusal::ModelGraphMismatch { member: "timing" });
     };
     let target_values = read_values(target)?;
     let reaches_target = digital_predecessors(&graph, &target_values);
-    if let Some(source) = source {
-        let source_values = read_values(source)?;
-        Ok(source_values
-            .iter()
-            .zip(&reaches_target)
-            .all(|(is_source, reaches)| !is_source || *reaches))
-    } else {
-        Ok(graph
-            .initials
-            .iter()
-            .all(|initial| reaches_target[*initial]))
-    }
+    Ok(graph
+        .initials
+        .iter()
+        .all(|initial| reaches_target[*initial]))
 }
 
 fn digital_predecessors(graph: &crate::DigitalStateGraph, target: &[bool]) -> Vec<bool> {

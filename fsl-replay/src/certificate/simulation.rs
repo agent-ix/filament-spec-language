@@ -34,7 +34,6 @@
 //! verdict writes its `where` and `cause` as kinds only; FR-127's full
 //! encoding of them is remaining work on QSL-549.
 
-use base64::Engine as _;
 use filament_exact::{Cancel, LimitKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -295,7 +294,7 @@ impl FailedStep {
                 Self::Undetermined(UndeterminedStep::new(Undetermined::UndecidedSuccessor))
             }
             StepVerdict::Passes { .. } | StepVerdict::Stopped(_) | StepVerdict::Fault(_) => {
-                return None
+                return None;
             }
         })
     }
@@ -360,6 +359,9 @@ impl FailedStep {
             Self::Fails(RefinementFailure::Undefined { position, .. }) => {
                 json!({"kind": "Undefined", "position": decimal(*position)})
             }
+            Self::Fails(RefinementFailure::UndefinedContract { position, .. }) => {
+                json!({"kind": "UndefinedContract", "position": decimal(*position)})
+            }
             // The liveness half has no certificate, so no step check writes
             // these.
             Self::Fails(
@@ -373,8 +375,7 @@ impl FailedStep {
                 "kind": "UndefinedEvaluation",
                 "where": {
                     "position": decimal(evaluation.site.position),
-                    "state_key": {"key": base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .encode(evaluation.site.state_key.as_bytes())},
+                    "state_key": crate::shared_wire::StateLocus::from(&evaluation.site.state_key),
                     "locus": locus_kind(&evaluation.site.locus)?,
                 },
                 "cause": undefined_cause_kind(&evaluation.cause),
@@ -407,20 +408,18 @@ impl Serialize for FailedStep {
     }
 }
 
-/// FSpec FR-364's encoding of a transition identity: the RFC 8785 identity
-/// document FSpec FR-181 defines.
+/// FSpec FR-364's encoding of a transition identity, written as FR-120 writes
+/// every transition.
+#[implements("FR-120-AC-40")]
 fn transition_wire(transition: &ModelTransition) -> Result<serde_json::Value, String> {
-    let bytes = transition
-        .canonical_bytes(quire_canonical::Limits::new(u64::MAX))
-        .map_err(|refusal| format!("a transition identity encodes: {refusal:?}"))?;
-    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+    crate::task_source_transition_wire(transition).map_err(|error| error.to_string())
 }
 
 /// The kind of expression an undefined evaluation names.
 fn locus_kind(locus: &UndefinedLocus) -> Result<&'static str, String> {
     Ok(match locus {
         UndefinedLocus::FractionValue => {
-            return Err("fraction-value belongs to probabilistic evidence".to_owned())
+            return Err("fraction-value belongs to probabilistic evidence".to_owned());
         }
         UndefinedLocus::Atom(_) => "atom",
         UndefinedLocus::Activation => "activation",
@@ -464,7 +463,9 @@ pub struct SimulationCertificateRequest<'a> {
 #[derive(Debug, thiserror::Error)]
 pub enum SimulationRefusal {
     /// The certificate names another refinement than the request's.
-    #[error("stale_dependency/content-mismatch: the certificate names refinement {certificate} but the request is for {request}")]
+    #[error(
+        "stale_dependency/content-mismatch: the certificate names refinement {certificate} but the request is for {request}"
+    )]
     Stale {
         /// The refinement the certificate names.
         certificate: String,
@@ -864,5 +865,34 @@ impl Run<'_, '_> {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod written_verdict_tests {
+    use super::FailedStep;
+    use filament_semantic_value::model_transition::ModelTransition;
+    use ix_trace_rs::trace;
+
+    /// FR-120-AC-40: a simulation certificate's verdict writes its transition's
+    /// `operation` as every writer does.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_verdict_transition_writes_a_name_identity_as_the_name() {
+        let object = r#"{"node":"ix://a/b/C/d","package":"a/b"}"#;
+        for (identity, written) in [(r#""tick""#, "tick"), (object, object)] {
+            let verdict = FailedStep::NoAbstractMatch {
+                position: 0,
+                transition: ModelTransition::new(
+                    identity.to_owned(),
+                    None,
+                    Vec::new(),
+                    quire_canonical::Limits::new(u64::MAX),
+                )
+                .expect("a canonical transition"),
+            };
+            let wire = serde_json::to_value(&verdict).expect("a verdict spells");
+            assert_eq!(wire["transition"]["operation"], written, "{identity}");
+        }
     }
 }

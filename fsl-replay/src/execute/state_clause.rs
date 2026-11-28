@@ -466,6 +466,7 @@ pub(crate) fn prepare_state_clause(
         package_name: compiled.package.as_str(),
         sources: &sources,
         progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+        emit: limits.spine.package.emit(),
     };
     let check = check_clause_admitted(&run, clause, &selection);
     Ok(PreparedStateClause {

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::checked_v2::wire_graph;
 
 /// The format of `equality.json` (FR-531 "The equality file").
-pub const EQUALITY_FORMAT: &str = "filament.checked-handoff.equality/1";
+pub const EQUALITY_FORMAT: &str = fsl_foundation::wire_format::WireFormat::HandoffEquality.as_str();
 
 /// The equality rows of one package, read from its `equality.json` or taken
 /// from the in-process unit that produced them (FR-390, FR-531).

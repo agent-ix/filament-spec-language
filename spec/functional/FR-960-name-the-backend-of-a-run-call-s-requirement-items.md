@@ -128,6 +128,9 @@ computed.
   FSpec FR-331 request identity, so the same call naming two backends is two
   requests.
 
+- The request member `require_certified`, a JSON boolean, absent meaning
+  `false`, settles the call's claim items under [FR-1052](FR-1052-settle-a-proof-that-is-not-certified-inconclusive-when-the-request-requires-certified-proofs.md).
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

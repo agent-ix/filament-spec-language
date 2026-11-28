@@ -2,6 +2,7 @@
 //! FR-921's independent timed-product certificate admission.
 
 use super::*;
+use crate::timed::{clock_constraints, follow_carries};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive};
@@ -11,10 +12,14 @@ use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use ix_trace_rs::implements;
 use num_traits::Zero;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
+mod admission;
 mod elapsed;
+pub use admission::timed_certificate_route;
 
+#[implements("FR-203-AC-30", "FR-204-AC-21")]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -23,8 +28,9 @@ pub(super) fn check(
     relation: super::super::ValueRelation,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let mut fairness_records = Vec::new();
     let document = read_document_profile(
@@ -45,11 +51,9 @@ pub(super) fn check(
     };
     let timed = fsl_eval::simulation::model::TimedSystem::new(system, &claim.subject.alias)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-    let route = if region_route(&timed, claim) {
-        TimedProbabilityRoute::Region
-    } else {
-        TimedProbabilityRoute::Digital
-    };
+    // The route the declared table admits for the conditions the checker
+    // establishes itself; no certificate exists for any other claim.
+    let route = admission::certificate_route(system, &timed, claim, limits, cancel)?;
     let scale = certificate_scale(system, &timed, claim, route)?;
     if objective.route != route
         || objective.unit != timed.source().unit_node
@@ -241,7 +245,11 @@ fn check_expected_elapsed(
     let Some((bound, predicate)) = mean_time_query(claim) else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
-    if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
+    let workload = matches!(
+        claim.scheduler,
+        fsl_semantics::check::ProbScheduler::Workload(_)
+    );
+    if (workload && !claim.fairness.is_empty())
         || document.cyclic_dtmc
         || document.event.is_some()
         || !document.failures.is_empty()
@@ -250,6 +258,7 @@ fn check_expected_elapsed(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let optimization = match bound {
+        _ if workload => ProbabilityObjective::Workload,
         Bound::AtLeast(_) => ProbabilityObjective::Minimum,
         Bound::AtMost(_) => ProbabilityObjective::Maximum,
     };
@@ -259,7 +268,11 @@ fn check_expected_elapsed(
     let binding = claim_binding(system, claim)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?
         .map(|binding| binding.reference);
-    let (graph, costs) = enumerate_region_mean_time(
+    let MeanTimeGraph {
+        graph,
+        costs,
+        quiescent,
+    } = enumerate_region_mean_time(
         system,
         timed,
         claim,
@@ -272,8 +285,36 @@ fn check_expected_elapsed(
         meter,
         storage,
     )?;
+    if workload {
+        return check_workload_mean_time(
+            system,
+            claim,
+            bytes,
+            &document,
+            timed,
+            route,
+            scale,
+            binding.as_ref(),
+            predicate,
+            &graph,
+            &bound,
+            limits,
+            cancel,
+            meter,
+            storage,
+        );
+    }
     if target_keys(&graph) != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if !some_policy_reaches_almost_surely(&graph, cancel, meter)?.contains(&graph.initial) {
+        return check_infinite_mean_time(graph.initial, bytes, &document, &bound);
+    }
+    // Some policy reaches the target, so the expectation is not infinite and a
+    // value-free infinity document is false. A finite value over a quiescent
+    // state, which may idle without end, is not derived here.
+    if quiescent {
+        return quiescent_finite_verdict(graph.initial, &document);
     }
     let checked = check_mean_time_values(
         &graph,
@@ -292,6 +333,163 @@ fn check_expected_elapsed(
         }
         rejected => Ok(rejected),
     }
+}
+
+/// A workload's expected elapsed time is certified only where it is
+/// infinite: no value is checked for a finite one. The workload is one of
+/// the schedulers, so a graph under every scheduler with no policy that
+/// reaches the target almost surely proves it. Where some scheduler does
+/// reach it, the checker's own workload product decides, on the digital
+/// route, whose keys are the mean-time product's.
+#[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-24", "FR-921-AC-7")]
+fn check_workload_mean_time(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    bytes: &[u8],
+    document: &ProbabilityCertificateDocument,
+    timed: &TimedSystem<'_, '_>,
+    route: TimedProbabilityRoute,
+    scale: u64,
+    binding: Option<&filament_exact::ObjectReference>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    every: &CheckerGraph,
+    bound: &Bound,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    if !some_policy_reaches_almost_surely(every, cancel, meter)?.contains(&every.initial) {
+        let targets = target_keys(every);
+        if !document
+            .targets
+            .iter()
+            .all(|target| targets.contains(target))
+        {
+            return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        }
+        return check_infinite_mean_time(every.initial.clone(), bytes, document, bound);
+    }
+    if route != TimedProbabilityRoute::Digital {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let graph = enumerate_digital_deadline(
+        system,
+        timed,
+        claim,
+        binding,
+        &Watch::Until(predicate),
+        0,
+        scale,
+        limits,
+        cancel,
+        meter,
+        storage,
+        &mut BTreeMap::new(),
+    )?;
+    if target_keys(&graph) != document.targets {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if some_policy_reaches_almost_surely(&graph, cancel, meter)?.contains(&graph.initial) {
+        return Ok(rejected(
+            ProbabilityCertificateRule::Malformed,
+            graph.initial,
+        ));
+    }
+    check_infinite_mean_time(graph.initial, bytes, document, bound)
+}
+
+/// The verdict on a document over a graph some policy reaches almost surely
+/// and whose reached non-target state is quiescent: a value-free document
+/// claims infinity, which is false, so it is `Malformed`; a document with
+/// values is a finite claim the checker does not derive, so `Unsupported`.
+fn quiescent_finite_verdict(
+    initial: ProbabilityProductKey,
+    document: &ProbabilityCertificateDocument,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    if document.values.is_empty() && document.ranking.is_empty() {
+        return Ok(rejected(ProbabilityCertificateRule::Malformed, initial));
+    }
+    Err(ProbabilityDocumentError::Unsupported)
+}
+
+/// The checker's expected-elapsed graph.
+struct MeanTimeGraph {
+    graph: CheckerGraph,
+    costs: RegionPolicyWeights,
+    /// Whether a reached non-target state is quiescent.
+    quiescent: bool,
+}
+
+/// The states from which some policy reaches a target with probability one,
+/// by the nested attractor over the checker's own graph: the greatest set `s`
+/// whose members reach a target through choices that never leave `s`.
+fn some_policy_reaches_almost_surely<'g>(
+    graph: &'g CheckerGraph,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+) -> Result<BTreeSet<&'g ProbabilityProductKey>, ProbabilityDocumentError> {
+    let mut surviving: BTreeSet<_> = graph.states.keys().collect();
+    loop {
+        let mut reaching: BTreeSet<_> = graph
+            .states
+            .iter()
+            .filter(|(_, state)| state.terminal == Some(true))
+            .map(|(key, _)| key)
+            .collect();
+        loop {
+            let mut grew = false;
+            for (key, state) in &graph.states {
+                charge_work(meter, cancel, 1)?;
+                poll(cancel)?;
+                if reaching.contains(key) {
+                    continue;
+                }
+                let progresses = state.choices.iter().any(|choice| {
+                    choice.iter().all(|edge| surviving.contains(&edge.target))
+                        && choice.iter().any(|edge| reaching.contains(&edge.target))
+                });
+                if progresses {
+                    reaching.insert(key);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        if reaching.len() == surviving.len() {
+            return Ok(reaching);
+        }
+        surviving = reaching;
+    }
+}
+
+/// Admit the certificate of an infinite least expected time: it holds an `>=`
+/// bound and carries no value or rank, there being no finite one.
+#[implements("FR-204-AC-25", "FR-921-AC-6")]
+fn check_infinite_mean_time(
+    initial: ProbabilityProductKey,
+    bytes: &[u8],
+    document: &ProbabilityCertificateDocument,
+    bound: &Bound,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    if !matches!(bound, Bound::AtLeast(_)) {
+        return Ok(rejected(
+            ProbabilityCertificateRule::ThresholdMissed,
+            initial,
+        ));
+    }
+    if !document.values.is_empty() || !document.ranking.is_empty() {
+        return Ok(rejected(ProbabilityCertificateRule::Malformed, initial));
+    }
+    Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(
+        ProbabilityValueFreeAcceptance {
+            document: bytes.into(),
+            side: super::super::ProbabilityBoundSide::AtLeast,
+        },
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -847,29 +1045,12 @@ fn enumerate_region_mean_time(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
-) -> Result<(CheckerGraph, RegionPolicyWeights), ProbabilityDocumentError> {
+) -> Result<MeanTimeGraph, ProbabilityDocumentError> {
     let (base_scale, subdivisions) = match route {
         TimedProbabilityRoute::Region => region_scale_parts(timed, claim, scale)?,
         TimedProbabilityRoute::Digital => (scale, 1),
     };
-    let mut caps = Vec::with_capacity(timed.places().len());
-    for place in timed.places() {
-        let mut largest = 0_u64;
-        for constraint in clock_constraints(timed)
-            .into_iter()
-            .filter(|constraint| constraint.clock() == place.clock())
-        {
-            largest = largest.max(
-                time_units(constraint.bound(), scale)
-                    .ok_or(ProbabilityDocumentError::Unsupported)?,
-            );
-        }
-        caps.push(
-            largest
-                .checked_add(1)
-                .ok_or(ProbabilityDocumentError::Unsupported)?,
-        );
-    }
+    let caps = place_caps(timed, scale)?;
     let mut initial = timed.initial();
     if initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -903,6 +1084,7 @@ fn enumerate_region_mean_time(
     let mut states = BTreeMap::new();
     let mut costs = BTreeMap::new();
     let mut edges = 0_u64;
+    let mut quiescent = false;
     while let Some(key) = pending.pop_front() {
         charge_work(meter, cancel, 1)?;
         poll(cancel)?;
@@ -924,11 +1106,15 @@ fn enumerate_region_mean_time(
             )?;
             continue;
         }
+        // Quiescent means no time invariant and not urgent; steps still fire
+        // there (FR-231). The state keeps its delay and steps, derived below
+        // by this pass; the flag only bars a finite value the checker has not
+        // derived for a state that may idle without end.
         if timed
             .is_quiescent(current.timed.discrete())
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
         {
-            return Err(ProbabilityDocumentError::Unsupported);
+            quiescent = true;
         }
         let mut choices = Vec::new();
         let mut choice_costs = Vec::new();
@@ -1058,15 +1244,16 @@ fn enumerate_region_mean_time(
         )?;
         costs.insert(key, choice_costs);
     }
-    Ok((
-        CheckerGraph {
+    Ok(MeanTimeGraph {
+        graph: CheckerGraph {
             initial: first_key,
             states,
             scheduler_actions: Default::default(),
             actions_by_state: None,
         },
         costs,
-    ))
+        quiescent,
+    })
 }
 
 fn mean_target(
@@ -1082,10 +1269,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [
-            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-            | fsl_eval::simulation::model::PredicateReading::Refused(_),
-        ] => Err(ProbabilityDocumentError::Unsupported),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -1504,6 +1691,13 @@ enum Phase {
     Complete,
     /// The elapsed clock passed the window first.
     Censored,
+    /// An unbounded `until` whose predicate has held at no position.
+    Unmeasured,
+    /// An unbounded `until` whose predicate holds at this position.
+    Reached,
+    /// An unbounded `until` whose predicate held at an earlier position of
+    /// the same product step.
+    Passed,
     /// One checked timed operator occurrence.
     Bounded(fsl_eval::probabilistic::TimedOperatorState),
     /// A nested formula retains both checked operator occurrences.
@@ -1517,7 +1711,7 @@ impl Phase {
     #[implements("FR-204-AC-21")]
     fn decided(&self) -> bool {
         match self {
-            Self::Pending | Self::Inactive | Self::Active => false,
+            Self::Pending | Self::Inactive | Self::Active | Self::Unmeasured => false,
             Self::Bounded(operator) | Self::NestedBounded(operator, _) => {
                 operator.phase != fsl_eval::probabilistic::DeadlinePhase::Pending
             }
@@ -1530,7 +1724,7 @@ impl Phase {
 fn phase_value(phase: &Phase) -> Option<bool> {
     use fsl_eval::probabilistic::DeadlinePhase as MonitorPhase;
     match phase {
-        Phase::Accepted => Some(true),
+        Phase::Accepted | Phase::Reached | Phase::Passed => Some(true),
         Phase::Rejected => Some(false),
         Phase::Bounded(operator) => match operator.phase {
             MonitorPhase::Accept => Some(true),
@@ -1544,6 +1738,28 @@ fn phase_value(phase: &Phase) -> Option<bool> {
         },
         _ => None,
     }
+}
+
+/// How the checker reads a run that ends at a time-lock with its event
+/// still pending (FSpec FR-416 "How claims read a time-lock", ADR-038
+/// RL-7): the declared mapping from the operator's kind, looked up here from
+/// the checker's own reading of the phase. A plain deadline event is an
+/// `eventually` (rejected); a nested formula keeps the rejection.
+#[implements("FR-924-AC-5")]
+fn locked_terminal(phase: &Phase) -> bool {
+    use fsl_eval::probabilistic::{DeadlineKind, MonitorVerdict};
+    use fsl_eval::simulation::model::LOCKED_RUN_TERMINAL;
+    let kind = match phase {
+        Phase::Pending => Some(DeadlineKind::Eventually),
+        Phase::Bounded(operator) => Some(operator.kind),
+        _ => None,
+    };
+    kind.and_then(|kind| {
+        LOCKED_RUN_TERMINAL
+            .iter()
+            .find(|(locked, _)| *locked == kind)
+    })
+    .is_some_and(|(_, verdict)| *verdict == MonitorVerdict::Accept)
 }
 
 fn monitor_json(phase: &Phase) -> JsonValue {
@@ -1616,6 +1832,8 @@ enum Watch<'a> {
         horizon: u64,
     },
     Elapsed(ElapsedWatch<'a>),
+    /// An unbounded `until`, read at every position and never closed.
+    Until(&'a fsl_semantics::check::CheckedPredicate),
 }
 
 impl Watch<'_> {
@@ -1632,6 +1850,7 @@ impl Watch<'_> {
                 Phase::NestedBounded(root, *nested)
             }
             Self::Elapsed(_) => Phase::Inactive,
+            Self::Until(_) => Phase::Unmeasured,
         }
     }
 
@@ -1673,6 +1892,8 @@ impl Watch<'_> {
                 Phase::Bounded(bounded_at(previous, *root, elapsed)),
                 elapsed,
             )),
+            // A delay changes no discrete state, so no reading changes.
+            Self::Until(_) => Ok((previous, 0)),
             Self::Nested { .. } | Self::Elapsed(_) => {
                 self.observe(system, binding, state, previous, elapsed, deadline, cancel)
             }
@@ -1696,7 +1917,7 @@ impl Watch<'_> {
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         match self {
             Self::Nested { .. } => Ok((previous, elapsed)),
-            Self::Deadline(_) | Self::Bounded { .. } | Self::Elapsed(_) => {
+            Self::Deadline(_) | Self::Bounded { .. } | Self::Elapsed(_) | Self::Until(_) => {
                 self.observe(system, binding, state, previous, elapsed, deadline, cancel)
             }
         }
@@ -1762,6 +1983,23 @@ impl Watch<'_> {
                     elapsed,
                 );
                 return Ok((Phase::NestedBounded(root, nested), elapsed));
+            }
+            Self::Until(predicate) => {
+                let readings = system
+                    .state_predicates_with_cancel(state, &[(*predicate, binding)], cancel)
+                    .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+                let phase = match (readings.as_slice(), previous) {
+                    ([fsl_eval::simulation::model::PredicateReading::True], _) => Phase::Reached,
+                    (
+                        [fsl_eval::simulation::model::PredicateReading::False],
+                        Phase::Reached | Phase::Passed,
+                    ) => Phase::Passed,
+                    ([fsl_eval::simulation::model::PredicateReading::False], _) => {
+                        Phase::Unmeasured
+                    }
+                    _ => return Err(ProbabilityDocumentError::Unsupported),
+                };
+                return Ok((phase, 0));
             }
             Self::Elapsed(watch) => watch,
         };
@@ -1930,24 +2168,7 @@ fn enumerate_digital_deadline(
     storage: &mut u64,
     terminals: &mut BTreeMap<ProbabilityProductKey, (Rational, bool)>,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
-    let mut caps = Vec::with_capacity(timed.places().len());
-    for place in timed.places() {
-        let mut largest = 0_u64;
-        for constraint in clock_constraints(timed)
-            .into_iter()
-            .filter(|constraint| constraint.clock() == place.clock())
-        {
-            largest = largest.max(
-                time_units(constraint.bound(), key_scale)
-                    .ok_or(ProbabilityDocumentError::Unsupported)?,
-            );
-        }
-        caps.push(
-            largest
-                .checked_add(1)
-                .ok_or(ProbabilityDocumentError::Unsupported)?,
-        );
-    }
+    let caps = place_caps(timed, key_scale)?;
     let mut initial = timed.initial();
     if initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -2048,6 +2269,9 @@ fn enumerate_digital_deadline(
                 continue;
             }
             Phase::Pending
+            | Phase::Unmeasured
+            | Phase::Reached
+            | Phase::Passed
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
@@ -2166,7 +2390,7 @@ fn enumerate_digital_deadline(
             insert_checker_state(
                 key,
                 CheckerState {
-                    terminal: choices.is_empty().then_some(false),
+                    terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                     choices,
                 },
                 &mut states,
@@ -2228,7 +2452,7 @@ fn enumerate_digital_deadline(
             insert_checker_state(
                 key,
                 CheckerState {
-                    terminal: Some(false),
+                    terminal: Some(locked_terminal(&current.phase)),
                     choices: Vec::new(),
                 },
                 &mut states,
@@ -2363,7 +2587,7 @@ fn enumerate_digital_deadline(
         insert_checker_state(
             key,
             CheckerState {
-                terminal: choices.is_empty().then_some(false),
+                terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                 choices,
             },
             &mut states,
@@ -2401,24 +2625,7 @@ fn enumerate_region_deadline(
     activated: &mut BTreeSet<ProbabilityProductKey>,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let (base_scale, subdivisions) = region_scale_parts(timed, claim, scale)?;
-    let mut caps = Vec::with_capacity(timed.places().len());
-    for place in timed.places() {
-        let mut largest = 0_u64;
-        for constraint in clock_constraints(timed)
-            .into_iter()
-            .filter(|constraint| constraint.clock() == place.clock())
-        {
-            largest = largest.max(
-                time_units(constraint.bound(), key_scale)
-                    .ok_or(ProbabilityDocumentError::Unsupported)?,
-            );
-        }
-        caps.push(
-            largest
-                .checked_add(1)
-                .ok_or(ProbabilityDocumentError::Unsupported)?,
-        );
-    }
+    let caps = place_caps(timed, key_scale)?;
     let mut initial = timed.initial();
     if initial.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -2529,6 +2736,9 @@ fn enumerate_region_deadline(
                 continue;
             }
             Phase::Pending
+            | Phase::Unmeasured
+            | Phase::Reached
+            | Phase::Passed
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
@@ -2667,7 +2877,7 @@ fn enumerate_region_deadline(
         insert_checker_state(
             key,
             CheckerState {
-                terminal: choices.is_empty().then_some(false),
+                terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                 choices,
             },
             &mut states,
@@ -3053,22 +3263,31 @@ fn digital_key(
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(&state.phase);
+    // An unbounded `until` keys as the mean-time product does, with no
+    // deadline and no monitor. A position passed inside a step has a key no
+    // such product holds, so a document never agrees with it silently.
+    let untimed = matches!(
+        state.phase,
+        Phase::Unmeasured | Phase::Reached | Phase::Passed
+    );
+    let monitor = match (&state.phase, measure) {
+        (Phase::Unmeasured | Phase::Reached, _) => None,
+        (Phase::Passed, _) => Some(json!(["until", "passed"])),
+        (_, Some((name, _))) => Some(json!(["measure", null, name])),
+        (phase, None) => Some(monitor_json(phase)),
+    };
     digital_probability_product_key(DigitalProductKeyInput {
         binding,
         discrete,
         unit,
         scale,
         clocks,
-        deadline: measure.is_none().then_some(DigitalDeadlineKey {
+        deadline: (measure.is_none() && !untimed).then_some(DigitalDeadlineKey {
             limit: deadline,
             elapsed: state.elapsed,
         }),
         tail: state.tail,
-        monitor: Some(match measure {
-            Some((name, _)) => json!(["measure", null, name]),
-            None => monitor,
-        }),
+        monitor,
         accumulator: None,
         pending: None,
         elapsed: measure.map(|(_, value)| (deadline, value)),
@@ -3130,8 +3349,10 @@ fn next_digital_delay(
         if key != current_key {
             return Ok(Some((key, reached)));
         }
-        if reached.phase == Phase::Inactive {
-            // An unactivated measure has no clock to move: no later delay differs.
+        // An unactivated measure and an unbounded `until` count no elapsed
+        // time, so a key one delay leaves unchanged stays unchanged: no later
+        // delay differs, and the elapsed bound would never end the loop.
+        if matches!(reached.phase, Phase::Inactive | Phase::Unmeasured) {
             return Ok(None);
         }
         state = reached;
@@ -3881,13 +4102,12 @@ type DigitalWorkloadChoices = (Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::Product
 /// identity enabled now (`WorkloadResolve`).
 ///
 /// Several racing given delays race together: the least draw wins and the
-/// workload's weights order the identities tied at it. Two states
-/// refuse, where the `WorkloadResolve` reading and ADR-026 SD-1 and SD-3 (the
-/// scheduler picks each free identity's delay inside its window) give
-/// different verdicts, until the standard rules between them: several free
-/// identities enabled now, and a free identity that the unit delay disables.
+/// workload's weights order the identities tied at it. For claims other than
+/// MeanTime, the checker refuses states where the `WorkloadResolve` reading
+/// and ADR-026 SD-1 and SD-3 disagree. MeanTime uses the independently
+/// enumerated free-delay assignments to rederive infinite-time certificates.
 #[allow(clippy::too_many_arguments)]
-#[implements("FR-204-AC-5")]
+#[implements("FR-204-AC-5", "FR-204-AC-24", "FR-921-AC-7")]
 fn digital_workload_choices(
     run: &WorkloadRun<'_, '_>,
     current: &RegionState,
@@ -3929,20 +4149,15 @@ fn digital_workload_choices(
         .iter()
         .filter(|window| window.given.is_none())
         .collect();
-    let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
-    let mut scheduler_actions: Vec<Vec<crate::ProductAction>> = Vec::new();
-    if racers.is_empty() {
-        // The free identities enabled now.
-        let free_now: Vec<&fsl_eval::simulation::model::Action> = enabled
-            .iter()
-            .filter(|action| discrete_delay(run.system, &action.identity.operation).is_none())
-            .collect();
-        // FR-204 reads this state as `UnitDelay` and one weighted
-        // `WorkloadResolve`; ADR-026 SD-1 and SD-3 (and FR-204's own
-        // `FreeDelays` rule) have the scheduler pick each free identity's
-        // delay inside its window. The two readings give different verdicts
-        // where several free identities are enabled now, and where the unit
-        // delay disables one that is enabled now, so neither is decided here.
+    // The free identities enabled now.
+    let free_now: Vec<&fsl_eval::simulation::model::Action> = enabled
+        .iter()
+        .filter(|action| discrete_delay(run.system, &action.identity.operation).is_none())
+        .collect();
+    if !matches!(
+        &run.claim.form,
+        fsl_semantics::check::ProbForm::MeanTime { .. }
+    ) {
         if free_now.len() >= 2 {
             return Err(ProbabilityDocumentError::WorkloadFreeDelays(
                 WorkloadFreeDelayRefusal::ManyFreeEnabled,
@@ -3960,6 +4175,89 @@ fn digital_workload_choices(
                     ));
                 }
             }
+        }
+    }
+    let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
+    let mut scheduler_actions: Vec<Vec<crate::ProductAction>> = Vec::new();
+    if racers.is_empty() {
+        if !free_now.is_empty()
+            && matches!(
+                &run.claim.form,
+                fsl_semantics::check::ProbForm::MeanTime { .. }
+            )
+        {
+            // With no given draw, the scheduler chooses one delay for every
+            // enabled free identity. Each assignment is one MDP action; a
+            // unit-delay transition cannot move an identity past its window.
+            let free_windows = free_now
+                .iter()
+                .map(|action| {
+                    windows
+                        .iter()
+                        .find(|window| window.identity == action.identity)
+                        .ok_or(ProbabilityDocumentError::Malformed)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let edge_limit = u64::try_from(run.limits.edges).unwrap_or(u64::MAX);
+            let assignments = free_windows.iter().fold(1_u64, |count, window| {
+                count.saturating_mul(u64::try_from(window.delays.len()).unwrap_or(u64::MAX))
+            });
+            if assignments > edge_limit {
+                return Err(ProbabilityDocumentError::Limit {
+                    limit: ProbabilityDocumentLimit::Edges,
+                    bound: edge_limit,
+                    actual: assignments,
+                });
+            }
+            let mut positions = vec![0_usize; free_windows.len()];
+            loop {
+                poll(run.cancel)?;
+                let delays = free_windows
+                    .iter()
+                    .zip(&positions)
+                    .map(|(window, position)| {
+                        window
+                            .delays
+                            .iter()
+                            .copied()
+                            .nth(*position)
+                            .ok_or(ProbabilityDocumentError::Malformed)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let delay = delays
+                    .iter()
+                    .copied()
+                    .min()
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                let tied = free_windows
+                    .iter()
+                    .zip(&delays)
+                    .filter(|(_, chosen)| **chosen == delay)
+                    .map(|(window, _)| window.identity.clone())
+                    .collect::<Vec<_>>();
+                let states = run.race_states(&trajectory, delay, &tied, &one())?;
+                let mut choice = Vec::new();
+                run.choice_of(states, &mut choice, reached, pending, storage)?;
+                choices.push(choice);
+                scheduler_actions.push(Vec::new());
+                charge_work(meter, run.cancel, 1)?;
+
+                let mut position = positions.len();
+                let mut advanced = false;
+                while position > 0 {
+                    position -= 1;
+                    positions[position] += 1;
+                    if positions[position] < free_windows[position].delays.len() {
+                        advanced = true;
+                        break;
+                    }
+                    positions[position] = 0;
+                }
+                if !advanced {
+                    break;
+                }
+            }
+            return Ok((choices, scheduler_actions));
         }
         let time_choices = digital_time_choices(
             run.system,
@@ -4428,11 +4726,75 @@ fn digital_state_after_delay(
     Ok(Some(state))
 }
 
+/// Move a region representative's live fractions as low as their order allows
+/// (FR-922): clocks below their caps and a running claim clock. The region key
+/// is unchanged, and the walk to the time successor then never carries a clock
+/// off an integer and another onto one in the same unit. A nested formula's
+/// monitor reads concrete times, so its representative stays.
+///
+/// Interim: part of a walk over a finer grid, not the symbolic region MDP of
+/// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
+#[implements("FR-922-AC-4")]
+fn lower_fractions(
+    watch: &Watch<'_>,
+    current: &RegionState,
+    caps: &[u64],
+    subdivisions: u64,
+    scale: u64,
+    deadline: u64,
+) -> Result<RegionState, ProbabilityDocumentError> {
+    if matches!(watch, Watch::Nested { .. }) {
+        return Ok(current.clone());
+    }
+    let mut units = Vec::with_capacity(caps.len() + 1);
+    for value in current.timed.clocks().values() {
+        units.push(time_units(value, scale).ok_or(ProbabilityDocumentError::Unsupported)?);
+    }
+    let mut live: Vec<bool> = units
+        .iter()
+        .zip(caps)
+        .map(|(value, cap)| value < cap)
+        .collect();
+    units.push(current.elapsed);
+    live.push(current.phase != Phase::Inactive && current.elapsed < deadline + subdivisions);
+
+    // Visit the fractions upwards, giving each one in use the next free slot.
+    let mut lowered = units.clone();
+    let mut slot = 0;
+    for fraction in 1..subdivisions {
+        let mut used = false;
+        for ((value, live), target) in units.iter().zip(&live).zip(&mut lowered) {
+            if *live && value % subdivisions == fraction {
+                if !used {
+                    slot += 1;
+                    used = true;
+                }
+                *target = value - fraction + slot;
+            }
+        }
+    }
+
+    let elapsed = lowered.pop().ok_or(ProbabilityDocumentError::Malformed)?;
+    let clocks = lowered
+        .into_iter()
+        .map(|value| rational_units(value, scale))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RegionState {
+        timed: TimedState::new(
+            current.timed.discrete().clone(),
+            ClockValuation::new(clocks),
+        ),
+        elapsed,
+        phase: current.phase.clone(),
+        tail: current.tail,
+    })
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "timed certificate checks bind the subject and claim with independent scale, accounting, storage, and cancellation limits"
 )]
-#[implements("FR-204-AC-21")]
+#[implements("FR-204-AC-21", "FR-922-AC-4")]
 fn next_region_delay(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -4467,7 +4829,7 @@ fn next_region_delay(
         .saturating_mul(subdivisions)
         .saturating_add(2);
     let mut steps = 0_u64;
-    let mut state = current.clone();
+    let mut state = lower_fractions(watch, current, caps, subdivisions, scale, deadline)?;
     while state.elapsed <= deadline {
         if let Some(cause) = cancel.tripped() {
             return Err(ProbabilityDocumentError::Cancelled(cause));
@@ -4619,6 +4981,35 @@ fn one() -> Rational {
     Rational::from_integer(Integer::from(1_i64))
 }
 
+/// Each clock place's cap (FR-196 "Canonical probability product key"): one
+/// plus the largest scaled constant its value is compared with, in its clock
+/// field or in one a collection write carries it into.
+fn place_caps(
+    timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
+    scale: u64,
+) -> Result<Vec<u64>, ProbabilityDocumentError> {
+    let mut largest = vec![0_u64; timed.model().clocks().len()];
+    for constraint in clock_constraints(timed) {
+        let constant =
+            time_units(constraint.bound(), scale).ok_or(ProbabilityDocumentError::Unsupported)?;
+        let entry = largest
+            .get_mut(constraint.clock().index())
+            .ok_or(ProbabilityDocumentError::Unsupported)?;
+        *entry = (*entry).max(constant);
+    }
+    follow_carries(timed, &mut largest);
+    timed
+        .places()
+        .iter()
+        .map(|place| {
+            largest
+                .get(place.clock().index())
+                .and_then(|largest| largest.checked_add(1))
+                .ok_or(ProbabilityDocumentError::Unsupported)
+        })
+        .collect()
+}
+
 /// The checker derives the route from the checked clock constraints and
 /// temporal intervals; the objective's route string is never authoritative.
 fn region_route(
@@ -4648,33 +5039,6 @@ fn region_route(
                 _ => false,
             })
         )
-}
-
-fn clock_constraints<'a>(
-    timed: &'a fsl_eval::simulation::model::TimedSystem<'_, '_>,
-) -> Vec<&'a fsl_semantics::check::ClockConstraint> {
-    fn part_constraints<'a>(
-        part: &'a fsl_semantics::check::ConvexPart,
-        found: &mut Vec<&'a fsl_semantics::check::ClockConstraint>,
-    ) {
-        found.extend(part.clocks());
-        for family in part.families() {
-            for inner in family.parts() {
-                part_constraints(inner, found);
-            }
-        }
-    }
-
-    let mut found = Vec::new();
-    for guard in timed.model().guards() {
-        for part in guard.parts() {
-            part_constraints(part, &mut found);
-        }
-    }
-    for invariant in timed.model().invariants() {
-        found.extend(invariant.bounds());
-    }
-    found
 }
 
 /// Recompute the canonical lattice and region refinement from the checked
@@ -4776,12 +5140,14 @@ fn certificate_scale(
 /// [`ProbabilityWitnessError`] when the claim is not a timed deadline claim,
 /// the product cannot be enumerated within the limits, or the witness names a
 /// state, step or choice the checker's product does not have.
+#[implements("FR-202-AC-47", "FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
 pub(in crate::probability_certificate) fn replay_timed_witness(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &super::super::ProbabilisticCounterexample,
     limits: &crate::ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<super::super::ProbabilityWitnessReplay, super::super::ProbabilityWitnessError> {
     use super::super::{ProbabilityWitnessError as Error, ProbabilityWitnessReplay as Replay};
     let unsupported = || Error::Graph(ExactProbabilityGraphError::UnsupportedClaimForm);
@@ -4797,17 +5163,20 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         _ => unsupported(),
     };
     if let Some(query) = elapsed::query(claim) {
-        return elapsed::replay(system, claim, &query, witness, limits, cancel);
+        return elapsed::replay(system, claim, &query, witness, limits, cancel, work);
     }
     if !claim.fairness.is_empty() {
         return Err(unsupported());
     }
     let timed = TimedSystem::new(system, &claim.subject.alias).map_err(|_| unsupported())?;
-    let route = if region_route(&timed, claim) {
-        TimedProbabilityRoute::Region
-    } else {
-        TimedProbabilityRoute::Digital
-    };
+    let route = admission::certificate_route(
+        system,
+        &timed,
+        claim,
+        ProbabilityDocumentLimits::for_exact(limits, system.meter_limits()),
+        cancel,
+    )
+    .map_err(from_document)?;
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
     let timed_watch = deadline_event(claim)
         .map(|(bound, predicate)| (bound, Watch::Deadline(predicate)))
@@ -4818,17 +5187,24 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     let binding = claim_binding(system, claim)
         .map_err(|_| unsupported())?
         .map(|binding| binding.reference);
+    if binding != witness.binding {
+        return Err(Error::Refused);
+    }
     // A bounded monitor keeps the claim's whole horizon, as the certificate
     // check does: a nested window ends past its root operator's upper bound.
     let clock_bound = match &watch {
         Watch::Bounded { .. } | Watch::Nested { .. } => watch.horizon(),
-        Watch::Deadline(_) | Watch::Elapsed(_) => {
+        Watch::Deadline(_) | Watch::Elapsed(_) | Watch::Until(_) => {
             time_bound(claim, scale).map_err(from_document)?
         }
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut meter =
-        filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(document_limits.accounting),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut storage = 0;
     let graph = match route {
         TimedProbabilityRoute::Digital => enumerate_digital_deadline(
@@ -5024,7 +5400,11 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted { one() } else { zero() }
+        if counted {
+            one()
+        } else {
+            zero()
+        }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {
@@ -5049,6 +5429,7 @@ impl Payoff<'_> {
     }
 }
 
+#[implements("FR-204-AC-14")]
 fn price_paths(
     graph: &CheckerGraph,
     scheduler: &BTreeMap<ProbabilityProductKey, usize>,
@@ -5228,7 +5609,7 @@ fn price_paths(
                 at = step.clone();
             }
             let end = graph.states.get(&at).ok_or(Error::Refused)?;
-            if sequence.is_empty() || !payoff.ends(&at, end.terminal) {
+            if !payoff.ends(&at, end.terminal) {
                 return Ok(None);
             }
             if !seen.insert(sequence) {
@@ -5354,6 +5735,7 @@ pub(in crate::probability_certificate) fn is_timed_witness_claim(
 /// decides which clock a value belongs to. `None` for a region key, a key
 /// that names a clock twice or not at all, or a value that is not a whole
 /// number of ticks.
+#[ix_trace_rs::string_edge]
 pub fn digital_key_clocks(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -5632,5 +6014,105 @@ mod witness_pricing_tests {
             price(&graph, part(1, 5), &[kept]),
             Some((vec![0], part(1, 4)))
         );
+    }
+}
+
+#[cfg(test)]
+mod quiescent_infinity_tests {
+    use super::*;
+    use crate::probability_certificate::document::tests::{document, fixture_key, limits};
+    use ix_trace_rs::trace;
+
+    fn key(name: &str) -> ProbabilityProductKey {
+        ProbabilityProductKey::from_canonical_bytes(name.as_bytes().to_vec())
+    }
+
+    /// The initial state `I` is a quiescent non-target state; when `reaches`,
+    /// its one enabled step reaches the target `T` with probability one.
+    fn graph(reaches: bool) -> CheckerGraph {
+        let choices = if reaches {
+            vec![vec![ProbabilityEdge {
+                target: key("T"),
+                probability: Rational::new(Integer::from(1i64), Integer::from(1i64))
+                    .expect("nonzero"),
+            }]]
+        } else {
+            Vec::new()
+        };
+        CheckerGraph {
+            initial: key("I"),
+            actions_by_state: None,
+            states: [
+                (
+                    key("I"),
+                    CheckerState {
+                        terminal: None,
+                        choices,
+                    },
+                ),
+                (
+                    key("T"),
+                    CheckerState {
+                        terminal: Some(true),
+                        choices: Vec::new(),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            scheduler_actions: Default::default(),
+        }
+    }
+
+    fn value_free() -> ProbabilityCertificateDocument {
+        let mut forged = document();
+        forged.targets = vec![fixture_key(0)];
+        forged.values.clear();
+        forged.ranking.clear();
+        forged
+    }
+
+    fn reaches_initial(graph: &CheckerGraph) -> bool {
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        some_policy_reaches_almost_surely(graph, &Cancel::new(), &mut meter)
+            .expect("the graph is small")
+            .contains(&graph.initial)
+    }
+
+    fn at_least() -> Bound {
+        Bound::AtLeast(Rational::new(Integer::from(1i64), Integer::from(1i64)).expect("nonzero"))
+    }
+
+    /// FR-921-AC-6: a quiescent state keeps its enabled steps, so a target the
+    /// step reaches has a finite expected time and a value-free document
+    /// claiming infinity is rejected `Malformed`; a document with values is a
+    /// finite claim the checker does not derive. Before the fix the quiescent
+    /// state had no moves, the target looked unreachable, and the forged
+    /// document was accepted as infinite. Control: with the target unreachable
+    /// the same value-free document is accepted as infinite.
+    #[trace("TC-2490", "FR-921-AC-6")]
+    #[test]
+    fn a_value_free_infinity_over_a_quiescent_state_that_reaches_the_target_is_malformed() {
+        let reaching = graph(true);
+        assert!(reaches_initial(&reaching));
+        let forged = value_free();
+        assert_eq!(
+            quiescent_finite_verdict(reaching.initial.clone(), &forged),
+            Ok(rejected(
+                ProbabilityCertificateRule::Malformed,
+                reaching.initial.clone()
+            ))
+        );
+        assert_eq!(
+            quiescent_finite_verdict(reaching.initial.clone(), &document()),
+            Err(ProbabilityDocumentError::Unsupported)
+        );
+
+        let stuck = graph(false);
+        assert!(!reaches_initial(&stuck));
+        assert!(matches!(
+            check_infinite_mean_time(stuck.initial.clone(), b"{}", &forged, &at_least()),
+            Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
+        ));
     }
 }

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tempfile::TempDir;
 
 const COUNTER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction digits using v(x: Int[0,9], y: Int[0,9]): Integer pure { x * 10 + y }\n";
@@ -884,11 +884,9 @@ fn replay_evaluated_limits_retain_the_actual_named_charge_and_bound() {
     assert_eq!(row["limit"]["kind"], "work_units", "{row}");
     assert_eq!(row["limit"]["bound"], "1");
     assert_eq!(row["limit"]["setting"], "accounting.work_units");
-    assert!(
-        row["limit"]["charge_point"]
-            .as_str()
-            .is_some_and(|point| !point.is_empty())
-    );
+    assert!(row["limit"]["charge_point"]
+        .as_str()
+        .is_some_and(|point| !point.is_empty()));
     assert!(row.get("supplied").is_none());
     assert!(row["value"].is_null());
 }
@@ -1017,7 +1015,8 @@ fn population_subsetting_retains_inherited_redefined_optional_and_collection_val
             .insert(1, population);
         fs::write(call_path, serde_json::to_vec(&call).unwrap()).unwrap();
         assert_eq!(
-            report(&fixture.execute(&["--limit", "admission.work_units=7"]))["capabilities"][0]["outcome"],
+            report(&fixture.execute(&["--limit", "admission.work_units=7"]))["capabilities"][0]
+                ["outcome"],
             "incomplete"
         );
         assert_eq!(
@@ -1154,11 +1153,9 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let region = region
         .as_ref()
         .expect("the unproved operator has a source region");
-    assert!(
-        undefined_source
-            [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
-            .contains("mod")
-    );
+    assert!(undefined_source
+        [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
+        .contains("mod"));
     let mut undefined_fixture = kernel_replay_fixture_source(&undefined_source);
     let undefined_native = use_witness(&mut undefined_fixture);
     let fsl_replay::ReplayResult::Witness(undefined_arm) = undefined_native else {
@@ -1170,18 +1167,14 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
         "the actual undefined operation retains its source"
     );
     let undefined_row = &undefined_fixture.value["vectors"][0]["expected"]["value"]["results"][0];
-    assert!(
-        !undefined_row["resolved_regions"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    assert!(!undefined_row["resolved_regions"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     let region = &undefined_arm.resolved_regions()[0];
-    assert!(
-        undefined_source
-            [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
-            .contains("mod")
-    );
+    assert!(undefined_source
+        [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
+        .contains("mod"));
     assert_eq!(undefined_row["resolved_regions"][0]["kind"], "region");
     assert_eq!(
         undefined_row["resolved_regions"][0]["start"],

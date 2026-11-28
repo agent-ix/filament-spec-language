@@ -13,9 +13,9 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
 use fsl_semantics::check::{
-    check_hyper_clauses, Capability, CheckCause, CheckRefusal, CheckedHyper, CheckedHyperClause,
+    check_hyper_clauses, Capability, CheckCause, CheckedHyper, CheckedHyperClause,
     CheckedModelRelation, HyperCause, HyperForm, HyperTraceFamily, HyperUnsupported,
-    PackageDeclarations, StepRead, TemporalCause, TemporalProfile,
+    PackageDeclarations, SemanticCheckRefusal, StepRead, TemporalCause, TemporalProfile,
 };
 use fsl_semantics::family::{ClaimExtent, FamilyContract};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -153,7 +153,7 @@ fn assemble_under(
     (unit, package)
 }
 
-type Outcome = Result<CheckedHyper, StageFailure<CheckRefusal>>;
+type Outcome = Result<CheckedHyper, StageFailure<SemanticCheckRefusal>>;
 
 /// The one clause of `declaration` over `aliases`, checked under `profile`,
 /// with the unit text its spans index.

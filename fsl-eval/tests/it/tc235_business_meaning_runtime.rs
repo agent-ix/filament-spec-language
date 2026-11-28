@@ -164,7 +164,7 @@ type LifecycleFixture = (
 fn lifecycle_package(
     document: &serde_json::Value,
     body: &str,
-) -> Result<LifecycleFixture, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<LifecycleFixture, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     model_package(document, body, 25)
 }
 
@@ -174,7 +174,7 @@ pub(crate) fn model_package(
     document: &serde_json::Value,
     body: &str,
     charges: usize,
-) -> Result<LifecycleFixture, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<LifecycleFixture, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     model_package_with(document, body, Some(charges))
 }
 
@@ -182,7 +182,7 @@ pub(crate) fn model_package(
 pub(crate) fn model_package_unpinned(
     document: &serde_json::Value,
     body: &str,
-) -> Result<LifecycleFixture, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<LifecycleFixture, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     model_package_with(document, body, None)
 }
 
@@ -190,7 +190,7 @@ fn model_package_with(
     document: &serde_json::Value,
     body: &str,
     charges: Option<usize>,
-) -> Result<LifecycleFixture, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<LifecycleFixture, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let (domain, packages) = read_k2(document);
     let (outcome, meter) = normalize_with_meter(&domain, ModelNormalizationLimits::default());
     let NormalizeOutcome::Completed(view) = outcome else {

@@ -9,6 +9,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+use super::settle::settle_declared_under;
 use super::tests::{
     constraint, declaration as guarantee_declaration, entry_of, invalid, item_json, local, node,
     node_in, node_key_json, premise, proved_entry, read, refusal, request_for as guarantee_request,
@@ -16,9 +17,13 @@ use super::tests::{
 };
 use super::*;
 use crate::outcome::ItemLabel;
-use crate::proof_result::{Certification, PremiseOutcome};
+use crate::proof_result::{
+    Certification, CertificationPolicy, InconclusiveCause, PremiseOutcome, ProofBasis,
+    TerminalRecord, TerminalValue,
+};
 use filament_exact::NodeKey;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
+use fsl_foundation::RequestIndex;
 
 const PRODUCER: &str = "producer@1";
 const CONSUMER: &str = "consumer@1";
@@ -725,4 +730,85 @@ fn a_rely_is_discharged_only_by_a_guarantee_of_the_premises_form() {
         assert!(!discharged(&result, RELY));
         assert!(discharged(&result, LIVENESS));
     }
+}
+
+// ---- FSL FR-1052-AC-12: certified premises keep `certified` in process -----
+
+/// The guarantee request with every item premise replaced by a record built in
+/// process, as `terminal(index)` builds it. Bytes cap `certified`, so only
+/// such a record can carry it.
+fn in_process(
+    declaration: &PlannerDeclaration,
+    terminal: &dyn Fn(usize) -> TerminalRecord,
+) -> SettlementRequest {
+    let mut request = read(declaration, &guarantee_request(declaration)).expect("admitted");
+    for (index, derived) in declaration.slots.iter().enumerate() {
+        if let (SlotKey::Item(key), SlotBacking::Item) = (&derived.key, &derived.backing) {
+            let item = PremiseItem {
+                key: key.clone(),
+                request_index: index as u64,
+                bounds: Vec::new(),
+            };
+            request.slots[index].fill =
+                SlotFill::Result(Box::new(PremiseResult::from_record(item, terminal(index))));
+        }
+    }
+    request
+}
+
+fn proved_under(index: usize, certification: Certification) -> TerminalRecord {
+    TerminalRecord::from_value(
+        RequestIndex::new(index),
+        TerminalValue::Proved {
+            basis: ProofBasis::Checks { success_checks: 1 },
+            certification,
+        },
+    )
+}
+
+#[trace("TC-3240", "FR-1052-AC-12")]
+#[test]
+fn require_certified_settles_proved_only_when_every_in_process_premise_is_certified() {
+    let declaration = guarantee_declaration();
+    let settle = |request: &SettlementRequest| {
+        settle_declared_under(
+            &declaration,
+            request,
+            Budget::default(),
+            CertificationPolicy::RequireCertified,
+        )
+        .expect("settles")
+    };
+
+    // Every premise `certified`: the fold is `certified`, which the policy
+    // admits, so the item is `proved` with its conclusion.
+    let certified = settle(&in_process(&declaration, &|index| {
+        proved_under(index, Certification::Certified)
+    }));
+    assert_eq!(certified.value, PlannerValue::Proved);
+    assert_eq!(certified.certification, Some(Certification::Certified));
+    assert_eq!(certified.cause, None);
+    assert!(certified.conclusion.is_some());
+
+    // One premise `trusted` folds to `trusted`: withheld.
+    let withheld = settle(&in_process(&declaration, &|index| {
+        let certification = if index == 0 {
+            Certification::Trusted
+        } else {
+            Certification::Certified
+        };
+        proved_under(index, certification)
+    }));
+    assert_eq!(withheld.value, PlannerValue::Inconclusive);
+    assert_eq!(withheld.certification, None);
+    assert!(withheld.conclusion.is_none());
+    assert_eq!(
+        withheld.cause,
+        Some(PlannerCause::Inconclusive(
+            InconclusiveCause::ProofNotCertified {
+                basis: None,
+                certification: Certification::Trusted,
+            }
+        ))
+    );
 }

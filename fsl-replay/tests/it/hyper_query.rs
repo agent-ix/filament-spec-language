@@ -365,7 +365,7 @@ fn binding(world: &World) -> fsl_eval::hyper::ParameterBinding {
     let parameter = &world.clause().parameters()[0];
     let instance = system
         .instances(&filament_exact::ValueType::Reference(
-            parameter.population.object(),
+            parameter.object.clone(),
         ))
         .expect("lists")
         .into_iter()
@@ -919,6 +919,33 @@ fn an_unknown_alias_is_the_same_fault_in_both_calls() {
     let fault = identity.expect_err("a fault");
     assert!(matches!(fault, SmtEncodingRefusal::Fault(_)), "{fault:?}");
     assert_eq!(query.expect_err("a fault"), fault);
+}
+
+/// FR-315-AC-59: a universe key that no initial state admits is not an
+/// instance; with an empty `initial` list every universe key is accepted,
+/// since the item settles `NoInitialState`.
+#[trace("TC-3219", "FR-315-AC-59")]
+#[test]
+fn a_key_no_initial_state_admits_is_no_instance_binding() {
+    let mut world = World::new(&["v"], false, &non_interference(EQUAL_INPUTS, ""));
+    world.universe.push("w".to_owned());
+    let identify = |world: &World, key: &str| {
+        HyperProductIdentity::of(&HyperQueryRequest {
+            clause: world.clause(),
+            subjects: &[world.subject()],
+            instance: &instance(key),
+            meter: &mut Meter::new(UNLIMITED),
+            encoding: SmtEncodingLimits::default(),
+        })
+    };
+    identify(&world, "v").expect("`v` is identified");
+    let refusal = identify(&world, "w").expect_err("no initial state admits `w`");
+    assert_eq!(refusal.code(), Some("instance-binding"), "{refusal}");
+    assert!(refusal.to_string().contains("`v`"), "{refusal}");
+
+    let empty = world.without_initial_states();
+    identify(&empty, "v").expect("an empty initial list accepts the key");
+    identify(&empty, "w").expect("and every other key of the universe");
 }
 
 // ---------------------------------------------------------------------------

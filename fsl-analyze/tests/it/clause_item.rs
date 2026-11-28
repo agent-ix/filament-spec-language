@@ -10,8 +10,8 @@
 use filament_exact::{Cancel, Origin, Role};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{
-    analyze_items, AnalyzeLimits, ClauseItemRefusal, ClauseLimits, ClauseSubject, Engine, Engines,
-    SourceProvision,
+    analyze_items, AnalyzeLimits, ClauseItemRefusal, ClauseLimits, ClauseSubject, DeadlineSupply,
+    Engine, Engines, SourceProvision,
 };
 use fsl_eval::simulation::Limits;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -47,7 +47,7 @@ pub(crate) fn subject(world: &World, limits: ClauseLimits) -> ClauseSubject<'_> 
     ClauseSubject::new(
         &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &world.provision,
         &key,
         limits,
@@ -65,6 +65,7 @@ fn run(world: &World, limits: ClauseLimits) -> fsl_analyze::analyze::AnalyzeReco
         &engines,
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records.len(), 1);
     records.remove(0)
@@ -98,6 +99,7 @@ fn a_clause_a_transition_breaks_settles_refuted_with_a_replayed_counterexample()
             &engines,
             vec![subject(&world, ClauseLimits::default()).item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         fsl_analyze::analyze::split_records(records, &world.package).1
     };
@@ -180,6 +182,7 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
             &engines,
             vec![subject.item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         fsl_analyze::analyze::split_records(records, &world.package)
     };
@@ -242,6 +245,7 @@ fn an_unspelled_counterexample_fails_its_item_and_not_the_document() {
             &engines,
             vec![subject(world, ClauseLimits::default()).item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
     };
     // The real record, its counterexample not handed on.
@@ -299,7 +303,7 @@ fn refused(world: &World, key: &OccurrenceKey) -> ClauseItemRefusal {
     ClauseSubject::new(
         &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &world.provision,
         key,
         ClauseLimits::default(),
@@ -395,7 +399,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
     let subject = ClauseSubject::new(
         &fsl_analyze::analyze::RunInput::source(package),
         world.binding(&["c"]),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &provision,
         &key,
         ClauseLimits::default(),
@@ -436,6 +440,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
         &Engines::fsl().expect("the engines register"),
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(records.len(), 1);
     assert_eq!(
@@ -489,7 +494,7 @@ fn a_tampered_counterexample_or_another_unit_is_refused_by_the_replay() {
     let wrong = ClauseSubject::new(
         &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &other_provision,
         &key,
         ClauseLimits::default(),
@@ -568,7 +573,7 @@ fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation(
             equality: Some(&equality_bytes),
         },
         world.binding(&["c"]),
-        AnalyzeLimits::unbounded(),
+        AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &key,
         ClauseLimits::default(),
     )
@@ -581,6 +586,7 @@ fn a_package_route_refutation_replays_from_the_handoff_as_the_source_refutation(
         &engines,
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let package = records.remove(0);
     assert_eq!(format!("{package:?}"), format!("{source:?}"));
@@ -668,7 +674,7 @@ fn package_fairness_matches_source_and_capture_remains_typed_pending() {
             bytes,
             supply,
             world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &key,
             ClauseLimits::default(),
         )
@@ -681,6 +687,7 @@ fn package_fairness_matches_source_and_capture_remains_typed_pending() {
             &engines,
             vec![subject.item(RequestIndex::new(0))],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         assert_eq!(records.len(), 1);
         let package = records.remove(0);
@@ -719,7 +726,7 @@ fn package_fairness_matches_source_and_capture_remains_typed_pending() {
                 bytes,
                 supply,
                 world.binding(&["c"]),
-                AnalyzeLimits::unbounded(),
+                AnalyzeLimits::published(DeadlineSupply::Unbounded),
                 &key,
                 ClauseLimits::default(),
             )
@@ -748,7 +755,7 @@ fn a_failed_replay_emission_settles_failed_with_the_package_emission_fault() {
     let key = OccurrenceKey::new(node.identity(), node.claim().clone());
     let limits = AnalyzeLimits {
         emit: fsl_package::EmitLimits::new(1),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let subject = ClauseSubject::new(
         &fsl_analyze::analyze::RunInput::source(&world.package),
@@ -767,6 +774,7 @@ fn a_failed_replay_emission_settles_failed_with_the_package_emission_fault() {
         &engines,
         vec![subject.item(RequestIndex::new(0))],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().expect("a terminal record");
     assert_eq!(terminal.value(), &TerminalValue::Failed, "{terminal:?}");
@@ -817,6 +825,7 @@ fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
     let run = |limits: fsl_analyze::analyze::AnalyzeLimits| {
         settle_run(
             AnalyzeRun {
+                selections: &[],
                 package: &world.package,
                 binding: world.binding(&["c"]),
                 provision: world.provision.clone(),
@@ -841,16 +850,22 @@ fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
                 }))],
                 engines: &engines,
                 limits,
+                certification: Default::default(),
             },
             &crate::analyze_cli_support::Fr290,
             &Cancel::new(),
         )
     };
-    let settled = run(fsl_analyze::analyze::AnalyzeLimits::unbounded()).expect("a settled run");
+    let settled = run(fsl_analyze::analyze::AnalyzeLimits::published(
+        fsl_analyze::analyze::DeadlineSupply::Unbounded,
+    ))
+    .expect("a settled run");
     crate::analyze_cli_support::assert_no_nested_node_ids(&settled.document);
     let limited = fsl_analyze::analyze::AnalyzeLimits {
         emit: fsl_package::EmitLimits::new(1),
-        ..fsl_analyze::analyze::AnalyzeLimits::unbounded()
+        ..fsl_analyze::analyze::AnalyzeLimits::published(
+            fsl_analyze::analyze::DeadlineSupply::Unbounded,
+        )
     };
     match run(limited) {
         Err(AnalyzeDocumentError::Identity(HeldIdentityError::NoGraph(
@@ -919,7 +934,10 @@ fn a_closure_lasso_replays_alike_on_the_source_and_the_package_routes() {
             expansion: fsl_eval::simulation::model::ExpansionLimits {
                 max_candidates: 1_000_000,
             },
-            meter: fsl_analyze::analyze::AnalyzeLimits::unbounded().accounting,
+            meter: fsl_analyze::analyze::AnalyzeLimits::published(
+                fsl_analyze::analyze::DeadlineSupply::Unbounded,
+            )
+            .accounting,
             emit: fsl_package::EmitLimits::fixture(),
         },
     )
@@ -969,7 +987,7 @@ fn a_closure_lasso_replays_alike_on_the_source_and_the_package_routes() {
                     bytes,
                     supply,
                     world.binding(&["c"]),
-                    AnalyzeLimits::unbounded(),
+                    AnalyzeLimits::published(DeadlineSupply::Unbounded),
                     &key,
                     ClauseLimits::default(),
                 )
@@ -1037,7 +1055,13 @@ fn closure_round_trip(formula: &str, stem: usize) {
         engines
             .with(Engine::model_check().expect("EN-1's own manifest is admitted"))
             .expect("one engine");
-        analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+        analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0)
     }
 
     let source_subject = subject(&world, ClauseLimits::default()).configured(temporal());
@@ -1095,7 +1119,7 @@ fn closure_round_trip(formula: &str, stem: usize) {
             bytes,
             supply,
             world.binding(&["c"]),
-            AnalyzeLimits::unbounded(),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &key,
             ClauseLimits::default(),
         )

@@ -43,10 +43,10 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex, analyze,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
 };
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
+use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{
     ExpansionLimit, ExpansionStop, InitialStateRefusal, SubjectSystem, TransitionSystem,
@@ -56,11 +56,10 @@ use fsl_replay::{
     check_protocol_initial_with_transition_limit, check_protocol_state_relations,
     check_protocol_step_with_transition_limit, check_step_for_model,
     open_protocol_systems_with_initial_limit, open_systems_with_initial_limit, AbstractClass,
-    AbstractProtocolSystem, CandidateFairState,
-    CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
-    CounterexampleKind, IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ModelStep, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolSystemsRefusal, ReachedLimit,
+    AbstractProtocolSystem, CandidateFairState, CandidateFairStep, CandidateLivenessError,
+    CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind, IncompleteCause, Lasso,
+    LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelStep,
+    ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
     RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
@@ -70,15 +69,17 @@ use ix_trace_rs::implements;
 #[cfg(test)]
 use fsl_replay::{check_protocol_initial, check_protocol_step};
 
-use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
+use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
 use super::fair_summary::{
-    CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
     candidate_steps_relation, candidate_stutter_relation, compose_candidate_relations,
     compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
     idempotent_has_fair_candidate_in, insert_relation_label, insert_walk_summary, neutral_label,
+    CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
 };
-use super::fair_walk::{FairModel, fairness_constraints};
-use super::initial::{Refused, admit_initial};
+use super::fair_walk::{fairness_constraints, FairModel};
+use super::initial::{admit_initial, Refused};
+use crate::analyze::EngineBounds;
+use fsl_foundation::budget::Budget;
 
 /// One refinement safety run (FR-142 Inputs).
 pub struct RefinementCheckRequest<'a> {
@@ -101,6 +102,9 @@ pub struct RefinementCheckRequest<'a> {
     pub max_depth: Option<usize>,
     /// The run's caller-raisable budgets.
     pub limits: ModelCheckLimits,
+    /// The item's `analysis.retained_bytes` allowance (FR-255 "Retained
+    /// bytes"); `None` runs on the published default.
+    pub retained: Option<&'a Budget>,
 }
 
 /// Request-owned binding for the selected abstract protocol subject.
@@ -358,6 +362,10 @@ fn check_with(
         meter: simulation.meter,
         max_candidates: simulation.expansion.max_candidates,
         cancel,
+        retained: request
+            .retained
+            .cloned()
+            .unwrap_or_else(|| EngineBounds::default().item_budget(simulation.meter, cancel)),
         nodes: Vec::new(),
         known: BTreeMap::new(),
         queue: VecDeque::new(),
@@ -535,6 +543,8 @@ struct Run<'r, 'a> {
     meter: filament_exact::ScalarLimits,
     max_candidates: u64,
     cancel: &'r Cancel,
+    /// The item's `analysis.retained_bytes` allowance.
+    retained: Budget,
     nodes: Vec<Node>,
     /// Each product state's index by its key: the concrete state's key
     /// bytes, its history values' key and its candidates' sorted state
@@ -588,16 +598,14 @@ impl Run<'_, '_> {
         // states carry fairness classes such as the selected TSO flush.
         for (product, node) in self.nodes.iter().enumerate() {
             for edge in &node.edges {
-                let Taken::ProtocolTraces(traces) = &edge.taken else {
-                    continue;
-                };
                 let target_product = usize::try_from(edge.post).map_err(|_| {
                     End::Fault(InternalFault::new(
                         "refinement-check",
                         "candidate-product-edge-target",
                     ))
                 })?;
-                for trace in traces {
+                let mut seen_path_nodes = BTreeSet::<usize>::new();
+                let mut retain_trace = |trace: &fsl_replay::ProtocolTrace| -> Result<(), End> {
                     let start_pair = (product, trace.start_key.clone());
                     if !by_product_key.contains_key(&start_pair) {
                         return Err(End::Fault(InternalFault::new(
@@ -615,6 +623,64 @@ impl Run<'_, '_> {
                         by_product_key.insert(pair, index);
                         candidates.push((target_product, candidate.clone(), key.clone(), false));
                     }
+                    Ok(())
+                };
+                match &edge.taken {
+                    Taken::ProtocolTraces(traces) => {
+                        for trace in traces {
+                            retain_trace(trace)?;
+                        }
+                    }
+                    Taken::ProtocolPathRefs(paths) => {
+                        for path in paths {
+                            let start_pair = (product, path.seed.start_key.clone());
+                            if !by_product_key.contains_key(&start_pair) {
+                                return Err(End::Fault(InternalFault::new(
+                                    "refinement-check",
+                                    "protocol-trace-start-is-a-candidate",
+                                )));
+                            }
+                            for (candidate, key) in
+                                path.seed.candidates.iter().zip(&path.seed.candidate_keys)
+                            {
+                                let pair = (target_product, key.clone());
+                                if let Some(index) = by_product_key.get(&pair).copied() {
+                                    candidates[index].3 = true;
+                                    continue;
+                                }
+                                let index = candidates.len();
+                                by_product_key.insert(pair, index);
+                                candidates.push((
+                                    target_product,
+                                    candidate.clone(),
+                                    key.clone(),
+                                    false,
+                                ));
+                            }
+                            let mut node = path.tail.as_deref();
+                            while let Some(current) = node {
+                                let identity = current as *const _ as usize;
+                                if !seen_path_nodes.insert(identity) {
+                                    break;
+                                }
+                                let pair = (target_product, current.candidate_key.clone());
+                                if let Some(index) = by_product_key.get(&pair).copied() {
+                                    candidates[index].3 = true;
+                                } else {
+                                    let index = candidates.len();
+                                    by_product_key.insert(pair, index);
+                                    candidates.push((
+                                        target_product,
+                                        current.candidate.as_ref().clone(),
+                                        current.candidate_key.clone(),
+                                        false,
+                                    ));
+                                }
+                                node = current.previous.as_deref();
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -796,6 +862,99 @@ impl Run<'_, '_> {
                                 }
                                 from = to;
                                 let _ = post_candidate;
+                            }
+                        }
+                    }
+                    Taken::ProtocolPathRefs(paths) => {
+                        let candidate_key = protocol
+                            .state_key(candidate)
+                            .map_err(|_| {
+                                End::Fault(InternalFault::new(
+                                    "refinement-check",
+                                    "protocol-candidate-state-key",
+                                ))
+                            })?
+                            .0;
+                        let mut seen_path_nodes = BTreeSet::<usize>::new();
+                        for path in paths
+                            .iter()
+                            .filter(|path| path.seed.start_key == candidate_key)
+                        {
+                            let mut from = source;
+                            for (index, transition) in path.seed.transitions.iter().enumerate() {
+                                let post_key =
+                                    path.seed.candidate_keys.get(index).ok_or_else(|| {
+                                        End::Fault(InternalFault::new(
+                                            "refinement-check",
+                                            "protocol-trace-state-key-exists",
+                                        ))
+                                    })?;
+                                let to = by_product_key
+                                    .get(&(target_product, post_key.clone()))
+                                    .copied()
+                                    .ok_or_else(|| {
+                                        End::Fault(InternalFault::new(
+                                            "refinement-check",
+                                            "protocol-trace-candidate-exists",
+                                        ))
+                                    })?;
+                                let candidate_edge = CandidateEdge {
+                                    target: to,
+                                    concrete: (index == 0)
+                                        .then(|| edge.transition.clone())
+                                        .flatten(),
+                                    protocol: Some(transition.clone()),
+                                };
+                                if !graph[from].edges.contains(&candidate_edge) {
+                                    graph[from].edges.push(candidate_edge);
+                                }
+                                from = to;
+                            }
+                            let seed_key = path
+                                .seed
+                                .candidate_keys
+                                .last()
+                                .unwrap_or(&path.seed.start_key);
+                            let mut node = path.tail.as_deref();
+                            while let Some(current) = node {
+                                let identity = current as *const _ as usize;
+                                if !seen_path_nodes.insert(identity) {
+                                    break;
+                                }
+                                let from_key = current
+                                    .previous
+                                    .as_deref()
+                                    .map_or(seed_key, |previous| &previous.candidate_key);
+                                let from = by_product_key
+                                    .get(&(target_product, from_key.clone()))
+                                    .copied()
+                                    .ok_or_else(|| {
+                                        End::Fault(InternalFault::new(
+                                            "refinement-check",
+                                            "protocol-trace-predecessor-candidate-exists",
+                                        ))
+                                    })?;
+                                let to = by_product_key
+                                    .get(&(target_product, current.candidate_key.clone()))
+                                    .copied()
+                                    .ok_or_else(|| {
+                                        End::Fault(InternalFault::new(
+                                            "refinement-check",
+                                            "protocol-trace-candidate-exists",
+                                        ))
+                                    })?;
+                                let candidate_edge = CandidateEdge {
+                                    target: to,
+                                    concrete: None,
+                                    protocol: Some(current.transition.as_ref().clone()),
+                                };
+                                if !graph[from].edges.contains(&candidate_edge) {
+                                    graph[from].edges.push(candidate_edge);
+                                }
+                                node = current.previous.as_deref();
+                            }
+                            if path.seed.transitions.is_empty() && path.tail.is_none() {
+                                continue;
                             }
                         }
                     }
@@ -998,6 +1157,7 @@ impl Run<'_, '_> {
                                 (Taken::Stutter, None)
                                     | (Taken::Protocol(_), Some(_))
                                     | (Taken::ProtocolTraces(_), Some(_))
+                                    | (Taken::ProtocolPathRefs(_), Some(_))
                                     | (Taken::CandidateSteps(_), None)
                             )
                     });
@@ -2000,6 +2160,7 @@ impl Run<'_, '_> {
                         state.state(),
                         widen(self.limits.limits.max_transitions),
                         widen(self.transitions),
+                        Some(&self.retained),
                     )
                     .map_err(ModelCheckRefusal::Protocol)?;
                     self.transitions = self.transitions.saturating_add(
@@ -2052,11 +2213,39 @@ impl Run<'_, '_> {
     }
 
     /// Check every edge out of node `at`, in canonical order.
+    #[implements("FR-142-AC-9")]
     fn expand(&mut self, at: usize) -> Result<(), End> {
         let expansion = self
             .concrete
             .successors(&self.nodes[at].state)
             .map_err(|stop| self.expansion_stop(stop))?;
+        // A contract conjunction with no value at a reachable concrete state
+        // refutes the refinement (ADR-018 UE-6, ADR-020 RE-5), whatever the
+        // fairness set reads; only a refused one is undecided below.
+        if let Some(contract) = expansion
+            .findings
+            .iter()
+            .find_map(ModelFinding::undefined_contract)
+        {
+            let (bytes, _) = Self::encoding(self.concrete.state_key(
+                &self.nodes[at].state,
+                fsl_foundation::IdentityLimits::default(),
+            ))?;
+            let position = u64::try_from(self.nodes[at].depth).unwrap_or(u64::MAX);
+            let clause = contract.clause.clone();
+            let evaluation = fsl_replay::UndefinedEvaluation::of_contract(
+                position,
+                fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+                contract,
+            );
+            return Err(End::Violated(Box::new(Failure {
+                from: Some(at),
+                edge: None,
+                initial_index: self.nodes[at].initial_index,
+                failure: RefinementFailure::UndefinedContract { position, clause },
+                kind: CounterexampleKind::UndefinedEvaluation(evaluation),
+            })));
+        }
         if let Some((transition, clause)) = expansion.findings.iter().find_map(|finding| {
             let ModelFinding::ContractUndetermined {
                 transition, clause, ..
@@ -2239,6 +2428,7 @@ impl Run<'_, '_> {
                     },
                     widen(self.limits.limits.max_transitions),
                     widen(self.transitions),
+                    Some(&self.retained),
                 ),
                 None => check_step_for_model(
                     self.refinement,
@@ -2361,6 +2551,7 @@ impl Run<'_, '_> {
 
     /// The position and `Taken` a passing verdict gives, or the end the
     /// verdict is.
+    #[implements("FR-142-AC-9")]
     fn judge(
         &self,
         verdict: StepVerdict,
@@ -2381,18 +2572,23 @@ impl Run<'_, '_> {
             StepVerdict::Passes { post, taken } => Ok((*post, *taken)),
             StepVerdict::Fails(failure) => Err(failed(*failure, CounterexampleKind::Formula)),
             StepVerdict::Undefined(evaluation) => {
-                let row = match &evaluation.site.locus {
-                    fsl_replay::UndefinedLocus::Mapping(site) => site.row.clone(),
+                let failure = match &evaluation.site.locus {
+                    fsl_replay::UndefinedLocus::Mapping(site) => RefinementFailure::Undefined {
+                        position: evaluation.site.position,
+                        row: site.row.clone(),
+                    },
+                    fsl_replay::UndefinedLocus::Contract(clause) => {
+                        RefinementFailure::UndefinedContract {
+                            position: evaluation.site.position,
+                            clause: clause.clone(),
+                        }
+                    }
                     _ => {
                         return Err(End::Fault(InternalFault::new(
                             "refinement-check",
                             "an-undefined-mapping-names-its-row",
                         )));
                     }
-                };
-                let failure = RefinementFailure::Undefined {
-                    position: evaluation.site.position,
-                    row,
                 };
                 Err(failed(
                     failure,
@@ -3104,6 +3300,37 @@ impl Run<'_, '_> {
                     }
                 }
             }
+            Taken::ProtocolPathRefs(paths) => {
+                for candidate in source_candidates {
+                    if candidate.protocol.is_none() {
+                        return Err(
+                            fault("a-protocol-trace-has-a-protocol-source-candidate").into()
+                        );
+                    }
+                    for path in paths
+                        .iter()
+                        .filter(|path| path.seed.start_key == candidate.key)
+                    {
+                        let post_key = path.endpoint_key();
+                        let Some(target) = target_candidates
+                            .iter()
+                            .find(|target| target.key.as_slice() == post_key)
+                        else {
+                            continue;
+                        };
+                        let label =
+                            self.protocol_path_ref_label(&candidate.transitions, path, classes)?;
+                        insert_relation_label(
+                            &mut relation,
+                            (
+                                (candidate.ordinal, candidate.key.clone()),
+                                (target.ordinal, target.key.clone()),
+                            ),
+                            label,
+                        );
+                    }
+                }
+            }
             Taken::Abstract(_) => {
                 return Err(fault("hidden-product-edge-retains-candidate-steps").into());
             }
@@ -3141,6 +3368,76 @@ impl Run<'_, '_> {
                 taken: class.is_taken_along(path),
                 enabled_somewhere: enabled_sets.iter().any(|set| class.is_enabled_in(set)),
                 enabled_everywhere: enabled_sets.iter().all(|set| class.is_enabled_in(set)),
+            })
+            .collect())
+    }
+
+    fn protocol_path_ref_label(
+        &mut self,
+        start_enabled: &[ModelTransition],
+        path: &fsl_replay::ProtocolPathRef,
+        classes: &[AbstractClass],
+    ) -> Result<FairLabel, End> {
+        let protocol = self
+            .abstract_protocol
+            .ok_or_else(|| fault("a-protocol-path-has-a-protocol-system"))?;
+        let mut enabled_somewhere = vec![false; classes.len()];
+        let mut enabled_everywhere = vec![true; classes.len()];
+        let mut observe = |enabled: &[ModelTransition]| {
+            for (index, class) in classes.iter().enumerate() {
+                let here = class.is_enabled_in(enabled);
+                enabled_somewhere[index] |= here;
+                enabled_everywhere[index] &= here;
+            }
+        };
+        observe(start_enabled);
+        let include_seed = if path.tail.is_some() {
+            path.seed.candidates.as_slice()
+        } else {
+            path.seed
+                .candidates
+                .get(..path.seed.candidates.len().saturating_sub(1))
+                .unwrap_or_default()
+        };
+        for candidate in include_seed {
+            let mut count = self.transitions;
+            let enabled = self.protocol_enabled(protocol, candidate, &mut count)?;
+            self.transitions = count;
+            observe(&enabled);
+        }
+        let mut taken = classes
+            .iter()
+            .map(|class| class.is_taken_along(&path.seed.transitions))
+            .collect::<Vec<_>>();
+        let mut node = path.tail.as_deref();
+        if let Some(endpoint) = node {
+            for (index, class) in classes.iter().enumerate() {
+                taken[index] |= endpoint
+                    .transition
+                    .applied_application()
+                    .is_some_and(|transition| class.covers(transition));
+            }
+            node = endpoint.previous.as_deref();
+        }
+        while let Some(current) = node {
+            let mut count = self.transitions;
+            let enabled =
+                self.protocol_enabled(protocol, current.candidate.as_ref(), &mut count)?;
+            self.transitions = count;
+            observe(&enabled);
+            for (index, class) in classes.iter().enumerate() {
+                taken[index] |= current
+                    .transition
+                    .applied_application()
+                    .is_some_and(|transition| class.covers(transition));
+            }
+            node = current.previous.as_deref();
+        }
+        Ok((0..classes.len())
+            .map(|index| FairMark {
+                taken: taken[index],
+                enabled_somewhere: enabled_somewhere[index],
+                enabled_everywhere: enabled_everywhere[index],
             })
             .collect())
     }
@@ -3452,7 +3749,10 @@ impl Run<'_, '_> {
             taking |= match &certified.taken {
                 Taken::Stutter => false,
                 Taken::CandidateSteps(steps) => steps.iter().any(|step| step.transition.is_some()),
-                Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) => true,
+                Taken::Abstract(_)
+                | Taken::Protocol(_)
+                | Taken::ProtocolTraces(_)
+                | Taken::ProtocolPathRefs(_) => true,
                 Taken::Failing => false,
             };
             match transition {
@@ -3552,7 +3852,7 @@ mod tests {
 
     use super::super::fair_summary::at_least_as_fair;
     use super::cas_fixture::{
-        SPEC, UNLIMITED, World, cas_refines_counter, failing_compensation, key,
+        cas_refines_counter, failing_compensation, key, World, SPEC, UNLIMITED,
     };
     use super::*;
 
@@ -3568,6 +3868,7 @@ mod tests {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         }
     }
 
@@ -3691,8 +3992,10 @@ mod tests {
         else {
             panic!("bump passes");
         };
-        let Taken::ProtocolTraces(traces) = *taken else {
-            panic!("bump takes protocol traces");
+        let traces = match *taken {
+            Taken::ProtocolTraces(traces) => traces,
+            Taken::ProtocolPathRefs(paths) => paths.iter().map(|path| path.to_trace()).collect(),
+            other => panic!("bump takes protocol traces: {other:?}"),
         };
         let fairness: Vec<_> = world
             .refinement()
@@ -3712,6 +4015,7 @@ mod tests {
             meter: UNLIMITED,
             max_candidates: systems.abstract_system.max_candidates(),
             cancel: &cancel,
+            retained: EngineBounds::default().item_budget(UNLIMITED, &cancel),
             nodes: Vec::new(),
             known: BTreeMap::new(),
             queue: VecDeque::new(),

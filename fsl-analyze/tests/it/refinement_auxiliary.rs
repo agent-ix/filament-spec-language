@@ -37,6 +37,7 @@ fn run(world: &World<'_>) -> SafetyOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -62,7 +63,12 @@ fn replay(
         vec![world.abstract_initial()],
     )
     .expect("the subjects open");
-    replay_refinement_trace(world.refinement(), &systems, payload)
+    replay_refinement_trace(
+        world.refinement(),
+        &systems,
+        payload,
+        &fsl_replay::ModelCheckLimits::default(),
+    )
 }
 
 fn settle(world: &World<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {
@@ -371,6 +377,7 @@ fn the_product_key_holds_the_candidate_set() {
             abstract_protocol_binding: None,
             max_depth: Some(1),
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -433,7 +440,10 @@ fn a_certificate_position_carries_its_history() {
         verdict: None,
     } = &rejection.at
     else {
-        panic!("history omission is located at a simulation edge: {:?}", rejection.at);
+        panic!(
+            "history omission is located at a simulation edge: {:?}",
+            rejection.at
+        );
     };
     let position = usize::try_from(*position).expect("a position index fits usize");
     let edge = usize::try_from(*edge).expect("an edge index fits usize");
@@ -471,6 +481,7 @@ fn a_hidden_side_ranges_over_the_abstract_initial_states_the_mapping_leaves_open
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -502,6 +513,7 @@ fn the_open_field_assignments_count_against_the_candidate_bound() {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )

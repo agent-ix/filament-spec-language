@@ -10,7 +10,7 @@ use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use crate::temporal_trace::{
-    EVENT, INFINITE, counter, counters, finite, fixture, lasso, outcome, violated,
+    counter, counters, finite, fixture, lasso, outcome, violated, EVENT, INFINITE,
 };
 
 /// The closed `Counter` trace with `c.level` 1, 1, 1 under event-position
@@ -234,14 +234,14 @@ mod operator_laws {
     //! their own letters and are not covered here.
     use filament_exact::Meter;
     use fsl_eval::temporal::{
-        AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome,
-        TemporalPosition, TemporalRefusal, TemporalTrace, evaluate, evaluate_at,
+        evaluate, evaluate_at, AtomReading, CaptureReading, LetterStop, TemporalLetters,
+        TemporalOutcome, TemporalPosition, TemporalRefusal, TemporalTrace,
     };
     use fsl_proptest_policy as prop;
     use fsl_semantics::check::{FormulaNode, FormulaNodeId, SCALAR_LIMITS_UNLIMITED};
     use proptest::prelude::*;
 
-    use crate::temporal_trace::{EVENT, Fixture, INFINITE, fixture};
+    use crate::temporal_trace::{fixture, Fixture, EVENT, INFINITE};
 
     const OVER: &str = "c: Counter";
 

@@ -271,7 +271,9 @@ pub fn open_protocol_systems_with_initial_limit<'a>(
             .map(|state| Ok((state.state().clone(), state.required_anchor()?.clone())))
             .collect::<Result<Vec<_>, ExpansionStop>>()
             .map_err(SubjectRefusal::Stopped)?;
-        model.with_initial_states(initial)
+        model
+            .with_initial_states(initial)
+            .map_err(|failure| SubjectRefusal::Admission(Box::new(failure)))?
     } else {
         model
     };
@@ -334,7 +336,7 @@ fn open_systems_inner<'a>(
         ModelSystem::over_model(abstract_request.clone(), abstract_model).map_err(admit)?;
     if mapped {
         let images = mapped_initial(refinement, &concrete_system, &abstract_system, max_states)?;
-        abstract_system = abstract_system.with_initial_states(images);
+        abstract_system = abstract_system.with_initial_states(images).map_err(admit)?;
     }
     Ok(RefinementSystems {
         concrete: concrete_system,

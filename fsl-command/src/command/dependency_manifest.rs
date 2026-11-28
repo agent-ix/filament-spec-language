@@ -4,7 +4,8 @@
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::fmt;
 
-pub(super) const FORMAT: &str = "filament.checked-handoff.dependencies/1";
+pub(super) const FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffDependencies.as_str();
 
 pub(super) struct Manifest {
     pub(super) dependencies: Vec<Row>,
@@ -38,6 +39,7 @@ impl<'de> Visitor<'de> for ObjectSeed<'_> {
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("a closed manifest object")
     }
+    #[ix_trace_rs::string_edge]
     fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
         let base = self
             .row
@@ -106,6 +108,7 @@ impl<'de> Visitor<'de> for RowsSeed<'_> {
 }
 
 impl Manifest {
+    #[ix_trace_rs::string_edge]
     pub(super) fn read(bytes: &[u8]) -> Result<Self, Refusal> {
         let mut pointer = String::new();
         let mut decoder = serde_json::Deserializer::from_slice(bytes);
