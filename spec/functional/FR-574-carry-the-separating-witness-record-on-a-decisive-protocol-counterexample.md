@@ -19,6 +19,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-352
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
 ---
 # FR-574: Carry the FR-351 separating witness record on a decisive protocol counterexample
 

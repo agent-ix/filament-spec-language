@@ -27,6 +27,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
 ---
 # FR-1039: Run every native-run member over a selected checked package without source
 

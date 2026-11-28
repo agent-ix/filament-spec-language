@@ -382,13 +382,7 @@ impl Transfer<'_> {
         });
         Ok(RunResult {
             exit_code,
-            value: NativeResult::analyze_document(json!({
-                "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
-                "refinement_transfer": {
-                    "refinement": refinement_value,
-                    "transfers": transfers,
-                }
-            })),
+            value: NativeResult::analyze_document(transfer_document(refinement_value, transfers)),
             outcome: None,
             requirements: None,
             sources: super::super::Sources::default(),
@@ -1043,9 +1037,43 @@ fn type_mismatch(member: &str, kind: &str, profile: Option<&str>) -> RunCause {
     }
 }
 
+/// The `refinement_transfer` run result document (FR-1030).
+fn transfer_document(refinement: Value, transfers: Vec<Value>) -> Value {
+    json!({
+        "format": fsl_foundation::wire_format::WireFormat::RunResult.as_str(),
+        "refinement_transfer": {
+            "refinement": refinement,
+            "transfers": transfers,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use ix_trace_rs::trace;
     use serde_json::json;
+
+    /// FR-267-AC-8, FSpec FR-352-AC-8: the transfer document carries the
+    /// run-result label with no clause-run or command-error members, so the
+    /// strict reader refuses it at its unknown `refinement_transfer` member
+    /// (the defect that it is no FR-352 form is tracked separately).
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn the_transfer_document_is_refused_by_the_run_result_reader() {
+        let value = super::transfer_document(json!({}), Vec::new());
+        let bytes = fsl_foundation::canonical_json::encode(&value).expect("canonical bytes");
+        let Err(fsl_replay::spine::NativeRunReadError::MalformedMember { source, .. }) =
+            fsl_replay::spine::read_native_run_result(&bytes)
+        else {
+            panic!("expected a refusal at the unknown member");
+        };
+        assert!(
+            source
+                .to_string()
+                .starts_with("unknown field `refinement_transfer`"),
+            "{source}"
+        );
+    }
 
     use super::step_for_step_value;
 
