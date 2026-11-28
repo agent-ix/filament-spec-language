@@ -1391,6 +1391,7 @@ dependencies = [
  "fsl-analyze",
  "fsl-certificate-mutation",
  "fsl-command",
+ "fsl-cst",
  "fsl-eval",
  "fsl-foundation",
  "fsl-package",

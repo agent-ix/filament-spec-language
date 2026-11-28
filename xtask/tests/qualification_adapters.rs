@@ -309,6 +309,7 @@ fn replay_fixture() -> Fixture {
 
 fn replay_fixture_source(source: &str) -> Fixture {
     let selected = fsl_replay::call_site(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
         fsl_replay::CallSiteUnit::new("qualification", "inputs/unit.native", source.as_bytes()),
         [],
@@ -361,7 +362,7 @@ fn kernel_replay_fixture_source(source: &str) -> Fixture {
     let identity = fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native");
     let limits = fsl_replay::CallerLimits::default();
     let cancel = filament_exact::Cancel::new();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse_with_context(
         &spine::ParseRequest {
             source: &identity,
             path: "inputs/unit.native",
@@ -369,10 +370,11 @@ fn kernel_replay_fixture_source(source: &str) -> Fixture {
         },
         limits.spine.source,
         &cancel,
+        &qsl3309_parser_context,
     )
     .expect("the undefined function parses")
     .into_value();
-    let models = spine::select(&qsl3309_parser_context,
+    let models = spine::select(
         &parsed,
         &std::collections::BTreeMap::new(),
         limits.spine.model,
@@ -1127,6 +1129,7 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     assert_eq!(true_fixture.execute(&[]).outcome.code, 0);
     let undefined_source = FALSE.replace("x < 0", "10 mod (x - 1) > 0");
     let linked = fsl_replay::call_site(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
         fsl_replay::CallSiteUnit::new(
             "qualification",

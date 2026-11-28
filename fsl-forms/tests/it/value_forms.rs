@@ -1311,11 +1311,11 @@ fn deep_bodies() -> [(String, usize); 5] {
 #[trace("TC-724", "FR-257-AC-1")]
 #[test]
 fn deep_bodies_build_clone_compare_format_and_drop_on_a_small_stack() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for (body, expected_depth) in deep_bodies() {
         std::thread::Builder::new()
             .stack_size(512 * 1024)
             .spawn(move || {
+                let qsl3309_parser_context = fsl_cst::ParserContext::new();
                 let text = format!(
                     "{HEADER}function f using v(a: Boolean, x: Integer): Integer pure {{ {body} }}\n"
                 );
@@ -1351,10 +1351,10 @@ fn deep_bodies_build_clone_compare_format_and_drop_on_a_small_stack() {
 #[trace("TC-724", "FR-257-AC-1")]
 #[test]
 fn a_deep_parameter_type_builds_clones_compares_formats_and_drops_on_a_small_stack() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     std::thread::Builder::new()
         .stack_size(512 * 1024)
         .spawn(|| {
+            let qsl3309_parser_context = fsl_cst::ParserContext::new();
             const DEPTH: usize = 100_000;
             let text = format!(
                 "{HEADER}function f using v(p: {}Boolean{}): Boolean pure {{ true }}\n",

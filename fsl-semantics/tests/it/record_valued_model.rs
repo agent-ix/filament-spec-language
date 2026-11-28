@@ -198,6 +198,7 @@ fn assembled_with_record_reader(
         source
     };
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "record-valued"),
         "record-valued.native",
         source.as_bytes(),

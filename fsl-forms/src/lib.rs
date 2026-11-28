@@ -177,6 +177,7 @@ mod stack_charge_tests {
     fn build(declarations: &str) -> (ParsedUnit, usize) {
         let text = format!("{HEADER}{declarations}\n");
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

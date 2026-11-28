@@ -384,6 +384,7 @@ fn build_world_document_with_header(
          model M = \"{PACKAGE}\";\nfunction Noop using v(): Boolean pure {{ true }}\n{clauses}\n",
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "fr-120"),
         "fr-120.native",
         unit.as_bytes(),
@@ -399,7 +400,7 @@ fn build_world_document_with_header(
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&fsl_cst::ParserContext::new(), text, fsl_cst::Limits::default())
     })
     .expect("the kept operation clauses parse");
     let declarations = PackageDeclarations::assemble(

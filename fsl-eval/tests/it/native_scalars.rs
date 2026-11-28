@@ -42,6 +42,7 @@ fn try_package(functions: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefus
          profile v = \"filament.value.complete/v1\";\n{functions}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "native-scalars"),
         "native-scalars.native",
         text.as_bytes(),

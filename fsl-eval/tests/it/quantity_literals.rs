@@ -86,6 +86,7 @@ fn package_with_aliases(
          profile v = \"filament.value.complete/v1\";\n{functions}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -285,6 +286,7 @@ fn a_package_typed_unit_conversion_evaluates_true_for_two_ticks() {
                 function chained using v(): Boolean pure { \
                     convert<Quantity<M::us>>(1 tock) = rational(3, 2) M::us }";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "fr-091-ac-72"),
         "fr-091-ac-72.native",
         text.as_bytes(),
@@ -671,6 +673,7 @@ fn a_carried_quantity_exponent_expression_is_not_admitted() {
          function illegal_power using v(a: Quantity<m, Int[-2, 2]>): Quantity<m, Int[-2, 2]> pure {{ a ** 2 }}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),

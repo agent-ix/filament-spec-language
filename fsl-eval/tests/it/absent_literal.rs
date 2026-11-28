@@ -36,6 +36,7 @@ fn compile(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusa
          profile v = \"filament.value.complete/v1\";\n{RECORD}{declarations}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -202,6 +203,7 @@ fn an_optional_field_takes_no_absent_literal() {
                 function f using v(p: Population<Integer>[2], r: Integer): Boolean pure \
                 { lookup<Integer>(p, r) absent absent = r }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

@@ -359,6 +359,7 @@ fn check_with_other(body: &str) -> (String, Result<CheckedGraph, Vec<SemanticChe
     })
     .expect("kept clauses parse");
     let raw = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("test", "tc-1334"),
         "unit.native",
         unit.as_bytes(),
@@ -1425,6 +1426,7 @@ fn a_later_units_timed_predicate_names_types_through_its_own_alias() {
              profile v = \"filament.model.complete/v1\";\n{TEMPORAL}{declarations}\n"
         );
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("test", identity),
             "unit.native",
             source.as_bytes(),
@@ -1504,6 +1506,7 @@ fn a_clock_reading_parameter_names_its_own_units_package() {
              profile v = \"filament.model.complete/v1\";\n{TEMPORAL}{declarations}\n"
         );
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("test", identity),
             "unit.native",
             source.as_bytes(),

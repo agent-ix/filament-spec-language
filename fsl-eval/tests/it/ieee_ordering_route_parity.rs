@@ -112,6 +112,7 @@ fn checked_unit(functions: &str) -> (CheckedPackage, fsl_package::Emission) {
          {functions}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -800,6 +801,7 @@ const SOURCE_OBJECT_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn a_source_models_clause_function_is_named_alike_on_both_routes() {
     let packages = package_input(std::iter::empty::<&[u8]>()).expect("source-only input");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         SOURCE_OBJECT_UNIT.as_bytes(),
@@ -878,6 +880,7 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
         pre sqrtPre using v on ConfigVersion::size { filament::value::ieee::sqrt(convert<Float64[nearest-even]>(float64(bits: 0x4000000000000000))) <= filament::value::ieee::sqrt(convert<Float64[nearest-even]>(float64(bits: 0x4000000000000000))) }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1225,6 +1228,7 @@ fn probe_a_source_field_read_on_both_routes() {
         pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
         pre versioned using v on ConfigVersion::size { self.versionNumber > 0 }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "qsl-3404"),
         "unit.native",
         text.as_bytes(),
@@ -1380,6 +1384,7 @@ fn bare_operation_selection_uses_a_finite_caller_budget_and_keeps_its_typed_limi
         pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
         pre sqrtPre using v on ConfigVersion::size { true }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "u"),
         "unit.native",
         text.as_bytes(),
