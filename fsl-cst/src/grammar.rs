@@ -13,7 +13,7 @@ pub mod generate;
 /// The built-in time type's spelling (FR-393).
 const CLOCK: &str = "Clock";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Terminal {
     Exact(&'static str),
     Literal(&'static str),
