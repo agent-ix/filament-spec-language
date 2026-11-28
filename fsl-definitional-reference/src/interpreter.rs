@@ -746,6 +746,8 @@ pub fn evaluate_boolean(
 
 /// Evaluates one finite scalar value from the checked graph.
 pub fn evaluate_finite_value(
+    // Kept so the public signature and its workspace callers stay unchanged;
+    // the finite fragment reads no graph data.
     _graph: &CheckedGraph,
     expression: CheckedNode<'_>,
     locals: &[Value],
