@@ -37,7 +37,7 @@ use fsl_eval::simulation::model::{
     check_model_bounds, ModelSystem, NoClaimInstances, PredicateReading,
 };
 use fsl_eval::simulation::{
-    ExpansionLimit, ExpansionStop, NotSimulated, Permutation, StateKey, SymmetryGroup,
+    ExpansionLimit, ExpansionStop, Permutation, StateKey, SymmetryGroup,
 };
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::ReplayRefusal;

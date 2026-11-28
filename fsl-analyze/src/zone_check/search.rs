@@ -1119,16 +1119,6 @@ struct Plan {
     orbit: Vec<String>,
 }
 
-/// The outcome of an item no instance of which the run reads, with no state
-/// explored.
-fn zone_undecided<S>(cause: ZoneUndecided) -> ZoneCheckOutcome<S> {
-    ZoneCheckOutcome::Undecided {
-        cause,
-        non_zeno: None,
-        stats: ZoneStats::default(),
-    }
-}
-
 /// The outcome the pre-check settles, with no state explored.
 fn reduced<S>(cause: ZoneReduction) -> ZoneCheckOutcome<S> {
     ZoneCheckOutcome::Reduction {

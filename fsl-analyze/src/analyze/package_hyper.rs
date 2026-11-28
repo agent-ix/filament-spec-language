@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use filament_exact::Cancel;
-use fsl_eval::hyper::{CheckedStepMatch, ParameterBinding};
+use fsl_eval::hyper::CheckedStepMatch;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
     CheckedHyperLetters, ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,

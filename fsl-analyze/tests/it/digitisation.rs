@@ -222,9 +222,9 @@ fn digital_clocks_decline_what_one_rounding_does_not_preserve() {
 }
 
 /// FR-243-AC-5, TC-2290 step 4: the admitted claims of the table, nested
-/// shapes included, are decided by both routes. Two nested shapes the digital
-/// product reads wrongly settle `inconclusive` `replay-parity` on EN-1
-/// until QSL-3480 is fixed.
+/// shapes included, are decided by both routes. The two nested shapes the
+/// digital product once read wrongly (`inconclusive` `replay-parity` on EN-1
+/// until QSL-3480) are proved since its EN-1 idle-tail delay merged (#4135).
 #[trace("TC-2290", "FR-243-AC-5")]
 #[test]
 fn digital_clocks_decide_the_admitted_claims_as_zones_do() {
@@ -263,7 +263,7 @@ fn digital_clocks_decide_the_admitted_claims_as_zones_do() {
         (
             "always[0 ms, 4 ms] eventually[0 ms, 1 ms] holds(c.phase >= 1)",
             "proved",
-            "inconclusive",
+            "proved",
         ),
         (
             "always[0 ms, 4 ms] eventually[0 ms, 1 ms] holds(c.phase = 1)",
@@ -273,7 +273,7 @@ fn digital_clocks_decide_the_admitted_claims_as_zones_do() {
         (
             "eventually[0 ms, 4 ms] always[0 ms, 1 ms] holds(c.phase = 2)",
             "proved",
-            "inconclusive",
+            "proved",
         ),
         (
             "always (holds(c.phase < 1) until[0 ms, 2 ms] holds(c.phase >= 1))",
