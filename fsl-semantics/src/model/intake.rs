@@ -1124,12 +1124,12 @@ pub type PackageInput = BTreeMap<String, Vec<u8>>;
 /// `invalid_package`/`conflicting-definition` (one domain package per
 /// identity). Each document is read here under no byte limit, and again when
 /// a selection admits it under the caller's `intake.input_bytes`.
-#[ix_trace_rs::implements("NFR-141-AC-10")]
+#[implements("NFR-141-AC-10")]
 pub fn package_input<'a>(
     documents: impl IntoIterator<Item = &'a [u8]>,
 ) -> Result<PackageInput, ModelRefusal> {
     let mut input = PackageInput::new();
-    let parser_context = fsl_forms::cst::ParserContext::new();
+    let parser_context = fsl_cst::ParserContext::new();
     for bytes in documents {
         if model_unit::looks_like_model_unit(&parser_context, bytes) {
             let compiled = model_unit::compile_model_unit_bytes(&parser_context, bytes)?;

@@ -9,6 +9,7 @@ use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::SourceReadCause;
 use fsl_foundation::{Code, Phase, Source, SourceIdentity, SourceLabel, Span};
 use fsl_cst::ParserContext;
+use ix_trace_rs::implements;
 use std::fmt;
 
 /// The stable complete-source diagnostic code.
@@ -263,6 +264,7 @@ pub enum TokenClass {
 }
 
 /// Parse a source identity and byte buffer, retaining its lossless parse.
+#[implements("NFR-141-AC-10")]
 pub fn parse(
     context: &ParserContext,
     identity: SourceIdentity,
@@ -276,6 +278,7 @@ pub fn parse(
 }
 
 /// Parse an already-labelled source.
+#[implements("NFR-141-AC-10")]
 pub fn parse_source(
     context: &ParserContext,
     source: Source,

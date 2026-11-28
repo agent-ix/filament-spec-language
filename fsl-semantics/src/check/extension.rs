@@ -206,7 +206,7 @@ pub(crate) struct CheckedExtensionForm {
 
 /// What the check reads besides the forms.
 pub(crate) struct ExtensionInput<'a> {
-    pub(crate) parser: &'a fsl_forms::cst::ParserContext,
+    pub(crate) parser: &'a fsl_cst::ParserContext,
     pub(crate) scope: &'a Scope,
     pub(crate) signatures: &'a Signatures,
     pub(crate) held: &'a HeldExtensions,
