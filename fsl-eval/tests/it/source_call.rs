@@ -755,7 +755,7 @@ fn state_only_and_complete_clause_slash_keep_the_rational_context_explicit() {
                 let graph = result
                     .unwrap_or_else(|refusals| panic!("{profile}, {kind}, {body}: {refusals:?}"));
                 assert_eq!(graph.state_clauses().len(), 1, "{kind}");
-                let children = graph.state_clauses()[0].body().children();
+                let mut children = graph.state_clauses()[0].body().children();
                 assert_eq!(children.len(), 2, "{kind}: equality operands");
                 let expected_domain = filament_exact::RationalDomain::new(
                     filament_exact::IntegerInterval::new(7_i64.into(), 7_i64.into())
@@ -765,7 +765,7 @@ fn state_only_and_complete_clause_slash_keep_the_rational_context_explicit() {
                 )
                 .expect("exact 7/3 domain");
                 assert_eq!(
-                    children[0].value_type(),
+                    children.next().expect("equality has a left operand").value_type(),
                     &ValueType::Rational(expected_domain),
                     "{kind}: slash carries exact 7/3"
                 );
