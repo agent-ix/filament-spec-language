@@ -1188,6 +1188,7 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
 /// Although `x <= 1 ms` permits time before the reset, the guard on `y`
 /// forces every repeated `ping` step to take zero time. The cycle is not an
 /// admitted time-divergent witness.
+#[trace("FR-245-AC-2")]
 #[test]
 fn a_guard_on_a_never_reset_clock_is_not_an_advancing_cycle() {
     let world = quiet(
