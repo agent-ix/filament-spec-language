@@ -90,6 +90,7 @@ fn the_document_graph_of_a_package_the_reader_refuses_is_the_readers_refusal() {
         &checked,
         &PackageInput::new(),
         AnalyzeLimits::published(DeadlineSupply::Unbounded).emit,
+        AnalyzeLimits::published(DeadlineSupply::Unbounded).read,
     )
     .expect_err("the reader refuses the package");
     let AnalyzeRefusal::Package(refusal) = refusal else {

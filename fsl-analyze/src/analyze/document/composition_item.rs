@@ -421,6 +421,7 @@ impl CompositionFront for Context<'_> {
             &dependency,
             self.binding.packages,
             self.limits.emit,
+            self.limits.read,
         ) {
             Ok(read) => crate::analyze::DocumentGraphs::of_bytes(read.emission().package().bytes())
                 .map_err(Unavailable::Emission),

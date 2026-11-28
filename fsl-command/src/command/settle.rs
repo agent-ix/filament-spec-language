@@ -50,7 +50,7 @@ pub(super) fn settle_call(
         .map(|member| fsl_replay::claim_locus_wire(member.occurrence()))
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| RunCause::AnalyzeFault)?;
-    let resolved = resolve_held_claims(checked, packages, limits.emit, selection)?;
+    let resolved = resolve_held_claims(checked, packages, (limits.emit, limits.read), selection)?;
     // FR-960 "Unknown claim": a claim of no item of the call refuses the
     // request before any item is negotiated, naming the claim as supplied.
     if let Some(position) = resolved
@@ -137,7 +137,7 @@ fn index_segments(claim: &serde_json::Value) -> Vec<(usize, &serde_json::Value)>
 fn resolve_held_claims<'a>(
     checked: &fsl_replay::spine::CheckedUnit,
     packages: &fsl_semantics::model::intake::PackageInput,
-    emit: fsl_package::EmitLimits,
+    (emit, read): (fsl_package::EmitLimits, fsl_package::V2ReadLimits),
     selection: &'a Requirements,
 ) -> Result<std::borrow::Cow<'a, Requirements>> {
     if selection
@@ -147,7 +147,7 @@ fn resolve_held_claims<'a>(
     {
         return Ok(std::borrow::Cow::Borrowed(selection));
     }
-    let graph = fsl_analyze::analyze::DocumentGraphs::of_package(checked.package(), packages, emit)
+    let graph = fsl_analyze::analyze::DocumentGraphs::of_package(checked.package(), packages, emit, read)
         .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
     resolve_held_claims_in(&graph, selection)
 }

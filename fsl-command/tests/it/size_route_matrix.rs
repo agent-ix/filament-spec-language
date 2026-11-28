@@ -313,10 +313,14 @@ fn analyze_size_limits() -> command::CommandLimits {
         (Setting::S3Nodes, 2_000_000),
         (Setting::S3WorkUnits, 2_000_000),
         (Setting::ModelSequenceMaximum, 100_000),
-        (Setting::I2InputBytes, 1_073_741_824),
-        (Setting::ReplayInputBytes, 1_073_741_824),
+        (Setting::I2InputBytes, 4_294_967_296),
+        (Setting::I2Nodes, 10_000_000),
+        (Setting::I2Edges, 10_000_000),
+        (Setting::I2Occurrences, 10_000_000),
+        (Setting::I2WorkUnits, 100_000_000),
+        (Setting::ReplayInputBytes, 4_294_967_296),
         (Setting::ObservationInputBytes, 1_073_741_824),
-        (Setting::EmitOutputBytes, 1_073_741_824),
+        (Setting::EmitOutputBytes, 4_294_967_296),
     ] {
         limits
             .set(SettingName::Stage(setting), bound)
@@ -364,9 +368,42 @@ fn assert_analyze_request_exact_and_one_byte_over(path: &Path) {
         serde_json::from_slice(&document.to_bytes().expect("incomplete outcome serializes"))
             .expect("incomplete outcome is JSON");
     assert_eq!(error.category().exit_code(), 22);
-    assert_eq!(value["category"], "resource_exhausted");
+    assert_eq!(value["category"], "incomplete");
+    assert_eq!(value["diagnostics"][0]["code"], "resource_exhausted");
     assert_eq!(value["last_stage"], Value::Null);
     assert_eq!(value["items"], json!([]));
+}
+
+/// The compile route's package read takes the caller's `i2.input_bytes`: a
+/// bound below the emitted package refuses the whole request naming that
+/// setting, its bound and the count reached (FR-255 Behavior 1).
+#[trace("TC-3242", "FR-255-AC-24")]
+#[test]
+fn analyze_package_read_refuses_naming_the_callers_i2_input_bytes() {
+    let directory = tempfile::tempdir().expect("analyze workspace");
+    let path = analyze_request(directory.path(), &analyze_source(""));
+    let mut limits = analyze_size_limits();
+    limits
+        .set(SettingName::Stage(Setting::I2InputBytes), 1_000)
+        .expect("analyze exposes i2.input_bytes");
+    let request_bytes = usize::try_from(std::fs::metadata(&path).expect("request metadata").len())
+        .expect("request size fits usize");
+    let error = command::analyze_with_providers_and_limits(
+        &path,
+        RunLimits {
+            request_bytes,
+            ..RunLimits::default()
+        },
+        &limits,
+        &FslNegotiate,
+        Vec::new(),
+        &ProviderOptions::default(),
+        &Cancel::new(),
+    )
+    .expect_err("a package over the caller's read bound refuses");
+    let rendered = format!("{error:?}");
+    assert!(rendered.contains("I2InputBytes"), "{rendered}");
+    assert!(rendered.contains("configured_bound: 1000"), "{rendered}");
 }
 
 /// Analyze admits the nested-source request exactly and rejects one appended
@@ -483,7 +520,8 @@ fn analyze_admits_one_hundred_thousand_observation_values_at_their_bound() {
     )
     .expect("request-limit outcome is JSON");
     assert_eq!(error.category().exit_code(), 22);
-    assert_eq!(value["category"], "resource_exhausted");
+    assert_eq!(value["category"], "incomplete");
+    assert_eq!(value["diagnostics"][0]["code"], "resource_exhausted");
     assert_eq!(value["last_stage"], Value::Null);
     assert_eq!(value["items"], json!([]));
 

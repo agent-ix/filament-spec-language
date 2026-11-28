@@ -607,6 +607,7 @@ pub(crate) fn analyze_bound<'a>(
         package,
         binding.packages,
         limits.emit,
+        limits.read,
         &selections,
     ) {
         Ok(read) => Some(read),
@@ -652,7 +653,12 @@ pub(crate) fn analyze_bound<'a>(
         if dependency_graphs.contains_key(&name) {
             continue;
         }
-        let graph = match crate::provider::read_package(dependency, binding.packages, limits.emit) {
+        let graph = match crate::provider::read_package(
+            dependency,
+            binding.packages,
+            limits.emit,
+            limits.read,
+        ) {
             Ok(read) => super::DocumentGraphs::of_bytes(read.emission().package().bytes()),
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
@@ -1427,6 +1433,7 @@ fn work<'a>(
                 super::hybrid_item::Spelling {
                     packages: binding.packages,
                     emit: limits.emit,
+                    read: limits.read,
                     shared,
                 },
             )
@@ -1484,6 +1491,7 @@ fn work<'a>(
                         claim: &item.claim,
                         routed,
                         emit: limits.emit,
+                        read: limits.read,
                         selection,
                     },
                     shared,
@@ -1592,7 +1600,7 @@ fn work<'a>(
                 package,
                 binding.packages,
                 routed,
-                limits.emit,
+                (limits.emit, limits.read),
                 selection,
                 shared,
                 &item.claim,
@@ -1660,7 +1668,7 @@ fn work<'a>(
                         backend.id(),
                         package,
                         binding.packages,
-                        (routed, limits.emit),
+                        (routed, limits.emit, limits.read),
                         crate::provider::CompositionTarget::new(
                             item.claim.clone(),
                             form.premises.clone(),

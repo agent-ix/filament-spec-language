@@ -907,6 +907,9 @@ pub struct AnalyzeLimits {
     /// The ceiling on the canonical bytes of each package emission the
     /// analysis makes (`emit.output_bytes`, FR-264 Behavior 5).
     pub emit: fsl_package::EmitLimits,
+    /// The strict reader's ceilings on each package the analysis reads back
+    /// (`i2.*`, FR-255 "Lifecycle caller-limit coverage").
+    pub read: fsl_package::V2ReadLimits,
     /// The bound on each replay read the analysis starts
     /// (`replay.input_bytes`, FR-255; FR-940-AC-22).
     pub replay: fsl_replay::ReplayLimits,
@@ -938,6 +941,9 @@ impl AnalyzeLimits {
             position_limit: crate::plan::MODEL_BASED_POSITIONS,
             deadline,
             emit: fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT),
+            read: fsl_package::V2ReadLimits::bounded(
+                fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT,
+            ),
             replay: fsl_replay::ReplayLimits::default(),
             engines: EngineBounds::default(),
         }
@@ -1125,8 +1131,9 @@ impl DocumentGraphs {
         package: &CheckedPackage,
         packages: &fsl_semantics::model::intake::PackageInput,
         emit: fsl_package::EmitLimits,
+        read: fsl_package::V2ReadLimits,
     ) -> Result<fsl_semantics::check::wire_id::WireGraph, AnalyzeRefusal> {
-        match crate::provider::read_package(package, packages, emit) {
+        match crate::provider::read_package(package, packages, emit, read) {
             Ok(read) => {
                 Self::of_bytes(read.emission().package().bytes()).map_err(AnalyzeRefusal::Emission)
             }

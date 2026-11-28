@@ -3955,6 +3955,7 @@ impl<'a> WorkInputs<'_, 'a> {
                             packages: self.binding.packages,
                             routed,
                             emit: self.limits.emit,
+                            read: self.limits.read,
                             target,
                         },
                     )

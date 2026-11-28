@@ -1011,6 +1011,8 @@ pub struct ProviderItemInput<'a> {
     pub routed: Option<RequirementItem>,
     /// The ceiling on the package's emission.
     pub emit: EmitLimits,
+    /// The strict reader's ceilings on the package read back.
+    pub read: fsl_package::V2ReadLimits,
     /// The claim's target.
     pub selection: Result<ValueTarget<'a>, Selection>,
 }
@@ -1023,6 +1025,7 @@ pub(crate) struct ProviderWork<'a> {
     packages: &'a PackageInput,
     routed: Option<RequirementItem>,
     emit: EmitLimits,
+    read: fsl_package::V2ReadLimits,
     selection: ProviderSelection<'a>,
 }
 
@@ -1091,6 +1094,7 @@ pub(crate) fn provider_item_over<'a>(
             packages: input.packages,
             routed: input.routed,
             emit: input.emit,
+            read: input.read,
             selection: ProviderSelection::Value(input.selection),
         },
     )
@@ -1118,6 +1122,7 @@ pub(crate) fn package_provider_item<'a>(
             packages: input.packages,
             routed: input.routed,
             emit: input.emit,
+            read: input.read,
             selection: ProviderSelection::Value(Ok(input.target)),
         },
     )
@@ -1129,6 +1134,7 @@ pub(crate) struct PackageProviderInput<'a> {
     pub(crate) packages: &'a PackageInput,
     pub(crate) routed: Option<RequirementItem>,
     pub(crate) emit: EmitLimits,
+    pub(crate) read: fsl_package::V2ReadLimits,
     pub(crate) target: ValueTarget<'a>,
 }
 
@@ -1144,7 +1150,7 @@ pub(crate) fn contract_provider_item_over<'a>(
     package: &'a CheckedPackage,
     packages: &'a PackageInput,
     routed: Option<RequirementItem>,
-    emit: EmitLimits,
+    (emit, read): (EmitLimits, fsl_package::V2ReadLimits),
     selection: Result<
         crate::contract_check::ContractRequest<'a>,
         fsl_replay::contract_check::ContractSelection,
@@ -1164,6 +1170,7 @@ pub(crate) fn contract_provider_item_over<'a>(
             packages,
             routed,
             emit,
+            read,
             selection: ProviderSelection::Contract(selection),
         },
     )
@@ -1177,7 +1184,11 @@ pub(crate) fn composition_provider_item_over<'a>(
     backend: &BackendId,
     package: &'a CheckedPackage,
     packages: &'a PackageInput,
-    (routed, emit): (Option<RequirementItem>, EmitLimits),
+    (routed, emit, read): (
+        Option<RequirementItem>,
+        EmitLimits,
+        fsl_package::V2ReadLimits,
+    ),
     target: CompositionTarget,
     shared: Option<Shared<'a>>,
 ) -> AnalyzeItem<'a> {
@@ -1193,6 +1204,7 @@ pub(crate) fn composition_provider_item_over<'a>(
             packages,
             routed,
             emit,
+            read,
             selection: ProviderSelection::Composition(target),
         },
     )
@@ -1230,8 +1242,9 @@ pub(crate) fn admitted_bytes(
     package: &CheckedPackage,
     packages: &PackageInput,
     emit: EmitLimits,
+    limits: fsl_package::V2ReadLimits,
 ) -> Result<EmittedPackage, NotAdmitted> {
-    let read = read_package(package, packages, emit)?;
+    let read = read_package(package, packages, emit, limits)?;
     Ok(read.emission().package().clone())
 }
 
@@ -1253,8 +1266,9 @@ pub(crate) fn read_package<'p>(
     package: &'p CheckedPackage,
     packages: &PackageInput,
     emit: EmitLimits,
+    limits: fsl_package::V2ReadLimits,
 ) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
-    read_package_with_temporal_selections(package, packages, emit, &[])
+    read_package_with_temporal_selections(package, packages, emit, limits, &[])
 }
 
 /// Read the source package under its checked acquisition's clock selections.
@@ -1263,6 +1277,7 @@ pub(crate) fn read_package_with_temporal_selections<'p>(
     package: &'p CheckedPackage,
     packages: &PackageInput,
     emit: EmitLimits,
+    limits: fsl_package::V2ReadLimits,
     selections: &[fsl_package::TemporalClockSelection],
 ) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
     let identity =
@@ -1274,7 +1289,7 @@ pub(crate) fn read_package_with_temporal_selections<'p>(
         &emission,
         identity,
         packages,
-        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+        limits,
         emit,
         fsl_package::SourceWitnessSupplier::new(&emission),
     )
@@ -1403,7 +1418,7 @@ pub(crate) fn settle_items(
             WorkPackage::Checked(package) => {
                 let bytes = match first.shared {
                     Some(shared) => PackageBytes::of(shared.emitted),
-                    None => match admitted_bytes(package, first.packages, first.emit) {
+                    None => match admitted_bytes(package, first.packages, first.emit, first.read) {
                         Ok(bytes) => {
                             owned = bytes;
                             PackageBytes::of(&owned)

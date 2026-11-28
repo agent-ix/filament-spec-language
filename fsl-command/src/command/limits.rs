@@ -449,11 +449,13 @@ impl CommandLimits {
             ..CallerLimits::default()
         };
         caller.spine.model = limits.normalization;
+        caller.spine.imports = limits.read;
         self.apply(&mut caller);
         limits.accounting = caller.accounting.0;
         limits.observation = caller.observation;
         limits.normalization = caller.spine.model;
         limits.replay = caller.replay;
+        limits.read = caller.spine.imports;
         if let Some(bound) = self.stage.get(&Setting::EmitOutputBytes) {
             limits.emit = fsl_package::EmitLimits::new(*bound);
         }

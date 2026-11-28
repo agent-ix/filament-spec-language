@@ -43,6 +43,7 @@ pub(crate) struct HybridReport {
 pub(super) struct Spelling<'a> {
     pub(super) packages: &'a PackageInput,
     pub(super) emit: EmitLimits,
+    pub(super) read: fsl_package::V2ReadLimits,
     /// The run's one strict read of its package, when it holds it.
     pub(super) shared: Option<crate::provider::Shared<'a>>,
 }
@@ -341,8 +342,13 @@ fn emitted_bytes(package: &CheckedPackage, spelling: Spelling<'_>) -> Option<Vec
     match spelling.shared {
         Some(shared) => Some(shared.emitted.bytes().to_vec()),
         None => {
-            let bytes =
-                crate::provider::admitted_bytes(package, spelling.packages, spelling.emit).ok()?;
+            let bytes = crate::provider::admitted_bytes(
+                package,
+                spelling.packages,
+                spelling.emit,
+                spelling.read,
+            )
+            .ok()?;
             Some(bytes.bytes().to_vec())
         }
     }
