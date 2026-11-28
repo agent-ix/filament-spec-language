@@ -14,7 +14,9 @@ use ix_trace_rs::implements;
 use num_traits::Zero;
 use serde_json::{json, Value as JsonValue};
 
+mod admission;
 mod elapsed;
+pub use admission::timed_certificate_route;
 
 #[implements("FR-203-AC-30", "FR-204-AC-21")]
 #[allow(clippy::too_many_arguments)]
@@ -49,11 +51,9 @@ pub(super) fn check(
     };
     let timed = fsl_eval::simulation::model::TimedSystem::new(system, &claim.subject.alias)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-    let route = if region_route(&timed, claim) {
-        TimedProbabilityRoute::Region
-    } else {
-        TimedProbabilityRoute::Digital
-    };
+    // The route the declared table admits for the conditions the checker
+    // establishes itself; no certificate exists for any other claim.
+    let route = admission::certificate_route(system, &timed, claim, limits, cancel)?;
     let scale = certificate_scale(system, &timed, claim, route)?;
     if objective.route != route
         || objective.unit != timed.source().unit_node
@@ -1740,6 +1740,28 @@ fn phase_value(phase: &Phase) -> Option<bool> {
     }
 }
 
+/// How the checker reads a run that ends at a time-lock with its event
+/// still pending (FSpec FR-416 "How claims read a time-lock", ADR-038
+/// RL-7): the declared mapping from the operator's kind, looked up here from
+/// the checker's own reading of the phase. A plain deadline event is an
+/// `eventually` (rejected); a nested formula keeps the rejection.
+#[implements("FR-924-AC-5")]
+fn locked_terminal(phase: &Phase) -> bool {
+    use fsl_eval::probabilistic::{DeadlineKind, MonitorVerdict};
+    use fsl_eval::simulation::model::LOCKED_RUN_TERMINAL;
+    let kind = match phase {
+        Phase::Pending => Some(DeadlineKind::Eventually),
+        Phase::Bounded(operator) => Some(operator.kind),
+        _ => None,
+    };
+    kind.and_then(|kind| {
+        LOCKED_RUN_TERMINAL
+            .iter()
+            .find(|(locked, _)| *locked == kind)
+    })
+    .is_some_and(|(_, verdict)| *verdict == MonitorVerdict::Accept)
+}
+
 fn monitor_json(phase: &Phase) -> JsonValue {
     use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase, TimedOperatorState};
     let kind_name = |kind| match kind {
@@ -2368,7 +2390,7 @@ fn enumerate_digital_deadline(
             insert_checker_state(
                 key,
                 CheckerState {
-                    terminal: choices.is_empty().then_some(false),
+                    terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                     choices,
                 },
                 &mut states,
@@ -2430,7 +2452,7 @@ fn enumerate_digital_deadline(
             insert_checker_state(
                 key,
                 CheckerState {
-                    terminal: Some(false),
+                    terminal: Some(locked_terminal(&current.phase)),
                     choices: Vec::new(),
                 },
                 &mut states,
@@ -2565,7 +2587,7 @@ fn enumerate_digital_deadline(
         insert_checker_state(
             key,
             CheckerState {
-                terminal: choices.is_empty().then_some(false),
+                terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                 choices,
             },
             &mut states,
@@ -2855,7 +2877,7 @@ fn enumerate_region_deadline(
         insert_checker_state(
             key,
             CheckerState {
-                terminal: choices.is_empty().then_some(false),
+                terminal: choices.is_empty().then(|| locked_terminal(&current.phase)),
                 choices,
             },
             &mut states,
@@ -5147,11 +5169,14 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         return Err(unsupported());
     }
     let timed = TimedSystem::new(system, &claim.subject.alias).map_err(|_| unsupported())?;
-    let route = if region_route(&timed, claim) {
-        TimedProbabilityRoute::Region
-    } else {
-        TimedProbabilityRoute::Digital
-    };
+    let route = admission::certificate_route(
+        system,
+        &timed,
+        claim,
+        ProbabilityDocumentLimits::for_exact(limits, system.meter_limits()),
+        cancel,
+    )
+    .map_err(from_document)?;
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
     let timed_watch = deadline_event(claim)
         .map(|(bound, predicate)| (bound, Watch::Deadline(predicate)))

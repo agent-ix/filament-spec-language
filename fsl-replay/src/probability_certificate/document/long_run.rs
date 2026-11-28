@@ -1786,17 +1786,7 @@ fn check_scheduled(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if !workload && !cx.refutation {
-        return check_mdp(
-            system,
-            &subject.graph,
-            &document,
-            &subject.bound,
-            subject.reference.as_ref(),
-            &subject.constraints,
-            subject.weight.as_ref().map(|_| &subject.action_weights),
-            cx,
-        )
-        .map(|mut check| {
+        return check_mdp(system, &document, &subject, cx).map(|mut check| {
             if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
                 accepted.document = Some(bytes.into());
             }
@@ -2310,14 +2300,15 @@ fn maximal_end_components(
 #[implements("FR-199-AC-6")]
 fn check_mdp(
     system: &ModelSystem<'_>,
-    graph: &CheckerGraph,
     document: &LongRunProbabilityDocument,
-    bound: &Bound,
-    reference: Option<&ObjectReference>,
-    constraints: &[filament_semantic_value::fairness::FairnessConstraint],
-    action_weights: Option<&BTreeMap<ProbabilityProductKey, Vec<Rational>>>,
+    subject: &Subject,
     cx: &mut Context<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let graph = &subject.graph;
+    let bound = &subject.bound;
+    let reference = subject.reference.as_ref();
+    let constraints = &subject.constraints;
+    let action_weights = subject.weight.as_ref().map(|_| &subject.action_weights);
     let minimum = document.optimization == LongRunOptimization::Minimum;
     let keys = graph.states.keys().collect::<Vec<_>>();
     let positions = keys

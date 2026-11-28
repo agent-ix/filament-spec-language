@@ -523,7 +523,7 @@ impl Run<'_, '_> {
                 let mut executions = Vec::with_capacity(self.slots.len());
                 for slot in &self.slots {
                     if *slot == index {
-                        executions.push(prefix.clone());
+                        executions.push(ClosedExecution::clone(&prefix));
                         continue;
                     }
                     let system = self

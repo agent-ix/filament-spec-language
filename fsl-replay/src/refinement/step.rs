@@ -3006,8 +3006,10 @@ mod tests {
     }
 
     fn retained_budget(bound: u64) -> Budget {
-        let mut limits = crate::limits::EngineLimits::default();
-        limits.analysis_retained_bytes = bound;
+        let limits = crate::limits::EngineLimits {
+            analysis_retained_bytes: bound,
+            ..crate::limits::EngineLimits::default()
+        };
         Budget::from_settings(
             &limits,
             filament_exact::ScalarLimits {

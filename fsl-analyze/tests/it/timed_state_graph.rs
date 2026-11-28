@@ -2305,7 +2305,7 @@ impl Fr852GapRun {
 fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
     use fsl_analyze::analyze::{
         test_support_state_graph_item, AnalyzeLimits, DeadlineSupply, Engines, RunInput,
-        SourceProvision, SubjectBinding, TemporalItem,
+        SourceProvision, StateGraphItemTarget, SubjectBinding, TemporalItem,
     };
     use fsl_foundation::RequestIndex;
 
@@ -2403,10 +2403,12 @@ fn fr852_gap_analyze(_name: &str, source: &str, items: Value) -> Fr852GapRun {
                 &binding,
                 limits,
                 &provision,
-                key,
-                RequestIndex::new(index),
-                &form,
-                method,
+                &StateGraphItemTarget {
+                    key,
+                    index: RequestIndex::new(index),
+                    form: &form,
+                    method,
+                },
                 &filament_exact::Cancel::new(),
             )
             .expect("the selected state-graph claim builds an item")

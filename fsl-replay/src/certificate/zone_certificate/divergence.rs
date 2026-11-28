@@ -191,7 +191,7 @@ impl<O> Checker<'_, '_, O> {
         let mut moves_count = 0_u64;
         for (_, state) in &states {
             let mut moves = Vec::new();
-            for step in self.timed.guarded_steps(state).or_else(undecided)? {
+            for step in self.steps_at(state)? {
                 let Some(&to) = index.get(&self.state_key(step.post())?) else {
                     continue;
                 };
@@ -211,11 +211,7 @@ impl<O> Checker<'_, '_, O> {
             moves_count =
                 moves_count.saturating_add(u64::try_from(moves.len()).unwrap_or(u64::MAX));
             let idles = match self.timed.tick_period() {
-                Some(_) => self
-                    .timed
-                    .guarded_steps(state)
-                    .or_else(undecided)?
-                    .is_empty(),
+                Some(_) => self.steps_at(state)?.is_empty(),
                 None => {
                     self.timed.is_quiescent(state).or_else(undecided)? && self.elapses(state)?
                 }

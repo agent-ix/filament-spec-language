@@ -373,6 +373,7 @@ pub(in crate::emit) fn renumber(
 /// Write the new numbering into the occurrences of the nodes at the positions
 /// `changed` names and rebuild their source-map entries. Synthetic slots clone
 /// the regions of the syntax-owner occurrence they repeat.
+#[implements("FSpec-FR-322-AC-490")]
 fn apply(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -428,10 +429,12 @@ fn apply(
                 Slot::Source { old, ordinal } => (old, ordinal),
                 Slot::Synthetic { from, ordinal } => (from, ordinal),
             };
-            let mut entry = entries
+            let Some(mut entry) = entries
                 .and_then(|entries| entries.get(&source_ordinal))
                 .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            else {
+                continue;
+            };
             entry.ordinal = new_ordinal;
             moved.push(entry);
         }
@@ -633,8 +636,8 @@ fn rewalk_slots(
         }
     }
     let mut region_of = HashMap::<(usize, bool, usize), u64>::new();
-    for visit in 0..numbered {
-        region_of.entry(lexical[visit]).or_insert(visit as u64);
+    for (visit, &key) in lexical.iter().enumerate().take(numbered) {
+        region_of.entry(key).or_insert(visit as u64);
     }
     let mut slots = Vec::with_capacity(end + listed - numbered);
     for place in 0..end {
@@ -892,7 +895,46 @@ fn relabel_term_data_inner(
     }
     data.body_locations
         .retain_mut(|row| relabel(&row.application, &mut row.occurrence).is_some());
+    deal_body_keys(data);
     sort_body_rows(data);
+}
+
+/// The rows of one function at one application pair with that function's
+/// visits by rank (FR-322 "Pairing rows with visits"), and a row's path is
+/// encoded relative to the row of the visit before it. The array was in rank
+/// order before the renumbering; a renumbering takes the checker's uses to the
+/// walk's ordinals in source order, which can cross the uses of one function.
+/// So each (function, application) group keeps its rows in rank order and takes
+/// its own renumbered keys in ascending order: its k-th visit's row is keyed by
+/// the k-th ordinal the function's visits consume (FR-322-AC-541).
+#[implements("FSpec-FR-322-AC-541")]
+fn deal_body_keys(data: &mut filament_contract_model::CheckedTermDataV2) {
+    use filament_contract_model::CheckedBodyLocationOrigin;
+    let mut groups = BTreeMap::<(&CheckedNodeId, &CheckedNodeId), Vec<usize>>::new();
+    for (at, row) in data.body_locations.iter().enumerate() {
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+        groups
+            .entry((function, &row.application))
+            .or_default()
+            .push(at);
+    }
+    let mut dealt = Vec::new();
+    for rows in groups.values() {
+        let mut keys: Vec<_> = rows
+            .iter()
+            .map(|&at| {
+                let row = &data.body_locations[at];
+                (row.occurrence.clone(), row.term_ordinal)
+            })
+            .collect();
+        keys.sort();
+        dealt.extend(rows.iter().copied().zip(keys));
+    }
+    for (at, (occurrence, term_ordinal)) in dealt {
+        let row = &mut data.body_locations[at];
+        row.occurrence = occurrence;
+        row.term_ordinal = term_ordinal;
+    }
 }
 
 /// A record node's id also changes with a field rename (FR-487), which can
@@ -1069,6 +1111,31 @@ mod rewalk_tests {
             .map(|row| row.application.clone())
             .collect();
         assert_eq!(order, [id("a"), id("b")]);
+    }
+
+    /// FSpec FR-322-AC-541 (QSL-3627): one function's rows at one application
+    /// keep their rank order when a renumbering crosses their occurrences, and
+    /// take the renumbered keys in ascending order.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-541")]
+    #[test]
+    fn a_functions_rows_keep_their_rank_when_a_renumbering_crosses_them() {
+        let mut first = body_row("g", 0);
+        first.location.up = 0;
+        let mut second = body_row("g", 1);
+        second.location.up = 1;
+        let mut data = CheckedTermDataV2 {
+            body_locations: vec![first, second],
+            ..CheckedTermDataV2::default()
+        };
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(0))];
+        let by_id: BTreeMap<_, _> = [(id("app"), mapping)].into_iter().collect();
+        relabel_term_data(&by_id, &Synthetics::new(), &mut data);
+        let rows: Vec<_> = data
+            .body_locations
+            .iter()
+            .map(|row| (row.occurrence.ordinal, row.location.up))
+            .collect();
+        assert_eq!(rows, [(0, 0), (1, 1)]);
     }
 
     fn pairs(slots: &[Slot]) -> Vec<(bool, u64, u64)> {

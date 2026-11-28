@@ -223,7 +223,7 @@ pub use certificate::zone_certificate::{
     RefinementIdentity, RefinementPart, SilentMove, StateGraphCertificateDecision,
     StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
     ZoneCertificateReferenceError, ZoneCertificateRefusal, ZoneCertificateRequest,
-    ZoneCertificateVerdict, ZoneCertificateWireError,
+    ZoneCertificateVerdict, ZoneCertificateWireError, UNDEFINED_POSITION_STATE,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -521,7 +521,8 @@ pub use probability_certificate::{
     replay_probabilistic_undefined_with_work_scope, replay_probabilistic_witness,
     replay_probabilistic_witness_from_package,
     replay_probabilistic_witness_from_package_with_work_scope,
-    replay_probabilistic_witness_with_work_scope, vacuous_measure_probability_certificate_document,
+    replay_probabilistic_witness_with_work_scope, timed_certificate_route,
+    vacuous_measure_probability_certificate_document,
     vacuous_measure_probability_certificate_document_with_work_scope,
     weighted_long_run_probability_certificate_document,
     weighted_long_run_probability_certificate_document_with_work_scope,

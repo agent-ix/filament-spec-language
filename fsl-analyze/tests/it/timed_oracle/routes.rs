@@ -116,7 +116,12 @@ pub(super) fn exact(world: &World, claim: &str) -> Answer {
             TerminalValue::Inconclusive(InconclusiveCause::NoAdmittedBehaviour) => {
                 Verdict::Vacuous("no-admitted-behaviour")
             }
-            value => Verdict::Broken(format!("{value:?}")),
+            value => Verdict::Broken(
+                format!("{value:?} {terminal:?}")
+                    .chars()
+                    .take(900)
+                    .collect(),
+            ),
         },
     };
     Answer {
