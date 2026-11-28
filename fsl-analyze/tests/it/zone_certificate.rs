@@ -1108,14 +1108,88 @@ fn the_certificate_members_are_the_reconciled_schema_set() {
     }
 }
 
-/// A `ping` step with `y <= 0` resets only `x`, and phase 0 has the
-/// invariant `x <= 1 ms`. Although that invariant permits a delay before a
-/// reset, the never-reset `y` guard makes every repeat of `ping` zero-time.
-/// The `go`/`tock` cycle is genuinely divergent; naming `ping` as the
-/// admission witness is rejected `witness-fails`.
-#[trace("TC-371", "FR-245-AC-2")]
+/// FR-418 (the ordinary checker's `advancing_cycle`): a guard `y > 0` after
+/// `y := 0` bounds no round away from zero, so a cycle of such guards is not
+/// a time-divergent witness. In phase 0 `x <= 1 ms` is never reset there, so
+/// the `ping` loop (`y > 0 ms`, reset `y`) can run for at most 1 ms in all:
+/// a Zeno loop. The `go`/`tock` cycle, whose `tock` needs `x >= 1 ms`, is
+/// the real divergence. Naming the `ping` loop as the witness is rejected
+/// `witness-fails`; the engine's own certificate is accepted.
+#[trace("TC-371")]
 #[test]
 fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
+    let world = quiet(
+        &["x", "y"],
+        &[
+            ("ping", &["y"]),
+            ("go", &["phase"]),
+            ("tock", &["phase", "x"]),
+        ],
+        "",
+        DENSE,
+        "pre Ping using v on M::Call::ping { self.phase = 0 and self.y > 0 ms }\n\
+         post Pinged using v on M::Call::ping { self.y = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 0 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 }\n\
+         pre Tock using v on M::Call::tock { self.phase = 1 and self.x >= 1 ms }\n\
+         post Tocked using v on M::Call::tock { self.phase = 0 and self.x = 0 ms }\n\
+         time invariant Bounded when { true } { self.x <= 1 ms }\n",
+    );
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+    let ping = certificate
+        .edges
+        .iter()
+        .position(|edge| {
+            edge.from == edge.to
+                && edge
+                    .transition
+                    .as_ref()
+                    .is_some_and(|step| step.operation().contains("Call/ping\""))
+        })
+        .expect("a ping self-loop");
+    // The witness starts at an initial node and reaches the loop by the
+    // shortest path over the certificate's edges.
+    let start = certificate.initials[0];
+    let goal = certificate.edges[ping].from;
+    let mut reach: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    reach.insert(start, Vec::new());
+    let mut queue = std::collections::VecDeque::from([start]);
+    while let Some(node) = queue.pop_front() {
+        for (index, edge) in certificate.edges.iter().enumerate() {
+            if edge.from == node && !reach.contains_key(&edge.to) {
+                let mut path = reach[&node].clone();
+                path.push(index);
+                reach.insert(edge.to, path);
+                queue.push_back(edge.to);
+            }
+        }
+    }
+    let path = reach.remove(&goal).expect("the loop is reachable");
+    let mut zeno = certificate;
+    zeno.admitted = Some(fsl_replay::DivergenceWitness {
+        start,
+        path,
+        target: DivergentTarget::Cycle(vec![ping]),
+    });
+    match verdict(&world, &zeno) {
+        ZoneCertificateVerdict::Rejected(CertificateRejection { rule, .. }) => {
+            assert_eq!(rule, CertificateRule::WitnessFails);
+        }
+        other => panic!("a Zeno loop is not an admitted witness: {other:?}"),
+    }
+}
+
+/// A `ping` step guarded by `y <= 0` resets `x` but never resets `y`.
+/// Although `x <= 1 ms` permits time before the reset, the guard on `y`
+/// forces every repeated `ping` step to take zero time. The cycle is not an
+/// admitted time-divergent witness.
+#[test]
+fn a_guard_on_a_never_reset_clock_is_not_an_advancing_cycle() {
     let world = quiet(
         &["x", "y"],
         &[
@@ -1149,8 +1223,6 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
                     .is_some_and(|step| step.operation().contains("Call/ping\""))
         })
         .expect("a ping self-loop");
-    // The witness starts at an initial node and reaches the loop by the
-    // shortest path over the certificate's edges.
     let start = certificate.initials[0];
     let goal = certificate.edges[ping].from;
     let mut reach: std::collections::BTreeMap<usize, Vec<usize>> =
