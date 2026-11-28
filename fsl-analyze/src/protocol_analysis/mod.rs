@@ -20,7 +20,8 @@ mod step_view;
 mod subject;
 
 pub(crate) use finite_replay::{
-    finite_replay_item, ClaimReport, FiniteReplayReport, SuppliedTrace, TraceDefect,
+    finite_replay_item, finite_replay_package_item, ClaimReport, FiniteReplayReport, SuppliedTrace,
+    TraceDefect,
 };
 pub(crate) use item::settle;
 pub use item::ProtocolAnalysisArtifact;

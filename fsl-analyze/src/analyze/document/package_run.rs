@@ -317,6 +317,12 @@ enum Named<'s> {
         name: &'s str,
         selection: &'s ItemSelection,
     },
+    /// A `finite-replay` item over a package protocol.
+    ProtocolReplay {
+        index: RequestIndex,
+        name: &'s str,
+        selection: &'s ItemSelection,
+    },
     StateClause {
         index: RequestIndex,
         name: &'s str,
@@ -357,6 +363,7 @@ enum Route<'a> {
     },
     ProtocolFreedom(ProtocolBinding),
     ProtocolAnalysis,
+    ProtocolReplay(String),
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
@@ -635,6 +642,18 @@ fn settle_package_run_inner(
                 Resolution::Claim(claim, ()) => {
                     protocol_claims.push(claim.item.claim.clone());
                     routes.insert(index, Route::ProtocolAnalysis);
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
+            Named::ProtocolReplay {
+                index,
+                name,
+                selection,
+            } => match reads.protocol_replay(index, name, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, ()) => {
+                    protocol_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::ProtocolReplay(name.to_owned()));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -1099,7 +1118,7 @@ fn resolve_names<'s>(
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
             let protocol = if matches!(
                 selection.kind.as_deref(),
-                Some("local-projection" | "realizability")
+                Some("local-projection" | "realizability" | "finite-replay")
             ) || (item_kind == Some(ItemKind::DeadlockFreedom)
                 && selection.kind.as_deref() == Some(Capability::TemporalSatisfaction.to_wire()))
             {
@@ -1132,6 +1151,13 @@ fn resolve_names<'s>(
             ) && protocol
             {
                 return Ok(Named::ProtocolAnalysis {
+                    index,
+                    name,
+                    selection,
+                });
+            }
+            if selection.kind.as_deref() == Some(Capability::FiniteReplay.to_wire()) && protocol {
+                return Ok(Named::ProtocolReplay {
                     index,
                     name,
                     selection,
@@ -1961,6 +1987,64 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     candidates: candidate_list(&candidates),
                     options: item_options,
                     form: Some(ItemForm::Temporal(form)),
+                },
+                claim_name: name.to_owned(),
+                candidates,
+                unrouted: selection.unrouted_routing_options(false, false)
+                    || selection.reductions.is_some()
+                    || reads_no_clocks(selection)
+                    || !own_subject.same_model(self.subject),
+                subject: own_subject,
+            }),
+            (),
+        ))
+    }
+
+    /// A `finite-replay` item over the package protocol `name`, anchored at
+    /// that protocol's declaration occurrence (FR-636, FR-850).
+    fn protocol_replay(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<()>, PackageRunError> {
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let input = self.input.ok_or_else(fault)?;
+        let kind = Capability::FiniteReplay;
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return Ok(Resolution::Settled(refused));
+        }
+        let own_subject = self.own_subject(index, selection)?;
+        let form = input
+            .package()
+            .protocol_execution_named(name)
+            .map_err(|_| fault())?
+            .ok_or_else(fault)?;
+        let key = input
+            .package()
+            .node_key(form.protocol.clause())
+            .ok_or_else(fault)?;
+        let claim = OccurrenceKey::declaration(key);
+        let candidates = self.registry.candidates(kind, named.as_ref());
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item: ClaimItem {
+                    request_index: index,
+                    claim,
+                    kind,
+                    extent: ExtentClassification::Bounded,
+                    backend: named,
+                    candidates: candidate_list(&candidates),
+                    options: options(selection, backend_options),
+                    form: None,
                 },
                 claim_name: name.to_owned(),
                 candidates,
@@ -3024,6 +3108,27 @@ impl<'a> WorkInputs<'_, 'a> {
                 item,
                 &self.limits,
             ),
+            (None, Some(Route::ProtocolReplay(protocol)))
+                if item.kind == Capability::FiniteReplay =>
+            {
+                let trace = item
+                    .options
+                    .trace
+                    .as_ref()
+                    .and_then(|reference| self.binding.snapshots.get(reference))
+                    .map_or(
+                        Err(crate::protocol_analysis::TraceDefect::unreadable()),
+                        |bytes| crate::protocol_analysis::SuppliedTrace::read(bytes),
+                    );
+                crate::protocol_analysis::finite_replay_package_item(
+                    item.request_index,
+                    &self.input.input(),
+                    self.binding.clone(),
+                    self.limits,
+                    protocol,
+                    trace,
+                )
+            }
             (
                 Some(ItemForm::Temporal(form)),
                 Some(Route::Clause {
