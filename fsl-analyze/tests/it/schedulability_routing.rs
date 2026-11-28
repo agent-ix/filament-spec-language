@@ -10,8 +10,8 @@ use fsl_foundation::Span;
 use fsl_route::request::items_from_requirements;
 use fsl_route::{CandidateOutcome, ProviderOrigin, Registry};
 use fsl_semantics::check::{
-    Capability, CheckRefusal, CheckedGraph, CheckedScheduleClaim, RequirementMap,
-    RequirementRecord, ScheduleClaim, SchedulingPolicy,
+    Capability, CheckedGraph, CheckedScheduleClaim, RequirementMap, RequirementRecord,
+    ScheduleClaim, SchedulingPolicy, SemanticCheckRefusal,
 };
 use fsl_semantics::family::{ClaimExtent, Requirements};
 use ix_trace_rs::trace;
@@ -88,7 +88,7 @@ struct World {
     provision: fsl_analyze::analyze::SourceProvision,
 }
 
-fn checked_graph(source: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn checked_graph(source: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no model documents");
@@ -216,6 +216,7 @@ impl World {
         engines: &fsl_analyze::analyze::Engines,
         items: Vec<fsl_analyze::analyze::NegotiatedItem>,
     ) -> fsl_analyze::analyze::AnalyzeOutcome {
+        use fsl_analyze::analyze::DeadlineSupply;
         use fsl_analyze::analyze::{AnalyzeLimits, AnalyzeRequest, SubjectBinding};
         fsl_analyze::analyze::analyze(
             &self.package,
@@ -228,9 +229,10 @@ impl World {
                 },
                 provision: self.provision.clone(),
                 items,
+                certification: Default::default(),
             },
             engines,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
             &filament_exact::Cancel::new(),
         )
         .expect("the empty binding admits")

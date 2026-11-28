@@ -22,6 +22,7 @@ use fsl_semantics::check::wire_id::{
     peer_graphs, WireGraph,
 };
 use fsl_semantics::check::ComponentPackages;
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 use crate::analyze::GraphUnavailable;
@@ -147,6 +148,7 @@ pub(super) fn hold(
 
 /// The RFC 6901 pointers, in `value`, of the ids a composition item writes
 /// against a component graph, each with the package of that graph.
+#[ix_trace_rs::string_edge]
 fn component_slots(
     value: &Value,
     scope: &ComponentScope<'_>,
@@ -205,6 +207,7 @@ fn component_slots(
 
 /// [`hold`] for a composition item: the ids of a component slot are held in
 /// the component's graph, every other id in `graph`.
+#[implements("FR-621-AC-17")]
 fn hold_composition(
     value: &Value,
     graph: &WireGraph,

@@ -9,10 +9,15 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Meter, Undefined};
-use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
+use fsl_analyze::model_check::digital::{
+    check_digital, DigitalLimits, DigitalRefusal, DigitalRequest,
+};
+use fsl_analyze::zone_check::{ZoneCheckLimits, ZoneCheckOutcome, ZoneUndecided};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
+use fsl_eval::simulation::model::TimedVacuity;
 use fsl_eval::simulation::model::{ModelSimState, TimedSystem};
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
+use fsl_replay::ZoneCertificateRefusal;
 use fsl_replay::{CounterexampleKind, ModelCheckOutcome};
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -20,6 +25,8 @@ use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit, rpc_unit_with};
+use crate::zone_replay::{replay, reproduced};
+use crate::zone_search::{assert_edges_cover, claim, operations, proved, violated};
 
 /// ADR-026 section 11's `Settles`: every `Waiting` position is followed within
 /// `interval` by a position that is not `Waiting`.
@@ -92,11 +99,7 @@ fn an_mitl_claim_proves_certified_and_refutes_with_exact_delays() {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect();
@@ -151,6 +154,32 @@ fn a_zone_state_budget_is_incomplete() {
     );
     assert_eq!(label(&items[0]), "incomplete");
     assert_eq!(run.exit, 22);
+}
+
+/// FR-255-AC-25: a timed item's `temporal.limits.max_states` and the
+/// caller's `zone_check.max_symbolic_states` are one bound given twice.
+#[trace("FR-255-AC-25")]
+#[test]
+fn a_timed_item_limit_and_the_zone_setting_are_refused() {
+    let ws = Workspace::new("timed-zone-conflict");
+    let request = request_over(
+        &ws,
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Settles", "temporal": {"limits": {"max_states": 2}}}]}),
+    );
+    let run = crate::analyze_cli_support::analyze_under(
+        &request,
+        &[(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5)],
+    );
+    assert_eq!(run.exit, 20, "{}", run.document());
+    let document = run.document().to_string();
+    assert!(document.contains("items[0]"), "{document}");
+    assert!(
+        document.contains("zone_check.max_symbolic_states"),
+        "{document}"
+    );
 }
 
 /// QSL-2129: a clock bound of the wrong dimension (a bare number against a
@@ -298,7 +327,8 @@ fn a_state_graph_claim_over_a_timed_subject_proves_on_zones() {
         .expect("a concrete witness path");
     assert_eq!(steps.len(), 1, "{item}");
     assert_eq!(
-        steps[0]["transition"]["operation"]["node"], "ix://test/timed/Call/send",
+        steps[0]["transition"]["operation"],
+        r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
         "{item}"
     );
     assert_eq!(
@@ -340,6 +370,16 @@ fn an_unread_member_settles_unsupported_not_requires_bound() {
     assert_eq!(run.exit, 21);
 }
 
+/// The operation's name in `step`'s transition, whose `operation` is its
+/// declaration identity text (FR-120); `-` when it is not one.
+fn operation_name(step: &Value) -> String {
+    step["transition"]["operation"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|identity| Some(identity["node"].as_str()?.rsplit('/').next()?.to_owned()))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
 /// The first two steps of `item`'s counterexample: each delay's numerator and
 /// denominator and its operation's name.
 fn head(item: &Value) -> Vec<(String, String, String)> {
@@ -353,11 +393,7 @@ fn head(item: &Value) -> Vec<(String, String, String)> {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect()
@@ -805,4 +841,1275 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
         "{}",
         run.item(0)
     );
+}
+
+/// One `Call` object whose `ping` changes no data field, under
+/// `time invariant x <= 1 ms`, with the temporal clauses `Safe`, `Live` and
+/// `Wrong`; `resets` makes `ping` reset `x`. The items are the three claims
+/// on EN-6, then on EN-1 `digital-clocks`; each result is backend, value and
+/// cause kind.
+fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
+    stalling_items(name, resets)
+        .iter()
+        .map(|item| {
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn stalling_items(name: &str, resets: bool) -> Vec<Value> {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    let (post, writes): (&str, &[&str]) = if resets {
+        (
+            "post Pinged using v on M::Call::ping { self.x = 0 ms }\n",
+            &["x"],
+        )
+    } else {
+        ("", &[])
+    };
+    let claims: String = [
+        ("Safe", "always holds(true)"),
+        ("Live", "always eventually holds(true)"),
+        ("Wrong", "always holds(false)"),
+    ]
+    .iter()
+    .map(|(claim, body)| {
+        format!(
+            "temporal {claim} using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ {body} }}\n"
+        )
+    })
+    .collect();
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}{post}time invariant Stall when {{ true }} {{ self.x <= 1 ms }}\n{claims}"
+        ),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let ws = Workspace::new(name);
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[("ping", writes)]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe"}, {"claim": "Live"}, {"claim": "Wrong"},
+            {"claim": "Safe", "options": digital.clone()},
+            {"claim": "Live", "options": digital.clone()},
+            {"claim": "Wrong", "options": digital}]}),
+    ));
+    (0..6).map(|n| run.item(n)).collect()
+}
+
+fn expected_on_both_routes<const N: usize>(
+    per_claim: [(&str, &str); N],
+) -> Vec<(String, String, String)> {
+    ["en-6", "en-1"]
+        .iter()
+        .flat_map(|backend| {
+            per_claim.iter().map(|(value, cause)| {
+                (
+                    (*backend).to_owned(),
+                    (*value).to_owned(),
+                    (*cause).to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// [`expected_on_both_routes`] for fair claims over a clock constraint, which
+/// EN-1 declines `invalid-input` (FR-243-AC-7).
+fn expected_with_digital_declined<const N: usize>(
+    per_claim: [(&str, &str); N],
+) -> Vec<(String, String, String)> {
+    let mut expected = expected_on_both_routes(per_claim);
+    for entry in &mut expected[N..] {
+        "declined".clone_into(&mut entry.1);
+        "invalid-input".clone_into(&mut entry.2);
+    }
+    expected
+}
+
+/// FR-232 "Vacuity", FR-240 "Vacuity": FR-232-AC-3's `Stall` is closed and has
+/// no time-divergent behaviour, so every claim over it, the false one
+/// included, is `inconclusive` `no-admitted-behaviour` on both routes, with
+/// no fairness declared.
+#[trace("FR-232-AC-3", "FR-240-AC-4")]
+#[test]
+fn digital_clocks_prove_nothing_over_a_stalled_subject() {
+    assert_eq!(
+        stalling("timed-digital-stall", false),
+        expected_on_both_routes([("inconclusive", "no-admitted-behaviour"); 3])
+    );
+}
+
+/// The same model with `ping` resetting `x`: time diverges, so the true claims
+/// are proved and the false one refuted on both routes. The first result,
+/// EN-6 on `always holds(true)`, is not asserted: EN-6 rejects its own
+/// certificate there (QSL-3486). A control for the stall test above; no
+/// criterion states these verdicts, so it carries no trace tag.
+#[test]
+fn digital_clocks_decide_claims_once_time_can_diverge() {
+    assert_eq!(
+        stalling("timed-digital-stall-reset", true)[1..],
+        expected_on_both_routes([("proved", ""), ("proved", ""), ("refuted", "")])[1..]
+    );
+}
+
+/// Each claim of `claims` over `model`'s timed model with `body`'s
+/// operations, on both timed routes: backend, value and cause kind. `analyze`
+/// refuses a package selection of a timed model, so the source program is the
+/// one input; the tests over [`partial_world`] read checked packages.
+fn routes_over(
+    name: &str,
+    model: &[u8],
+    body: &str,
+    claims: &[(&str, &str)],
+    snapshots: &[Vec<u8>],
+    subject: Option<Value>,
+) -> Vec<(String, String, String)> {
+    items_on_both_routes(name, model, body, claims, snapshots, subject)
+        .into_iter()
+        .map(|item| {
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(&item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// The result items [`routes_over`] reads: each claim on EN-6, then each on
+/// EN-1.
+fn items_on_both_routes(
+    name: &str,
+    model: &[u8],
+    body: &str,
+    claims: &[(&str, &str)],
+    snapshots: &[Vec<u8>],
+    subject: Option<Value>,
+) -> Vec<Value> {
+    use crate::timed_world::{unit_text, DENSE, PACKAGE};
+    let temporal: String = claims
+        .iter()
+        .map(|(claim, formula)| {
+            format!(
+                "temporal {claim} using tt over (c: M::Call) clock \"model-time\" on origin \
+                 {{ {formula} }}\n"
+            )
+        })
+        .collect();
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!("{DENSE}{body}{temporal}"),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let items: Vec<Value> = claims
+        .iter()
+        .map(|(claim, _)| json!({"claim": claim}))
+        .chain(
+            claims
+                .iter()
+                .map(|(claim, _)| json!({"claim": claim, "options": digital.clone()})),
+        )
+        .collect();
+    let mut extra = json!({"items": items});
+    if let Some(subject) = subject {
+        extra["subject"] = subject;
+    }
+    let ws = Workspace::new(name);
+    let run = analyze(&request_over(&ws, &unit, model, snapshots, extra));
+    (0..claims.len() * 2).map(|n| run.item(n)).collect()
+}
+
+/// From `phase` 0, `idle` loops and `go` enters the quiescent `phase` 1.
+/// Under `fair weak go` a behaviour idles any finite time, then takes `go`.
+const IDLE_OR_GO: &str = "pre Idle using v on M::Call::idle { self.phase = 0 }\n\
+     post Idled using v on M::Call::idle { self.x = 0 ms }\n\
+     pre Go using v on M::Call::go { self.phase = 0 }\n\
+     post Gone using v on M::Call::go { self.phase = 1 and self.x = 0 ms }\n\
+     time invariant Busy when { self.phase = 0 } { self.x <= 1 ms }\n";
+
+/// FR-239 decides a fair TT-1 or TT-2 claim on the liveness product, and FSpec
+/// FR-416 "Non-Zeno premise" gives a TT-1 or TT-2 result no `non_zeno`. By
+/// hand over [`IDLE_OR_GO`]: `go` breaks `phase != 1`, at once or within the
+/// window; no step leaves `phase <= 1`; and a behaviour that idles past 3 ms
+/// has not reached `phase` 1 by then.
+#[trace("FSpec-FR-416-AC-10", "FSpec-FR-161-AC-16", "FR-243-AC-7")]
+#[test]
+fn a_fair_invariant_or_window_claim_states_no_non_zeno_premise() {
+    let items = items_on_both_routes(
+        "timed-fair-forms",
+        &crate::timed_world::document(&["x"], &[("idle", &["x"]), ("go", &["phase", "x"])]),
+        IDLE_OR_GO,
+        &[
+            ("Held", "fair weak M::Call::go; always holds(c.phase <= 1)"),
+            (
+                "Broken",
+                "fair weak M::Call::go; always holds(c.phase != 1)",
+            ),
+            (
+                "Window",
+                "fair weak M::Call::go; always[0 ms, 3 ms] holds(c.phase <= 1)",
+            ),
+            (
+                "Early",
+                "fair weak M::Call::go; always[0 ms, 3 ms] holds(c.phase != 1)",
+            ),
+            (
+                "Late",
+                "fair weak M::Call::go; eventually[0 ms, 3 ms] holds(c.phase = 1)",
+            ),
+        ],
+        &[rpc_snapshot()],
+        None,
+    );
+    for item in &items {
+        assert_eq!(item["record"]["non_zeno"], Value::Null, "{item}");
+    }
+    // EN-6 decides all five; EN-1 declines each fair claim over `Busy`.
+    let found: Vec<&str> = items.iter().map(label).collect();
+    assert_eq!(
+        found[..5],
+        ["proved", "refuted", "proved", "refuted", "refuted"],
+        "{items:#?}"
+    );
+    assert_eq!(found[5..], ["declined"; 5], "{items:#?}");
+}
+
+/// From `phase` 0, `block` enters `phase` 2, where the invariant lets no time
+/// pass and no step is enabled, and `go` enters the quiescent `phase` 1.
+const LOCKING: &str = "pre Block using v on M::Call::block { self.phase = 0 }\n\
+     post Blocked using v on M::Call::block { self.phase = 2 }\n\
+     pre Go using v on M::Call::go { self.phase = 0 }\n\
+     post Gone using v on M::Call::go { self.phase = 1 }\n\
+     time invariant Locked when { self.phase = 2 } { self.x <= 0 ms }\n";
+
+/// `6 mod (2 - phase)`, undefined only at `phase` 2. Only a package checked
+/// under `Kernel` holds it: a source program is refused before it runs.
+const MOD_DEFINED: &str = "function mod_defined using v(n: Int[0, 3]): Boolean pure \
+     { 6 mod (2 - n) >= 0 }\n";
+
+fn locking_document() -> Vec<u8> {
+    crate::timed_world::document(&["x"], &[("block", &["phase"]), ("go", &["phase"])])
+}
+
+/// [`rpc_snapshot`] as the snapshot `identity` with `phase`.
+fn snapshot_at(identity: &str, phase: u8) -> Vec<u8> {
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
+    snapshot["identity"]["identity"] = json!(identity);
+    snapshot["populations"][0]["objects"][0]["fields"]["phase"] =
+        json!({"integer": phase.to_string()});
+    snapshot.to_string().into_bytes()
+}
+
+/// FR-239-AC-5's time-lock rule on both routes: `phase != 2` is false only on
+/// the time-locked state, so it is proved, and the search goes on from there
+/// to `go`, where `phase = 0` is false.
+#[trace("FR-239-AC-5")]
+#[test]
+fn a_false_reading_on_a_time_locked_branch_refutes_nothing_on_either_route() {
+    let expected = expected_on_both_routes([("proved", ""), ("refuted", "")]);
+    let found = routes_over(
+        "timed-lock-branch",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("NotLocked", "always holds(c.phase != 2)"),
+            ("Wrong", "always holds(c.phase = 0)"),
+        ],
+        &[rpc_snapshot()],
+        None,
+    );
+    assert_eq!(found, expected);
+}
+
+/// The same rule over two initial states, one healthy (`phase` 0) and one
+/// time-locked from the start (`phase` 2): `phase != 2` is proved, and
+/// `phase != 1` is refuted after `go`.
+#[trace("FR-239-AC-5")]
+#[test]
+fn a_locked_initial_state_beside_a_healthy_one_refutes_nothing() {
+    let reference = |identity: &str| json!({"authority": "test", "identity": identity});
+    let expected = expected_on_both_routes([("proved", ""), ("refuted", "")]);
+    let found = routes_over(
+        "timed-lock-initial",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("NotLocked", "always holds(c.phase != 2)"),
+            ("Wrong", "always holds(c.phase != 1)"),
+        ],
+        &[snapshot_at("s0", 0), snapshot_at("s1", 2)],
+        Some(json!({"initial_states": [reference("s1"), reference("s0")],
+            "universes": [reference("s0")], "proof_bounds": []})),
+    );
+    assert_eq!(found, expected);
+}
+
+/// The Kernel-checked package of one claim over [`LOCKING`].
+fn partial_world(formula: &str) -> crate::timed_world::World {
+    crate::timed_world::world_with_mode(
+        &locking_document(),
+        crate::zone_search::TIMED,
+        &format!(
+            "{}{MOD_DEFINED}{LOCKING}temporal Partial using tt over (c: M::Call) clock \
+             \"model-time\" on origin {{ {formula} }}\n",
+            crate::timed_world::DENSE
+        ),
+        filament_semantic_value::checking::CheckMode::Kernel,
+    )
+}
+
+/// [`check_digital`] on `system`'s timed model and the claim of `world`.
+fn digital_on(
+    world: &crate::timed_world::World,
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+) -> ModelCheckOutcome {
+    let timed = TimedSystem::new(system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("clause letters");
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: UNLIMITED,
+    };
+    check_digital(&request, &Cancel::new())
+        .expect("digital route accepts")
+        .outcome
+}
+
+/// EN-1 declines `world`'s fair claim over a subject with a clock constraint
+/// (FR-243 rule (f)).
+fn digital_declines_fairness(world: &crate::timed_world::World) {
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("clause letters");
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: UNLIMITED,
+    };
+    let found = check_digital(&request, &Cancel::new()).map(|checked| checked.outcome);
+    assert!(
+        matches!(
+            found,
+            Err(DigitalRefusal::NotDigitisable(fsl_replay::NotDigitisable {
+                rule: fsl_replay::NotDigitisableRule::FairnessOverClockConstraint,
+                ..
+            }))
+        ),
+        "{found:?}"
+    );
+}
+
+const UNLIMITED: DigitalLimits = DigitalLimits {
+    max_states: u64::MAX,
+    max_transitions: u64::MAX,
+    max_automaton_states: u64::MAX,
+};
+
+/// QSL-3485 over the production evaluator and a checked package: the reading
+/// undefined only on the locked branch hides nothing. By hand `phase = 0` is
+/// false after `go` (so the conjunction refutes there), on both engines, and
+/// both counterexamples replay.
+#[trace("FR-239-AC-5")]
+#[test]
+fn an_undefined_reading_on_a_time_locked_branch_hides_no_violation() {
+    let world = partial_world("always holds(mod_defined(c.phase) and c.phase = 0)");
+    let system = world.system();
+    let ModelCheckOutcome::Violated { counterexample, .. } = digital_on(&world, &system) else {
+        panic!("en-1: `go` violates the claim");
+    };
+    let zones = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    for counterexample in [*counterexample, zones] {
+        assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+        assert_eq!(operations(&counterexample), ["go"]);
+        let settlement = replay(&world, &counterexample).expect("replays");
+        assert!(reproduced(&settlement), "{settlement:?}");
+    }
+}
+
+/// Where the claim holds on every admitted behaviour, the reading undefined
+/// on the locked one leaves it proved: EN-1 holds, and EN-6's certificate
+/// passes the independent checker.
+#[trace("FR-239-AC-5")]
+#[test]
+fn an_undefined_reading_only_on_a_time_locked_branch_leaves_the_claim_proved() {
+    let world = partial_world("always holds(mod_defined(c.phase) and c.phase <= 1)");
+    let system = world.system();
+    let digital = digital_on(&world, &system);
+    assert!(
+        matches!(digital, ModelCheckOutcome::HoldsReduced { .. }),
+        "{digital:?}"
+    );
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+}
+
+/// An initial state that is time-locked and reads undefined, listed before a
+/// healthy one: EN-1 goes on to the healthy one and proves.
+#[trace("FR-239-AC-5")]
+#[test]
+fn digital_clocks_pass_an_undefined_time_locked_initial_state() {
+    let world = partial_world("always holds(mod_defined(c.phase))");
+    let locked = snapshot_at("locked", 2);
+    let mut snapshots = world.snapshots.clone();
+    snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&locked)
+            .expect("a document names itself"),
+        locked,
+    );
+    let mut request = world.request();
+    request.snapshots = &snapshots;
+    request.initial.insert(
+        0,
+        fsl_semantics::model::observation::DocumentRef {
+            authority: "test".to_owned(),
+            identity: "locked".to_owned(),
+        },
+    );
+    let system = fsl_eval::simulation::model::ModelSystem::new(request).expect("admits");
+    assert_eq!(system.initial_states().len(), 2);
+    let outcome = digital_on(&world, &system);
+    assert!(
+        matches!(outcome, ModelCheckOutcome::HoldsReduced { .. }),
+        "{outcome:?}"
+    );
+}
+
+/// FR-125-AC-13: a timed subject with no initial state is `inconclusive`
+/// `no-initial-state` on both routes, never proved, and ahead of the
+/// instance set, which is empty too.
+#[trace("FR-125-AC-13")]
+#[test]
+fn a_timed_claim_over_no_initial_state_is_never_proved() {
+    let start = json!({"authority": "test", "identity": "s0"});
+    let expected = expected_on_both_routes([("inconclusive", "no-initial-state"); 2]);
+    let found = routes_over(
+        "timed-no-initial",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("Safe", "always holds(true)"),
+            ("Wrong", "always holds(false)"),
+        ],
+        &[rpc_snapshot()],
+        Some(json!({"initial_states": [], "universes": [start], "proof_bounds": []})),
+    );
+    assert_eq!(found, expected);
+}
+
+/// Counts the atom reads and reads as `inner` does, but for the first false
+/// atom when `undefine_first_false` is set.
+struct CountedLetters<'a> {
+    inner: &'a dyn ModelLetters,
+    atoms: Cell<u64>,
+    undefine_first_false: Cell<bool>,
+}
+
+impl<'a> CountedLetters<'a> {
+    fn new(inner: &'a dyn ModelLetters, undefine_first_false: bool) -> Self {
+        Self {
+            inner,
+            atoms: Cell::new(0),
+            undefine_first_false: Cell::new(undefine_first_false),
+        }
+    }
+}
+
+impl ModelLetters for CountedLetters<'_> {
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        self.atoms.set(self.atoms.get() + 1);
+        let reading = self.inner.atom(atom, instance, state, meter)?;
+        if matches!(reading, AtomReading::False) && self.undefine_first_false.replace(false) {
+            return Ok(AtomReading::Undefined(UndefinedCause::Kernel(
+                Undefined::DivisionByZero,
+            )));
+        }
+        Ok(reading)
+    }
+
+    fn activation(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, AtomStop> {
+        self.inner.activation(instance, state, meter)
+    }
+
+    fn captures(
+        &self,
+        instance: &ModelInstance,
+        state: &ModelSimState,
+        meter: &mut Meter,
+    ) -> Result<CaptureReading, AtomStop> {
+        self.inner.captures(instance, state, meter)
+    }
+
+    fn reads(&self, atom: FormulaNodeId) -> crate::units::Reads {
+        self.inner.reads(atom)
+    }
+
+    fn activation_reads(&self) -> crate::units::Reads {
+        self.inner.activation_reads()
+    }
+}
+
+/// [`check_digital`] on the checked package of `body`'s one claim over
+/// `document`, with the letters [`CountedLetters`] wraps: the outcome and the
+/// atom reads.
+fn digital_over(model: &[u8], body: &str, undefine_first_false: bool) -> (ModelCheckOutcome, u64) {
+    let world = crate::timed_world::world(
+        model,
+        crate::zone_search::TIMED,
+        &format!("{}{body}", crate::timed_world::DENSE),
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed model");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let inner = system.clause_letters(node).expect("clause letters");
+    let letters = CountedLetters::new(&inner, undefine_first_false);
+    let request = DigitalRequest {
+        subject: &timed,
+        clause: node.clause(),
+        letters: &letters,
+        limits: UNLIMITED,
+    };
+    let outcome = check_digital(&request, &Cancel::new()).expect("digital route accepts");
+    (outcome.outcome, letters.atoms.get())
+}
+
+/// QSL-3485: `block`, searched first, locks time, and the reading there is
+/// made undefined; `go` still refutes `always holds(c.phase = 0)`.
+#[trace("FR-239-AC-5")]
+#[test]
+fn digital_undefined_at_a_time_lock_does_not_hide_a_violation() {
+    let body = "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 }\n\
+         pre Go using v on M::Call::go { self.phase = 0 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 }\n\
+         time invariant Locked when { self.phase = 2 } { self.x <= 0 ms }\n\
+         temporal Stays using tt over (c: M::Call) clock \"model-time\" on origin \
+         { always holds(c.phase = 0) }\n";
+    let (outcome, _) = digital_over(&locking_document(), body, true);
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("`go` violates the claim: {outcome:?}");
+    };
+    assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+    assert_eq!(operations(&counterexample), ["go"]);
+}
+
+/// FR-232 "Vacuity": the subject's admitted behaviour is classified before
+/// any claim product, so over the stalled subject no claim atom is read.
+#[trace("FR-232-AC-3")]
+#[test]
+fn digital_clocks_read_no_claim_over_a_stalled_subject() {
+    let body = "time invariant Stall when { true } { self.x <= 1 ms }\n\
+         temporal Wrong using tt over (c: M::Call) clock \"model-time\" on origin \
+         { always holds(c.phase = 1) }\n";
+    let (outcome, atoms) = digital_over(
+        &crate::timed_world::document(&["x"], &[("ping", &[])]),
+        body,
+        false,
+    );
+    assert!(
+        matches!(
+            outcome,
+            ModelCheckOutcome::Undecided {
+                cause: fsl_replay::UndecidedCause::NoAdmittedBehaviour,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(atoms, 0);
+}
+
+/// FR-125 "Instancing": a claim whose `over` type admits no key settles
+/// `inconclusive` `no-instance`, the false one included, on both timed
+/// routes.
+#[trace("FR-125-AC-7")]
+#[test]
+fn timed_claims_over_no_instance_are_never_proved() {
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
+    snapshot["populations"][0]["objects"] = json!([]);
+    let expected = expected_on_both_routes([
+        ("inconclusive", "no-instance"),
+        ("inconclusive", "no-instance"),
+    ]);
+    let found = routes_over(
+        "timed-no-instance",
+        &locking_document(),
+        LOCKING,
+        &[
+            ("Safe", "always holds(true)"),
+            ("Never", "always holds(false)"),
+        ],
+        &[snapshot.to_string().into_bytes()],
+        None,
+    );
+    assert_eq!(found, expected);
+}
+
+/// The EN-6 certificate checker accepts no certificate over a subject with no
+/// instance: the proof of a claim over one object, checked where the
+/// population is empty.
+#[trace("FR-125-AC-7")]
+#[test]
+fn a_zone_certificate_over_no_instance_is_refused() {
+    let world = partial_world("always holds(c.phase <= 2)");
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
+    snapshot["populations"][0]["objects"] = json!([]);
+    snapshot["identity"]["identity"] = json!("empty");
+    let empty = snapshot.to_string().into_bytes();
+    let reference = fsl_semantics::model::observation::document_reference(&empty)
+        .expect("a document names itself");
+    let mut snapshots = world.snapshots.clone();
+    snapshots.insert(reference, empty);
+    let mut request = world.request();
+    request.snapshots = &snapshots;
+    request.initial = vec![fsl_semantics::model::observation::DocumentRef {
+        authority: "test".to_owned(),
+        identity: "empty".to_owned(),
+    }];
+    let checked = crate::zone_search::check_over(
+        &world,
+        request,
+        &certificate,
+        fsl_replay::CertificateCheckLimits::default(),
+    );
+    assert_eq!(
+        checked,
+        Err(ZoneCertificateRefusal::Vacuous(TimedVacuity::NoInstance))
+    );
+}
+
+/// The Kernel-checked package of one claim over the operations `operations`
+/// with the clauses `model`, [`MOD_DEFINED`] in scope.
+fn kernel_world(
+    operations: &[(&str, &[&str])],
+    model: &str,
+    formula: &str,
+) -> crate::timed_world::World {
+    crate::timed_world::world_with_mode(
+        &crate::timed_world::document(&["x"], operations),
+        crate::zone_search::TIMED,
+        &format!(
+            "{}{MOD_DEFINED}{model}temporal Partial using tt over (c: M::Call) clock \
+             \"model-time\" on origin {{ {formula} }}\n",
+            crate::timed_world::DENSE
+        ),
+        filament_semantic_value::checking::CheckMode::Kernel,
+    )
+}
+
+/// [`LOCKING`] with `phase` 2 let sit until `x` is 1 and `spin` looping there
+/// in zero time: time never passes 1 ms from it, so it is a time-lock that a
+/// delay enters.
+const ZENO_LOCK: &str = "pre Block using v on M::Call::block { self.phase = 0 }\n\
+     post Blocked using v on M::Call::block { self.phase = 2 }\n\
+     pre Spin using v on M::Call::spin { self.phase = 2 }\n\
+     post Spun using v on M::Call::spin { self.phase = 2 }\n\
+     pre Go using v on M::Call::go { self.phase = 0 }\n\
+     post Gone using v on M::Call::go { self.phase = 1 }\n\
+     time invariant Locked when { self.phase = 2 } { self.x <= 1 ms }\n";
+
+fn zeno_lock_world(formula: &str) -> crate::timed_world::World {
+    kernel_world(
+        &[
+            ("block", &["phase"]),
+            ("spin", &["phase"]),
+            ("go", &["phase"]),
+        ],
+        ZENO_LOCK,
+        formula,
+    )
+}
+
+/// By hand: the reading is undefined only at `phase` 2, which is time-locked,
+/// and `phase` 0 and 1 read true, so both routes prove the claim.
+#[trace("FR-239-AC-5")]
+#[test]
+fn a_zero_time_loop_entered_by_a_delay_is_a_time_lock() {
+    let world = zeno_lock_world("always holds(mod_defined(c.phase) and c.phase <= 1)");
+    let system = world.system();
+    let digital = digital_on(&world, &system);
+    assert!(
+        matches!(digital, ModelCheckOutcome::HoldsReduced { .. }),
+        "{digital:?}"
+    );
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+}
+
+/// By hand: `go` makes `phase = 0` false, and the undefined reading on the
+/// time-locked `phase` 2, found first, hides nothing.
+#[trace("FR-239-AC-5")]
+#[test]
+fn a_zero_time_loop_entered_by_a_delay_hides_no_violation() {
+    let world = zeno_lock_world("always holds(mod_defined(c.phase) and c.phase = 0)");
+    let system = world.system();
+    let ModelCheckOutcome::Violated { counterexample, .. } = digital_on(&world, &system) else {
+        panic!("en-1: `go` violates the claim");
+    };
+    let zones = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    for counterexample in [*counterexample, zones] {
+        assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+        assert_eq!(operations(&counterexample), ["go"]);
+    }
+}
+
+/// FSpec FR-161 "Vacuity": `go` is enabled at every instant of the one
+/// divergent behaviour (the `idle` loop) and leads to a time-lock, so under
+/// `fair weak go` the subject admits no behaviour: every claim, the false one
+/// included, is `inconclusive` `no-admitted-behaviour` on EN-6. EN-1 declines
+/// each fair claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-15", "FR-243-AC-7")]
+#[test]
+fn a_timed_claim_with_no_fair_behaviour_is_never_proved() {
+    let model = "pre Idle using v on M::Call::idle { self.phase = 0 }\n\
+         post Idled using v on M::Call::idle { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 0 }\n\
+         post Gone using v on M::Call::go { self.phase = 2 and self.x = 0 ms }\n\
+         time invariant Busy when { self.phase = 0 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n";
+    let expected = expected_with_digital_declined([("inconclusive", "no-admitted-behaviour"); 3]);
+    let found = routes_over(
+        "timed-no-fair-behaviour",
+        &crate::timed_world::document(&["x"], &[("idle", &["x"]), ("go", &["phase", "x"])]),
+        model,
+        &[
+            (
+                "Invariant",
+                "fair weak M::Call::go; always holds(c.phase != 1)",
+            ),
+            (
+                "Window",
+                "fair weak M::Call::go; always[0 ms, 1 ms] holds(c.phase != 1)",
+            ),
+            ("Never", "fair weak M::Call::go; always holds(false)"),
+        ],
+        &[rpc_snapshot()],
+        None,
+    );
+    assert_eq!(found, expected);
+}
+
+/// FSpec FR-161 "Fairness over time": `phase` 3 is left only unfairly (the
+/// `idle` loop, with `go` always enabled) or into a time-lock, so a claim
+/// false only there holds on every fair behaviour; idling in `phase` 0 is one.
+/// EN-1 declines the fair claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-16", "FR-243-AC-7")]
+#[test]
+fn a_violation_only_on_unfair_behaviours_refutes_nothing() {
+    let model = "pre Bad using v on M::Call::block { self.phase = 0 }\n\
+         post Badly using v on M::Call::block { self.phase = 3 }\n\
+         pre Idle using v on M::Call::idle { self.phase = 3 }\n\
+         post Idled using v on M::Call::idle { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 3 }\n\
+         post Gone using v on M::Call::go { self.phase = 2 and self.x = 0 ms }\n\
+         time invariant Busy when { self.phase = 3 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n";
+    let expected = expected_with_digital_declined([("proved", "")]);
+    let found = routes_over(
+        "timed-unfair-violation",
+        &crate::timed_world::document(
+            &["x"],
+            &[
+                ("block", &["phase"]),
+                ("idle", &["x"]),
+                ("go", &["phase", "x"]),
+            ],
+        ),
+        model,
+        &[(
+            "Invariant",
+            "fair weak M::Call::go; always holds(c.phase != 3)",
+        )],
+        &[rpc_snapshot()],
+        None,
+    );
+    assert_eq!(found, expected);
+}
+
+/// FSpec FR-161 "Vacuity" ahead of an undefined reading: the reading is
+/// undefined at `phase` 2, from which time diverges only on the `spin` loop
+/// that `fair weak go` rejects, and no behaviour at all is fair. Both routes
+/// that `fair weak go` rejects, and no behaviour at all is fair. EN-6
+/// settles `no-admitted-behaviour`, not `undefined-evaluation`; EN-1 declines
+/// the fair claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-15", "FR-243-AC-7")]
+#[test]
+fn no_fair_behaviour_comes_before_an_undefined_refutation() {
+    let world = kernel_world(
+        &[
+            ("block", &["phase"]),
+            ("spin", &["x"]),
+            ("go", &["phase", "x"]),
+        ],
+        "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 }\n\
+         pre Spin using v on M::Call::spin { self.phase = 2 }\n\
+         post Spun using v on M::Call::spin { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 2 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 and self.x = 0 ms }\n\
+         time invariant Start when { self.phase = 0 } { self.x <= 1 ms }\n\
+         time invariant Busy when { self.phase = 2 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 1 } { self.x <= 0 ms }\n",
+        "fair weak M::Call::go; always holds(mod_defined(c.phase))",
+    );
+    digital_declines_fairness(&world);
+    let zones = claim(&world, ZoneCheckLimits::default(), &Cancel::new());
+    assert!(
+        matches!(
+            zones,
+            ZoneCheckOutcome::Undecided {
+                cause: ZoneUndecided::NoAdmittedBehaviour,
+                ..
+            }
+        ),
+        "{zones:?}"
+    );
+}
+
+/// A temporal claim and a state-graph claim, each on both timed routes, over
+/// `model` with `body`, no initial state and a universe snapshot listing no
+/// population: each item's result, diagnostic code and cause.
+fn over_no_universe(name: &str, model: &[u8], body: &str) -> Vec<(String, String, String)> {
+    use crate::timed_world::{unit_text, DENSE, PACKAGE};
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}{body}temporal Safe using tt over (c: M::Call) clock \"model-time\" on \
+             origin {{ always holds(true) }}\n\
+             possible Reaches using v over (c: M::Call) {{ c.phase = 1 }}\n"
+        ),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let ws = Workspace::new(name);
+    let mut universe: Value = serde_json::from_slice(&rpc_snapshot()).expect("the snapshot");
+    universe["identity"]["identity"] = json!("u0");
+    universe["populations"] = json!([]);
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        model,
+        &[rpc_snapshot(), universe.to_string().into_bytes()],
+        json!({"items": [{"claim": "Safe"}, {"claim": "Safe", "options": digital.clone()},
+            {"claim": "Reaches"}, {"claim": "Reaches", "options": digital}],
+            "subject": {"initial_states": [], "universes": [{"authority": "test", "identity": "u0"}],
+                "proof_bounds": []}}),
+    ));
+    (0..4)
+        .map(|n| {
+            let record = &run.item(n)["record"];
+            let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
+            (
+                text(&record["result"]),
+                text(&record["diagnostic"]["code"]),
+                text(&record["diagnostic"]["cause"]),
+            )
+        })
+        .collect()
+}
+
+fn requires_bound_on_all_four() -> Vec<(String, String, String)> {
+    vec![
+        (
+            "unsupported".to_owned(),
+            "unsupported_projection".to_owned(),
+            "unbounded-extent".to_owned(),
+        );
+        4
+    ]
+}
+
+/// `rest` loops at `phase` 0; `block` enters `phase` 2, which `spin` loops
+/// at and `go` leaves for the time-locked `phase` 1. Only a behaviour that
+/// ignores the enabled `go` for ever stays at `phase` 2.
+fn unfair_phase_world(formula: &str) -> crate::timed_world::World {
+    kernel_world(
+        &[
+            ("block", &["phase"]),
+            ("rest", &["x"]),
+            ("spin", &["x"]),
+            ("go", &["phase", "x"]),
+        ],
+        "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 }\n\
+         pre Rest using v on M::Call::rest { self.phase = 0 }\n\
+         post Rested using v on M::Call::rest { self.x = 0 ms }\n\
+         pre Spin using v on M::Call::spin { self.phase = 2 }\n\
+         post Spun using v on M::Call::spin { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 2 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 and self.x = 0 ms }\n\
+         time invariant Busy when { self.phase = 2 } { self.x <= 1 ms }\n\
+         time invariant Done when { self.phase = 1 } { self.x <= 0 ms }\n",
+        formula,
+    )
+}
+
+/// FSpec FR-416 "Undefined evaluation" refutes only at a position of an
+/// admitted behaviour. By hand: `fair weak go` rejects staying at `phase` 2,
+/// and `go` leads into a time-lock, so no admitted behaviour reaches the
+/// undefined reading; `rest` for ever is admitted. EN-6 proves, and the
+/// FR-245 checker accepts the certificate, for an invariant claim and an
+/// eventuality alike. EN-1 declines each (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5", "FR-243-AC-7")]
+#[test]
+fn an_undefined_reading_only_on_unfair_behaviours_refutes_nothing() {
+    for formula in [
+        "fair weak M::Call::go; always holds(mod_defined(c.phase))",
+        "fair weak M::Call::go; always eventually holds(mod_defined(c.phase))",
+    ] {
+        let world = unfair_phase_world(formula);
+        digital_declines_fairness(&world);
+        let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+        assert_edges_cover(&world, &certificate);
+    }
+}
+
+/// The same model under `fair weak spin`: looping at `phase` 2 is now fair,
+/// so `block` reaches the undefined reading on an admitted behaviour and EN-6
+/// refutes there, with a counterexample that replays. EN-1 declines the fair
+/// claim over a clock constraint (FR-243-AC-7).
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5", "FR-243-AC-7")]
+#[test]
+fn an_undefined_reading_on_a_fair_behaviour_still_refutes() {
+    let world = unfair_phase_world("fair weak M::Call::spin; always holds(mod_defined(c.phase))");
+    digital_declines_fairness(&world);
+    let counterexample = violated(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert!(
+        matches!(
+            counterexample.kind,
+            CounterexampleKind::UndefinedEvaluation(_)
+        ),
+        "{counterexample:?}"
+    );
+    assert_eq!(operations(&counterexample), ["block"]);
+    let settlement = replay(&world, &counterexample).expect("replays");
+    assert!(reproduced(&settlement), "{settlement:?}");
+}
+
+/// `rest` loops at `phase` 0 and `block` enters the time-locked `phase` 2,
+/// the one value at which `mod_defined` is undefined.
+fn locked_undefined_world(formula: &str) -> crate::timed_world::World {
+    kernel_world(
+        &[("block", &["phase", "x"]), ("rest", &["x"])],
+        "pre Block using v on M::Call::block { self.phase = 0 }\n\
+         post Blocked using v on M::Call::block { self.phase = 2 and self.x = 0 ms }\n\
+         pre Rest using v on M::Call::rest { self.phase = 0 }\n\
+         post Rested using v on M::Call::rest { self.x = 0 ms }\n\
+         time invariant Done when { self.phase = 2 } { self.x <= 0 ms }\n",
+        formula,
+    )
+}
+
+/// FSpec FR-416 "Undefined evaluation" refutes only at a position of an
+/// admitted behaviour. By hand, with no fairness: the one undefined reading is
+/// at `phase` 2, a time-lock, and resting at `phase` 0 for ever is admitted
+/// and satisfies the claim. EN-6 proves it and the FR-245 checker accepts the
+/// certificate, which enters the reading as the reserved automaton state.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn an_undefined_reading_only_at_a_time_lock_is_certified_without_fairness() {
+    let world = locked_undefined_world("always eventually holds(mod_defined(c.phase))");
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_edges_cover(&world, &certificate);
+    assert!(certificate
+        .nodes
+        .iter()
+        .any(|node| node.automaton_state == fsl_replay::UNDEFINED_POSITION_STATE));
+}
+
+/// A node past an undefined reading is the checker's own reading: relabelling
+/// it as a claim automaton state, or claiming the reserved state for a node
+/// whose positions are all defined, is rejected, with a fairness and without.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn a_tampered_undefined_position_state_is_rejected() {
+    let reserved = fsl_replay::UNDEFINED_POSITION_STATE;
+    let worlds = [
+        unfair_phase_world("fair weak M::Call::go; always holds(mod_defined(c.phase))"),
+        locked_undefined_world("always eventually holds(mod_defined(c.phase))"),
+        locked_undefined_world("always eventually holds(true)"),
+    ];
+    for (index, world) in worlds.iter().enumerate() {
+        let certificate = proved(claim(world, ZoneCheckLimits::default(), &Cancel::new()));
+        let rejects = |tampered: &crate::zone_search::Certificate, what: &str| {
+            let verdict = crate::zone_search::check(
+                world,
+                tampered,
+                fsl_replay::CertificateCheckLimits::default(),
+            );
+            assert!(
+                !matches!(verdict, Ok(fsl_replay::ZoneCertificateVerdict::Accepted)),
+                "world {index}, {what}: {verdict:?}"
+            );
+        };
+        let defined = certificate
+            .nodes
+            .iter()
+            .map(|node| node.automaton_state)
+            .find(|&state| state != reserved)
+            .expect("a defined node");
+        let past = certificate
+            .nodes
+            .iter()
+            .filter(|node| node.automaton_state == reserved)
+            .count();
+        assert_eq!(past > 0, index < 2, "world {index}");
+        for (at, node) in certificate.nodes.iter().enumerate() {
+            let mut tampered = certificate.clone();
+            tampered.nodes[at].automaton_state = if node.automaton_state == reserved {
+                defined
+            } else {
+                reserved
+            };
+            rejects(&tampered, &format!("node {at}"));
+        }
+        let mut tampered = certificate.clone();
+        for node in &mut tampered.nodes {
+            node.automaton_state = reserved;
+        }
+        rejects(&tampered, "every node reserved");
+    }
+}
+
+/// The checker enters an undefined reading with no fairness too, so its
+/// component reasons are what refuse a behaviour that stays past one. The
+/// proof under `fair weak go` stays at `phase` 2 only unfairly; held to the
+/// same claim with no fairness that behaviour is admitted, and no reason
+/// stated for the components makes the checker accept it.
+#[trace("FSpec-FR-161-AC-16", "FR-239-AC-5")]
+#[test]
+fn no_component_reason_certifies_a_divergent_undefined_reading() {
+    use fsl_replay::{AcceptanceSet, ComponentReason};
+
+    let fair =
+        unfair_phase_world("fair weak M::Call::go; always eventually holds(mod_defined(c.phase))");
+    let certificate = proved(claim(&fair, ZoneCheckLimits::default(), &Cancel::new()));
+    let open = unfair_phase_world("always eventually holds(mod_defined(c.phase))");
+    let reasons = [
+        None,
+        Some(ComponentReason::Acyclic),
+        Some(ComponentReason::Lacks(AcceptanceSet::Divergence)),
+        Some(ComponentReason::Lacks(AcceptanceSet::Position)),
+        Some(ComponentReason::Lacks(AcceptanceSet::Automaton(0))),
+    ];
+    for reason in reasons {
+        let mut forged = certificate.clone();
+        forged.obligation.kind = fsl_route::deadlock::ObligationKind::Authored(
+            crate::zone_search::claim_occurrence(&open),
+        );
+        if let Some(reason) = &reason {
+            let components = forged.components.as_mut().expect("a component part");
+            components.reasons.fill(reason.clone());
+        }
+        let verdict = crate::zone_search::check(
+            &open,
+            &forged,
+            fsl_replay::CertificateCheckLimits::default(),
+        );
+        assert!(
+            matches!(verdict, Ok(fsl_replay::ZoneCertificateVerdict::Rejected(_))),
+            "{reason:?}: {verdict:?}"
+        );
+    }
+}
+
+/// FR-125-AC-13: a subject with no clock whose population has no universe is
+/// refused for the missing bound, ahead of its empty initial list.
+#[trace("FR-125-AC-13")]
+#[test]
+fn a_timed_claim_over_no_universe_requires_a_bound() {
+    let model = crate::timed_world::document(&[], &[("go", &["phase"])]);
+    assert_eq!(
+        over_no_universe("timed-no-universe", &model, ""),
+        requires_bound_on_all_four()
+    );
+}
+
+/// FR-125-AC-13 with a clock the population's objects own: its clocks cannot
+/// be listed without the universe, which is a missing bound, not a bad value.
+#[trace("FR-125-AC-13")]
+#[test]
+fn a_clock_owner_with_no_universe_requires_a_bound() {
+    assert_eq!(
+        over_no_universe("timed-no-universe-clocked", &locking_document(), LOCKING),
+        requires_bound_on_all_four()
+    );
+}
+
+#[test]
+fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
+    let items = stalling_items("timed-zone-resetting-deadline", true);
+    assert_eq!(label(&items[0]), "proved", "{}", items[0]);
+    assert_eq!(label(&items[1]), "proved", "{}", items[1]);
+}
+
+#[trace("FR-240-AC-4")]
+#[test]
+fn digital_invariant_stall_does_not_create_a_divergent_tail() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}\
+             time invariant Boundary when {{ true }} {{ self.x <= 0 ms }}\n\
+             temporal Safe using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ always holds(true) }}\n"
+        ),
+    );
+    let ws = Workspace::new("digital-idle-tail-invariant-boundary");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe", "options": {"method": "digital-clocks"}}]}),
+    ));
+    assert_eq!(run.exit, 22, "{}", run.document());
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(
+        item["record"]["cause"]["kind"], "no-admitted-behaviour",
+        "{item}"
+    );
+}
+
+/// TC-2290: EN-1's digital-clock route agrees with the zone route on a true
+/// bounded eventual-always claim after the two-step subject reaches phase 2.
+#[trace("FR-243-AC-5")]
+#[test]
+fn digital_clocks_prove_a_true_always_inside_eventually() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let body = format!(
+        "{DENSE}\
+         pre First using v on M::Call::first {{ self.phase = 0 and self.x >= 1 ms }}\n\
+         post Firsted using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Second using v on M::Call::second {{ self.phase = 1 and self.x >= 2 ms }}\n\
+         post Seconded using v on M::Call::second {{ self.phase = 2 }}\n\
+         time invariant FirstDeadline when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n\
+         time invariant SecondDeadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         temporal TwoStep using tt over (c: M::Call) clock \"model-time\" on origin {{\
+             eventually[0 ms, 4 ms] always[0 ms, 1 ms] holds(c.phase = 2) }}\n"
+    );
+    let unit = unit_text(PACKAGE, crate::zone_search::TIMED, &body);
+    let domain = document(
+        &["x"],
+        &[("first", &["phase", "x"]), ("second", &["phase"])],
+    );
+    let ws = Workspace::new("digital-clocks-eventually-always");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &domain,
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "TwoStep"},
+            {"claim": "TwoStep", "options": {"method": "digital-clocks"}}]}),
+    ));
+    let item = run.item(1);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.item(0));
+    assert_eq!(run.exit, 0, "{}", run.document());
+}
+
+/// FR-239-AC-10 and FR-243-AC-8: a false initial position refutes the claim
+/// on both the default temporal route and explicit EN-1 digital clocks.
+#[trace("FR-239-AC-10", "FR-243-AC-8")]
+#[test]
+fn an_initial_position_violation_is_refuted_on_both_timed_routes() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let body = format!(
+        "{}\
+         pre Block using v on M::Call::block {{ self.phase = 0 }}\n\
+         post Blocked using v on M::Call::block {{ self.phase = 2 }}\n\
+         pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Gone using v on M::Call::go {{ self.phase = 1 }}\n\
+         time invariant Locked when {{ self.phase = 2 }} {{ self.x <= 0 ms }}\n\
+         temporal InitialPhase using tt over (c: M::Call) clock \"model-time\" on origin {{ always holds(c.phase = 1) }}\n",
+        DENSE,
+    );
+    let unit = unit_text(PACKAGE, crate::zone_search::TIMED, &body);
+    let document = document(&["x"], &[("block", &["phase"]), ("go", &["phase"])]);
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "s0"},
+        "observation": "current",
+        "model": {"identity": PACKAGE},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": format!("ix://{PACKAGE}/calls"), "complete": true,
+            "objects": [{"key": "c", "type": format!("ix://{PACKAGE}/Call"),
+                "fields": {"phase": {"integer": "0"}, "inflight": {"boolean": false},
+                    "late": {"boolean": false}, "retried": {"boolean": false}}}]}],
+    })
+    .to_string()
+    .into_bytes();
+    let ws = Workspace::new("initial-position-refutation");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document,
+        &[snapshot],
+        json!({"items": [
+            {"claim": "InitialPhase"},
+            {"claim": "InitialPhase", "options": {"method": "digital-clocks"}}
+        ]}),
+    ));
+    let items = run.document()["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(items.len(), 2, "analysis result: {:#?}", run.document());
+
+    let outcomes = items.iter().map(label).collect::<Vec<_>>();
+    assert_eq!(
+        outcomes,
+        ["refuted", "refuted"],
+        "route records: {items:#?}"
+    );
+    assert_eq!(items[0]["record"]["backend"], "en-6", "{items:#?}");
+    assert_eq!(items[1]["record"]["backend"], "en-1", "{items:#?}");
+    assert_eq!(run.exit, 10, "route records: {items:#?}");
 }

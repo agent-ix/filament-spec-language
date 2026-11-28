@@ -8,7 +8,9 @@ use fsl_analyze::analyze::document::{
     SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision};
+use fsl_replay::CertificationPolicy;
 use fsl_semantics::model::observation::DocumentProvision;
+use ix_trace_rs::implements;
 
 use super::requirements::Requirements;
 use super::{Result, RunCause};
@@ -32,12 +34,15 @@ pub(super) struct Settle<'a> {
 /// [`RunCause::UnknownRequirementClaim`] for an `items` entry whose claim
 /// names no item of the call, before any item is negotiated; the analyze
 /// settlement's refusal or fault otherwise.
+#[implements("FR-1052-AC-10")]
 pub(super) fn settle_call(
     checked: &fsl_replay::spine::CheckedUnit,
     members: &fsl_replay::CallRequirements,
     selection: &Requirements,
     packages: &fsl_semantics::model::intake::PackageInput,
+    limits: AnalyzeLimits,
     settle: &Settle<'_>,
+    certification: CertificationPolicy,
 ) -> Result<SettledRun> {
     let claims = members
         .members()
@@ -45,7 +50,7 @@ pub(super) fn settle_call(
         .map(|member| fsl_replay::claim_locus_wire(member.occurrence()))
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| RunCause::AnalyzeFault)?;
-    let resolved = resolve_held_claims(checked, packages, selection)?;
+    let resolved = resolve_held_claims(checked, packages, limits.emit, selection)?;
     // FR-960 "Unknown claim": a claim of no item of the call refuses the
     // request before any item is negotiated, naming the claim as supplied.
     if let Some(position) = resolved
@@ -87,12 +92,14 @@ pub(super) fn settle_call(
     let documents = DocumentProvision::new();
     let subject = SubjectSelection::default_over(&documents);
     let run = AnalyzeRun {
+        selections: &[],
         package,
         binding: subject.binding(packages, &documents),
         provision,
         items: resolved,
         engines: settle.engines,
-        limits: AnalyzeLimits::unbounded(),
+        limits,
+        certification,
     };
     settle_run(run, settle.negotiate, settle.cancel).map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
@@ -130,6 +137,7 @@ fn index_segments(claim: &serde_json::Value) -> Vec<(usize, &serde_json::Value)>
 fn resolve_held_claims<'a>(
     checked: &fsl_replay::spine::CheckedUnit,
     packages: &fsl_semantics::model::intake::PackageInput,
+    emit: fsl_package::EmitLimits,
     selection: &'a Requirements,
 ) -> Result<std::borrow::Cow<'a, Requirements>> {
     if selection
@@ -139,12 +147,8 @@ fn resolve_held_claims<'a>(
     {
         return Ok(std::borrow::Cow::Borrowed(selection));
     }
-    let graph = fsl_analyze::analyze::DocumentGraphs::of_package(
-        checked.package(),
-        packages,
-        AnalyzeLimits::unbounded().emit,
-    )
-    .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
+    let graph = fsl_analyze::analyze::DocumentGraphs::of_package(checked.package(), packages, emit)
+        .map_err(|refusal| RunCause::AnalyzeRefused(Box::new(refusal)))?;
     resolve_held_claims_in(&graph, selection)
 }
 

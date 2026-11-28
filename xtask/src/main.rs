@@ -3,10 +3,12 @@
 //! route-lint` / `cargo xtask checked-input` / `cargo xtask test-suites
 //! <lane> [<cargo test args>]` and `cargo xtask refinement versioning
 //! <corpus>` / `cargo xtask refinement layering <corpus>`: refinement gates.
+//! `cargo xtask limit-literals` reports literal limits.
 //! `cargo xtask
 //! canonical-types [<workspace>]` runs on demand, over this workspace or the
 //! one named. `cargo xtask pin-check` checks Agent-IX git dependency pins;
-//! `cargo xtask merge-gate-recipe [--preflight] <changed-path>...` prints test commands.
+//! `cargo xtask merge-gate-recipe --workspace <path> [--preflight]
+//! <changed-path>...` prints test commands for that workspace.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -17,12 +19,12 @@ use std::process::ExitCode;
 use xtask::{
     backend_agreement, canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
-    examples_check, facade_tests, merge_gate_recipe, parity, pin_check, qualification, refinement,
-    route_lint, seam_probe, string_edge, test_suites, Outcome,
+    examples_check, facade_tests, limit_literals, merge_gate_recipe, parity, pin_check,
+    qualification, refinement, route_lint, seam_probe, string_edge, test_suites, Outcome,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
-                     cargo xtask route-lint\n       cargo xtask checked-input\n       \
+                     cargo xtask route-lint\n       cargo xtask limit-literals\n       cargo xtask checked-input\n       \
                      cargo xtask test-suites <lane> [<cargo test args>]\n       \
                      cargo xtask conformance\n       cargo xtask backend-agreement --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \
                      cargo xtask ci\n       cargo xtask examples-check\n       cargo xtask refinement versioning <corpus>\n       \
@@ -33,7 +35,7 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask canonical-types [<workspace>]\n       \
                      cargo xtask facade-tests [--tests <dir>] [--inventory <file>]\n       \
                      cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]\n       \
-                     cargo xtask merge-gate-recipe [--preflight] <changed-path>...";
+                     cargo xtask merge-gate-recipe --workspace <path> [--preflight] <changed-path>...";
 
 #[ix_trace_rs::string_edge]
 fn run(arguments: &[OsString]) -> Result<Outcome> {
@@ -81,6 +83,7 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         "seam-probe" => seam_probe::run(&workspace_root),
         "string-edge" => string_edge::run(&workspace_root),
         "route-lint" => route_lint::run(&workspace_root),
+        "limit-literals" => limit_literals::run(&workspace_root),
         "checked-input" => checked_input::run(&workspace_root),
         "canonical-types" => {
             canonical_types::run(workspace_operand.as_deref().unwrap_or(&workspace_root))

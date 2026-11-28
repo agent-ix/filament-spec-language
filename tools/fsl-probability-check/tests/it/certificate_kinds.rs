@@ -77,7 +77,7 @@ fn fair_link_model() -> String {
     )
 }
 
-fn likely(profile: &str, scheduler: &str, form: &str) -> String {
+pub(super) fn likely(profile: &str, scheduler: &str, form: &str) -> String {
     format!(
         "{}\nprobabilistic Likely using {profile} on M over (m: M::Msg) under {scheduler} on origin {{ {form} }}\n",
         model()
@@ -327,9 +327,8 @@ fn value_bounds_certificates_are_accepted() {
         partial_limits,
         domain().as_bytes(),
     );
-    let partial = partial.unwrap_or_else(|| {
-        panic!("a lower proof on the explored prefix settles: {settlement:?}")
-    });
+    let partial = partial
+        .unwrap_or_else(|| panic!("a lower proof on the explored prefix settles: {settlement:?}"));
     let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
         panic!("partial evidence settles with a terminal record: {settlement:?}");
     };

@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_semantics::check::{
-    AbstractionRefusal, AdmittedImport, CheckCause, CheckRefusal, CheckedComposition,
-    CompositionName, CompositionRefusal, CompositionRule, CompositionSlot, CompositionSlotKey,
-    ItemPlacement, MalformedMember, SlotBacking, SlotRole,
+    AbstractionRefusal, AdmittedImport, CheckCause, CheckedComposition, CompositionName,
+    CompositionRefusal, CompositionRule, CompositionSlot, CompositionSlotKey, ItemPlacement,
+    MalformedMember, SemanticCheckRefusal, SlotBacking, SlotRole,
 };
 use fsl_semantics::library::LibraryName;
 use ix_trace_rs::trace;
@@ -66,7 +66,7 @@ const CASE_ONE_MEMBERS: &str = "guarantee Producer::Sends; guarantee Consumer::D
 enum Failure {
     Syntax(Vec<fsl_cst::CompleteDiagnostic>),
     Assembly(fsl_semantics::check::AssemblyRefusal),
-    Check(Vec<CheckRefusal>),
+    Check(Vec<SemanticCheckRefusal>),
 }
 
 /// A checked dependency package and the import that names it.
@@ -227,7 +227,7 @@ impl World {
         let Err(Failure::Check(refusals)) = self.compile(declaration) else {
             panic!("{declaration}: a check refusal");
         };
-        let [CheckRefusal { cause, .. }] = &refusals[..] else {
+        let [SemanticCheckRefusal { cause, .. }] = &refusals[..] else {
             panic!("{declaration}: one composition refusal: {refusals:?}");
         };
         let CheckCause::Abstraction(cause) = cause.as_ref() else {
@@ -616,11 +616,9 @@ fn a_composition_over_dependency_components_is_emitted_and_admitted() {
         .map(|entry| entry["name"].as_str().expect("component name"))
         .collect();
     assert_eq!(names, ["Consumer", "Producer"]);
-    assert!(
-        list("components")
-            .iter()
-            .all(|entry| entry["subject"].is_object())
-    );
+    assert!(list("components")
+        .iter()
+        .all(|entry| entry["subject"].is_object()));
     assert_eq!(list("guarantees").len(), 3);
     assert_eq!(list("relies").len(), 1);
     assert_eq!(list("liveness_dependencies").len(), 1);
@@ -963,13 +961,11 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
                     panic!("the foreign clause operand must name its dependency");
                 };
                 assert_eq!(operand.package.as_ref(), *identity);
-                assert!(
-                    owner
-                        .structural_key_at(
-                            usize::try_from(operand.node).expect("foreign operand position")
-                        )
-                        .is_some()
-                );
+                assert!(owner
+                    .structural_key_at(
+                        usize::try_from(operand.node).expect("foreign operand position")
+                    )
+                    .is_some());
                 *segment = filament_contract_model::CheckedNodePathSegment::Index(operand.node);
                 slots += 1;
             }
@@ -1230,12 +1226,10 @@ fn a_composition_without_its_component_packages_is_not_admitted() {
                 refusal.code,
                 filament_contract_model::CheckedPackageRefusalCode::MalformedWire
             );
-            assert!(
-                refusal.loci[0]
-                    .path
-                    .as_ref()
-                    .is_some_and(|path| path.as_str().starts_with("/semantic_graph/operand_rows/"))
-            );
+            assert!(refusal.loci[0]
+                .path
+                .as_ref()
+                .is_some_and(|path| path.as_str().starts_with("/semantic_graph/operand_rows/")));
         }
         other => panic!("the component packages are unsupplied: {other:?}"),
     }

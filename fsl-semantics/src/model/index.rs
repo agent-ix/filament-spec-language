@@ -634,6 +634,13 @@ impl ModelIndex {
         self.records.is_abstract(key)
     }
 
+    /// The record declared under `key` (the last one, if several).
+    pub(crate) fn record(&self, key: &DeclarationKey) -> Option<&DomainPackageRecord> {
+        let position = self.records.position(key)?;
+        let record = *self.records.declarations.get(&position)?;
+        self.package.records.get(record)
+    }
+
     /// The field record declared under `key` (the last one, if several).
     pub(crate) fn field(&self, key: &DeclarationKey) -> Option<&FieldMemberRecord> {
         self.records.field(&self.package.records, key)

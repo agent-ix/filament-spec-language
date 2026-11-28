@@ -32,17 +32,17 @@ use std::collections::BTreeMap;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::{CapacityBinding, RoleBinding};
-use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
+use fsl_eval::simulation::model::{PackageModelInput, PendingClauseForm, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
-use fsl_replay::TerminalRecord;
 use fsl_replay::value_check::ValueTarget;
+use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::implements;
-use serde_json::{Map, json};
+use serde_json::{json, Map};
 
 use super::super::hyper_route::PackageRelationSubject;
 use super::super::package_hyper::PackageHyperSubject;
@@ -57,10 +57,10 @@ mod probability;
 mod schedule;
 
 use super::{
-    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
-    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
-    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
-    write_run,
+    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
+    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
+    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
+    SubjectSelection,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -301,6 +301,8 @@ pub struct PackageRun<'a> {
     /// The invocation's cumulative native budget, which reading a
     /// composition and its component packages continues (FR-531, FR-1044).
     pub budget: filament_contract_model::NativeJoinBudget,
+    /// Which proofs settle `proved`.
+    pub certification: fsl_replay::CertificationPolicy,
 }
 
 /// One item as the package's name tables resolve it.
@@ -469,6 +471,7 @@ pub fn settle_package_call(
     settle_package_run_inner(run, Some((function, call_items)), negotiate, cancel)
 }
 
+#[ix_trace_rs::string_edge]
 fn settle_package_run_inner(
     run: PackageRun<'_>,
     call: Option<(&str, &[super::CallItem])>,
@@ -485,6 +488,7 @@ fn settle_package_run_inner(
         engines,
         limits,
         mut budget,
+        certification,
     } = run;
     let explicit_items = items.is_some();
     let defaults = items.is_none().then(|| default_selections(package));
@@ -1030,7 +1034,7 @@ fn settle_package_run_inner(
             analyzed.push(work.item(route, item));
         }
     }
-    let records = super::super::analyze_items(engines, analyzed, cancel);
+    let records = super::super::analyze_items(engines, analyzed, cancel, certification);
     let details = records.iter().map(super::super::ItemDetail::of).collect();
     let protocol_conformance = records
         .iter()
@@ -1125,6 +1129,7 @@ fn owner_of_graph(
 }
 
 /// Whether the package node `node` is a `claim`/`state_graph` node (FR-410).
+#[ix_trace_rs::string_edge]
 fn is_state_graph(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
@@ -1255,6 +1260,7 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
 /// composition, which only the default items select over a package yet: the
 /// name could be that claim's or composition's. A default item selecting a
 /// composition (`defaults`) resolves to it (FR-1044-AC-10).
+#[ix_trace_rs::string_edge]
 fn resolve_names<'s>(
     view: &dyn AnalysisView,
     selections: &'s [ItemSelection],
@@ -1714,6 +1720,7 @@ fn protocol_binding(
 
 /// Whether the package node `node` names a state clause. The kind determines
 /// whether FR-489 routes it to `contract-checker` or EN-1.
+#[ix_trace_rs::string_edge]
 fn is_state_clause(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
@@ -2079,6 +2086,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// A Boolean value clause or an explicitly selected scalar record.
     /// Non-Boolean function names retain their declaration's inapplicable
     /// family; unsupported parameter shapes keep their typed refusal.
+    #[ix_trace_rs::string_edge]
     fn value(
         &self,
         index: RequestIndex,
@@ -2350,7 +2358,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// Supplied finite replay or recording over an admitted protocol declaration.
+    /// Resolve conformance or supplied replay/recording over a package protocol.
+    #[implements("FR-896-AC-8", "FR-896-AC-9", "FR-896-AC-10", "FR-990-AC-11")]
     fn supplied_protocol(
         &self,
         index: RequestIndex,
@@ -2388,8 +2397,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ) {
             return Ok(Resolution::Settled(refused));
         }
-        if (kind == Capability::GlobalConformance && selection.recording.is_none())
-            || !crate::protocol_analysis::recording::package_recording_supported(
+        if !(kind == Capability::GlobalConformance && selection.recording.is_none())
+            && !crate::protocol_analysis::recording::package_recording_supported(
                 &input.input(),
                 name,
             )
@@ -2406,8 +2415,45 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let candidates = self.registry.candidates(kind, named.as_ref());
         let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
-        let item_form = (kind == Capability::GlobalConformance)
-            .then(|| ItemForm::Temporal(temporal_settings(&temporal)));
+        // FR-896-AC-8/9: a `subject.protocol` binding this protocol selects
+        // the item's `over` and roles; one binding another protocol declines.
+        let mut form = temporal_settings(&temporal);
+        if kind == Capability::GlobalConformance {
+            if own_subject
+                .protocol
+                .as_ref()
+                .is_some_and(|selected| selected.protocol != name)
+            {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index,
+                    name,
+                    "temporal.subject.protocol",
+                )));
+            }
+            form.protocol = match protocol_binding(&own_subject, input) {
+                Ok(protocol) => protocol,
+                Err(member) => {
+                    return Ok(Resolution::Settled(super::invalid_value(
+                        index, name, member,
+                    )));
+                }
+            };
+        }
+        // FR-896-AC-10: a deadlock-freedom item needs an explicit protocol
+        // subject, as on the source route (FR-850-AC-2).
+        if kind == Capability::GlobalConformance
+            && form.protocol.is_none()
+            && temporal
+                .item_kind
+                .is_some_and(|item_kind| item_kind.kind() == ItemKind::DeadlockFreedom)
+        {
+            return Ok(Resolution::Settled(super::invalid_value(
+                index,
+                name,
+                "temporal.subject.protocol",
+            )));
+        }
+        let item_form = (kind == Capability::GlobalConformance).then(|| ItemForm::Temporal(form));
         Ok(Resolution::Claim(
             Box::new(ResolvedClaim {
                 item: ClaimItem {
@@ -2695,6 +2741,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 
     /// Resolve universal hyper analysis from its authenticated package form.
+    #[implements("FR-173-AC-3", "FR-173-AC-5", "FR-281-AC-3")]
     fn hyper(
         &self,
         index: RequestIndex,
@@ -2711,6 +2758,25 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             key.clone(),
             filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
         );
+        let profile = package.hyper_clause_profile(&claim).map_err(|_| fault())?;
+        let unsupported_form = package
+            .hyper_clause_hp4_reason(&claim)
+            .map_err(|_| fault())?;
+        if !matches!(
+            profile,
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+                | fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        ) || unsupported_form.is_some()
+        {
+            return Ok(Resolution::Settled(ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(TerminalRecord::disposition_unsupported(
+                    index,
+                    fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                    Map::new(),
+                )),
+            }));
+        }
         let pending = |fact| {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -2719,19 +2785,14 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 note: None,
             })
         };
-        let form = package
-            .hyper_clause_form(&claim)
+        let clause = input
+            .hyper_clause(&claim, crate::plan::MODEL_BASED_POSITIONS)
             .map_err(|refusal| match refusal {
-                fsl_package::BareClauseRefusal::Pending { fact, .. } => pending(fact),
+                PendingClauseForm::Read(fsl_package::BareClauseRefusal::Pending {
+                    fact, ..
+                }) => pending(fact),
                 _ => fault(),
             })?;
-        let world = package.world().map_err(|_| fault())?;
-        let clause = fsl_semantics::check::CheckedHyperClause::of_package_form(
-            form,
-            world.types(),
-            crate::plan::MODEL_BASED_POSITIONS,
-        )
-        .map_err(|_| fault())?;
         use fsl_eval::simulation::model::ModelEvaluator;
         package
             .hyper_reference_literals(&clause)
@@ -3323,6 +3384,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 max_cases: None,
                 max_task_product_work: None,
                 max_check_work: None,
+                max_states: None,
+                max_transitions: None,
                 trace: None,
                 traces: selection
                     .traces
@@ -3561,6 +3624,16 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .as_ref()
             .and_then(|temporal| temporal.limits)
             .and_then(|limits| limits.max_check_work),
+        max_states: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_states),
+        max_transitions: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_transitions),
         trace: selection
             .trace
             .as_ref()
@@ -3641,6 +3714,7 @@ impl<'a> WorkInputs<'_, 'a> {
     /// route, as the source route's `work` builds it: a temporal clause
     /// over its package form, a derived deadlock-freedom item over the
     /// package route's input, and any other kind its unadapted item.
+    #[ix_trace_rs::string_edge]
     fn item(&self, route: Option<Route<'a>>, negotiated: &NegotiatedItem) -> AnalyzeItem<'a> {
         let item = &negotiated.item;
         let temporal_kind = match &item.form {
@@ -3699,25 +3773,42 @@ impl<'a> WorkInputs<'_, 'a> {
             (_, Some(Route::SuppliedProtocol(protocol)))
                 if item.kind == Capability::GlobalConformance =>
             {
-                let recording = item
-                    .options
-                    .recording
-                    .as_ref()
-                    .and_then(|reference| self.binding.snapshots.get(reference))
-                    .map(Vec::as_slice);
-                crate::protocol_analysis::conformance::package_global_recording_item(
-                    item.request_index,
-                    crate::protocol_analysis::conformance::PackageRecordingRequest {
-                        input: self.input.input(),
-                        selected_protocol: protocol,
-                        recording_identity: item.options.recording.clone(),
-                        recording,
-                        population: item.options.population.clone(),
-                        incremental: item.options.assessment
-                            == Some(super::super::request::AssessmentMode::Incremental),
-                        replay_limits: self.limits.replay,
-                    },
-                )
+                match item.options.recording.as_ref() {
+                    Some(recording_identity) => {
+                        let recording = self
+                            .binding
+                            .snapshots
+                            .get(recording_identity)
+                            .map(Vec::as_slice);
+                        crate::protocol_analysis::conformance::package_global_recording_item(
+                            item.request_index,
+                            crate::protocol_analysis::conformance::PackageRecordingRequest {
+                                input: self.input.input(),
+                                selected_protocol: protocol,
+                                recording_identity: Some(recording_identity.clone()),
+                                recording,
+                                population: item.options.population.clone(),
+                                incremental: item.options.assessment
+                                    == Some(super::super::request::AssessmentMode::Incremental),
+                                replay_limits: self.limits.replay,
+                            },
+                        )
+                    }
+                    None => crate::protocol_analysis::conformance::package_global_behavior_item(
+                        item.request_index,
+                        self.input.input().clone(),
+                        self.binding.clone(),
+                        self.limits,
+                        protocol,
+                        item.form
+                            .as_ref()
+                            .and_then(|form| match form {
+                                ItemForm::Temporal(form) => Some(form.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default(),
+                    ),
+                }
             }
             (
                 Some(ItemForm::Temporal(form)),
@@ -4123,6 +4214,7 @@ fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
 /// list, then the start byte of the declaration span), then each task-set
 /// schedulability claim, then the derived deadlock-freedom item of each model
 /// selection. Each item carries the published default of every setting.
+#[implements("FR-620-AC-5", "FR-620-AC-10", "FR-1044-AC-10")]
 fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     use filament_contract_model::CheckedSourceRegion;
 
@@ -4244,6 +4336,7 @@ fn model_deadlock_claim(identity: &str) -> Result<OccurrenceKey, PackageRunError
 }
 
 /// Whether the package node `node` is a `claim`/`schedulability` node (FR-246).
+#[ix_trace_rs::string_edge]
 fn is_schedulability(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()

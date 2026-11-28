@@ -100,8 +100,9 @@ use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
 use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
 use fsl_semantics::check::{
-    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
+    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause,
     CorrespondenceConflict, KeyFault, Obligation, OperandText, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
@@ -199,11 +200,11 @@ enum ProtocolFailure {
         region: Option<SourceRegion>,
     },
     Check {
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         region: Option<SourceRegion>,
     },
     CheckDiagnostics {
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         regions: Vec<Option<SourceRegion>>,
     },
 }
@@ -845,11 +846,12 @@ impl ParsedUnitSource {
 /// Give an unproved range refusal the exact source spelling of its arithmetic
 /// node for the diagnostic message (FR-577).
 fn name_operand(
-    refusals: &mut [CheckRefusal],
+    refusals: &mut [SemanticCheckRefusal],
     region: Option<&SourceRegion>,
     sources: &[ParsedUnitSource],
 ) {
-    let (Some(CheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region) else {
+    let (Some(SemanticCheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region)
+    else {
         return;
     };
     let CheckCause::Unproved(Obligation::Range {
@@ -1217,6 +1219,7 @@ pub enum ObligationState {
     Pending,
 }
 
+#[implements("FR-514-AC-1")]
 fn type_report(graph: &fsl_semantics::check::CheckedGraph, source: &RawSourceRef) -> TypeReport {
     use fsl_semantics::check::Owner;
 
@@ -1851,6 +1854,7 @@ pub fn check_with_profile_catalog(
     clippy::too_many_arguments,
     reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
 )]
+#[implements("FR-508-AC-1")]
 pub fn check_with_profile_catalog_and_inputs(
     parsed: &ParsedUnitSource,
     inputs: ProfileCheckInputs<'_>,
@@ -2461,6 +2465,10 @@ pub(crate) struct ContinuationInputs<'a> {
 
 /// S3 continuation for the compiler: keep an attributable protocol refusal
 /// in the checked graph so S4 can still emit clean siblings.
+#[implements("FR-503-AC-3")]
+#[implements("FR-503-AC-4")]
+#[implements("FR-503-AC-5")]
+#[implements("FR-503-AC-6")]
 pub(crate) fn check_for_continuation(
     parsed: &ParsedUnitSource,
     inputs: ContinuationInputs<'_>,
@@ -3202,6 +3210,7 @@ fn is_nonprotocol_declaration_head(spelling: &[u8]) -> bool {
     )
 }
 
+#[implements("FR-503-AC-1")]
 fn forms_protocol_results(
     parsed: &fsl_cst::ParsedSource,
     refusals: &[fsl_forms::ProtocolFormsRefusal],
@@ -3468,6 +3477,7 @@ fn protocol_failure_from_parsed(parsed: &ParsedUnitSource) -> Option<CompileRefu
 
 /// The declarations delimited by S1 when one syntax diagnostic belongs to
 /// exactly one protocol. Returns `None` for a unit-level error.
+#[implements("FR-503-AC-2")]
 fn syntax_protocol_results(
     parsed: &fsl_cst::ParsedSource,
     diagnostic: Option<&fsl_cst::CompleteDiagnostic>,

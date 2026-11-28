@@ -39,6 +39,7 @@ fn native_mixed_infinity_is_unsupported_even_with_finite_initial_minimum() {
             world.request("Cost", fsl_replay::ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let Settlement::Disposed(disposal) = &records[0].settlement else {
         panic!("must not emit evidence: {records:?}");

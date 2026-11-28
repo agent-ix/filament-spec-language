@@ -184,8 +184,7 @@ fn a_model_trace_run_writes_its_limits() {
         "{bounded}"
     );
     assert_eq!(
-        bounded["disposition"]["category"],
-        "incomplete",
+        bounded["disposition"]["category"], "incomplete",
         "{bounded}"
     );
     let finite = result(&run_file(&write(

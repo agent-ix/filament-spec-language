@@ -946,6 +946,78 @@ fn native_result_two_writer_refuses_inconsistent_basis_and_witness() {
     ));
 }
 
+/// FR-267-AC-17: Quire's diagnostics and clauses are written in Quire's
+/// encoding and read back unchanged.
+#[trace("TC-109", "FR-267-AC-17")]
+#[test]
+fn native_result_two_writer_round_trips_extraction_diagnostics_and_clauses() {
+    use quire_rs::semantic::{ClauseRef, SemanticDiagnostic, SemanticSeverity, SourceLocus};
+
+    let span = SourceLocus {
+        source_identity: "ix://agent-ix/spec".to_owned(),
+        path: "spec.md".to_owned(),
+        start_line: 3,
+        start_column: 1,
+        end_line: Some(4),
+        end_column: Some(2),
+    };
+    let span_json = json!({
+        "sourceIdentity": "ix://agent-ix/spec", "path": "spec.md",
+        "startLine": 3, "startColumn": 1, "endLine": 4, "endColumn": 2
+    });
+    let expected = json!({
+        "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
+        "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
+        "binding": {"clause": "check", "package": "fixture/package"},
+        "outcome": {
+            "availability": {"state": "available", "reason": "partial", "lossy": true},
+            "clause_text": {"check": "true"},
+            "diagnostics": [{
+                "code": "unchecked-language", "severity": "advisory", "message": "unchecked",
+                "line": 3, "column": 1, "reason": "unknown-token",
+                "sourceSpan": span_json.clone(), "section": "Invariants"
+            }],
+            "clauses": [{"language": "ix:native", "clauseId": "check", "sourceSpan": span_json}]
+        },
+        "map": {
+            "region": {"start": 0, "end": 1},
+            "segments": [{"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]
+        }
+    });
+    let mut record: crate::spine::ExtractionRecord =
+        serde_json::from_value(expected.clone()).unwrap();
+    record.outcome.availability.reason = Some("partial".to_owned());
+    record.outcome.diagnostics = vec![SemanticDiagnostic {
+        code: "unchecked-language".to_owned(),
+        severity: SemanticSeverity::Advisory,
+        message: "unchecked".to_owned(),
+        line: Some(3),
+        column: Some(1),
+        reason: Some("unknown-token".to_owned()),
+        source_span: Some(span.clone()),
+        section: Some("Invariants".to_owned()),
+    }];
+    record.outcome.clauses = Some(vec![ClauseRef {
+        language: "ix:native".to_owned(),
+        clause_id: "check".to_owned(),
+        source_span: Some(span),
+    }]);
+
+    let report = run("AllBelow", Snapshot::High, "mid");
+    let bytes =
+        crate::spine::write_clause_run_result_for_with_extraction(&report, None, Some(record))
+            .unwrap();
+    let written: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(written["extraction"], expected);
+
+    let crate::spine::NativeRunResult::Clause(read) =
+        crate::spine::read_native_run_result(&bytes).unwrap()
+    else {
+        panic!("expected a clause record");
+    };
+    assert_eq!(serde_json::to_value(read.extraction()).unwrap(), expected);
+}
+
 /// FR-267-AC-2: each independent malformed witness, basis and format edit
 /// refuses at the member it changed.
 #[trace("TC-742", "FR-267-AC-2")]

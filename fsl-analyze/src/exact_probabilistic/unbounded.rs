@@ -5,6 +5,7 @@ use super::rows::Evaluation;
 use super::{ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind};
 use filament_exact::{Cancel, CancelCause, Integer, Rational, Value};
 use fsl_replay::ExactProbLimits;
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as BigInteger;
 
@@ -216,6 +217,7 @@ pub enum UnboundedError {
 /// The caller supplies a state-label vector and the extremum. Qualitative
 /// target and target-avoiding states are fixed before the linear equations are
 /// solved, so singular recurrent classes do not enter policy evaluation.
+#[implements("FR-198-AC-1", "FR-198-AC-3", "FR-198-AC-5")]
 pub fn decide_reachability(
     product: &ProbProduct,
     target: &[bool],
@@ -227,6 +229,7 @@ pub fn decide_reachability(
 }
 
 /// Decide `A until B`, fixing states where neither predicate holds to zero.
+#[implements("FR-201-AC-15")]
 pub fn decide_until(
     product: &ProbProduct,
     from: &[bool],
@@ -248,6 +251,7 @@ pub fn decide_until(
 
 /// Decide `always P` as the complement of eventual `not P`, exchanging the
 /// minimum and maximum objective.
+#[implements("FR-201-AC-16")]
 pub fn decide_always(
     product: &ProbProduct,
     predicate: &[bool],
@@ -436,6 +440,7 @@ fn reachability(
 
 /// Run outward-rounded Bellman iteration and use exact policy iteration when
 /// the interval cannot decide `threshold` within the configured budgets.
+#[implements("FR-198-AC-7", "FR-198-AC-8")]
 pub fn decide_reachability_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -450,6 +455,7 @@ pub fn decide_reachability_threshold(
 }
 
 /// Threshold form of [`decide_until`].
+#[implements("FR-201-AC-15")]
 pub fn decide_until_threshold(
     product: &ProbProduct,
     from: &[bool],
@@ -522,6 +528,7 @@ fn decide_reachability_threshold_with_blocked(
     )
 }
 
+#[implements("FR-198-AC-5")]
 fn reachability_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -562,11 +569,11 @@ fn reachability_threshold(
     } else {
         None
     };
+    // The components of the non-target states. Dropping a whole component for
+    // holding a target would leave its smaller ones uncollapsed, and a witness
+    // there may stay for ever.
     let mecs = if product.kind == ProductKind::Mdp && objective == UnboundedObjective::Max {
-        maximal_end_components(&graph)?
-            .into_iter()
-            .filter(|component| component.iter().all(|state| !target[*state]))
-            .collect::<Vec<_>>()
+        maximal_end_components_from(&graph, (0..target.len()).filter(|s| !target[*s]).collect())?
     } else {
         Vec::new()
     };
@@ -648,6 +655,7 @@ fn reachability_threshold(
 /// States from which the objective permits a positive probability of never
 /// reaching the target receive positive infinity. Remaining states are
 /// evaluated by exact policy iteration.
+#[implements("FR-198-AC-2", "FR-198-AC-10")]
 pub fn decide_expected_reward(
     product: &ProbProduct,
     target: &[bool],
@@ -852,6 +860,7 @@ pub fn avoiding_policy<E: From<UnboundedError>>(
 
 /// Decide a workload's unweighted or reward-weighted long-run fraction
 /// exactly from its bottom strongly connected components (FR-199).
+#[implements("FR-199-AC-1", "FR-199-AC-2", "FR-199-AC-3", "FR-199-AC-4")]
 pub fn decide_long_run_workload(
     product: &ProbProduct,
     predicate: &[bool],
@@ -992,6 +1001,8 @@ pub fn decide_long_run_workload(
 
 /// Decide a long-run fraction over every scheduler by MEC optima and exact
 /// Dinkelbach updates (FR-199).
+#[implements("FR-199-AC-2")]
+#[implements("FR-199-AC-6")]
 pub fn decide_long_run_mdp(
     product: &ProbProduct,
     predicate: &[bool],
@@ -2714,6 +2725,9 @@ fn restricted_scc(
     result
 }
 
+/// The policy iteration starts from. For a maximum over an MDP it must be
+/// proper, reaching a fixed state from every other state, or its linear
+/// system is singular; only an end component can hold it away.
 fn initial_policy(
     graph: &Graph<'_>,
     fixed: &[Option<Rational>],
@@ -2728,7 +2742,15 @@ fn initial_policy(
         return Ok(policy);
     }
     for component in maximal_end_components(graph)? {
-        if component.iter().any(|state| fixed[*state].is_some()) {
+        let held = component
+            .iter()
+            .copied()
+            .filter(|state| fixed[*state].is_some())
+            .collect::<Vec<_>>();
+        if !held.is_empty() {
+            // The component's other states head for its fixed ones by its
+            // own actions.
+            route_within_component(graph, &component, &held, &mut policy)?;
             continue;
         }
         let member = component
@@ -2759,13 +2781,26 @@ fn expand_one_mec_policy(
     owner_action: usize,
     policy: &mut [Option<usize>],
 ) -> Result<(), UnboundedError> {
+    policy[owner] = Some(owner_action);
+    route_within_component(graph, component, &[owner], policy)
+}
+
+/// Give every state of `component` outside `ends` an action that stays in the
+/// component and steps nearer to one of `ends`.
+fn route_within_component(
+    graph: &Graph<'_>,
+    component: &[usize],
+    ends: &[usize],
+    policy: &mut [Option<usize>],
+) -> Result<(), UnboundedError> {
     let members = component
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    policy[owner] = Some(owner_action);
     let mut distance = vec![None; graph.product.states.len()];
-    distance[owner] = Some(0_usize);
+    for end in ends {
+        distance[*end] = Some(0_usize);
+    }
     loop {
         let mut changed = false;
         for state in component {
@@ -2793,7 +2828,7 @@ fn expand_one_mec_policy(
         }
     }
     for state in component {
-        if *state == owner {
+        if ends.contains(state) {
             continue;
         }
         let current_distance = distance[*state].ok_or(UnboundedError::InvalidState)?;
@@ -3317,6 +3352,37 @@ mod tests {
         assert!(lower[0].rational() < ratio(1, 2));
         assert!(upper[0].rational() > ratio(1, 2));
         assert!(upper[0].rational() < ratio(3, 5));
+    }
+
+    /// FR-198-AC-5's rule on a component that also holds the target: `s` (state
+    /// 0) has the self-loop `wait` first and `go` to the target second, and the
+    /// target returns to `s`. By hand the maximum is 1 and only `go` attains it,
+    /// although both reach the same iterate value.
+    #[trace("TC-633", "FR-198-AC-5")]
+    #[test]
+    fn interval_witness_leaves_an_end_component_beside_the_target() {
+        let product = graph(
+            ProductKind::Mdp,
+            vec![
+                choice_edge(0, 0, one(), 0),
+                choice_edge(0, 1, one(), 1),
+                edge(1, 0, one()),
+            ],
+        );
+        let result = decide_reachability_threshold(
+            &product,
+            &[false, true],
+            UnboundedObjective::Max,
+            &ratio(1, 2),
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("intervals separate the threshold");
+        let UnboundedOutcome::Bounds { lower, policy, .. } = result else {
+            panic!("the interval should decide: {result:?}");
+        };
+        assert_eq!(lower[0].rational(), one());
+        assert_eq!(policy[0], Some(1), "`wait` never reaches the target");
     }
 
     /// Trace: FR-198-AC-1.

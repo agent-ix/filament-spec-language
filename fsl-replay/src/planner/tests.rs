@@ -1513,6 +1513,42 @@ fn incomplete_schedulability_entries_read_and_bind_task_search_frontiers() {
     );
 }
 
+/// FSpec FR-418's DBM entry has one reader (`shared_wire::DbmBound`), so a task
+/// search zone bound that is no canonical integer string is refused at its
+/// `bound`, where the hand-written reader once admitted any non-empty text.
+#[trace("FSpec-FR-418")]
+#[test]
+fn a_task_search_zone_bound_is_read_by_the_shared_dbm_entry() {
+    let identity = json!({
+        "node_id": fsl_foundation::node_wire::node_key_to_json(&node("Task"))
+            .expect("node identity writes"),
+        "model": "app@1",
+        "ordinal": 0
+    });
+    let entry = |bound: &str| {
+        with(
+            base("incomplete"),
+            json!({
+                "kind": "schedulability",
+                "cause": {"type": "bounded-search-incomplete", "reason": "unresolved-dynamics"},
+                "task_search": {
+                    "type": "task-search-frontier",
+                    "identity": identity,
+                    "nodes": [{"state": {"key": "0000000000000000000000000000000000000000000000000000000000000000"}, "depth": 0, "zone": [[{"bound": bound, "strict": false}]], "expanded": false}],
+                    "edges": [],
+                    "frontier": [{"node": 0, "reason": "unresolved-choice", "open": ["demand"]}]
+                }
+            }),
+        )
+    };
+    read_result_entry(&entry("-4"), 0, EntryOrigin::FirstParty).expect("a canonical bound reads");
+    for bound in ["01", "-0"] {
+        let (pointer, cause) = entry_defect(&entry(bound), EntryOrigin::FirstParty);
+        assert!(pointer.ends_with("/bound"), "{bound}: {pointer}");
+        assert_eq!(cause, EntryCause::InvalidValue, "{bound}");
+    }
+}
+
 #[trace("FSpec-FR-419-AC-6")]
 #[test]
 fn unresolved_task_search_requires_the_unresolved_dynamics_cause() {
@@ -1988,4 +2024,36 @@ fn a_preflight_limit_reached_cause_carries_its_required_count() {
             "{required}"
         );
     }
+}
+
+/// FSpec FR-331: a `not-stochastic` cause names the identity at fault or an
+/// idle tail, never both or neither, and `idle_tail` is `true`.
+#[test]
+fn a_not_stochastic_cause_names_exactly_one_of_identity_and_idle_tail() {
+    let defect = |members: Value| {
+        let mut cause = json!({"type": "not-stochastic", "state": {}});
+        for (name, value) in members.as_object().expect("members").clone() {
+            cause[name] = value;
+        }
+        entry_defect(
+            &with(base("unsupported"), json!({"cause": cause})),
+            EntryOrigin::FirstParty,
+        )
+    };
+    let at = |pointer: &str| pointer.to_owned();
+    assert_eq!(
+        defect(json!({})),
+        (at("/cause/identity"), EntryCause::MissingMember)
+    );
+    assert_eq!(
+        defect(json!({"identity": {}, "idle_tail": true})),
+        (at("/cause/idle_tail"), EntryCause::UnknownMember)
+    );
+    assert_eq!(
+        defect(json!({"idle_tail": false})),
+        (at("/cause/idle_tail"), EntryCause::InvalidValue)
+    );
+    // A well-formed one passes the rule: the reader then refuses the cause as
+    // one a result entry does not carry.
+    assert_eq!(defect(json!({"idle_tail": true})).0, at("/cause/type"));
 }

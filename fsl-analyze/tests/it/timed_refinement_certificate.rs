@@ -14,12 +14,14 @@ use fsl_analyze::zone_check::{
 use fsl_replay::{
     check_free_delay_zone_certificate, check_zone_certificate, CertificateCheckLimits,
     CertificateLocus, CertificateMember, CertificateRejection, CertificateRule, IncompleteCause,
-    ModelCheckLimit, RefinementFailure, Taken, ZoneCertificate, ZoneCertificateRefusal,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    InconclusiveCause, ModelCheckLimit, RefinementFailure, Taken, TerminalValue, ZoneCertificate,
+    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
+use crate::certificate_rejection_support::written_cause;
+use crate::provider_schema_support::{assert_valid, provider_definition};
 use crate::timed_refinement::{
     certificate_request, dead_undo, dead_undo_with_idle, free_delay_world, obligation, refinement,
     req, safety, safety_request, treq, undo_world, unit, CONTRACTS,
@@ -161,6 +163,7 @@ fn node(index: usize) -> CertificateLocus {
 fn edge(index: usize) -> CertificateLocus {
     CertificateLocus::ZoneEdge {
         edge: u64::try_from(index).expect("a small index"),
+        verdict: None,
     }
 }
 
@@ -198,6 +201,7 @@ fn holds(row: &str) -> Refining {
 /// refinement item's obligation; FR-245 accepts it (FR-245-AC-8), and two
 /// runs give equal certificates.
 #[trace("TC-699", "FR-244-AC-5")]
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
@@ -245,9 +249,11 @@ fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
 /// `Taken::Failing` (FR-244-AC-8; the byte and `candidate_blocks` clauses of
 /// that criterion are not covered here);
 /// FR-245 accepts it. With the `locked` mark removed from that node it is
-/// `Rejected` `StepFails` at the `undo` edge (FR-245-AC-8).
+/// `Rejected` `StepFails` at the `undo` edge (FR-245-AC-8), written as FSpec
+/// FR-331's zone edge step with the failing verdict.
 #[trace("TC-699", "FR-244-AC-5")]
 #[trace("TC-699", "FR-244-AC-8")]
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[trace("TC-700", "FR-245-AC-12")]
 #[trace("TC-1170", "FR-430-AC-8")]
@@ -286,9 +292,36 @@ fn the_locked_undo_post_state_is_a_locked_entry_node() {
 
     let mut unmarked = certificate.clone();
     unmarked.nodes[*entry].locked = false;
+    let ZoneCertificateVerdict::Rejected(rejection) = verdict(&world, &unmarked) else {
+        panic!("the unmarked entry rejects");
+    };
+    assert_eq!(rejection.rule, CertificateRule::StepFails);
+    let at = u64::try_from(*undo).expect("a small index");
+    assert!(
+        matches!(
+            &rejection.at,
+            CertificateLocus::ZoneEdge { edge, verdict: Some(_) } if *edge == at
+        ),
+        "{:?}",
+        rejection.at
+    );
+    let cause = written_cause(TerminalValue::Inconclusive(
+        InconclusiveCause::CertificateRejected {
+            rule: rejection.rule,
+            at: rejection.at,
+        },
+    ));
+    assert_valid(
+        &provider_definition("CertificateRejected"),
+        &cause,
+        "the zone step-fails rejection",
+    );
     assert_eq!(
-        verdict(&world, &unmarked),
-        rejected(CertificateRule::StepFails, edge(*undo))
+        cause["at"],
+        serde_json::json!({
+            "edge": at,
+            "verdict": {"kind": "StutterChanged", "position": at.to_string()},
+        })
     );
 
     // FR-245-AC-12 (TC-700 step 9): `None` or another value for the failing
@@ -364,6 +397,7 @@ fn a_step_inside_the_locked_region_lists_no_taken() {
 /// `Malformed` at that member before any successor is recomputed; with one
 /// edge's target position replaced, or its `taken` changed to `Stutter`, it
 /// is `Rejected` `PostDiffers` at that edge.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[trace("TC-1170", "FR-430-AC-8")]
 #[test]
@@ -431,6 +465,7 @@ fn a_tampered_treq_certificate_is_rejected() {
 /// true, so its half is `Violated`) with a forged certificate, the `TReq`
 /// one, whose initial node lists the abstract state `sent` false and no
 /// `locked` mark, is `Rejected` `InitialMismatch` at the initial node.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn a_forged_initial_position_is_an_initial_mismatch() {
@@ -460,6 +495,7 @@ fn a_forged_initial_position_is_an_initial_mismatch() {
 /// at the first `check_initial` or `check_step`, never `Rejected`; checked
 /// against the refinement over another abstract package it refuses
 /// `stale_dependency`.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn a_meter_stop_is_no_rejection_and_another_package_is_stale() {
@@ -671,6 +707,7 @@ fn no_positioned_initial_state_is_no_admitted_behaviour() {
 /// forged for the variant whose `undo` post-state has no time invariant
 /// (its half `Violated`), with the entry widened to the universe so it
 /// covers that post-state, is rejected `BadState` at the entry.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn a_forged_step_level_locked_entry_that_diverges_is_a_bad_state() {

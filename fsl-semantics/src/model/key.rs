@@ -180,6 +180,7 @@ pub fn object_type_node_key(key: &DeclarationKey) -> Result<NodeKey, InvalidNode
 /// the checked package's name `package_name`. `None` when no node key can be
 /// formed.
 #[must_use]
+#[ix_trace_rs::string_edge]
 pub fn declaring_node_key(key: &DeclarationKey, package_name: &str) -> Option<NodeKey> {
     if key.package.starts_with("source/") {
         source_object_node_key(key, package_name)

@@ -23,8 +23,8 @@ use fsl_forms::{
 };
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef, SourceRegion};
 use fsl_semantics::check::wire_id::WireGraph;
-use fsl_semantics::check::CheckRefusal;
 use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::check::SemanticCheckRefusal;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::value::{always_roles, native_diagnostics_catalog, DefinitionRole};
 use ix_trace_rs::trace;
@@ -48,12 +48,13 @@ use crate::checked_v2::{read_v2, Read, V2ReadLimits};
 mod abstraction;
 mod admission_corpus;
 mod bare_world;
+mod body_location_walk;
 mod bytes_operations;
 mod carried_quantity_paths;
-mod class_c;
 mod check_mode;
 mod checked_views;
 mod child_composite;
+mod class_c;
 mod clock_places;
 mod collection_if;
 mod composition;
@@ -79,6 +80,7 @@ mod navigation;
 mod one_occurrence;
 mod operation_bodies;
 mod operation_effects;
+mod operation_member_form;
 mod option_nesting;
 mod option_value;
 mod output_limit;
@@ -114,7 +116,7 @@ mod selected_model_rows;
 mod source_enum_carrier;
 mod source_enum_rows;
 mod source_map_debug;
-mod source_objects;
+pub(in crate::emit) mod source_objects;
 mod source_record_rows;
 mod source_tuple_rows;
 mod source_union_rows;
@@ -411,6 +413,25 @@ fn operand_slot_rows_preserve_the_retained_document_graph() {
     .expect("the package emits");
     assert_eq!(document_nodes(graph).unwrap(), typed);
     assert!(matches!(read_back(&emission), Read::Verified { .. }));
+}
+
+#[trace("TC-3242", "FR-869-AC-9", "FSpec-FR-322-AC-280")]
+#[test]
+fn one_pass_operand_rewrite_preserves_package_bytes() {
+    let values = (0..1_000)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let (_, package) = package_from_text(&format!(
+        "function allValues using v(): Sequence<Integer>[0, 1000] pure {{ sequence[{values}] }}\n"
+    ));
+
+    let one_pass = emit_checked(&package).expect("the package emits with one-pass rewrites");
+    let repeated = with_repeated_operand_rewrite(|| {
+        emit_checked(&package).expect("the package emits with repeated rewrites")
+    });
+
+    assert_eq!(one_pass.package().bytes(), repeated.package().bytes());
 }
 
 #[trace("FSpec-TC-233", "FSpec-FR-322-AC-280")]
@@ -2012,7 +2033,7 @@ fn an_empty_package_refuses_during_check() {
             .expect_err("an empty package has no graph to emit");
     assert!(matches!(
         refusals.as_slice(),
-        [CheckRefusal { cause, .. }]
+        [SemanticCheckRefusal { cause, .. }]
             if matches!(cause.as_ref(), fsl_semantics::check::CheckCause::EmptyPackage { .. })
     ));
 }
@@ -2980,7 +3001,7 @@ fn text_function(text_type: &str, literal: &str) -> String {
 }
 
 /// The checked package for `declarations`, or the checker's refusals.
-fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
@@ -3308,7 +3329,7 @@ fn emit_model_unit(unit: &str, evidence_identity: Option<&str>) -> (Emission, Va
 /// package by identity alone, with no version, while the emitted model nodes are keyed by the
 /// content-only `ModelOwner`, which carries no version. FSL's I2 read, given the package
 /// as domain package evidence, returns Verified exporting `keep` and `held`.
-#[trace("TC-442", "FR-027-AC-9", "FR-056-AC-9")]
+#[trace("TC-442", "FR-027-AC-9", "FR-056-AC-9", "FSpec-FR-322-AC-137")]
 #[test]
 fn a_model_bearing_unit_emits_its_model_selection_and_reads_back_verified() {
     let unit = spine_model_without(&[FIELD_ACCESS, CONFORMING_EQUALITY]);
@@ -3375,9 +3396,9 @@ fn a_model_bearing_unit_emits_its_model_selection_and_reads_back_verified() {
     );
     // FSL FR-094 "Model declaration nodes": every ordinary object of the selected
     // document is rooted, including the unused `Rock`.
-    // FSpec FR-322-AC-132/134/136: exactly one `model_root` for the one row,
-    // last in graph order with its `generated` source-map entry last, keyed by
-    // its identity alone, never by the alias.
+    // FSpec FR-322-AC-132/134/136: exactly one self-typed `model_root` for
+    // the selected identity. FR-322-AC-137 requires it and its generated
+    // source-map entry to be last.
     let graph = nodes(&wire);
     assert_eq!(
         graph
@@ -4245,7 +4266,7 @@ const VERSION_UNCHANGED: &str =
 fn check_attempt_unit(
     unit: &str,
     with_sub: bool,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-309"),
         "program.native",
@@ -5476,10 +5497,21 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         filament_contract_model::CheckedPackageRefusalCode::InvalidSemanticGraph,
         "inconsistent cycle: {cycle_refusal:?}; node={mutated_cycle_node}"
     );
+    // IR-FR-063-AC-4 and FSpec FR-322-AC-268 (IR-1625): the refused edge is
+    // the latest, in node-id order, of the inconsistent cycle it closes. The
+    // three equivalence rows form one triangle, so the cycle's latest edge is
+    // the last equivalence row of the wire (rows are in node-id order),
+    // whichever row was edited.
+    let latest_equivalence_position = inconsistent_cycle["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the nodes")
+        .iter()
+        .rposition(|node| node["semantic_form"] == "dimension_equivalence")
+        .expect("the cycle's equivalence rows");
     assert_eq!(
         cycle_path.as_deref(),
-        Some(format!("/semantic_graph/nodes/{clock_equivalence_position}").as_str()),
-        "inconsistent cycle must identify the closing edge's equivalence node"
+        Some(format!("/semantic_graph/nodes/{latest_equivalence_position}").as_str()),
+        "an inconsistent cycle is refused at its latest equivalence row"
     );
     assert_eq!(cycle_cause, None);
     for (numerator, denominator, refusal) in invalid_scale_refusals {

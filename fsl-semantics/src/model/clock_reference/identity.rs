@@ -90,6 +90,7 @@ impl CollectionKind {
         }
     }
 
+    #[ix_trace_rs::string_edge]
     fn read(text: &str) -> Result<Self, IdentityError> {
         match text {
             "sequence" => Ok(Self::Sequence),
@@ -259,6 +260,7 @@ impl PlaceIdentity {
 
     /// Decode only v2, preserving exact decimal strings and requiring a byte
     /// equal canonical round trip. Declaration admission is a separate check.
+    #[ix_trace_rs::string_edge]
     pub fn decode(text: &str, limits: Limits) -> Result<Self, IdentityError> {
         check_bytes(text.len(), limits)?;
         let pieces: Vec<_> = text
@@ -370,6 +372,7 @@ fn string<'d>(node: NodeRef<'d>) -> Result<&'d str, IdentityError> {
 }
 
 impl DeclarationScope {
+    #[ix_trace_rs::string_edge]
     fn read(node: NodeRef<'_>) -> Result<Self, IdentityError> {
         let parts = array(node)?;
         match parts.as_slice() {
@@ -484,6 +487,7 @@ impl Encode for Carrier {
 }
 
 impl Carrier {
+    #[ix_trace_rs::string_edge]
     fn read(mut node: NodeRef<'_>) -> Result<Self, IdentityError> {
         let mut layers = Vec::new();
         loop {
@@ -563,6 +567,7 @@ impl Encode for Path<'_> {
 }
 
 impl PathEntry {
+    #[ix_trace_rs::string_edge]
     fn read(node: NodeRef<'_>) -> Result<Self, IdentityError> {
         let parts = array(node)?;
         match parts.as_slice() {
@@ -611,6 +616,7 @@ impl Encode for Indices<'_> {
 }
 
 impl SlotIndex {
+    #[ix_trace_rs::string_edge]
     fn read(node: NodeRef<'_>) -> Result<Self, IdentityError> {
         let parts = array(node)?;
         match parts.as_slice() {

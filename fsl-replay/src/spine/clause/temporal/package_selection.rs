@@ -16,20 +16,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::node::NodeKind;
 use filament_exact::{Meter, NodeKey, ScalarLimits, ValueType};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
-use fsl_eval::temporal::{DecisiveAtom, PackagePositions, evaluate_package_positions_decisive};
+use fsl_eval::temporal::{evaluate_package_positions_decisive, DecisiveAtom, PackagePositions};
 use fsl_eval::value::{CheckedPackageEvaluation, HoldsAtom, HoldsBinders, ObservationIdentity};
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    AdmissionUsage, DocumentProvision, ModelSelections, ObservationLimits, admit_trace_snapshot,
+    admit_trace_snapshot, AdmissionUsage, DocumentProvision, ModelSelections, ObservationLimits,
 };
 
 use super::super::model_trace::{behaviour_payload, expansion_stop, replay_refusal, universes};
 use super::super::trace_refusal::{PackageClauseSite, TraceSite};
 use super::super::{ClauseDisposition, ClauseRunReport, ClauseRunUsage, TemporalVerdict};
-use super::{OverObject, TraceInput, refused, resolve_over_in, with_counterexample};
-use crate::model_check::replay::{ModelTraceEnd, ModelTraceRun, evaluate_model_trace};
+use super::{refused, resolve_over_in, with_counterexample, OverObject, TraceInput};
+use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
 
 /// A run the package route reads no verdict for, and why.
 #[derive(Debug)]
@@ -82,6 +82,9 @@ pub struct PackageSnapshotRequest<'a, 'p> {
     /// The progress ledger the request carries, which only a trace that
     /// asserts progress accepts.
     pub ledger: Option<&'a super::ProgressLedger>,
+    /// The ceiling on the bytes of each package emission the run makes
+    /// (`emit.output_bytes`).
+    pub emit: fsl_package::EmitLimits,
 }
 
 fn report(disposition: ClauseDisposition, usage: ClauseRunUsage) -> ClauseRunReport {
@@ -145,6 +148,7 @@ pub fn run_package_snapshots(
         ledger,
         sources,
         progress_capacity,
+        emit: _,
     } = *request;
     let input = input.as_inner();
     let early = |disposition| Ok(report(disposition, ClauseRunUsage::default()));
@@ -398,6 +402,7 @@ fn run_model(
         accounting,
         trace,
         over,
+        emit,
         ..
     } = *request;
     let input = input.as_inner();
@@ -478,7 +483,7 @@ fn run_model(
             max_candidates: *max_candidates,
         },
         meter: accounting,
-        emit: fsl_package::EmitLimits::new(u64::MAX),
+        emit,
     }) {
         Ok(system) => system,
         Err(failure) => return stopped(ClauseDisposition::Admit(failure), admitted),
@@ -544,9 +549,12 @@ fn run_model(
         disposition,
         None::<crate::ObservedTemporalCounterexample>,
         |atom, meter| {
-            let observed = observation
-                .as_ref()
-                .ok_or_else(|| decisive_fault("decisive-atom-has-an-observation"))?;
+            // A state with no object conforming to the parameter under the key
+            // gives no reference to read the atom over, so there is no
+            // decisive record, as on the source route.
+            let Some(observed) = observation.as_ref() else {
+                return Ok(None);
+            };
             decisive_over(
                 request.package,
                 clause,

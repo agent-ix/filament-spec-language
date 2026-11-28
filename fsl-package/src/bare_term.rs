@@ -756,6 +756,7 @@ pub struct BareFrameOperation {
 impl<'p> BarePackage<'p> {
     /// The declaring type and operation selected by a protocol attempt's
     /// admitted `operation_anchor` node (FR-531/FR-940).
+    #[ix_trace_rs::string_edge]
     pub fn protocol_operation(
         &self,
         anchor_id: &CheckedNodeId,
@@ -915,6 +916,7 @@ impl BarePackage<'_> {
     ///
     /// [`BareSelectionFailure`]: a witness refusal, or `MalformedNode` for a
     /// clause node whose body, `self` parameter or anchor does not read.
+    #[ix_trace_rs::string_edge]
     pub fn state_clause_declarations(
         &self,
     ) -> Result<Vec<BareStateClauseDeclaration>, BareSelectionFailure> {
@@ -1301,6 +1303,7 @@ impl<'p> BarePackage<'p> {
             .map(|node| &node.node_id)
     }
 
+    #[ix_trace_rs::string_edge]
     fn temporal_clause_semantic_node(
         &self,
         clause: &NodeKey,

@@ -25,6 +25,8 @@ use fsl_route::request::RequestItem;
 use fsl_semantics::check::{ComponentGuaranteeKey, PackageDeclarations, SlotKey};
 use serde_json::{json, Value};
 
+use fsl_replay::CertificationPolicy;
+
 /// The checked package identity text every fixture unit is assembled under.
 pub(crate) const PACKAGE: &str = "pkg";
 
@@ -37,7 +39,7 @@ pub(crate) const PACKAGE: &str = "pkg";
 pub(crate) enum Failure {
     Syntax(Vec<fsl_cst::CompleteDiagnostic>),
     Assembly(fsl_semantics::check::AssemblyRefusal),
-    Check(Vec<fsl_semantics::check::CheckRefusal>),
+    Check(Vec<fsl_semantics::check::SemanticCheckRefusal>),
 }
 
 /// Compile `unit` over the domain package `documents` through S1 to S4.
@@ -326,7 +328,13 @@ impl Chain {
     /// Admit and settle `request`.
     pub(crate) fn settled(&self, request: &Value) -> PlannerResult {
         let read = self.read(request).expect("the request is admitted");
-        settle(&self.package, &read, Budget::default()).expect("the item settles")
+        settle(
+            &self.package,
+            &read,
+            Budget::default(),
+            CertificationPolicy::AdmitAny,
+        )
+        .expect("the item settles")
     }
 
     /// The refusal of `request`: code, cause and pointer.

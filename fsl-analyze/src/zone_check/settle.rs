@@ -109,7 +109,8 @@ impl ZoneCheckRecord {
             | IncompleteCause::ResourceExhausted
             | IncompleteCause::UnresolvedDynamics
             | IncompleteCause::CertificateUnchecked
-            | IncompleteCause::PrecisionBudget { .. } => None,
+            | IncompleteCause::PrecisionBudget { .. }
+            | IncompleteCause::IdleTailUndecided(_) => None,
         };
         Self {
             limit_reached,
@@ -277,10 +278,11 @@ pub fn settle_zone_check<S>(
 }
 
 /// The V-6 cause of an undecided EN-6 run.
-fn undecided_cause(cause: &ZoneUndecided) -> InconclusiveCause {
+pub(crate) fn undecided_cause(cause: &ZoneUndecided) -> InconclusiveCause {
     match cause {
         // FR-127's V-6 rows, which FR-235 extends.
         ZoneUndecided::NoInitialState => InconclusiveCause::NoInitialState,
+        ZoneUndecided::NoInstance => InconclusiveCause::NoInstance,
         ZoneUndecided::UndecidedSuccessor(_) => InconclusiveCause::UndecidedSuccessor,
         // FR-235's V-6 rows.
         ZoneUndecided::NoAdmittedBehaviour => InconclusiveCause::NoAdmittedBehaviour,
@@ -359,6 +361,10 @@ fn certified<O>(
         ) => ZoneCheckRecord::inconclusive(InconclusiveCause::ReplayRefused(
             fsl_foundation::diagnostic::Code::StaleDependency,
         )),
+        // FR-125 Instancing: the item has no instance set to check over.
+        Err(ZoneCertificateRefusal::Vacuous(vacuity)) => {
+            ZoneCheckRecord::inconclusive(undecided_cause(&vacuity.into()))
+        }
         // A checker that cannot read the certificate's item is a tool
         // failure (ADR-013 C-09), never a verdict.
         Err(

@@ -107,7 +107,7 @@ selection whose alias is `v`, and is checked under owner (`a`, `u`).
 Tag the tests `#[trace("FR-093-AC-n", "TC-415")]` with the AC each backs.
 
 `PackageDeclarations::check` reports a family's `StageFailure::Limit` as a
-`CheckRefusal` whose cause is `CheckCause::ResourceExhausted` carrying the
+`SemanticCheckRefusal` whose cause is `CheckCause::ResourceExhausted` carrying the
 stage, kind, bound and actual counter (ADR-013 §7 slice S-5b, FR-096); that
 cause's code is always `stage_limit_exceeded` and its cause the limit kind's
 (`check/refusal.rs`, `CheckCause::code` and `CheckCause::cause`).

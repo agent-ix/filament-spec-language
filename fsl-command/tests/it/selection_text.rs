@@ -77,12 +77,7 @@ fn check_source(text: &str) -> OutcomeDocument {
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n";
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-17",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-17", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_model_producer_text_holds_its_hint() {
     let unit = format!(
         "{HEADER}profile v = \"filament.model.complete/v1\";\n\
@@ -93,12 +88,7 @@ fn the_model_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-18",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-18", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_library_producer_text_holds_its_hint() {
     let unit = format!(
         "{HEADER}profile v = \"filament.value.complete/v1\";\n\
@@ -109,12 +99,7 @@ fn the_library_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-22",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-22", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_sibling_unit_producer_text_holds_its_hint() {
     let refusal = CompileRefusal::UnitList(UnitListRefusal::SiblingImport {
         identity: "a-unit".to_owned(),
@@ -129,12 +114,7 @@ fn the_sibling_unit_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-19",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-19", "FR-865-AC-24", "FR-286-AC-40")]
 #[trace("TC-3210", "FR-027-AC-15")]
 fn the_unimported_library_producer_text_holds_its_hint() {
     let case = Case::new();
@@ -171,12 +151,7 @@ fn the_unimported_library_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-20",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-20", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_function_owner_producer_text_holds_its_hint() {
     let refusal = ReplayRefusal::UnknownOwner {
         owner: LibraryName::new("test/other").unwrap(),
@@ -190,12 +165,7 @@ fn the_function_owner_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-21",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-21", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_byte_provision_producer_text_holds_its_hint() {
     let refusal = ReplayRefusal::Request(ReplayRequestRefusal::IncompleteByteProvision {
         requested: "test unit".to_owned(),
@@ -272,11 +242,19 @@ fn a_call_site_fault_is_an_internal_failure_at_stage_i1() {
     };
     assert_eq!(error.category(), Category::InternalFailure);
     assert_eq!(error.category().exit_code(), 30);
-    let wire: Value =
-        serde_json::from_slice(&error.outcome_document(Operation::Package).to_bytes().unwrap())
-            .unwrap();
+    let wire: Value = serde_json::from_slice(
+        &error
+            .outcome_document(Operation::Package)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
     assert_outcome_schema(&wire);
     assert_eq!(wire["category"], "internal-failure", "{wire}");
     assert_eq!(wire["last_stage"], "I1", "{wire}");
-    assert_eq!(wire["diagnostics"].as_array().map(Vec::len), Some(1), "{wire}");
+    assert_eq!(
+        wire["diagnostics"].as_array().map(Vec::len),
+        Some(1),
+        "{wire}"
+    );
 }

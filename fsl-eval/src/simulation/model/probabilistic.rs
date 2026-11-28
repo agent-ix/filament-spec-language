@@ -30,6 +30,7 @@ use fsl_semantics::check::{
     CheckedProbabilisticModel, ProbabilisticOperation, ReadReward, Reward, Workload,
 };
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 
 use super::contracts::{verdict, Verdict};
 use super::domain::{Domain, Odometer};
@@ -168,6 +169,11 @@ impl Eq for NotMarkov {}
 pub struct UndecidedSuccessor {
     /// The state's canonical key.
     pub state: StateKey,
+    /// The first contract conjunction the expansion evaluated undefined,
+    /// not refused (ADR-018 UE-6): the route refutes with it rather than
+    /// reading the state as undecided. `None` when only a refused
+    /// conjunction left the successors unknown.
+    pub undefined: Option<super::UndefinedContract>,
 }
 
 /// Why [`ModelSystem::weighted_steps`] gives a state no step probabilities
@@ -764,6 +770,7 @@ impl ModelSystem<'_> {
     /// The [`ExpansionStop`] FR-120's expansion stops with;
     /// `resource_exhausted`/`insufficient-next-charge` when a reward
     /// evaluation exhausts the meter.
+    #[implements("FR-187-AC-1", "FR-187-AC-2")]
     pub fn actions(
         &self,
         state: &ModelSimState,
@@ -851,16 +858,24 @@ impl ModelSystem<'_> {
                 filament_exact::LimitKind::WorkUnits,
             )));
         }
-        if expansion
+        let undefined = expansion
             .findings
             .iter()
-            .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+            .find_map(ModelFinding::undefined_contract);
+        if undefined.is_some()
+            || expansion
+                .findings
+                .iter()
+                .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
         {
             let key = match key_policy {
                 Some(policy) => policy.key(self, state.state())?,
                 None => self.canonical_state_key(state).map_err(|_| stop(BROKEN))?,
             };
-            return Ok(Err(UndecidedSuccessor { state: key }));
+            return Ok(Err(UndecidedSuccessor {
+                state: key,
+                undefined,
+            }));
         }
         let mut successors: Vec<Option<(ModelTransition, ModelSimState)>> =
             expansion.successors.into_iter().map(Some).collect();
@@ -980,6 +995,7 @@ impl ModelSystem<'_> {
     /// [`Self::actions`]; `runtime_invariant`/`established-invariant-broken`
     /// when `workload` gives no weight to an enabled operation, which a
     /// workload of another model's subject does.
+    #[implements("FR-187-AC-1", "FR-187-AC-2")]
     pub fn weighted_steps(
         &self,
         state: &ModelSimState,
@@ -1090,7 +1106,9 @@ impl ModelSystem<'_> {
             .collect();
         let total = drawn
             .values()
-            .fold(Rational::from_integer(Integer::zero()), |total, weight| total.add(weight));
+            .fold(Rational::from_integer(Integer::zero()), |total, weight| {
+                total.add(weight)
+            });
         let mut steps: Vec<(Vec<u8>, WeightedStep)> = Vec::new();
         for action in actions {
             let (_, identities) = operations
@@ -1195,7 +1213,9 @@ mod tests;
 /// takes none (`None`) while another has a positive weight; when every weight
 /// is 0 each takes 1, so they are drawn uniformly. Both the model's
 /// `weighted_steps` and the digital product's tie ordering draw by this rule.
-pub fn draw_weights<'w>(weights: impl IntoIterator<Item = &'w Rational> + Clone) -> Vec<Option<Rational>> {
+pub fn draw_weights<'w>(
+    weights: impl IntoIterator<Item = &'w Rational> + Clone,
+) -> Vec<Option<Rational>> {
     let any_positive = weights.clone().into_iter().any(|weight| !weight.is_zero());
     weights
         .into_iter()

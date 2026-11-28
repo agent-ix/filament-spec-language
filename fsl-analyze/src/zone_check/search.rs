@@ -36,11 +36,14 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
-    GuardedStep, ModelSimState, PlaceConstraint, TerminalClass, TimedStop, TimedSystem,
+    admitted_refutation, admitted_start, claim_start, states_non_zeno, GuardedStep, ModelSimState,
+    PlaceConstraint, TerminalClass, TimedStop, TimedSystem, TimedVacuity, UndecidedReading,
 };
-use fsl_eval::simulation::{NotSimulated, Permutation, RequiresBound, SymmetryGroup};
+use fsl_eval::simulation::{
+    NotSimulated, Permutation, RequiresBound, SymmetryGroup, TransitionSystem,
+};
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::ReductionKind;
+use fsl_foundation::{ReductionKind, Setting};
 use fsl_replay::{
     AppliedReduction, CounterexampleKind, Lasso, NonZeno, ReductionCause, SymmetryBrokenCause,
     SymmetryRefusal, TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus,
@@ -83,11 +86,12 @@ pub struct ZoneCheckLimits {
 
 impl Default for ZoneCheckLimits {
     fn default() -> Self {
+        let default = |setting: Setting| setting.default_bound().unwrap_or(0);
         Self {
-            max_symbolic_states: 1 << 20,
-            max_symbolic_transitions: 1 << 24,
-            max_automaton_states: 1 << 20,
-            max_zone_bytes: 1 << 30,
+            max_symbolic_states: default(Setting::ZoneCheckMaxSymbolicStates),
+            max_symbolic_transitions: default(Setting::ZoneCheckMaxSymbolicTransitions),
+            max_automaton_states: default(Setting::ZoneCheckMaxAutomatonStates),
+            max_zone_bytes: default(Setting::ZoneCheckMaxZoneBytes),
         }
     }
 }
@@ -148,14 +152,30 @@ pub struct TimedStateGraph {
     pub edges: Vec<TimedStateGraphEdge>,
     /// Each initial state's graph node, in the subject's initial order.
     pub initials: Vec<usize>,
+    /// Undefined evaluations encountered at reachable nodes, in breadth-first
+    /// discovery order.
+    pub undefined: Vec<TimedStateGraphUndefined>,
     /// Counts for the exploration.
     pub stats: ZoneStats,
     /// The scale factor shared by the node zones.
     pub(super) scale: BigInt,
-    /// The LU simulation bounds used to explore and certify the graph.
+    /// The bounds the graph is covered under and certified with: `L = U =
+    /// max(L, U)` per clock, the aM bisimulation.
     pub(super) lower: Vec<Option<BigInt>>,
-    /// The upper LU simulation bounds used to explore and certify the graph.
+    /// The upper bounds, equal to [`Self::lower`].
     pub(super) upper: Vec<Option<BigInt>>,
+    /// The node, step and guard part that created each node, `None` for an
+    /// initial one. A node's zone is exactly its parent's successor.
+    pub(super) parents: Vec<Option<(usize, usize, usize)>>,
+}
+
+/// An undefined timed-subject evaluation at one explored state-graph node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimedStateGraphUndefined {
+    /// The node where evaluation was undefined.
+    pub node: usize,
+    /// The timed member and undefined cause.
+    pub reading: UndecidedReading,
 }
 
 /// A request to EN-6.
@@ -181,8 +201,7 @@ pub enum ZoneReduction {
     /// ADR-018 V-8: a selected reduction EN-6 does not apply. Over any
     /// item, partial-order reduction or a state constraint (FSpec FR-430),
     /// named first in the order partial-order, constraint; failing that,
-    /// symmetry over an item decided on the liveness product or by the
-    /// time-lock search, which do not read a symmetry-reduced graph.
+    /// symmetry over the time-lock item or a TT-3 or TT-4 clause.
     Unsupported {
         /// The reduction.
         reduction: ReductionKind,
@@ -227,6 +246,8 @@ pub enum ZoneStop {
 pub enum ZoneUndecided {
     /// The subject has no initial state.
     NoInitialState,
+    /// The claim's `over` type admits no key.
+    NoInstance,
     /// An expansion or a timed member's reading had no value.
     UndecidedSuccessor(TimedStop),
     /// No initial symbolic state has a time-divergent behaviour (ADR-026
@@ -408,6 +429,7 @@ pub enum ZoneCheckOutcome<S> {
 ///
 /// [`ZoneCheckRefusal`] if the timed subject cannot be explored or the
 /// caller cancels the run.
+#[implements("FR-852-AC-9", "FR-852-AC-10", "FR-852-AC-11")]
 pub fn explore_timed_state_graph(
     subject: &TimedSystem<'_, '_>,
     limits: ZoneCheckLimits,
@@ -432,7 +454,7 @@ pub fn explore_timed_state_graph(
             _ => return Err(ZoneCheckRefusal::Fault("state-graph-halt")),
         },
     };
-    let nodes = run
+    let nodes: Vec<TimedStateGraphNode> = run
         .nodes
         .iter()
         .map(|node| TimedStateGraphNode {
@@ -440,6 +462,30 @@ pub fn explore_timed_state_graph(
             zone: node.zone.clone(),
         })
         .collect();
+    let mut undefined = run
+        .undefined
+        .iter()
+        .filter_map(|(key, reading)| {
+            let node = run.keys.iter().position(|candidate| candidate == key)?;
+            Some(TimedStateGraphUndefined {
+                node,
+                reading: reading.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    for (node, state) in run.nodes.iter().enumerate() {
+        if undefined.iter().any(|found| found.node == node) {
+            continue;
+        }
+        if let Err(TimedStop::Undecided(reading)) = subject.guarded_steps(&state.state) {
+            if reading.cause.is_some() {
+                undefined.push(TimedStateGraphUndefined {
+                    node,
+                    reading: *reading,
+                });
+            }
+        }
+    }
     let mut edges = Vec::new();
     let graph_edges = run.edges.clone();
     for edge in &graph_edges {
@@ -463,14 +509,52 @@ pub fn explore_timed_state_graph(
     edges.dedup_by(|right, left| {
         right.from == left.from && right.to == left.to && right.transition == left.transition
     });
+    let parents = run
+        .parent
+        .iter()
+        .map(|parent| {
+            parent.and_then(|edge| {
+                let edge = &run.edges[edge];
+                edge.step.map(|(step, part)| (edge.from, step, part))
+            })
+        })
+        .collect();
+    let model_system = subject.system();
+    for (node, graph_node) in nodes.iter().enumerate() {
+        if undefined.iter().any(|found| found.node == node) {
+            continue;
+        }
+        let Ok(expansion) = model_system.successors(&graph_node.state) else {
+            continue;
+        };
+        let Ok(TerminalClass::Undefined { model, cause }) =
+            model_system.terminal_class(&graph_node.state, !expansion.successors.is_empty())
+        else {
+            continue;
+        };
+        undefined.push(TimedStateGraphUndefined {
+            node,
+            reading: UndecidedReading {
+                site: fsl_eval::simulation::model::TimedSite::Terminal {
+                    model: model.identity().to_owned(),
+                },
+                object: None,
+                cause: Some(cause),
+                transition: None,
+                location: model_system.terminal_locus(&model),
+            },
+        });
+    }
     Ok(TimedStateGraph {
         nodes,
         edges,
         initials,
+        undefined,
         stats,
         scale: run.scale,
         lower: run.lower,
         upper: run.upper,
+        parents,
     })
 }
 
@@ -595,12 +679,16 @@ pub enum ZoneCheckRefusal {
     /// The alive hidden candidates of one product step apply different
     /// clock carries or resets, which needs one clock block per candidate;
     /// the product keeps one abstract clock block per position.
-    #[error("the refinement checker does not decide a timed abstract side whose alive hidden candidates apply different clock carries or resets at one step")]
+    #[error(
+        "the refinement checker does not decide a timed abstract side whose alive hidden candidates apply different clock carries or resets at one step"
+    )]
     HiddenCandidateClockBlocks,
     /// The liveness half of a timed abstract side under a concrete tick
     /// source: abstract class enabledness is read over the instants between
     /// positions, which a tick source does not have.
-    #[error("the refinement checker does not decide the liveness half of a timed abstract side under a tick source")]
+    #[error(
+        "the refinement checker does not decide the liveness half of a timed abstract side under a tick source"
+    )]
     TimedAbstractLivenessTickSource,
     /// A symmetry declaration does not admit (FR-151).
     #[error(transparent)]
@@ -608,6 +696,17 @@ pub enum ZoneCheckRefusal {
     /// An invariant of the engine broke.
     #[error("the zone engine broke an invariant: {0}")]
     Fault(&'static str),
+}
+
+/// The timed outcome layer's classification as an EN-6 run states it.
+impl From<TimedVacuity> for ZoneUndecided {
+    fn from(vacuity: TimedVacuity) -> Self {
+        match vacuity {
+            TimedVacuity::NoInitialState => Self::NoInitialState,
+            TimedVacuity::NoInstance => Self::NoInstance,
+            TimedVacuity::NoAdmittedBehaviour => Self::NoAdmittedBehaviour,
+        }
+    }
 }
 
 impl From<WindowRefusal> for ZoneCheckRefusal {
@@ -631,9 +730,10 @@ pub(super) enum Badness {
     /// The claim's atom is false for the instance.
     False(ModelInstance),
     /// A condition of the claim, an atom or the activation's, is undefined
-    /// for the instance.
+    /// for the instance, or (no instance, as for a derived item) a step
+    /// guard of the node's state is undefined (ADR-018 UE-6).
     Undefined(
-        ModelInstance,
+        Option<ModelInstance>,
         fsl_eval::temporal::UndefinedCause,
         UndefinedLocus,
     ),
@@ -666,7 +766,7 @@ impl From<DbmError> for Halt {
 /// [`ZoneCheckRefusal`] when the clause is of no form EN-6 decides, its
 /// automaton does not build, its instances are not finite, an atom gives
 /// no reading, or the engine breaks an invariant.
-#[implements("FR-239-AC-1")]
+#[implements("FR-239-AC-1", "FR-125-AC-7")]
 pub fn check_timed_model<S: Clone>(
     request: ZoneCheckRequest<'_, '_, '_, S>,
     cancel: &Cancel,
@@ -701,11 +801,12 @@ pub fn check_timed_model<S: Clone>(
     }
     // FR-239's bound check ran when the timed subject was built.
     let system = request.subject.system();
-    let mut symmetric = !reductions.symmetry.is_empty();
-    // EN-6 applies symmetry to its search only: the time-lock search and
-    // the liveness product read the unreduced graph's edges, so an item
-    // decided by either settles V-8 naming symmetry, as an unapplied
-    // reduction does, before its declarations are admitted.
+    let symmetric = !reductions.symmetry.is_empty();
+    // The time-lock search and the liveness product read the unreduced
+    // graph's edges. A time-lock item, or a TT-3 or TT-4 clause, settles
+    // V-8 naming symmetry, as an unapplied reduction does, before its
+    // declarations are admitted; a TT-1 or TT-2 clause under a fairness is
+    // reduced to one instance per orbit.
     if symmetric && reads_unreduced_graph(&request)? {
         return Ok(reduced(ZoneReduction::Unsupported {
             reduction: ReductionKind::Symmetry,
@@ -729,9 +830,7 @@ pub fn check_timed_model<S: Clone>(
         }
         Err(ClosureRefusal::Encoding(_)) => return Err(ZoneCheckRefusal::Fault("state-key")),
         Err(
-            ClosureRefusal::Unordered
-            | ClosureRefusal::Stopped(_)
-            | ClosureRefusal::Initial(_),
+            ClosureRefusal::Unordered | ClosureRefusal::Stopped(_) | ClosureRefusal::Initial(_),
         ) => {
             return Err(ZoneCheckRefusal::Fault("symmetry-closure"));
         }
@@ -744,10 +843,18 @@ pub fn check_timed_model<S: Clone>(
     // run over every instance.
     let plans = match request.item {
         ZoneCheckItem::Clause { clause, .. } => {
-            let instances = system.instances(&clause.over().1).map_err(not_simulated)?;
-            // With no instance there is no orbit to reduce: the item runs
-            // unreduced, so its proof is certified.
-            symmetric &= !instances.is_empty();
+            let over = system.claim_instances(&clause.over().1);
+            let started = claim_start(request.subject.initial().len(), over);
+            let instances = match started.map_err(not_simulated)? {
+                Ok(instances) => instances.as_slice().to_vec(),
+                Err(vacuity) => {
+                    return Ok(ZoneCheckOutcome::Undecided {
+                        cause: vacuity.into(),
+                        non_zeno: None,
+                        stats: ZoneStats::default(),
+                    });
+                }
+            };
             if symmetric {
                 instance_groups(Some(&instances), &group)
                     .into_iter()
@@ -790,7 +897,10 @@ pub fn check_timed_model<S: Clone>(
         run.live = live;
         run.group = plan.group.clone();
         run.reduced = symmetric;
-        let liveness_product = matches!(&run.judged, Judged::Liveness(_));
+        // A TT-1 or TT-2 claim decided on the product, for its fairness,
+        // states no premise.
+        let liveness_product = matches!(&run.judged, Judged::Liveness(claim)
+            if states_non_zeno(claim.clause));
         let searched = match run.search() {
             Ok(searched) => searched,
             Err(Halt::Outcome(searched)) => *searched,
@@ -859,9 +969,11 @@ pub fn check_timed_model<S: Clone>(
     })
 }
 
-/// Whether `request`'s item is decided on a graph EN-6 does not reduce:
-/// the time-lock-freedom item, or a clause with no TT-1 atom and no flat
-/// TT-2 window, which the liveness product decides (FR-240).
+/// Whether `request`'s item admits no symmetry: the time-lock-freedom item,
+/// or a TT-3 or TT-4 clause the liveness product decides (FR-240). A TT-1
+/// or TT-2 clause under a fairness is decided on the product too, and keeps
+/// symmetry: it is checked once per orbit (FR-151), the instance's product
+/// explored unreduced, and the product reads no canonical state.
 fn reads_unreduced_graph<S>(
     request: &ZoneCheckRequest<'_, '_, '_, S>,
 ) -> Result<bool, ZoneCheckRefusal> {
@@ -869,7 +981,9 @@ fn reads_unreduced_graph<S>(
         ZoneCheckItem::TimeLockFreedom => true,
         ZoneCheckItem::DeadlockFreedom => false,
         ZoneCheckItem::Clause { clause, .. } => {
-            if fsl_eval::automaton::invariant_atom(clause).is_some() {
+            if !clause.fairness().is_empty() {
+                states_non_zeno(clause)
+            } else if fsl_eval::automaton::invariant_atom(clause).is_some() {
                 false
             } else {
                 let instances = request
@@ -915,7 +1029,10 @@ fn judge_plan<'r, S>(
     let mut live = None;
     let judged = match request.item {
         ZoneCheckItem::Clause { clause, letters } => {
-            if let Some(atom) = fsl_eval::automaton::invariant_atom(clause) {
+            // The search reads no fairness: a clause declaring one is
+            // decided on the liveness product, whatever its form.
+            let fair = !clause.fairness().is_empty();
+            if let Some(atom) = fsl_eval::automaton::invariant_atom(clause).filter(|_| !fair) {
                 if !matches!(
                     clause.profile(),
                     TemporalProfile::InfiniteTrace | TemporalProfile::Timed
@@ -928,12 +1045,16 @@ fn judge_plan<'r, S>(
                     letters,
                     instances,
                 })
-            } else if let Some(claim) = flat_window(
-                clause,
-                instances.len(),
-                request.subject.tick_period().cloned(),
-                request.limits.max_automaton_states,
-            )? {
+            } else if let Some(claim) = if fair {
+                None
+            } else {
+                flat_window(
+                    clause,
+                    instances.len(),
+                    request.subject.tick_period().cloned(),
+                    request.limits.max_automaton_states,
+                )?
+            } {
                 window = Some(claim);
                 Judged::Claim(Claim {
                     clause,
@@ -1112,7 +1233,9 @@ pub(super) struct Run<'r, 's, 'a> {
     escape_states: u64,
     escape_edges: u64,
     /// The guarded steps of each model state reached, by its key.
-    steps: BTreeMap<Vec<u8>, Vec<GuardedStep>>,
+    steps: BTreeMap<Vec<u8>, fsl_eval::simulation::model::GuardedSteps>,
+    /// Undefined timed guards retained by state-graph exploration.
+    undefined: Vec<(Vec<u8>, UndecidedReading)>,
     /// The first instance an admitted behaviour read short of data for.
     insufficient: Option<ModelInstance>,
     /// The group the run's states are canonicalised under (FSpec FR-430).
@@ -1132,13 +1255,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     ) -> Self {
         let (scale, mut lower, mut upper) =
             scaled_bounds(timed, window.as_ref(), automaton_constants);
-        if matches!(judged, Judged::DeadlockFreedom | Judged::TimeLockFreedom) {
-            // The deadlock-freedom and time-lock-freedom items read
-            // valuations whose absence of behaviour the aLU simulation does
-            // not preserve: they cover under the aM bisimulation,
-            // `L = U = max(L, U)` per clock, which the deadlock item's
-            // certificate checker reads (FR-245) and FR-240's trap search
-            // needs (`super::time_lock`).
+        if matches!(
+            judged,
+            Judged::StateGraph | Judged::DeadlockFreedom | Judged::TimeLockFreedom
+        ) {
+            // The state-graph forms and the deadlock-freedom and
+            // time-lock-freedom items read valuations whose absence of
+            // behaviour the aLU simulation does not preserve: they cover
+            // under the aM bisimulation, `L = U = max(L, U)` per clock,
+            // which the certificate checker reads (FR-245) and FR-240's trap
+            // search needs (`super::time_lock`).
             for (lower, upper) in lower.iter_mut().zip(&mut upper) {
                 let most = lower.clone().max(upper.clone());
                 lower.clone_from(&most);
@@ -1172,6 +1298,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             escape_states: 0,
             escape_edges: 0,
             steps: BTreeMap::new(),
+            undefined: Vec::new(),
             insufficient: None,
             group: SymmetryGroup::default(),
             reduced: false,
@@ -1485,7 +1612,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn search(&mut self) -> Result<Searched, Halt> {
         let initial = self.timed.initial();
         if initial.is_empty() {
-            return Err(self.undecided(ZoneUndecided::NoInitialState));
+            return Err(self.undecided(TimedVacuity::NoInitialState.into()));
         }
         if self.window.is_some() && self.limits.max_automaton_states == 0 {
             return Err(
@@ -1529,7 +1656,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             }
         }
         if roots.is_empty() {
-            return Err(self.undecided(ZoneUndecided::NoInitialState));
+            return Err(self.undecided(TimedVacuity::NoInitialState.into()));
         }
         while let Some(node) = queue.pop_front() {
             self.poll()?;
@@ -1555,34 +1682,37 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             }
         }
         // Vacuity (ADR-026 TD-6): an initial state with a time-divergent
-        // behaviour.
-        let mut admitted = None;
-        for &root in &roots {
-            let escape = self.node_escape(root)?;
-            if escape.diverges {
-                admitted = Some((root, escape.witness));
-                break;
+        // behaviour, this route's evidence for the timed outcome layer.
+        let admitted = admitted_start(roots.len(), || {
+            for &root in &roots {
+                let escape = self.node_escape(root)?;
+                if escape.diverges {
+                    return Ok(Some((root, escape.witness)));
+                }
             }
-        }
+            Ok::<_, Halt>(None)
+        })?;
         match admitted {
-            None => Err(self.undecided(ZoneUndecided::NoAdmittedBehaviour)),
+            Err(vacuity) => Err(self.undecided(vacuity.into())),
             // STD-493: a deadlock reached only by waiting at a quiescent
             // state has no counterexample form (FR-236 gives `final_delay`
             // to time-locks only), so it is neither proved away nor refuted.
-            Some(_) if delayed_deadlock => Err(self.undecided(ZoneUndecided::DeadlockAfterDelay)),
+            Ok(_) if delayed_deadlock => Err(self.undecided(ZoneUndecided::DeadlockAfterDelay)),
             // ADR-024 WA-4: an admitted behaviour read a window short of
             // data, which the evaluator reports `InsufficientData`.
-            Some(_) if self.insufficient.is_some() => {
+            Ok(_) if self.insufficient.is_some() => {
                 let instance = self.insufficient.take();
                 Err(self.undecided(ZoneUndecided::InsufficientData(
                     instance.ok_or(ZoneCheckRefusal::Fault("insufficient-instance"))?,
                 )))
             }
             // FR-160: a symmetry-reduced graph has no certificate.
-            Some(_) if self.reduced => Ok(Searched::HoldsReduced {
-                stats: self.stats(),
-            }),
-            Some((root, witness)) => {
+            Ok(_) if self.reduced && !matches!(self.judged, Judged::Liveness(_)) => {
+                Ok(Searched::HoldsReduced {
+                    stats: self.stats(),
+                })
+            }
+            Ok((root, witness)) => {
                 // FR-240: a claim decided on the liveness product, once
                 // the subject admits a behaviour; its proof is the
                 // product's (FR-244).
@@ -1591,6 +1721,13 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                         Liveness::Violated(counterexample) => {
                             return Ok(Searched::Violated {
                                 counterexample,
+                                stats: self.stats(),
+                            });
+                        }
+                        // FR-160: a proof under a symmetry, here over one
+                        // instance of each orbit, has no certificate.
+                        Liveness::Proved(..) if self.reduced => {
+                            return Ok(Searched::HoldsReduced {
                                 stats: self.stats(),
                             });
                         }
@@ -1810,13 +1947,78 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         self.steps_for(&state)
     }
 
-    /// The guarded steps of `state`, computed once per model state.
+    /// The guarded steps of `state`, computed once per model state. A state
+    /// whose expansion evaluated a guard undefined settles nothing from its
+    /// steps (ADR-018 UE-6): the search is undecided unless the route
+    /// refutes it first through [`Self::undefined_of`].
     pub(super) fn steps_for(&mut self, state: &ModelSimState) -> Result<Vec<GuardedStep>, Halt> {
+        let expanded = self.expanded_steps(state)?;
+        match expanded.undefined {
+            // The route refutes an undefined guard when it enters the
+            // state, so what reads the steps after (divergence, the
+            // counterexample's path) reads the guard as a disabled step.
+            Some(_) if self.refutes_undefined_guards() => Ok(expanded.steps),
+            Some(finding) => Err(self.undecided(ZoneUndecided::UndecidedSuccessor(
+                TimedStop::Undefined(Box::new(finding)),
+            ))),
+            None => Ok(expanded.steps),
+        }
+    }
+
+    /// Whether the route refutes a state whose step guard is undefined as
+    /// it enters the state ([`Self::badness`] for a claim or deadlock-freedom
+    /// item, the liveness product's `take` without a fairness). Every other
+    /// route is undecided there (ADR-018 UE-6).
+    pub(super) fn refutes_undefined_guards(&self) -> bool {
+        match &self.judged {
+            Judged::Claim(_) | Judged::DeadlockFreedom => true,
+            Judged::Liveness(claim) => claim.clause.fairness().is_empty(),
+            Judged::StateGraph
+            | Judged::SourceClosure
+            | Judged::TimeLockFreedom
+            | Judged::Refinement => false,
+        }
+    }
+
+    /// The first undefined finding of `state`'s expansion (ADR-018 UE-6) as
+    /// the locus and cause an undefined evaluation names.
+    #[implements("FR-239-AC-11")]
+    pub(super) fn undefined_of(
+        &mut self,
+        state: &ModelSimState,
+    ) -> Result<Option<(UndefinedLocus, fsl_eval::temporal::UndefinedCause)>, Halt> {
+        let expanded = self.expanded_steps(state)?;
+        Ok(expanded.undefined.and_then(|finding| {
+            fsl_replay::undefined_finding(std::slice::from_ref(&finding))
+                .map(|(locus, _, cause)| (locus, cause))
+        }))
+    }
+
+    fn expanded_steps(
+        &mut self,
+        state: &ModelSimState,
+    ) -> Result<fsl_eval::simulation::model::GuardedSteps, Halt> {
         let key = self.key(state)?;
         if let Some(steps) = self.steps.get(&key) {
             return Ok(steps.clone());
         }
-        let steps = self.timed(self.timed.guarded_steps(state))?;
+        let mut steps = self.timed(self.timed.guarded_expansion(state))?;
+        if matches!(self.judged, Judged::StateGraph) {
+            // The state-graph route retains the undefined guard and
+            // explores no step past it.
+            if let Some(finding) = steps.undefined.clone() {
+                match self.timed.undefined_stop(finding) {
+                    TimedStop::Undecided(reading) if reading.cause.is_some() => {
+                        self.undefined.push((key.clone(), *reading));
+                        steps = fsl_eval::simulation::model::GuardedSteps {
+                            steps: Vec::new(),
+                            undefined: None,
+                        };
+                    }
+                    stop => return self.timed(Err(stop)),
+                }
+            }
+        }
         self.steps.insert(key, steps.clone());
         Ok(steps)
     }
@@ -2024,13 +2226,15 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             }
         };
         let escape = self.node_escape(node)?;
-        if !escape.diverges {
+        let found = admitted_refutation(escape.diverges, || {
+            self.counterexample(node, badness, escape)
+        })?;
+        let Some(counterexample) = found else {
             // Every behaviour through it is Zeno: the violation holds
             // vacuously and the time-lock-freedom item reports it.
             self.nodes[node].locked = true;
             return Ok(false);
-        }
-        let counterexample = self.counterexample(node, badness, escape)?;
+        };
         Err(Halt::Outcome(Box::new(Searched::Violated {
             counterexample: Box::new(counterexample),
             stats: self.stats(),
@@ -2048,13 +2252,14 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         else {
             return Ok(());
         };
-        if !self.node_escape(node)?.diverges {
+        let diverges = self.node_escape(node)?.diverges;
+        let Some(at) = admitted_refutation(diverges, || Ok::<_, Halt>(at))? else {
             // Every behaviour through it is Zeno: as a violation on
             // time-locked valuations, it is kept `locked`, which the
             // certificate checker confirms (FR-245).
             self.nodes[node].locked = true;
             return Ok(());
-        }
+        };
         if self.insufficient.is_none() {
             let instance = self
                 .claim()
@@ -2081,7 +2286,20 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         clippy::type_complexity,
         reason = "no violation, a violation, or one only after a delay"
     )]
+    #[implements("FR-239-AC-11")]
     fn badness(&mut self, node: usize) -> Result<Option<Result<Badness, ()>>, Halt> {
+        // ADR-018 UE-6: a step guard with no value at the node's state is
+        // read as a disabled step by the expansion, so the node is refuted
+        // as an undefined evaluation before any verdict reads its steps.
+        if self.refutes_undefined_guards() {
+            let state = self.nodes[node].state.clone();
+            if let Some((locus, cause)) = self.undefined_of(&state)? {
+                let instance = self
+                    .claim()
+                    .and_then(|claim| claim.instances.first().cloned());
+                return Ok(Some(Ok(Badness::Undefined(instance, cause, locus))));
+            }
+        }
         let claim = match &self.judged {
             Judged::Claim(claim) => claim,
             Judged::StateGraph | Judged::SourceClosure => return Ok(None),
@@ -2100,7 +2318,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             };
             if let Some(undefined) = window.undefined(q) {
                 return Ok(Some(Ok(Badness::Undefined(
-                    instance(undefined.instance)?,
+                    Some(instance(undefined.instance)?),
                     undefined.cause.clone(),
                     UndefinedLocus::Atom(undefined.atom),
                 ))));
@@ -2123,7 +2341,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 AtomReading::False => return Ok(Some(Ok(Badness::False(instance.clone())))),
                 AtomReading::Undefined(cause) => {
                     return Ok(Some(Ok(Badness::Undefined(
-                        instance.clone(),
+                        Some(instance.clone()),
                         cause,
                         UndefinedLocus::Atom(atom),
                     ))));
@@ -2500,9 +2718,11 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         // canonical state; σ carries them to the concrete one.
         let badness = match badness {
             Badness::False(instance) => Badness::False(lift_instance(instance, &sigma)),
-            Badness::Undefined(instance, cause, locus) => {
-                Badness::Undefined(lift_instance(instance, &sigma), cause, locus)
-            }
+            Badness::Undefined(instance, cause, locus) => Badness::Undefined(
+                instance.map(|instance| lift_instance(instance, &sigma)),
+                cause,
+                locus,
+            ),
             Badness::Deadlock(zone) => Badness::Deadlock(self.renamed(&zone, &sigma)?),
         };
         self.finite_counterexample((initial, stages, stutters), state, badness, escape, &sigma)
@@ -2591,9 +2811,17 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                     .map_or_else(Vec::new, |claim| claim.clause.fairness().to_vec()),
             ),
             Badness::Undefined(instance, cause, locus) => {
-                let claim = self
+                let fairness = self
                     .claim()
-                    .ok_or(ZoneCheckRefusal::Fault("undefined-claim"))?;
+                    .map_or_else(Vec::new, |claim| claim.clause.fairness().to_vec());
+                // The guarded transition of an undefined precondition,
+                // which a replay rebuilds the site with.
+                let transition = match &locus {
+                    UndefinedLocus::Contract(_) | UndefinedLocus::Protocol(_) => {
+                        self.expanded_steps(&state)?.undefined_guard_of()
+                    }
+                    _ => None,
+                };
                 (
                     CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
                         site: UndefinedSite {
@@ -2602,7 +2830,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                                 discrete_key,
                             ),
                             locus,
-                            transition: None,
+                            transition,
                             time: Some(Box::new(TimedPoint {
                                 stamp: concrete.last_stamp.clone(),
                                 clocks: present,
@@ -2610,8 +2838,8 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                         },
                         cause,
                     }),
-                    Some(instance),
-                    claim.clause.fairness().to_vec(),
+                    instance,
+                    fairness,
                 )
             }
             Badness::Deadlock(_) => (CounterexampleKind::Deadlock, None, Vec::new()),
@@ -2766,48 +2994,80 @@ pub(super) fn uncovered(zone: &Dbm, covers: &[Dbm]) -> Result<Vec<Dbm>, DbmError
             distinct.push(cover.clone());
         }
     }
-    subtract(zone, &distinct)
+    subtract(zone, &distinct, &mut |_| Ok(()))
 }
 
-/// [`uncovered`] over covers already distinct: a cover that holds all of
-/// `zone` leaves nothing, and one disjoint from it is skipped.
-fn subtract(zone: &Dbm, covers: &[Dbm]) -> Result<Vec<Dbm>, DbmError> {
-    if zone.is_empty() {
-        return Ok(Vec::new());
-    }
-    let Some((first, rest)) = covers.split_first() else {
-        return Ok(vec![zone.clone()]);
-    };
-    if first.includes(zone)? {
-        return Ok(Vec::new());
-    }
-    let mut meet = zone.clone();
-    intersect(&mut meet, first)?;
-    if meet.is_empty() {
-        return subtract(zone, rest);
-    }
+/// What [`subtract`] reports before it goes on, for its caller to charge,
+/// poll and cap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Split {
+    /// One cover is about to be read against one piece.
+    Read,
+    /// One piece was made; so many pieces are now held.
+    Piece(usize),
+}
+
+/// `zone` without the union of `covers`, as [`uncovered`] gives it, over the
+/// covers as listed. A cover that holds all of a piece drops it, and one
+/// disjoint from it is skipped. The pieces still to be read are held in a
+/// list, not on the call stack, so any number of covers can be read; `meter`
+/// stops the subtraction by returning an error.
+#[implements("FR-852-AC-33")]
+pub(super) fn subtract<E: From<DbmError>>(
+    zone: &Dbm,
+    covers: &[Dbm],
+    meter: &mut impl FnMut(Split) -> Result<(), E>,
+) -> Result<Vec<Dbm>, E> {
     let mut parts = Vec::new();
-    for i in 0..zone.dim() {
-        for j in 0..zone.dim() {
-            if i == j {
-                continue;
-            }
-            let Bound::Finite { value, strict } = first.bound(i, j)? else {
-                continue;
-            };
-            if zone.bound(i, j)? <= first.bound(i, j)? {
-                continue;
-            }
-            // Outside `x_i - x_j ≺ value`: `x_j - x_i ≺' -value`.
-            let mut outside = zone.clone();
-            let negation = if *strict {
-                Bound::le(-value)
-            } else {
-                Bound::lt(-value)
-            };
-            outside.constrain(j, i, negation)?;
-            parts.extend(subtract(&outside, rest)?);
+    // Each piece with the position of the first cover it has not read; the
+    // last is read next, which keeps the parts in order.
+    let mut pending = Vec::new();
+    if !zone.is_empty() {
+        pending.push((zone.clone(), 0));
+    }
+    while let Some((piece, next)) = pending.pop() {
+        let Some(cover) = covers.get(next) else {
+            parts.push(piece);
+            continue;
+        };
+        meter(Split::Read)?;
+        if cover.includes(&piece)? {
+            continue;
         }
+        let mut meet = piece.clone();
+        intersect(&mut meet, cover)?;
+        if meet.is_empty() {
+            pending.push((piece, next + 1));
+            continue;
+        }
+        let mut made = Vec::new();
+        for i in 0..piece.dim() {
+            for j in 0..piece.dim() {
+                if i == j {
+                    continue;
+                }
+                let Bound::Finite { value, strict } = cover.bound(i, j)? else {
+                    continue;
+                };
+                if piece.bound(i, j)? <= cover.bound(i, j)? {
+                    continue;
+                }
+                // Outside `x_i - x_j ≺ value`: `x_j - x_i ≺' -value`.
+                let mut outside = piece.clone();
+                let negation = if *strict {
+                    Bound::le(-value)
+                } else {
+                    Bound::lt(-value)
+                };
+                outside.constrain(j, i, negation)?;
+                if outside.is_empty() {
+                    continue;
+                }
+                meter(Split::Piece(pending.len() + parts.len() + made.len() + 1))?;
+                made.push((outside, next + 1));
+            }
+        }
+        pending.extend(made.into_iter().rev());
     }
     Ok(parts)
 }
@@ -2892,16 +3152,25 @@ fn scaled_bounds(
     constants.extend(automaton_constants.iter().cloned());
     let factor = scale_constants(&constants).factor().clone();
     let max = |values: &[Rational]| values.iter().max().map(|value| scaled(value, &factor));
-    let mut lower: Vec<Option<BigInt>> = timed
-        .places()
-        .iter()
-        .map(|place| max(&lower[place.clock().index()]))
-        .collect();
-    let mut upper: Vec<Option<BigInt>> = timed
-        .places()
-        .iter()
-        .map(|place| max(&upper[place.clock().index()]))
-        .collect();
+    // A clock carried into another field is compared with its constants too.
+    let of_places = |fields: Vec<Vec<Rational>>| -> Vec<Option<BigInt>> {
+        let mut largest: Vec<Option<Rational>> = fields
+            .into_iter()
+            .map(|values| values.into_iter().max())
+            .collect();
+        timed.raise_by_carries(&mut largest);
+        timed
+            .places()
+            .iter()
+            .map(|place| {
+                largest[place.clock().index()]
+                    .as_ref()
+                    .map(|value| scaled(value, &factor))
+            })
+            .collect()
+    };
+    let mut lower = of_places(lower);
+    let mut upper = of_places(upper);
     // The horizon clock is compared with every interval end, from both
     // sides.
     if window.is_some() {

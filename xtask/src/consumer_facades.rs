@@ -361,6 +361,7 @@ fn bindings_by_consumer(
     result
 }
 
+#[ix_trace_rs::string_edge]
 fn crate_roots(workspace_root: &Path) -> Result<BTreeMap<String, PathBuf>> {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
     let output = Command::new(cargo)
@@ -407,6 +408,7 @@ fn crate_roots(workspace_root: &Path) -> Result<BTreeMap<String, PathBuf>> {
     Ok(roots)
 }
 
+#[ix_trace_rs::string_edge]
 fn public_api(crate_name: &str, root: &Path) -> PublicApi {
     let mut api = PublicApi {
         external_crates: dependency_crates(root),
@@ -574,6 +576,7 @@ fn scan_items(
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn scan_item(crate_name: &str, module: &str, item: Item, api: &mut PublicApi) {
     match item {
         Item::Fn(item) if is_public(&item.vis) => {
@@ -656,6 +659,7 @@ fn scan_item(crate_name: &str, module: &str, item: Item, api: &mut PublicApi) {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn flatten_use(tree: &UseTree, prefix: String, out: &mut Vec<(String, String)>) {
     match tree {
         UseTree::Path(path) => {
@@ -703,6 +707,7 @@ fn flatten_use(tree: &UseTree, prefix: String, out: &mut Vec<(String, String)>) 
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn module_file(parent: &Path, name: &str, attributes: &[syn::Attribute]) -> Option<PathBuf> {
     for attribute in attributes {
         if attribute.path().is_ident("path") {
@@ -791,6 +796,7 @@ fn is_external_path(api: &PublicApi, path: &str) -> bool {
         .is_some_and(|(crate_name, _)| api.external_crates.contains(crate_name))
 }
 
+#[ix_trace_rs::string_edge]
 fn resolve_use_path(
     crate_name: &str,
     owner: &str,

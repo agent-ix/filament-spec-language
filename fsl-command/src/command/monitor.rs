@@ -24,21 +24,23 @@ use fsl_replay::spine::{
     read_trace_binding, write_clause_run_result, write_ledger, OverObject, ProgressLowerBoundary,
     TimestampedMissingValuation, TimestampedOrderKey,
 };
+use ix_trace_rs::implements;
 use serde_json::{json, Value};
 
 use super::limits::{CommandLimits, MonitorPreparationLimits};
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request_integer_division, request_with_overrides,
+    require_native_header, wire, FileCounts, NativeResult, RequestOverrides, Result, RunCause,
+    RunError, RunLimits, RunResult,
 };
 
 /// The format of one event.
-pub const EVENT_FORMAT: &str = "filament.monitor-event/1";
+pub const EVENT_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorEvent.as_str();
 /// The format of the summary.
-pub const SUMMARY_FORMAT: &str = "filament.monitor-summary/1";
+pub const SUMMARY_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorSummary.as_str();
 /// The format of the batch result.
-pub const RUN_FORMAT: &str = "filament.monitor-run/1";
+pub const RUN_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorRun.as_str();
 /// FR-644's published draft 2020-12 schema for `filament.monitor-event/1`.
 pub const MONITOR_EVENT_SCHEMA_1: &str =
     include_str!("../../schemas/filament-monitor-event-1.schema.json");
@@ -543,7 +545,9 @@ fn read_record(
 /// FR-644 "Provider-routed items": the request's `items` with the
 /// `subject`, `documents` and `deadline_ms` beside them, each read as FR-620
 /// reads it in a `native-analyze/1` request; `None` for a request without
-/// `items`, which carries none of the three.
+/// `items`, which carries none of the three; `require_certified` is read the
+/// same way (FR-1052).
+#[implements("FR-1052-AC-14")]
 fn read_routed(
     intake: &mut super::Intake<'_>,
     request: &mut wire::MonitorRequest,
@@ -560,6 +564,7 @@ fn read_routed(
             ("subject", request.subject.is_some()),
             ("documents", !request.documents.is_empty()),
             ("deadline_ms", request.deadline_ms.is_some()),
+            ("require_certified", request.require_certified.is_some()),
         ];
         return match beside.iter().find(|(_, present)| *present) {
             Some((member, _)) => Err(invalid(member, "is read only beside items")),
@@ -576,7 +581,9 @@ fn read_routed(
     super::analyze::validate_items(Some(&items))?;
     let documents = super::analyze::read_documents(intake, &request.documents, Some(&items))?;
     let subject = super::analyze::read_subject(request.subject.take(), &documents)?;
+    let certification = super::analyze::read_certification(request.require_certified.take())?;
     Ok(Some(super::analyze::RoutedItems {
+        certification,
         documents,
         subject,
         memory: Vec::new(),
@@ -729,6 +736,8 @@ struct DriveRequest<'a> {
     bytes: &'a [u8],
     dependent_bytes: usize,
     caller: &'a CommandLimits,
+    /// FR-640: the batch run's caller overrides, for the clock selections.
+    overrides: &'a RequestOverrides<'a>,
 }
 
 /// Drive one stream. `lines` yields the records; `sink` gets each event.
@@ -745,8 +754,9 @@ fn drive(
         bytes,
         dependent_bytes,
         caller,
+        overrides,
     } = request_input;
-    let mut request: wire::MonitorRequest = request(bytes)?;
+    let mut request: wire::MonitorRequest = request_with_overrides(bytes, overrides)?;
     let integer_division = request_integer_division(request.integer_division.take())?;
     let records_file = request.records.clone();
     match (matches!(source, Records::Batch), &records_file) {
@@ -1269,6 +1279,7 @@ where
                 bytes,
                 dependent_bytes: limits.dependent_bytes,
                 caller,
+                overrides: &RequestOverrides::default(),
             },
             Records::Stream(Box::new(records.map(|line| {
                 line.map_err(|error| RunCause::Io {
@@ -1291,12 +1302,17 @@ pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    overrides: &RequestOverrides<'_>,
     settle: &Settle<'_>,
 ) -> Result<RunResult> {
-    let caller = CommandLimits::monitor(MonitorPreparationLimits {
-        work: u64::MAX,
-        storage: u64::MAX,
-    });
+    let caller = super::overrides::command_limits(
+        super::overrides::RunRoute::Monitor,
+        CommandLimits::monitor(MonitorPreparationLimits {
+            work: u64::MAX,
+            storage: u64::MAX,
+        }),
+        overrides,
+    )?;
     let mut events = Vec::new();
     let summary = drive(
         DriveRequest {
@@ -1304,6 +1320,7 @@ pub(super) fn run_bytes(
             bytes,
             dependent_bytes,
             caller: &caller,
+            overrides,
         },
         Records::Batch,
         &mut |event| events.push(event.as_value().clone()),

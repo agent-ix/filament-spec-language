@@ -15,7 +15,7 @@ use fsl_replay::{
     ProbabilityUndefinedWitness, ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue,
     UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
-use fsl_semantics::check::{Bound, EnumBinding};
+use fsl_semantics::check::EnumBinding;
 use ix_trace_rs::trace;
 use serde_json::json;
 
@@ -39,6 +39,7 @@ fn evidence(world: &World, claim: &str) -> ProbabilisticCounterexample {
             world.request(claim, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -90,6 +91,7 @@ fn real_link_refutations_replay_target_hits_and_terminal_nonreach() {
 }
 #[trace("TC-770", "FR-286-AC-14")]
 #[trace("FSpec-TC-431", "FSpec-FR-413-AC-17")]
+#[trace("TC-471", "FR-120-AC-41")]
 #[test]
 fn a_refuted_exact_probabilistic_item_is_spelled_and_its_path_set_replays() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -101,6 +103,7 @@ fn a_refuted_exact_probabilistic_item_is_spelled_and_its_path_set_replays() {
             world.request("TooMuch", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (terminals, counterexamples) = fsl_analyze::analyze::split_records(records, &world.package);
     let [item] = counterexamples.as_slice() else {
@@ -126,9 +129,16 @@ fn a_refuted_exact_probabilistic_item_is_spelled_and_its_path_set_replays() {
     let entries = wire["scheduler"]["entries"]
         .as_array()
         .expect("every scheduler");
-    assert!(entries
-        .iter()
-        .all(|entry| entry["state"]["key"].is_string() && !entry["choice"]["operation"].is_null()));
+    // FR-120-AC-41: each scheduled identity writes its operation as the
+    // declaration identity text, one string.
+    assert!(entries.iter().all(|entry| entry["state"]["key"].is_string()
+        && matches!(
+            entry["choice"]["operation"].as_str(),
+            Some(
+                r#"{"node":"ix://test/link/Msg/send_a","package":"test/link"}"#
+                    | r#"{"node":"ix://test/link/Msg/send_b","package":"test/link"}"#
+            )
+        )));
     let document = fsl_analyze::analyze::analyze_document(&terminals, &counterexamples)
         .expect("the refuted item carries its counterexample");
     let written = serde_json::to_value(&document).expect("serializes");
@@ -402,6 +412,7 @@ fn witness_limits_and_final_acceptance_cancellation_never_yield_tokens() {
                 world.request("TooMuch", ModelCheckLimits::default()),
             )],
             &cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         assert_eq!(
@@ -585,7 +596,13 @@ fn replay_parity_and_refusal_settle_inconclusive_without_evidence() {
                 }
             },
         );
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         if duplicate {
             assert!(matches!(
                 record.terminal().unwrap().value(),
@@ -711,6 +728,7 @@ fn cancellation_at_the_en5_replay_acceptance_boundary_has_no_evidence() {
                 world.request("TooMuch", ModelCheckLimits::default()),
             )],
             cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     };
@@ -774,6 +792,7 @@ fn merged_draws_expand_into_actual_vectors_with_a_witness_storage_limit() {
         &engines,
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(
@@ -830,6 +849,7 @@ fn fix_round_producer_path_exhaustion_settles_incomplete_without_evidence() {
         &engines,
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(
@@ -856,7 +876,15 @@ fn fix_round_fanout_checks_state_storage_before_queuing_successors() {
         let mut limits = ExactProbLimits::default();
         limits.model.limits.max_states = maximum;
         limits.model.limits.max_transitions = maximum;
-        assert!(matches!(replay(&world,&witness,&limits,&Cancel::new()),Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::LimitReached))),"state admission must stop before another fanout edge can exhaust the transition budget");
+        assert!(
+            matches!(
+                replay(&world, &witness, &limits, &Cancel::new()),
+                Err(ProbabilityWitnessError::Graph(
+                    ExactProbabilityGraphError::LimitReached
+                ))
+            ),
+            "state admission must stop before another fanout edge can exhaust the transition budget"
+        );
     }
 }
 
@@ -978,7 +1006,13 @@ fn an_unfair_witness_settles_inconclusive_replay_parity() {
             witness.scheduler.remove(0);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert!(matches!(
         record.terminal().unwrap().value(),
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(_))
@@ -1017,7 +1051,13 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
             .ok()
             .map(|(_, key)| key)
     };
-    let bound = Bound::AtMost(ratio(1, 2));
+    let bound =
+        fsl_replay::shared_wire::ProbabilisticBound::from(&fsl_replay::statistical::VerdictBound {
+            form: fsl_replay::statistical::ClaimForm::Probability,
+            comparison: fsl_replay::statistical::BoundComparison::LessOrEqual,
+            threshold: ratio(1, 2),
+            level: None,
+        });
     let scope = world.package.graph().scope();
     let color = |member: &str| {
         json!({"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
@@ -1029,7 +1069,6 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
         probabilistic_wire(
             &witness,
             &bound,
-            "probability",
             &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
             &state_key,
             &scheduler,
@@ -1069,7 +1108,6 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
             &undefined,
             claim,
             &bound,
-            "probability",
             &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
             &state_key,
             &scheduler,
@@ -1112,6 +1150,7 @@ fn source_object_wire(profile: &str, measure: &str) -> serde_json::Value {
             world.request("Seen", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     record
@@ -1178,6 +1217,7 @@ fn a_source_enum_draw_is_spelled_in_an_undefined_counterexample() {
             world.request("Seen", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let wire = record

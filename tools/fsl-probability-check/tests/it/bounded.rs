@@ -4,11 +4,11 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    Engines, Settlement, analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered,
+    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, Engines, Settlement,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
@@ -18,16 +18,18 @@ use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
+pub(crate) mod mutation;
+
+pub(super) const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const SOURCE: &str = include_str!("../fixtures/link.native");
 const COIN_DOMAIN: &[u8] = include_bytes!("../fixtures/coin.semantic-ir.json");
 const COIN_SNAPSHOT: &[u8] = include_bytes!("../fixtures/coin.snapshot.json");
 const COIN_SOURCE: &str = include_str!("../fixtures/coin.native");
 
-fn model_source() -> String {
+pub(super) fn model_source() -> String {
     SOURCE.replace(
         "filament.temporal.infinite-trace/v1",
         "filament.temporal.event-position.false-extension/v1",
@@ -160,6 +162,31 @@ pub(super) fn request_with(
     request_with_mode(source, snapshot, exact, domain, false)
 }
 
+pub(super) fn request_with_accounting(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    accounting: filament_exact::ScalarLimits,
+    kernel: bool,
+) -> (Option<Value>, Settlement) {
+    let (mut requests, settlement) =
+        requests_with_accounting(source, snapshot, exact, domain, accounting, kernel);
+    let first = (!requests.is_empty()).then(|| requests.remove(0));
+    (first, settlement)
+}
+
+pub(super) fn requests_with_accounting(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    accounting: filament_exact::ScalarLimits,
+    kernel: bool,
+) -> (Vec<Value>, Settlement) {
+    requests_for(source, snapshot, exact, domain, kernel, None, accounting)
+}
+
 fn request_with_mode(
     source: &str,
     snapshot: &[u8],
@@ -167,9 +194,14 @@ fn request_with_mode(
     domain: &[u8],
     kernel: bool,
 ) -> (Option<Value>, Settlement) {
-    let (mut requests, settlement) = requests_with_mode(source, snapshot, exact, domain, kernel);
-    let first = (!requests.is_empty()).then(|| requests.remove(0));
-    (first, settlement)
+    request_with_accounting(
+        source,
+        snapshot,
+        exact,
+        domain,
+        fsl_replay::AccountingLimits::default().0,
+        kernel,
+    )
 }
 
 /// One checker request for the settled record's certificate document and, for a
@@ -181,7 +213,15 @@ pub(super) fn requests_with_mode(
     domain: &[u8],
     kernel: bool,
 ) -> (Vec<Value>, Settlement) {
-    requests_for(source, snapshot, exact, domain, kernel, None)
+    requests_for(
+        source,
+        snapshot,
+        exact,
+        domain,
+        kernel,
+        None,
+        fsl_replay::AccountingLimits::default().0,
+    )
 }
 
 /// The solver's certificate, altered before the core's checker sees it.
@@ -197,7 +237,15 @@ pub(super) fn requests_offering(
     domain: &[u8],
     offered: Tamper<'_>,
 ) -> (Vec<Value>, Settlement) {
-    requests_for(source, snapshot, exact, domain, false, Some(offered))
+    requests_for(
+        source,
+        snapshot,
+        exact,
+        domain,
+        false,
+        Some(offered),
+        fsl_replay::AccountingLimits::default().0,
+    )
 }
 
 fn requests_for(
@@ -207,6 +255,7 @@ fn requests_for(
     domain: &[u8],
     kernel: bool,
     offered: Option<Tamper<'_>>,
+    accounting: filament_exact::ScalarLimits,
 ) -> (Vec<Value>, Settlement) {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
@@ -259,7 +308,7 @@ fn requests_for(
         expansion: ExpansionLimits {
             max_candidates: 100_000,
         },
-        meter: fsl_replay::AccountingLimits::default().0,
+        meter: accounting,
         emit: limits.package.emit(),
     };
     let system = fsl_eval::simulation::model::ModelSystem::new(simulation.clone()).unwrap();
@@ -294,7 +343,12 @@ fn requests_for(
         Some(offered) => exact_probabilistic_item_tampered(RequestIndex::new(0), request, offered),
         None => exact_probabilistic_item(RequestIndex::new(0), request),
     };
-    let mut records = analyze_items(&engines, vec![item], &cancel);
+    let mut records = analyze_items(
+        &engines,
+        vec![item],
+        &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
+    );
     let record = records.remove(0);
     let Some(terminal) = record.terminal() else {
         return (Vec::new(), record.settlement);
@@ -549,12 +603,6 @@ pub(super) fn proof(source: &str, snapshot: &[u8]) -> Value {
             source.lines().last().unwrap_or(source)
         )
     })
-}
-
-pub(super) fn kernel_proof(source: &str, snapshot: &[u8]) -> Value {
-    let (request, settlement) =
-        request_with_mode(source, snapshot, ExactProbLimits::default(), DOMAIN, true);
-    request.unwrap_or_else(|| panic!("Kernel fixture carries no proof: {settlement:?}"))
 }
 
 pub(super) fn document_limits(request: &Value) -> fsl_replay::ProbabilityDocumentLimits {
@@ -1436,10 +1484,12 @@ fn replace_source_and_rebind_with_mode(
     let mut certified: Value =
         serde_json::from_str(request["certificate"].as_str().unwrap()).unwrap();
     if certified["objective"]["profile"] == "filament.probability-objective/on-each-reachability/v1"
+        || certified["objective"]["profile"]
+            == "filament.probability-objective/finite-horizon-measure/v1"
         || certified["objective"]["base"]["profile"]
             == "filament.probability-objective/finite-horizon-measure/v1"
     {
-        // An `on each` document and bounds over a bounded measure carry no
+        // An `on each` document and a bounded measure's documents carry no
         // formula or key to rebind: only the identity names the claim.
         certified["identity"] = identity.clone();
         for part in ["numerator", "denominator"] {

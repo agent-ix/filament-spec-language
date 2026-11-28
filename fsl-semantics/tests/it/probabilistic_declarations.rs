@@ -24,10 +24,10 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph,
-    CheckingLimitKind, Confidence, Event, GroupMember, LeafTerm, MemberTerm, Owner,
-    PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator, SemanticNode, WeightOwner,
+    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, CheckedGraph, CheckingLimitKind,
+    Confidence, Event, GroupMember, LeafTerm, MemberTerm, Owner, PackageDeclarations,
+    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ReachTarget, Reward,
+    RewardEvaluationFailure, RewardEvaluator, SemanticCheckRefusal, SemanticNode, WeightOwner,
     Weighting,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -411,7 +411,7 @@ fn checked_timed_service(body: &str) -> CheckedGraph {
         .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
 }
 
-fn refusals_of(body: &str) -> Vec<CheckRefusal> {
+fn refusals_of(body: &str) -> Vec<SemanticCheckRefusal> {
     assemble(body)
         .check(
             CheckMode::Linked,
@@ -3983,6 +3983,29 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
         [invalid(
             "unbounded-event",
             &format!("eventually[2,*] {holds}")
+        )]
+    );
+}
+
+/// FR-194-AC-4 and FR-194-AC-7: an aggregate over a model subject is refused
+/// as an unsupported expression at the aggregate term.
+#[trace("FR-194-AC-4", "FR-194-AC-7")]
+#[test]
+fn a_window_aggregate_on_model_subject_refuses_at_the_aggregate_term() {
+    let aggregate = "count where holds(c.phase = 1) over past[0 ms, 5 ms]";
+    let claim = exact_claim(
+        "ev",
+        "Steady",
+        CONFIDENT,
+        &format!("probability >= 0.5 [ {aggregate} >= 1 ]"),
+    );
+
+    assert_eq!(
+        located(&claim),
+        [(
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            aggregate.to_owned()
         )]
     );
 }

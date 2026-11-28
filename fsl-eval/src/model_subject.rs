@@ -80,10 +80,10 @@ pub struct RoleBinding {
 }
 
 /// FR-125 Instancing: one instance of a clause's `over` parameter, a key
-/// of a population that admits the parameter's type. The pair is the
-/// instance in the obligation identity and the name of a refuted binding;
-/// it carries no object type, since a key has no type until a state holds
-/// its object.
+/// of a population that admits the parameter's type. The key alone identifies
+/// the instance: the population is the one the key was first listed by, which
+/// reads and reductions use, and is part of no obligation identity, key
+/// context or written binding (`ModelSystem::written_reference` writes those).
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ModelInstance {
     /// The population's declaration key.

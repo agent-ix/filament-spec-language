@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The package-bound boundary between native and backend reference identities.
 
+use crate::shared_wire::TransitionIdentity;
+use crate::written_operation::WrittenOperation;
 use filament_exact::{
     Cancel, EffectiveId, IdentityCopyError, IntegerDecimalBudget, ObjectId, ObjectReference,
 };
@@ -11,6 +13,7 @@ use fsl_package::{CheckedPackage, CheckedPackageV2, ReferenceCatalog, ReferenceD
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::PopulationBinding;
+use ix_trace_rs::implements;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
 mod json;
@@ -180,14 +183,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
         transition: &ModelTransition,
     ) -> Result<Value, ReferenceCodecError> {
         self.scope.member(name, |scope| {
-            let mut wire = self.codec.encode_transition_in(transition, scope)?;
-            let operation = wire
-                .get_mut("operation")
-                .ok_or_else(|| scope.fail(ReferenceFailure::MalformedWire))?;
-            let spelling = crate::outcome::task_source_operation(operation, transition.operation());
-            let text = scope.member("operation", |s| s.text(spelling))?;
-            *operation = Value::String(text);
-            Ok(wire)
+            self.codec.encode_transition_in(transition, scope)
         })
     }
 
@@ -287,7 +283,8 @@ impl ReferenceScope<'_, '_, '_, '_> {
         })
     }
 
-    /// Encode a native transition with the generic operation identity intact.
+    /// Encode a native transition, a source arm included, with `operation`
+    /// spelled by FR-120's one writer rule.
     ///
     /// # Errors
     /// Retains the codec's typed identity, resource and cancellation failures.
@@ -308,24 +305,6 @@ impl ReferenceScope<'_, '_, '_, '_> {
     ) -> Result<ModelTransition, ReferenceCodecError> {
         self.codec
             .restore_transition_in(value, &mut self.scope, self.limits)
-    }
-
-    /// Encode the task-source arm using its existing operation-string adapter.
-    ///
-    /// # Errors
-    /// Retains reference and caller resource/cancellation failures.
-    pub fn encode_task_transition(
-        &mut self,
-        value: &ModelTransition,
-    ) -> Result<Value, ReferenceCodecError> {
-        let mut wire = self.encode_transition(value)?;
-        let operation = wire
-            .get_mut("operation")
-            .ok_or_else(|| self.scope.fail(ReferenceFailure::MalformedWire))?;
-        let spelling = crate::outcome::task_source_operation(operation, value.operation());
-        let text = self.scope.member("operation", |s| s.text(spelling))?;
-        *operation = Value::String(text);
-        Ok(wire)
     }
 
     /// Restore a task-source arm; its operation must be a string.
@@ -876,6 +855,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         scope.poll()?;
         Ok(result)
     }
+    #[ix_trace_rs::string_edge]
     fn value_with_children(
         &self,
         value: &Value,
@@ -1371,34 +1351,41 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         self.restore_transition_in(value, &mut scope, limits)
     }
 
+    #[implements("FR-120-AC-39")]
     fn restore_transition_in(
         &self,
         value: &Value,
         scope: &mut Scope<'_, 'm>,
         limits: quire_canonical::Limits,
     ) -> Result<ModelTransition, ReferenceCodecError> {
-        let map = scope.closed(value, &["type", "operation", "receiver", "arguments"])?;
-        if map["type"].as_str() != Some("transition") {
-            return Err(scope.fail(ReferenceFailure::MalformedWire));
-        }
+        // The one transition type checks the shape; the scope charges for the
+        // walk and spells the locus.
+        let map = scope.closed(value, &TransitionIdentity::MEMBERS)?;
+        let members = TransitionIdentity::members(value).map_err(|defect| {
+            scope.path.push_str(&defect.pointer);
+            scope.fail(ReferenceFailure::MalformedWire)
+        })?;
+        // FR-120's reader rule: a string holding an identity text is that
+        // text and any other string a name. The empty name is none.
         let operation = scope.member("operation", |s| {
-            if !matches!(map["operation"], Value::String(_) | Value::Object(_)) {
-                return Err(s.fail(ReferenceFailure::MalformedWire));
-            }
-            let operation = s.json(&map["operation"], 0)?;
-            canonical_text(&operation, s, limits)
+            let operation = if WrittenOperation::is_identity_text(members.operation) {
+                s.text(members.operation)?
+            } else {
+                let operation = s.json(&map["operation"], 0)?;
+                canonical_text(&operation, s, limits)?
+            };
+            WrittenOperation::admit_identity_text(operation)
+                .ok_or_else(|| s.fail(ReferenceFailure::MalformedWire))
         })?;
         let receiver = scope.member("receiver", |s| {
-            if map["receiver"].is_null() {
+            let Some(receiver) = members.receiver else {
                 return Ok(None);
-            }
-            let restored = self.value(&map["receiver"], true, 0, s)?;
+            };
+            let restored = self.value(receiver, true, 0, s)?;
             canonical_text(&restored, s, limits).map(Some)
         })?;
         let arguments = scope.member("arguments", |s| {
-            let array = map["arguments"]
-                .as_array()
-                .ok_or_else(|| s.fail(ReferenceFailure::MalformedWire))?;
+            let array = members.arguments;
             let bytes = array
                 .len()
                 .checked_mul(size_of::<String>())
@@ -1460,18 +1447,26 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         self.encode_transition_in(transition, &mut scope)
     }
 
+    #[implements("FR-120-AC-40")]
     fn encode_transition_in(
         &self,
         transition: &ModelTransition,
         scope: &mut Scope<'_, 'm>,
     ) -> Result<Value, ReferenceCodecError> {
-        let operation = scope.member("operation", |s| parse_text(transition.operation(), s))?;
-        if !matches!(operation, Value::String(_) | Value::Object(_)) {
+        let identity = scope.member("operation", |s| parse_text(transition.operation(), s))?;
+        if !matches!(identity, Value::String(_) | Value::Object(_)) {
             return scope.member(
                 "operation",
                 |s| Err(s.fail(ReferenceFailure::MalformedWire)),
             );
         }
+        // FSpec FR-181 writes the operation as one string.
+        let operation = scope.member("operation", |s| {
+            s.text(crate::written_operation::WrittenOperation::spelling(
+                &identity,
+                transition.operation(),
+            ))
+        })?;
         let receiver = scope.member("receiver", |s| match transition.receiver() {
             None => Ok(Value::Null),
             Some(text) => {
@@ -1494,7 +1489,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         let mut out = Map::new();
         let tag = Value::String(scope.text("transition")?);
         scope.put(&mut out, "type", tag)?;
-        scope.put(&mut out, "operation", operation)?;
+        scope.put(&mut out, "operation", Value::String(operation))?;
         scope.put(&mut out, "receiver", receiver)?;
         scope.put(&mut out, "arguments", Value::Array(arguments))?;
         Ok(Value::Object(out))
@@ -1581,6 +1576,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn integer_text(text: &str) -> bool {
     let digits = text.strip_prefix('-').unwrap_or(text);
     !digits.is_empty()
@@ -1867,6 +1863,7 @@ mod tests {
         Cancel, Integer, IntegerDecimalBudget, Meter, Reservation, ReservationDenied,
     };
     use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, ModelRestoreBudget};
+    use ix_trace_rs::trace;
 
     struct Budget {
         meter: Meter,
@@ -2009,15 +2006,16 @@ mod tests {
     }
 
     /// Trace: FSpec-FR-181, FSpec-FR-418-AC-11
+    #[trace("TC-471", "FR-120-AC-40")]
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
-        use super::{ReferenceCodec, reference_fixture};
+        use super::{reference_fixture, ReferenceCodec};
         use filament_semantic_value::model_transition::ModelTransition;
         use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
         use fsl_package::ReferenceCatalog;
-        use fsl_semantics::model::intake::{SelectedModels, package_input};
+        use fsl_semantics::model::intake::{package_input, SelectedModels};
         use fsl_semantics::model::observation::{
-            DocumentRef, ObservationLimits, admit_current_snapshot,
+            admit_current_snapshot, DocumentRef, ObservationLimits,
         };
         use serde_json::json;
         use std::collections::BTreeMap;
@@ -2131,7 +2129,7 @@ mod tests {
         )
         .unwrap();
         let transition = ModelTransition::new(
-            r#"{"name":"keep"}"#.to_owned(),
+            r#"{"node":"ix://test/tasks/Task/keep","package":"test/tasks"}"#.to_owned(),
             Some(native_text.clone()),
             vec![native_text],
             quire_canonical::Limits::new(100000),
@@ -2155,7 +2153,10 @@ mod tests {
             quire_canonical::Limits::new(100000),
         );
         let mut task_wire = carrier.encode_task_template(&template).unwrap();
-        assert_eq!(task_wire["release"]["operation"], "keep");
+        assert_eq!(
+            task_wire["release"]["operation"],
+            r#"{"node":"ix://test/tasks/Task/keep","package":"test/tasks"}"#
+        );
         assert_eq!(task_wire["release"]["receiver"], wire);
         assert_eq!(task_wire["source_transition"]["arguments"][0], wire);
         let restored = carrier.restore_task_template(&task_wire).unwrap();
@@ -2163,10 +2164,8 @@ mod tests {
         let original_wire = template
             .to_wire()
             .expect("unchanged unscoped source spelling");
-        assert!(
-            template
-                .same_identity(&crate::TaskTransitionTemplate::from_wire(&original_wire).unwrap())
-        );
+        assert!(template
+            .same_identity(&crate::TaskTransitionTemplate::from_wire(&original_wire).unwrap()));
         task_wire["source_transition"]["arguments"][0]["identity"] = json!("FF");
         assert!(
             matches!(carrier.restore_task_template(&task_wire), Err(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer }) if pointer == "/source_transition/arguments/0/identity")
@@ -2268,9 +2267,10 @@ mod tests {
     }
 
     /// Trace: FSpec-FR-181
+    #[trace("TC-471", "FR-120-AC-39")]
     #[test]
     fn reference_catalog_genuine_config_version_source_and_admitted_roundtrip() {
-        use super::{ReferenceCodec, reference_fixture};
+        use super::{reference_fixture, ReferenceCodec};
         use filament_checked::key::DeclarationKey;
         use filament_contract_model::NativeJoinBudget;
         use fsl_eval::model_subject::ModelInstance;
@@ -2289,13 +2289,13 @@ mod tests {
         use fsl_semantics::model::normalize::EffectiveView;
         use fsl_semantics::model::object_environment::ObjectEnvironment;
         use fsl_semantics::model::observation::{
-            DocumentRef, ObservationLimits, admit_current_snapshot_with_views,
-            admitted_population_document, declared_type_universe_for,
+            admit_current_snapshot_with_views, admitted_population_document,
+            declared_type_universe_for, DocumentRef, ObservationLimits,
         };
         use fsl_semantics::model::population::{
-            AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, admit_binding,
+            admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
         };
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
         use std::collections::BTreeMap;
 
         let mut document: Value = serde_json::from_str(reference_fixture::DOMAIN_PACKAGE).unwrap();
@@ -2526,6 +2526,7 @@ mod tests {
         let encoded = codec
             .encode_transition(&transition, &mut budget, &cancel, 64)
             .unwrap();
+        assert_eq!(encoded["operation"], transition.operation());
         assert_eq!(
             codec
                 .restore_transition(
@@ -2538,6 +2539,98 @@ mod tests {
                 .unwrap(),
             transition
         );
+        // FR-120-AC-40: the codec writes the name identity `"tick"` as the
+        // bare name and reads it back as that identity.
+        let named = filament_semantic_value::model_transition::ModelTransition::new(
+            r#""tick""#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(100000),
+        )
+        .unwrap();
+        let named_wire = codec
+            .encode_transition(&named, &mut budget, &cancel, 64)
+            .unwrap();
+        assert_eq!(named_wire["operation"], "tick");
+        assert_eq!(
+            codec
+                .restore_transition(
+                    &named_wire,
+                    &mut budget,
+                    &cancel,
+                    64,
+                    quire_canonical::Limits::new(100000)
+                )
+                .unwrap(),
+            named
+        );
+        // FR-120-AC-39: a literal spelling is a name, and no other member than
+        // a string is read, an object among them.
+        let mut restore_written = |operation: Value| {
+            let mut written = encoded.clone();
+            written["operation"] = operation;
+            codec.restore_transition(
+                &written,
+                &mut budget,
+                &cancel,
+                64,
+                quire_canonical::Limits::new(100000),
+            )
+        };
+        for name in ["tick", "true", "false", "null", "1", "[1]", "ix://a/b/C/d"] {
+            assert_eq!(
+                restore_written(json!(name)).unwrap().operation(),
+                format!("\"{name}\"")
+            );
+        }
+        for other in [
+            json!({"name": "tick"}),
+            json!(""),
+            json!(r#""""#),
+            json!(true),
+            json!(1),
+            json!([1]),
+            json!(null),
+        ] {
+            assert!(matches!(
+                restore_written(other),
+                Err(super::ReferenceCodecError::Refused {
+                    reason: super::ReferenceFailure::MalformedWire,
+                    ..
+                })
+            ));
+        }
+        // FR-120-AC-39: the restore reads the whole closed transition.
+        for (member, replacement) in [
+            ("receiver", None),
+            ("arguments", None),
+            ("receiver", Some(json!(1))),
+            ("receiver", Some(json!("c1"))),
+        ] {
+            let mut written = encoded.clone();
+            let members = written.as_object_mut().expect("an object");
+            match &replacement {
+                Some(replacement) => members.insert(member.to_owned(), replacement.clone()),
+                None => members.remove(member),
+            };
+            let refused = codec.restore_transition(
+                &written,
+                &mut budget,
+                &cancel,
+                64,
+                quire_canonical::Limits::new(100000),
+            );
+            assert!(
+                matches!(
+                    refused,
+                    Err(super::ReferenceCodecError::Refused {
+                        reason: super::ReferenceFailure::MalformedWire,
+                        ..
+                    })
+                ),
+                "{member} {replacement:?}"
+            );
+        }
         assert_eq!(system.state_key_of(&initial).unwrap().0, before);
         let (environment, _, views) = admit_current_snapshot_with_views(
             checked.graph().model_inputs(),

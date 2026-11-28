@@ -9,7 +9,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckRefusal, CheckedGraph};
+use fsl_semantics::check::{CheckedGraph, SemanticCheckRefusal};
 use ix_trace_rs::trace;
 use serde_json::json;
 
@@ -36,7 +36,7 @@ fn document() -> Vec<u8> {
 
 /// The checked graph of `body`, or every refusal with the source text each
 /// names.
-fn check(body: &str) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>> {
+fn check(body: &str) -> Result<CheckedGraph, Vec<(SemanticCheckRefusal, Option<String>)>> {
     check_with(PROFILES, body)
 }
 
@@ -44,7 +44,7 @@ fn check(body: &str) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>
 fn check_with(
     profiles: &str,
     body: &str,
-) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>> {
+) -> Result<CheckedGraph, Vec<(SemanticCheckRefusal, Option<String>)>> {
     let document = document();
     let (unit, _) = config_unit_with_profiles(&document, profiles, body);
     let declarations = admit_and_assemble_with_profiles(&document, profiles, body)

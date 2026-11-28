@@ -70,7 +70,7 @@ ADR-018 §6 and are illustrative.
 - The clause's `filament_semantic_value::fairness::PropertyForm` (FSV FR-121),
   classified as `ReachableInvariant`, `BoundedMltl`, `Safety` or `Liveness`
   (TP-1 to TP-4) and recorded beside its `Requirements` (ADR-014 A-3).
-- A typed `CheckRefusal` with a span, and no checked clause, on refusal.
+- A typed `SemanticCheckRefusal` with a span, and no checked clause, on refusal.
 
 ## Behavior
 

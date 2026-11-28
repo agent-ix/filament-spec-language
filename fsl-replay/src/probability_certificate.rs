@@ -35,8 +35,8 @@ mod cyclic_state;
 mod state_predicate;
 pub use bounded::probabilistic_formula_monitor_context;
 mod source;
-pub(crate) use document::is_model_state_key;
 pub use document::*;
+pub(crate) use document::{clock_constraints, is_model_state_key};
 pub use source::*;
 mod witness;
 pub use witness::*;
@@ -765,9 +765,9 @@ pub struct ExactProbabilityAcceptance {
 struct CheckedInitialValues {
     values: Vec<(u32, Option<Rational>)>,
     // The instance each entry of `values` was read for, in the same order.
-    bindings: Vec<Option<crate::ExactBinding>>,
+    bindings: Vec<Option<ObjectReference>>,
     // The `on each` object beside an `over` binding, in the same order.
-    instances: Vec<Option<crate::ExactBinding>>,
+    instances: Vec<Option<ObjectReference>>,
 }
 
 impl ExactProbabilityAcceptance {
@@ -803,13 +803,13 @@ impl ExactProbabilityAcceptance {
             .map(|coverage| coverage.values.as_slice())
     }
 
-    pub(crate) fn initial_bindings(&self) -> Option<&[Option<crate::ExactBinding>]> {
+    pub(crate) fn initial_bindings(&self) -> Option<&[Option<ObjectReference>]> {
         self.initial_values
             .as_ref()
             .map(|coverage| coverage.bindings.as_slice())
     }
 
-    pub(crate) fn initial_instances(&self) -> Option<&[Option<crate::ExactBinding>]> {
+    pub(crate) fn initial_instances(&self) -> Option<&[Option<ObjectReference>]> {
         self.initial_values
             .as_ref()
             .map(|coverage| coverage.instances.as_slice())
@@ -850,15 +850,16 @@ impl ExactProbabilityAcceptance {
     }
 }
 
-/// A value-free vacuous probability proof accepted by the independent checker.
-/// Its private document can only be obtained by proving activation unreachable.
+/// A proof with no numeric value, accepted by the independent checker: a
+/// vacuous one, whose activation it proved unreachable, or an expected time it
+/// proved infinite. Only the checker builds one.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProbabilityVacuityAcceptance {
+pub struct ProbabilityValueFreeAcceptance {
     document: Box<[u8]>,
     side: ProbabilityBoundSide,
 }
-impl ProbabilityVacuityAcceptance {
-    /// The accepted Conditional::Vacuous document's canonical bytes.
+impl ProbabilityValueFreeAcceptance {
+    /// The accepted document's canonical bytes.
     pub fn document(&self) -> &[u8] {
         &self.document
     }
@@ -875,7 +876,10 @@ pub enum ExactProbabilityCertificateCheck {
     /// value satisfies the claim bound.
     Accepted(ExactProbabilityAcceptance),
     /// Activation is unreachable; this certified proof has no numeric value.
-    AcceptedVacuous(ProbabilityVacuityAcceptance),
+    AcceptedVacuous(ProbabilityValueFreeAcceptance),
+    /// Every scheduler's expected time is infinite, as the checker rederives
+    /// from its own graph; an `>=` bound holds with no finite value.
+    AcceptedInfinite(ProbabilityValueFreeAcceptance),
     /// The certificate fails a checked condition.
     Rejected(ProbabilityCertificateRejection),
 }
@@ -1622,6 +1626,7 @@ pub struct ClaimBinding {
 /// [`ExactProbabilityGraphError::ExtentLimit`] when the universe is unbounded or
 /// its classification reached its limit; [`ExactProbabilityGraphError::ExpansionRefused`]
 /// when the subject cannot otherwise enumerate or reference them.
+#[implements("FR-125-AC-9")]
 pub fn claim_binding(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -1647,7 +1652,7 @@ pub fn claim_binding(
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
     let reference = system
-        .bound_reference(object.clone(), &instance)
+        .written_reference(object.clone(), &instance)
         .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
     Ok(Some(ClaimBinding {
         instance,
@@ -2426,7 +2431,9 @@ fn certificate_values(
         }
         let named = values.keys().cloned().collect::<BTreeSet<_>>();
         for key in graph.states.keys() {
-            values.entry(key.clone()).or_insert_with(|| Rational::from_integer(0_i64.into()));
+            values
+                .entry(key.clone())
+                .or_insert_with(|| Rational::from_integer(0_i64.into()));
         }
         return Ok(CertificateValues::Partial { values, named });
     }

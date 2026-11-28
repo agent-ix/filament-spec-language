@@ -16,38 +16,43 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
-    TimedState, TimedSystem,
+    claim_start, ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+    PendingClauseForm, TimedState, TimedSubjectRefusal, TimedSystem, TimedVacuity,
 };
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
-    GraphEvidenceEnvelope, GraphReplayResult, GraphReplaySettlement, ModelTraceSubject,
-    ProfileSelection, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestTargetWire, StateGraphCertificateForm, StateGraphInstanceOutcome, StateGraphOutcome,
-    StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence, GraphEvidenceEnvelope,
+    GraphReplayResult, GraphReplaySettlement, ModelTraceSubject, ProfileSelection, ReplayRefusal,
+    ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
+    StateGraphCertificateDecision, StateGraphCertificateForm, StateGraphInstanceOutcome,
+    StateGraphOutcome, StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure,
+    WitnessPath, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
-use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
-use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
+use fsl_route::StateGraphFormKind;
+use fsl_semantics::check::{
+    Capability, CheckedStateGraphClaim, DeclarationFamily, PredicateRole, StateGraphForm,
+};
+use ix_trace_rs::implements;
 
-use super::items::{INVALID_VALUE, model_refusal};
+use super::instance_records::{decisive, undecided};
+use super::items::{model_refusal, INVALID_VALUE};
 use super::timed_item::subject_refusal;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
     SubjectBinding, TemporalItem,
 };
+use crate::model_check::digitisable::{digitisation_decline, DigitalItem};
 use crate::model_check::manifest as en1;
 use crate::model_check::{
-    StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
+    check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, certificate_item,
-    decide_timed_state_graph, explore_timed_state_graph,
+    certificate_item, explore_timed_state_graph, undecided_cause, TimedStateGraphDecision,
+    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, ZoneUndecided,
 };
 
 /// The property form of a checked claim.
@@ -66,6 +71,7 @@ fn property_form(form: &StateGraphForm) -> StateGraphPropertyForm {
     clippy::too_many_arguments,
     reason = "the item binds source provision, subject, request identity, method, and independent budgets"
 )]
+#[ix_trace_rs::string_edge]
 pub(super) fn state_graph_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
@@ -112,6 +118,8 @@ pub(super) fn state_graph_item<'a>(
                         form: &form,
                         timed: backend == crate::zone_check::manifest::BACKEND_ID,
                         digital,
+                        #[cfg(feature = "test-support")]
+                        alter: None,
                     },
                     cancel,
                 )
@@ -132,7 +140,15 @@ struct Run<'r, 'a> {
     form: &'r TemporalItem,
     timed: bool,
     digital: bool,
+    /// Alters an instance's evidence before its replay, so that a test can
+    /// make one instance's replay disagree.
+    #[cfg(feature = "test-support")]
+    alter: Option<AlterEvidence>,
 }
+
+/// A change to the evidence an instance replays from.
+#[cfg(feature = "test-support")]
+pub type AlterEvidence = fn(&mut GraphEvidence);
 
 impl<'a> Run<'_, 'a> {
     fn simulation(&self) -> ModelSimulationRequest<'a> {
@@ -168,6 +184,10 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if let Some(samples) = form.witness_samples {
         model_limits.witness_samples = samples;
     }
+    let retained = read
+        .limits
+        .engines
+        .item_budget(read.limits.accounting, cancel);
     let request = StateGraphRequest {
         subject: ModelSubject {
             simulation: read.simulation(),
@@ -180,10 +200,16 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         max_depth: form.max_depth,
         limits: model_limits,
         seed: form.seed,
+        retained: Some(&retained),
     };
     let replay = |instance: &StateGraphInstanceOutcome| {
-        let evidence = evidence_of(&system, claim, instance)
+        #[cfg_attr(not(feature = "test-support"), allow(unused_mut))]
+        let mut evidence = evidence_of(&system, claim, instance)
             .ok_or_else(|| ReplayRefusal::Fault(InternalFault::new("analyze", "graph-evidence")))?;
+        #[cfg(feature = "test-support")]
+        if let Some(alter) = read.alter {
+            alter(&mut evidence);
+        }
         replay_instance(read, evidence, None, false).map_err(|refusal| *refusal)
     };
     let settled = match check_and_settle_state_graph(request, cancel, replay) {
@@ -258,6 +284,21 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     }))
 }
 
+#[implements(
+    "FR-243-AC-6",
+    "FR-852-AC-12",
+    "FR-852-AC-13",
+    "FR-852-AC-14",
+    "FR-852-AC-15",
+    "FR-852-AC-20",
+    "FR-852-AC-21",
+    "FR-852-AC-22",
+    "FR-852-AC-23",
+    "FR-852-AC-28",
+    "FR-852-AC-29",
+    "FR-852-AC-30",
+    "FR-852-AC-31"
+)]
 fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = read
         .input
@@ -282,22 +323,19 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     if let Some(refusal) = digital_closed_refusal(&timed) {
         return EngineReport::Refused(refusal);
     }
-    let instances = match read.claim.over() {
-        Some(parameter) => {
-            match system.instances(&ValueType::Reference(parameter.object.clone())) {
-                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            }
+    // FR-243: `always possible` and `unique path` quantify over timed states
+    // the integer-clock reading does not visit.
+    match digitisation_decline(DigitalItem::StateGraph(read.claim)) {
+        Ok(None) => {}
+        Ok(Some(declined)) => {
+            return EngineReport::Refused(super::digital_item::not_digitisable(declined));
         }
-        None => vec![None],
+        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+    }
+    let instances = match timed_instances(read, &system, timed.initial().len()) {
+        Ok(instances) => instances,
+        Err(settled) => return *settled,
     };
-    // FR-125 Instancing: no initial state settles before no instance.
-    if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
-    }
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
     let graph = match fsl_replay::explore_digital_state_graph(
         &timed,
         u64::try_from(read.form.limits.limits.max_states).unwrap_or(u64::MAX),
@@ -305,41 +343,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         cancel,
     ) {
         Ok(graph) => graph,
-        Err(fsl_replay::DigitalGraphLimit::States(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxStates,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Transitions(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Clocks(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxClocks,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Cancelled) => match cancel.cause() {
-            Some(source) => {
-                return EngineReport::Refused(Refusal::Incomplete(
-                    fsl_replay::IncompleteCause::Cancelled { source },
-                ));
-            }
-            None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
+        Err(limit) => return graph_limit_refusal(limit, cancel),
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
@@ -350,7 +354,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         let over = match (read.claim.over(), instance.as_ref()) {
             (None, None) => None,
             (Some(parameter), Some(instance)) => {
-                match system.bound_reference(parameter.object.clone(), instance) {
+                match system.written_reference(parameter.object.clone(), instance) {
                     Ok(reference) => Some(reference),
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
@@ -362,16 +366,31 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             StateGraphForm::AlwaysPossible { from, target } => (Some(from), target),
             StateGraphForm::UniquePath { from, to } => (Some(from), to),
         };
-        let target_values =
-            match digital_predicate_values(&system, &graph.nodes, target, over.as_ref(), cancel) {
-                Ok(values) => values,
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            };
+        let (target_values, mut undefined_candidates) = match digital_predicate_values(
+            &system,
+            &graph.nodes,
+            target,
+            PredicateRole::Target,
+            over.as_ref(),
+            cancel,
+        ) {
+            Ok(values) => values,
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        };
         let source_values = match source {
             Some(source) => {
-                match digital_predicate_values(&system, &graph.nodes, source, over.as_ref(), cancel)
-                {
-                    Ok(values) => Some(values),
+                match digital_predicate_values(
+                    &system,
+                    &graph.nodes,
+                    source,
+                    PredicateRole::From,
+                    over.as_ref(),
+                    cancel,
+                ) {
+                    Ok((values, mut undefined)) => {
+                        undefined_candidates.append(&mut undefined);
+                        Some(values)
+                    }
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
             }
@@ -390,6 +409,34 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 &target_values,
             ),
         };
+        for found in &graph.undefined {
+            let state = graph.nodes[found.node].discrete();
+            let Ok((_, state_key)) =
+                system.state_key(state, fsl_foundation::IdentityLimits::default())
+            else {
+                return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+            };
+            let Some(cause) = found.reading.cause.clone() else {
+                return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+            };
+            undefined_candidates.push((
+                found.node,
+                fsl_replay::GraphUndefined {
+                    predicate: None,
+                    transition: found.reading.transition.clone(),
+                    state_key,
+                    locus: found.reading.location.clone(),
+                    cause,
+                },
+            ));
+        }
+        if let Some(constraint) = read.form.reductions.constraint.as_deref() {
+            match digital_constraint_undefined(&system, &graph.nodes, constraint) {
+                Ok(found) => undefined_candidates.extend(found),
+                Err(refusal) => return EngineReport::Refused(refusal),
+            }
+        }
+        let decision = prefer_digital_undefined(&graph, decision, undefined_candidates);
         let held = matches!(decision, DigitalDecision::Holds(_));
         let evidence = match decision {
             DigitalDecision::Holds(witnesses)
@@ -406,7 +453,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 match paths {
                     Ok(paths) => Some(GraphEvidence::Witness {
                         paths,
-                        over: instance.clone(),
+                        over: instance.iter().cloned().collect(),
                     }),
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
@@ -420,7 +467,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 Some(GraphEvidence::Trap {
                     stem,
                     closure: TrapClosure::StateGraph,
-                    over: instance.clone(),
+                    over: instance.iter().cloned().collect(),
                 })
             }
             DigitalDecision::PathPair {
@@ -445,7 +492,34 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     stem,
                     first,
                     second,
-                    over: instance.clone(),
+                    over: instance.iter().cloned().collect(),
+                })
+            }
+            DigitalDecision::Undefined {
+                initial,
+                stem,
+                node,
+                reading,
+            } => {
+                let stem = match digital_model_path(&timed, &graph, initial, &stem) {
+                    Ok(stem) => stem,
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+                };
+                let mut reading = reading;
+                reading.state_key = match timed_path_state_key(&timed, &stem) {
+                    Ok(key) => key,
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+                };
+                let Ok(key) = timed.state_key(&graph.nodes[node]) else {
+                    return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+                };
+                if key != reading.state_key {
+                    return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+                }
+                Some(GraphEvidence::Undefined {
+                    stem,
+                    undefined: reading,
+                    over: instance.iter().cloned().collect(),
                 })
             }
         };
@@ -515,7 +589,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             witness_samples: read.form.witness_samples.unwrap_or(1),
             walks_stopped: 0,
             end: None,
-            undefined: None,
+            undefined: evidence.as_ref().and_then(|evidence| match evidence {
+                GraphEvidence::Undefined { undefined, .. } => Some(undefined.clone()),
+                _ => None,
+            }),
         };
         let report = GraphReport {
             record,
@@ -542,34 +619,85 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     )
 }
 
+type DigitalPredicateValues = (Vec<bool>, Vec<(usize, fsl_replay::GraphUndefined)>);
+
 /// EN-6's timed state-graph route. The zone certificate is checked by the
 /// qualified core before this result is reported; a refutation is accepted
 /// only when that checker re-derives the form's failed condition.
 #[allow(dead_code)]
+#[implements("FR-852-AC-12", "FR-852-AC-20", "FR-852-AC-28")]
 fn digital_predicate_values(
     system: &ModelSystem<'_>,
     nodes: &[TimedState],
     predicate: &fsl_semantics::check::CheckedStatePredicate,
+    role: PredicateRole,
     over: Option<&ObjectReference>,
     cancel: &Cancel,
-) -> Result<Vec<bool>, ()> {
+) -> Result<DigitalPredicateValues, ()> {
     if predicate.is_constant_true() {
-        return Ok(vec![true; nodes.len()]);
+        return Ok((vec![true; nodes.len()], Vec::new()));
     }
     let body = predicate.predicate_body().ok_or(())?;
-    nodes
-        .iter()
-        .map(|node| {
-            let readings = system
-                .state_predicates_with_cancel(node.discrete(), &[(body, over)], cancel)
-                .map_err(|_| ())?;
-            match readings.as_slice() {
-                [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
-                [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-                _ => Err(()),
+    let mut values = Vec::with_capacity(nodes.len());
+    let mut undefined = Vec::new();
+    for (index, node) in nodes.iter().enumerate() {
+        let readings = system
+            .state_predicates_with_cancel(node.discrete(), &[(body, over)], cancel)
+            .map_err(|_| ())?;
+        match readings.as_slice() {
+            [fsl_eval::simulation::model::PredicateReading::True] => values.push(true),
+            [fsl_eval::simulation::model::PredicateReading::False] => values.push(false),
+            [fsl_eval::simulation::model::PredicateReading::Undefined { cause, location }] => {
+                let (_, state_key) = system
+                    .state_key(node.discrete(), fsl_foundation::IdentityLimits::default())
+                    .map_err(|_| ())?;
+                undefined.push((
+                    index,
+                    fsl_replay::GraphUndefined {
+                        predicate: Some(role),
+                        transition: None,
+                        state_key,
+                        locus: location.clone(),
+                        cause: cause.clone(),
+                    },
+                ));
+                values.push(false);
             }
-        })
-        .collect()
+            _ => return Err(()),
+        }
+    }
+    Ok((values, undefined))
+}
+
+#[implements("FR-852-AC-15", "FR-852-AC-23", "FR-852-AC-31")]
+fn digital_constraint_undefined(
+    system: &ModelSystem<'_>,
+    nodes: &[TimedState],
+    constraint: &str,
+) -> Result<Vec<(usize, fsl_replay::GraphUndefined)>, Refusal> {
+    let mut undefined = Vec::new();
+    for (node, timed) in nodes.iter().enumerate() {
+        let value = system
+            .constraint_value(timed.discrete(), constraint)
+            .map_err(|_| Refusal::Failed(super::items::BROKEN))?;
+        let fsl_eval::simulation::ConstraintValue::Undefined { cause, .. } = value else {
+            continue;
+        };
+        let (_, state_key) = system
+            .state_key(timed.discrete(), fsl_foundation::IdentityLimits::default())
+            .map_err(|_| Refusal::Failed(super::items::BROKEN))?;
+        undefined.push((
+            node,
+            fsl_replay::GraphUndefined {
+                predicate: None,
+                transition: None,
+                state_key,
+                locus: system.state_clause_locus(constraint),
+                cause,
+            },
+        ));
+    }
+    Ok(undefined)
 }
 
 fn digital_path_to(
@@ -625,6 +753,50 @@ enum DigitalDecision {
         first: Vec<usize>,
         second: Vec<usize>,
     },
+    Undefined {
+        initial: usize,
+        stem: Vec<usize>,
+        node: usize,
+        reading: fsl_replay::GraphUndefined,
+    },
+}
+
+#[implements("FR-852-AC-13", "FR-852-AC-21", "FR-852-AC-29")]
+fn prefer_digital_undefined(
+    graph: &fsl_replay::DigitalStateGraph,
+    decision: DigitalDecision,
+    candidates: Vec<(usize, fsl_replay::GraphUndefined)>,
+) -> DigitalDecision {
+    let mut candidates = candidates;
+    let Some((undefined_node, reading)) = candidates.drain(..).min_by_key(|(node, _)| *node) else {
+        return decision;
+    };
+    let prior = match &decision {
+        DigitalDecision::Holds(_) => false,
+        DigitalDecision::Trap { initial, stem }
+        | DigitalDecision::PathPair { initial, stem, .. } => {
+            let start = graph.initials.get(*initial).copied();
+            let end = stem
+                .last()
+                .and_then(|edge| graph.edges.get(*edge))
+                .map(|edge| edge.to)
+                .or(start);
+            end.is_some_and(|node| node < undefined_node)
+        }
+        DigitalDecision::Undefined { .. } => true,
+    };
+    if prior {
+        return decision;
+    }
+    let Some((initial, stem)) = digital_stem_to(graph, undefined_node) else {
+        return decision;
+    };
+    DigitalDecision::Undefined {
+        initial,
+        stem,
+        node: undefined_node,
+        reading,
+    }
 }
 
 fn digital_possible_paths(
@@ -990,39 +1162,67 @@ fn digital_closed_refusal(timed: &TimedSystem<'_, '_>) -> Option<Refusal> {
     ))
 }
 
+/// The instances a timed state-graph item runs over, `None` alone for a claim
+/// with no `over` parameter, or the report that settles the item before any
+/// run (FR-125 "Instancing", by the timed outcome layer).
+#[implements("FR-125-AC-7", "FR-125-AC-13")]
+fn timed_instances(
+    read: &Run<'_, '_>,
+    system: &ModelSystem<'_>,
+    initial_states: usize,
+) -> Result<Vec<Option<ModelInstance>>, Box<EngineReport>> {
+    let vacuous = |vacuity: TimedVacuity| {
+        no_timed_graph_decision(read, undecided_cause(&ZoneUndecided::from(vacuity)))
+    };
+    let Some(parameter) = read.claim.over() else {
+        return if initial_states == 0 {
+            Err(Box::new(vacuous(TimedVacuity::NoInitialState)))
+        } else {
+            Ok(vec![None])
+        };
+    };
+    let over = system.claim_instances(&ValueType::Reference(parameter.object.clone()));
+    match claim_start(initial_states, over) {
+        Ok(Ok(instances)) => Ok(instances.as_slice().iter().cloned().map(Some).collect()),
+        Ok(Err(vacuity)) => Err(Box::new(vacuous(vacuity))),
+        Err(refusal) => Err(Box::new(EngineReport::Refused(subject_refusal(
+            &TimedSubjectRefusal::NotSimulated(refusal),
+        )))),
+    }
+}
+
 fn no_timed_graph_decision(
     read: &Run<'_, '_>,
     cause: fsl_replay::InconclusiveCause,
 ) -> EngineReport {
-    let record = StateGraphRecord {
-        value: TerminalValue::Inconclusive(cause),
-        label: fsl_replay::ResultLabel::Inconclusive,
-        basis: fsl_replay::SettlementBasis::Unsettled,
-        execution: fsl_replay::Execution::Completed,
-        truth: fsl_replay::Truth::Pending,
-        method: fsl_replay::EXPLICIT_STATE,
+    let method = fsl_replay::StateGraphMethod {
+        limits: read.form.limits,
         max_depth: read
             .form
             .max_depth
             .and_then(|depth| u64::try_from(depth).ok()),
-        limits: read.form.limits.used(),
-        limit_reached: None,
         seed: read.form.seed.unwrap_or_default(),
-        witness_samples: read.form.witness_samples.unwrap_or(1),
-        walks_stopped: 0,
-        end: None,
-        undefined: None,
     };
-    EngineReport::StateGraph(Box::new(GraphReport {
-        record,
-        exploration: fsl_replay::RunStats::default(),
-        counterexample: None,
-        evidence: None,
-        certificate_document: None,
-        checker: None,
-    }))
+    undecided(cause, &method, read.form.witness_samples.unwrap_or(1))
 }
 
+#[implements(
+    "FR-852-AC-2",
+    "FR-852-AC-8",
+    "FR-852-AC-9",
+    "FR-852-AC-10",
+    "FR-852-AC-11",
+    "FR-852-AC-16",
+    "FR-852-AC-17",
+    "FR-852-AC-18",
+    "FR-852-AC-19",
+    "FR-852-AC-24",
+    "FR-852-AC-25",
+    "FR-852-AC-26",
+    "FR-852-AC-27",
+    "FR-852-AC-32",
+    "FR-852-AC-34"
+)]
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = read
         .input
@@ -1035,7 +1235,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let simulation = read.simulation();
     let system = match ModelSystem::new(simulation.clone()) {
         Ok(system) => system,
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(failure) => return EngineReport::Refused(super::items::admission(&failure)),
     };
     let max_clocks = read
         .form
@@ -1043,91 +1243,59 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         .unwrap_or(fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS);
     let timed = match TimedSystem::with_max_clocks(&system, &model, max_clocks) {
         Ok(timed) => timed,
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(refusal) => return EngineReport::Refused(subject_refusal(&refusal)),
     };
-    let instances = match read.claim.over() {
-        Some(parameter) => {
-            match system.instances(&ValueType::Reference(parameter.object.clone())) {
-                Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            }
-        }
-        None => vec![None],
+    let instances = match timed_instances(read, &system, timed.initial().len()) {
+        Ok(instances) => instances,
+        Err(settled) => return *settled,
     };
-    // FR-125 Instancing: no initial state settles before no instance.
-    if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
-    }
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
-    let graph = match explore_timed_state_graph(
-        &timed,
-        super::timed_item::zone_limits(read.form),
-        cancel,
-    ) {
+    let bounds = super::timed_item::zone_bounds(read.form, read.limits.engines);
+    let limits = super::timed_item::zone_limits(&bounds);
+    let graph = match explore_timed_state_graph(&timed, limits, cancel) {
         Ok(graph) => graph,
-        Err(ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(limit))) => {
-            let (limit, value) = match limit {
-                ZoneCheckLimit::MaxSymbolicStates(value) => {
-                    (fsl_replay::ModelCheckLimit::MaxStates, value)
-                }
-                ZoneCheckLimit::MaxSymbolicTransitions(value) => (
-                    fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions,
-                    value,
-                ),
-                ZoneCheckLimit::MaxAutomatonStates(value) => {
-                    (fsl_replay::ModelCheckLimit::ZoneMaxAutomatonStates, value)
-                }
-                ZoneCheckLimit::MaxZoneBytes(value) => {
-                    (fsl_replay::ModelCheckLimit::ZoneMaxZoneBytes, value)
-                }
-                ZoneCheckLimit::MaxClocks(value) => (fsl_replay::ModelCheckLimit::MaxClocks, value),
-            };
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(ZoneCheckRefusal::Stopped(ZoneStop::Cancelled)) => match cancel.cause() {
-            Some(source) => {
-                return EngineReport::Refused(Refusal::Incomplete(
-                    fsl_replay::IncompleteCause::Cancelled { source },
-                ));
-            }
-            None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(refusal) => return stopped(refusal, read, cancel),
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
         None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let mut selected = None;
+    let (mut any_refuted, mut unwritten) = (false, false);
     for instance in instances {
         let over = match (read.claim.over(), instance.as_ref()) {
             (None, None) => None,
             (Some(parameter), Some(instance)) => {
-                match system.bound_reference(parameter.object.clone(), instance) {
+                match system.written_reference(parameter.object.clone(), instance) {
                     Ok(reference) => Some(reference),
                     Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
             }
             _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
-        let decision =
-            match decide_timed_state_graph(&system, &graph, read.claim, over.as_ref(), cancel) {
-                Ok(decision) => decision,
-                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-            };
+        let decision = match crate::zone_check::decide_timed_state_graph_with_constraint(
+            &timed,
+            &graph,
+            read.claim,
+            over.as_ref(),
+            read.form.reductions.constraint.as_deref(),
+            limits,
+            cancel,
+        ) {
+            Ok(decision) => decision,
+            Err(refusal) => return stopped(refusal, read, cancel),
+        };
         let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
+        let undefined_decision = matches!(decision, TimedStateGraphDecision::Undefined { .. });
         let form = certificate_form(read.claim.form());
         let ef_nodes = match &decision {
             TimedStateGraphDecision::Holds { ef_nodes, .. }
-            | TimedStateGraphDecision::Refuted { ef_nodes, .. } => ef_nodes,
+            | TimedStateGraphDecision::Refuted { ef_nodes, .. }
+            | TimedStateGraphDecision::Undefined { ef_nodes, .. } => ef_nodes,
+            // A later instance may still be refuted with a counterexample.
+            TimedStateGraphDecision::Unwritten { .. } => {
+                unwritten = true;
+                continue;
+            }
         };
         let obligation = ItemObligation {
             subject: (),
@@ -1144,7 +1312,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             Ok(certificate) => certificate,
             Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
-        let check = fsl_replay::check_zone_certificate(
+        let check = fsl_replay::check_state_graph_certificate(
             ZoneCertificateRequest {
                 simulation: simulation.clone(),
                 model: &model,
@@ -1157,27 +1325,29 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             &obligation,
             certificate_item,
             &certificate,
-            CertificateCheckLimits::default(),
+            super::timed_item::certificate_limits(&bounds),
             cancel,
         );
-        let accepted = matches!(check, Ok(ZoneCertificateVerdict::Accepted));
-        let refuted = matches!(
-            check,
-            Ok(ZoneCertificateVerdict::Rejected(ref refusal))
-                if matches!(
-                    refusal.rule,
-                    CertificateRule::InitialMissing
-                        | CertificateRule::SuccessorMissing
-                        | CertificateRule::CountBroken
-                )
-        );
-        if (held && !accepted) || (!held && !refuted) {
+        if let Ok((ZoneCertificateVerdict::Stopped(cause), _)) = &check {
+            return EngineReport::Refused(Refusal::Incomplete(cause.clone()));
+        }
+        // ADR-018 UE-6: an undefined model-side expression at a reachable
+        // state refutes the item as an undefined claim. The zone certificate
+        // for that state is accepted, not rejected, so an `Undefined` decision
+        // is let through with an accepted certificate and its evidence reaches
+        // replay, which reproduces the undefined reading.
+        let undefined_accepted = !held
+            && undefined_decision
+            && matches!(check, Ok((ZoneCertificateVerdict::Accepted, _)));
+        let confirmed = undefined_accepted
+            || check.is_ok_and(|(verdict, decision)| checker_confirms(held, &verdict, decision));
+        if !confirmed {
             return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
-        let evidence = match timed_evidence(&timed, &graph, read.claim, &decision, instance.clone())
+        let evidence = match timed_evidence(&timed, &graph, read.claim, decision, instance.clone())
         {
             Ok(evidence) => evidence,
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+            Err(refusal) => return stopped(refusal, read, cancel),
         };
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), Some(&certificate), false) {
@@ -1211,6 +1381,10 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             Ok(wire) => wire,
             Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
+        let undefined = evidence.as_ref().and_then(|evidence| match evidence {
+            GraphEvidence::Undefined { undefined, .. } => Some(undefined.clone()),
+            _ => None,
+        });
         let limit_values = read.form.limits.used();
         let record = StateGraphRecord {
             value: if held {
@@ -1248,15 +1422,16 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             witness_samples: read.form.witness_samples.unwrap_or(1),
             walks_stopped: 0,
             end: None,
-            undefined: None,
+            undefined,
         };
-        let certificate_document = (accepted || refuted).then(|| {
-            serde_json::json!({
-                "state_graph": {
-                    "form": form.as_str(),
-                    "ef_nodes": certificate.state_graph.as_ref().map_or_else(Vec::new, |part| part.ef_nodes.clone())
-                }
-            })
+        let certificate_document = serde_json::json!({
+            "state_graph": {
+                "form": form.as_str(),
+                "ef_nodes": certificate
+                    .state_graph
+                    .as_ref()
+                    .map_or_else(Vec::new, |part| part.ef_nodes.clone())
+            }
         });
         let report = GraphReport {
             record,
@@ -1267,15 +1442,19 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             },
             counterexample: (!held).then(|| wire.clone()).flatten(),
             evidence: held.then(|| wire.clone()).flatten(),
-            certificate_document,
-            checker: (accepted || refuted).then_some(CertificateChecker::Zone),
+            certificate_document: Some(certificate_document),
+            checker: Some(CertificateChecker::Zone),
         };
         if selected.is_none() || !held {
             selected = Some(report);
         }
         if !held {
+            any_refuted = true;
             break;
         }
+    }
+    if unwritten && !any_refuted {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::LassoNotConcretized);
     }
     selected.map_or_else(
         || EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
@@ -1291,59 +1470,124 @@ fn certificate_form(form: &StateGraphForm) -> StateGraphCertificateForm {
     }
 }
 
+/// A timed exploration or decision that returned no verdict.
+fn stopped(refusal: ZoneCheckRefusal, read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
+    let incomplete = |cause| EngineReport::Refused(Refusal::Incomplete(cause));
+    let broken = || EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+    match refusal {
+        ZoneCheckRefusal::Stopped(ZoneStop::LimitReached(limit)) => {
+            let (limit, value) = match limit {
+                ZoneCheckLimit::MaxSymbolicStates(value) => {
+                    // FR-852: the item's own `max_states` keeps its name.
+                    let stated = read
+                        .form
+                        .requested_limits
+                        .contains(&fsl_replay::ModelCheckLimit::MaxStates);
+                    let limit = if stated {
+                        fsl_replay::ModelCheckLimit::MaxStates
+                    } else {
+                        fsl_replay::ModelCheckLimit::ZoneMaxSymbolicStates
+                    };
+                    (limit, value)
+                }
+                ZoneCheckLimit::MaxSymbolicTransitions(value) => (
+                    fsl_replay::ModelCheckLimit::ZoneMaxSymbolicTransitions,
+                    value,
+                ),
+                ZoneCheckLimit::MaxAutomatonStates(value) => {
+                    (fsl_replay::ModelCheckLimit::ZoneMaxAutomatonStates, value)
+                }
+                ZoneCheckLimit::MaxZoneBytes(value) => {
+                    (fsl_replay::ModelCheckLimit::ZoneMaxZoneBytes, value)
+                }
+                ZoneCheckLimit::MaxClocks(value) => (fsl_replay::ModelCheckLimit::MaxClocks, value),
+            };
+            incomplete(fsl_replay::IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None,
+            })
+        }
+        ZoneCheckRefusal::Stopped(ZoneStop::Cancelled) => match cancel.cause() {
+            Some(source) => incomplete(fsl_replay::IncompleteCause::Cancelled { source }),
+            None => broken(),
+        },
+        _ => broken(),
+    }
+}
+
+#[implements(
+    "FR-852-AC-8",
+    "FR-852-AC-9",
+    "FR-852-AC-10",
+    "FR-852-AC-11",
+    "FR-852-AC-17",
+    "FR-852-AC-25"
+)]
 fn timed_evidence(
     timed: &TimedSystem<'_, '_>,
     graph: &crate::zone_check::TimedStateGraph,
     claim: &CheckedStateGraphClaim,
-    decision: &TimedStateGraphDecision,
+    decision: TimedStateGraphDecision,
     over: Option<ModelInstance>,
 ) -> Result<Option<GraphEvidence>, crate::zone_check::ZoneCheckRefusal> {
+    let over: Vec<_> = over.into_iter().collect();
     match decision {
         TimedStateGraphDecision::Holds { witness_paths, .. }
             if matches!(claim.form(), StateGraphForm::Possible { .. }) =>
         {
             let paths = witness_paths
-                .iter()
-                .enumerate()
-                .map(|(initial, edges)| {
-                    let steps =
-                        crate::zone_check::concretise_timed_state_graph_path(timed, graph, edges)?;
-                    let path = fsl_replay::ModelPath {
-                        initial: u32::try_from(initial).map_err(|_| {
-                            crate::zone_check::ZoneCheckRefusal::Fault("state-graph-initial")
-                        })?,
-                        steps,
-                    };
-                    Ok((WitnessPath::Path(path), fsl_replay::WitnessSource::Explored))
-                })
-                .collect::<Result<Vec<_>, crate::zone_check::ZoneCheckRefusal>>()?;
+                .into_iter()
+                .map(|path| (WitnessPath::Path(path), fsl_replay::WitnessSource::Explored))
+                .collect();
             Ok(Some(GraphEvidence::Witness { paths, over }))
         }
-        TimedStateGraphDecision::Holds { .. } => Ok(None),
-        TimedStateGraphDecision::Refuted {
-            stem, node, paths, ..
+        TimedStateGraphDecision::Holds { .. } | TimedStateGraphDecision::Unwritten { .. } => {
+            Ok(None)
+        }
+        TimedStateGraphDecision::Refuted { stem, paths, .. } => Ok(Some(match paths {
+            Some((first, second)) => GraphEvidence::PathPair {
+                stem,
+                first,
+                second,
+                over,
+            },
+            None => GraphEvidence::Trap {
+                stem,
+                closure: TrapClosure::StateGraph,
+                over,
+            },
+        })),
+        TimedStateGraphDecision::Undefined {
+            stem,
+            node,
+            reading,
+            ..
         } => {
-            let stem = model_path(timed, graph, stem, *node)?;
-            if let Some((first, second)) = paths {
-                let first =
-                    crate::zone_check::concretise_timed_state_graph_path(timed, graph, first)?;
-                let second =
-                    crate::zone_check::concretise_timed_state_graph_path(timed, graph, second)?;
-                Ok(Some(GraphEvidence::PathPair {
-                    stem,
-                    first,
-                    second,
-                    over,
-                }))
-            } else {
-                Ok(Some(GraphEvidence::Trap {
-                    stem,
-                    closure: TrapClosure::StateGraph,
-                    over,
-                }))
-            }
+            let stem = model_path(timed, graph, &stem, node)?;
+            let mut reading = reading;
+            reading.state_key = timed_path_state_key(timed, &stem).map_err(|_| {
+                crate::zone_check::ZoneCheckRefusal::Fault("state-graph-undefined-key")
+            })?;
+            Ok(Some(GraphEvidence::Undefined {
+                stem,
+                undefined: reading,
+                over,
+            }))
         }
     }
+}
+
+fn timed_path_state_key(
+    timed: &TimedSystem<'_, '_>,
+    path: &fsl_replay::ModelPath,
+) -> Result<fsl_eval::simulation::StateKey, ()> {
+    if let Some(step) = path.steps.last() {
+        return Ok(step.post_state.clone());
+    }
+    let initial_states = timed.initial();
+    let initial = initial_states.get(path.initial as usize).ok_or(())?;
+    timed.state_key(initial).map_err(|_| ())
 }
 
 fn model_path(
@@ -1370,19 +1614,6 @@ fn model_path(
     })
 }
 
-/// The index of the instance that decides the item.
-fn decisive(records: &[StateGraphRecord]) -> usize {
-    records
-        .iter()
-        .position(|record| matches!(record.value, TerminalValue::Refuted))
-        .or_else(|| {
-            records
-                .iter()
-                .position(|record| !matches!(record.value, TerminalValue::Proved { .. }))
-        })
-        .unwrap_or(0)
-}
-
 /// The FR-393 evidence an instance's outcome settles from, bound to the
 /// instance it was found for.
 fn evidence_of(
@@ -1390,7 +1621,9 @@ fn evidence_of(
     claim: &CheckedStateGraphClaim,
     instance: &StateGraphInstanceOutcome,
 ) -> Option<GraphEvidence> {
-    let over = bound_instance(system, claim, instance.over.as_ref())?;
+    let over: Vec<_> = bound_instance(system, claim, instance.over.as_ref())?
+        .into_iter()
+        .collect();
     let witnesses = |paths: &[fsl_replay::GraphWitness]| {
         paths
             .iter()
@@ -1447,7 +1680,7 @@ fn bound_instance(
         .into_iter()
         .find(|instance| {
             system
-                .bound_reference(over.object.clone(), instance)
+                .written_reference(over.object.clone(), instance)
                 .is_ok_and(|bound| &bound == reference)
         })
         .map(Some)
@@ -1586,6 +1819,8 @@ pub struct PackageStateGraphSubject<'a> {
     form: TemporalItem,
     package_bytes: &'a [u8],
     supply: fsl_replay::HandoffSupply<'a>,
+    #[cfg(feature = "test-support")]
+    alter: Option<AlterEvidence>,
 }
 
 impl<'a> PackageStateGraphSubject<'a> {
@@ -1616,7 +1851,19 @@ impl<'a> PackageStateGraphSubject<'a> {
             form: TemporalItem::default(),
             package_bytes,
             supply,
+            #[cfg(feature = "test-support")]
+            alter: None,
         })
+    }
+
+    /// The same subject, whose instances replay from evidence that `alter`
+    /// has changed. A reproduced replay of altered evidence is impossible
+    /// unless the change keeps it true.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn altering_evidence(mut self, alter: AlterEvidence) -> Self {
+        self.alter = Some(alter);
+        self
     }
 
     /// The rebuilt claim.
@@ -1660,11 +1907,134 @@ impl<'a> PackageStateGraphSubject<'a> {
                         form: &self.form,
                         timed,
                         digital: false,
+                        #[cfg(feature = "test-support")]
+                        alter: self.alter,
                     },
                     cancel,
                 )
             },
         )
         .claimed(key)
+    }
+}
+
+/// The refusal a digital state graph's stop settles: a named limit is
+/// `incomplete` with that limit; a graph that stops at a protocol expression
+/// or step guard with no value is `incomplete` with unresolved dynamics, as a
+/// graph the engine does not build (the route's refutation of it, ADR-018
+/// UE-6, is its own ticket's); cancellation is `incomplete` with its cause.
+fn graph_limit_refusal(limit: fsl_replay::DigitalGraphLimit, cancel: &Cancel) -> EngineReport {
+    use fsl_replay::{DigitalGraphLimit, IncompleteCause, ModelCheckLimit};
+    let limit_reached = |limit, value| {
+        EngineReport::Refused(Refusal::Incomplete(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        }))
+    };
+    match limit {
+        DigitalGraphLimit::States(value) => limit_reached(ModelCheckLimit::MaxStates, value),
+        DigitalGraphLimit::Transitions(value) => {
+            limit_reached(ModelCheckLimit::MaxTransitions, value)
+        }
+        DigitalGraphLimit::Clocks(value) => limit_reached(ModelCheckLimit::MaxClocks, value),
+        DigitalGraphLimit::UndefinedGuard => {
+            EngineReport::Refused(Refusal::Incomplete(IncompleteCause::UnresolvedDynamics))
+        }
+        DigitalGraphLimit::Cancelled => match cancel.cause() {
+            Some(source) => {
+                EngineReport::Refused(Refusal::Incomplete(IncompleteCause::Cancelled { source }))
+            }
+            None => EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        },
+    }
+}
+
+/// Whether the certificate checker confirms the engine's answer: for a claim
+/// the engine proved, an accepted certificate the checker decided holds; for
+/// one it refuted, the checker's own decision that the claim is violated.
+/// Never the rule a rejection names: the coverage checks reject a broken
+/// certificate under the same rules.
+#[implements("FR-852-AC-32")]
+fn checker_confirms(
+    held: bool,
+    verdict: &ZoneCertificateVerdict,
+    decision: Option<StateGraphCertificateDecision>,
+) -> bool {
+    match decision {
+        Some(StateGraphCertificateDecision::Holds) => {
+            held && matches!(verdict, ZoneCertificateVerdict::Accepted)
+        }
+        Some(StateGraphCertificateDecision::Violated) => !held,
+        // An undefined predicate reading is refuted by `Undefined` evidence
+        // (QSL-3478), and the checker's rejection of it carries no decision.
+        None => {
+            !held
+                && matches!(
+                    verdict,
+                    ZoneCertificateVerdict::Rejected(refusal)
+                        if refusal.rule == CertificateRule::PredicateUndefined
+                )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fsl_replay::{
+        CertificateLocus, CertificateMember, CertificateRejection, CertificateRule,
+        StateGraphCertificateDecision, ZoneCertificateVerdict,
+    };
+    use ix_trace_rs::trace;
+
+    use super::{checker_confirms, graph_limit_refusal};
+    use super::{Cancel, EngineReport, Refusal};
+
+    /// A rejection under a rule a violation also reports, with no decision
+    /// of the checker's, confirms neither answer.
+    #[trace("FR-852-AC-32")]
+    #[test]
+    fn a_rejection_without_a_decision_confirms_no_answer() {
+        let accepted = ZoneCertificateVerdict::Accepted;
+        let holds = Some(StateGraphCertificateDecision::Holds);
+        let violated = Some(StateGraphCertificateDecision::Violated);
+        for rule in [
+            CertificateRule::SuccessorMissing,
+            CertificateRule::InitialMissing,
+            CertificateRule::CountBroken,
+        ] {
+            let rejected = ZoneCertificateVerdict::Rejected(CertificateRejection {
+                rule,
+                at: CertificateLocus::CertificateMember(CertificateMember::Nodes),
+            });
+            assert!(!checker_confirms(false, &rejected, None), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, None), "{rule:?}");
+            assert!(checker_confirms(false, &rejected, violated), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, violated), "{rule:?}");
+            assert!(!checker_confirms(true, &rejected, holds), "{rule:?}");
+        }
+        assert!(checker_confirms(true, &accepted, holds));
+        assert!(!checker_confirms(false, &accepted, holds));
+        assert!(!checker_confirms(true, &accepted, None));
+    }
+
+    /// FR-239-AC-11 (TC-710): a graph that stops at an expression with no
+    /// value settles `incomplete`, unresolved dynamics, never `Failed`.
+    #[trace("TC-710", "FR-239-AC-11")]
+    #[test]
+    fn an_undefined_guard_stop_settles_incomplete_unresolved_dynamics() {
+        let report = graph_limit_refusal(
+            fsl_replay::DigitalGraphLimit::UndefinedGuard,
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                report,
+                EngineReport::Refused(Refusal::Incomplete(
+                    fsl_replay::IncompleteCause::UnresolvedDynamics
+                ))
+            ),
+            "the undefined-guard stop is not incomplete unresolved dynamics"
+        );
     }
 }

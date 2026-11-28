@@ -231,6 +231,7 @@ fn a_model_trace_with_an_empty_loop_is_refused() {
 /// `incomplete` run naming the bound, its value and the setting that raises
 /// it, never a verdict and never `pending` (exit 0).
 #[trace("TC-1663", "FR-641-AC-4")]
+#[trace("FR-267-AC-14")]
 #[test]
 fn a_model_trace_whose_expansion_stops_is_incomplete_naming_the_limit() {
     let (fixture, payload) = stuttering();
@@ -272,7 +273,23 @@ fn a_model_trace_whose_expansion_stops_is_incomplete_naming_the_limit() {
         serde_json::json!({"kind": "incomplete", "limit": "work_units"}),
         "{written}"
     );
-    fsl_replay::spine::read_native_run_result(&bytes).expect("the written record reads back");
+    let fsl_replay::spine::NativeRunResult::Clause(read_back) =
+        fsl_replay::spine::read_native_run_result(&bytes).expect("the written record reads back")
+    else {
+        panic!("the clause result writer selects a clause result");
+    };
+    // FR-267: the `incomplete` row of a stage `evaluate` temporal
+    // disposition has no truth and an `unavailable` basis.
+    assert_eq!(read_back.stage(), "evaluate");
+    assert_eq!(read_back.category(), "incomplete");
+    assert_eq!(read_back.basis(), "unavailable");
+    assert_eq!(read_back.truth(), None);
+    assert!(matches!(
+        read_back.outcome(),
+        Some(fsl_replay::spine::NativeRunOutcome::Incomplete(
+            "work_units"
+        ))
+    ));
 }
 
 /// FR-330 "Admit": a post-state no successor of the step has refuses with

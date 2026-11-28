@@ -21,6 +21,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
 ---
 # FR-177: Check a forall-exists safety hyperproperty by witness sets (EN-1)
 
@@ -98,11 +100,21 @@ partner has failed.
   `Undecided(MatchUndetermined)` (ADR-023 HV-4).
 - If a universal component's contract conjunction is refused or incomplete
   at a product state, or an existential contract conjunction is refused,
-  incomplete or undefined at a member of that state's `X`, so that the
-  member's existential steps are not exactly known, and no refuting evidence
-  comes first, then the engine SHALL return `Undecided(UndecidedSuccessor)`
-  and never `Holds`. A universal component's contract conjunction that is
-  undefined is an undefined evaluation of the universal side.
+  incomplete at a member of that state's `X`, so that the member's
+  existential steps are not exactly known, and no refuting evidence comes
+  first, then the engine SHALL return `Undecided(UndecidedSuccessor)` and
+  never `Holds`. A universal component's contract conjunction that is
+  undefined is an undefined evaluation of the universal side, and an
+  existential member's contract conjunction that is undefined is an
+  undefined evaluation of that member's component (ADR-018 UE-6): the
+  counterexample is the `undefined` kind whose paths end at the member's
+  tuple, with the locus `contract` naming the existential component alone.
+  When several existential partners have an undefined expression, the
+  engine reports the one whose undefined position is earliest (shortest
+  prefix first, ADR-018 UE-4), the first of them in the partner list on a
+  tie. Every partner is read: a holding partner listed before or after an
+  undefined one does not witness, and the verdict does not depend on the
+  order of the partners.
 - When the evaluation is on the universal side at a product state whose `X`
   is not empty, the existential variables' paths SHALL be the path of the
   first member of `X` in `X`'s sorted order, which ends at that member's
@@ -116,8 +128,8 @@ partner has failed.
   product state whose `X` is empty, then the engine SHALL refuse the item
   with `HyperRefusal::NoPartnerPath` and return no outcome, since the
   counterexample would have no existential path for FSpec FR-400's one path
-  per variable. It ranks as the undefined evaluation it is, so it ends the
-  item only when no earlier finding exists.
+  per variable. It ranks as the undefined evaluation it is among its
+  instance's findings, and ends the item only as "Instances" states.
 - The `NoPartnerPath` refusal is a request refusal returned to the caller. It
   has no terminal record, no V-x settlement and no catalog code or cause,
   and none is defined until FSpec FR-400 either admits an empty existential
@@ -132,13 +144,16 @@ partner has failed.
 
 ### Ranking findings
 
+Findings are ranked within one instance only.
+
 - A finding SHALL have the joint position at which it is made: an undefined
   letter, the position the letter reads; an undefined or refused `μ_U` or
   `μ_E`, the position its joint step enters, one past the state it leaves;
   a contract conjunction, the position of its product state; an empty `X`
   with a fair universal cycle, the first joint position at which `X` is
   empty.
-- The engine SHALL return the finding at the least joint position.
+- The engine SHALL take as an instance's finding the one at the least joint
+  position.
 - At one position an undefined evaluation SHALL come before a refused or
   incomplete `μ` or universal contract conjunction, or a contract
   conjunction that leaves a member's steps unknown, which SHALL come before
@@ -152,28 +167,31 @@ partner has failed.
   over the joint step that enters the position; the body's letter there,
   its atoms in clause-node order; then each universal component's contract
   conjunctions there, the components in quantifier order and each
-  component's in the order its expansion records them. An existential
-  member's undefined contract conjunction is not among them: it leaves the
-  member's steps unknown, as above.
-- Across instances the earlier in FR-125's canonical order SHALL win a tie.
+  component's in the order its expansion records them, then each existential
+  member's component's, in the member's own order.
 - A later finding SHALL NOT replace an earlier one: an undefined evaluation
   at a position after an empty `X` with a fair universal cycle returns the
   empty `X`'s `WitnessExhausted` counterexample.
 
 ### Instances
 
-- The engine SHALL take the clause's instances in FR-125's canonical order
-  and rank their findings as FR-126 "Bindings and ranking" does: a later
-  instance wins only with a strictly earlier finding by the order above.
-- An empty `X` is found only once a fair universal cycle past it is known,
-  so a finding at a joint position after 0 SHALL NOT bound a later instance:
-  each later instance is explored in full, and a later instance that stops
-  on a limit before it is explored returns its `Stopped`.
-- A finding at joint position 0 that is an undefined evaluation SHALL end the
-  search, since nothing can precede it. A finding at position 0 of a later
-  rank SHALL bound each later instance to the first phase through the
-  expansion of its initial states (horizon 1), which is enough to find the
-  position-0 undefined evaluation that would replace it.
+- The engine SHALL take the clause's instances in FR-125's canonical order,
+  decide each from its own findings as "Ranking findings" states, and SHALL
+  NOT rank findings of different instances by joint position, kind or
+  discovery order.
+- The item SHALL take the outcome of the first refuted instance in that
+  order (FR-621 "Items over several claim instances"; FSpec FR-361-AC-10,
+  FR-396). A later instance SHALL NOT replace it, whatever its finding. The
+  engine need not explore a later instance, and the statistics SHALL count
+  only the instances it explored.
+- An instance that is neither refuted nor holds, `Undecided`, bounded by the
+  search horizon or `Stopped` on a limit, SHALL NOT end the search: the engine
+  SHALL decide each later instance with what remains of the run's limits, and
+  a later refuted instance is the item's outcome. With no instance refuted,
+  the item takes the outcome of the first instance that does not hold; it
+  holds only when every instance holds. A cancellation ends the run.
+- For this selection a `NoPartnerPath` refusal is its instance's refutation:
+  it ends the item exactly when no earlier instance is refuted.
 
 ### Violation
 
@@ -208,12 +226,13 @@ partner has failed.
 | FR-177-AC-4 | `Opaque` over the leaky vault with `max_witness_set` 0 returns `Stopped(ResourceExhausted, MaxWitnessSet)` naming the limit and its value; with the default it returns AC-1's outcome. | Test (TC-602) |
 | FR-177-AC-5 | `Opaque` over the secure vault with the added `match` conjunct `(if present(b.step.Vault::step.i) then q(value(b.step.Vault::step.i)) else 0) = 0` on the existential variable `b`, where `function q using v(x: Integer): Integer pure { 1 mod x }` is checked under `CheckMode::Kernel` and the clause calls it (the clause is checked Linked and would refuse a bare `mod` as `unproved-nonzero`, FR-495-AC-3, FR-952), so `q` has no value on a joint step whose `b` step is `step(0)`: the item returns `Violated` with an `Undefined` counterexample whose traces hold a path for `a` and for `b`, ending at the first such joint step in canonical order, with cause `division-by-zero`; it never returns `Holds`. | Test (TC-602) |
 | FR-177-AC-6 | `Opaque` with a `match` conjunct that calls a function whose evaluation exhausts its meter at the first joint step (incomplete) returns `Undecided(MatchUndetermined)` and never `Holds`. | Test (TC-602) |
-| FR-177-AC-7 | `Opaque` over the leaky vault whose `step` has the precondition `d(1 - self.l + self.h) >= 0`, where `function d using v(x: Integer): Integer pure { 1 div x }` is checked under `CheckMode::Kernel` and the Linked precondition calls it (a bare `div` in the guard is refused `Unproved(Nonzero)` before evaluation, FR-495-AC-3, FR-952), so the guard has no value in the state `(h, l) = (0, 1)`, with the added `match` conjuncts `(if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 and b.step.op != stutter`, so that `a` never reaches `(0, 1)` and an existential member does: the item returns `Undecided(UndecidedSuccessor)` and never `Holds`. With a `μ_U` evaluation refused on a joint step that enters position 2, it returns the same cause, the contract at position 1 coming first. | Test (TC-602) |
+| FR-177-AC-7 | `Opaque` over the leaky vault whose `step` has the precondition `d(1 - self.l + self.h) >= 0`, where `function d using v(x: Integer): Integer pure { 1 div x }` is checked under `CheckMode::Kernel` and the Linked precondition calls it (a bare `div` in the guard is refused `Unproved(Nonzero)` before evaluation, FR-495-AC-3, FR-952), so the guard has no value in the state `(h, l) = (0, 1)`, with the added `match` conjuncts `(if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 and b.step.op != stutter`, so that `a` never reaches `(0, 1)` and an existential member does: the item returns `Violated` with an `undefined` counterexample of position 1, locus `contract` `Guard` naming the existential variable `b` alone, and cause `DivisionByZero`, and never `Holds`. With a `μ_U` evaluation refused on a joint step that enters position 2, it returns the same counterexample, the contract at position 1 coming first. A contract conjunction that is refused at a member, with none undefined, returns `Undecided(UndecidedSuccessor)`. | Test (TC-602) |
 | FR-177-AC-8 | Over the leaky vault, a `μ_U` conjunct with no value on `step(1)` from joint position 1 on, a joint step that enters position 2, does not replace the empty `X` at position 1: the item returns `Violated` with `WitnessExhausted{position: 1}`. AC-6's refused `μ_E` returns `Undecided(MatchUndetermined)` although the members it drops would empty `X` at the same position. | Test (TC-602) |
 | FR-177-AC-9 | AC-1's lasso is the canonical one: the stem is `step(0)` into the empty `X`, the loop is `step(0)` from that state, and since the loop's step repeats the stem's step from an equal universal state the loop entry rotates back to 0. Over the leaky vault with `step` requiring `l = 0`, an added `reset` requiring `l = 0` with postcondition `l = 1`, and `fair { weak V::Vault::reset }` on `a`, the empty state after `step(0)` has only the unfair loop `step(0)`: the lasso goes on by one connecting step to `l = 1`, where nothing is enabled, and loops on the terminal stutter, with `position: 1` and loop entry 2. | Test (TC-602) |
 | FR-177-AC-10 | `Opaque` over the secure vault with the added `match` conjunct `(if present(a.step.Vault::step.i) then q(value(a.step.Vault::step.i)) else 0) = 0` (`q` is AC-5's Kernel-checked function, FR-495-AC-3, FR-952) on the universal variable `a`: the item returns `Violated` with an `Undefined` counterexample at position 1 with cause `division-by-zero`, whose trace for `a` takes `step(0)` and whose trace for `b` is the first member's path, from the initial state `(1, 0)` with no step, one step short of `a`'s; `variables` and `state_keys` hold two entries. With a second universal variable `c` before `b` they hold three, in the order `a`, `c`, `b`. | Test (TC-602) |
-| FR-177-AC-11 | A clause with two instances `v` and `w` that both end at the undefined `μ_E` of AC-5 at position 1 returns the first instance's counterexample. With one initial state, instance `v` is violated at position 0 by an empty `X`; instance `w` is explored through the expansion of its initial states, which needs 7 product states across both instances, so `max_states` 7 still returns `Violated` and `max_states` 6 returns `Stopped`. If instance `w` has an atom with no value at position 0, the run returns `w`'s `Undefined` counterexample at position 0, which ranks before `v`'s empty `X` at the same position. | Test (TC-602) |
-| FR-177-AC-12 | `Opaque` over the secure vault from the one initial state `(0, 0)`, where both variables share the secret so `X_0` is empty, with a `μ_U` conjunct that has no value on every joint step, is refused with `HyperRefusal::NoPartnerPath` and returns no outcome. With another instance whose empty `X` is at the same position as the refusal, the refusal ranks first and ends the item. | Test (TC-602) |
+| FR-177-AC-11 | Each instance is decided on its own findings, and the item takes the first refuted instance in order. With two instances, `v` first and `w`: when both end at the undefined `μ_E` of AC-5 at position 1, the run returns `v`'s counterexample. When `v` is violated at position 0 by an empty `X` and `w` has an atom with no value at position 0, the run returns `v`'s `WitnessExhausted` counterexample, and a `max_states` under which a run of `v` alone returns `Violated` returns `v`'s `Violated` for both. When `v` is violated at position 1 and `w` at position 0, the run returns `v`'s counterexample at position 1. When `v`'s `X_0` has a member, `w`'s `X_0` is empty with a fair universal cycle and `max_witness_set` is 0, so that `v` stops on `MaxWitnessSet`, the run returns `w`'s `Violated`, not `v`'s `Stopped`. | Test (TC-602) |
+| FR-177-AC-12 | `Opaque` over the secure vault from the one initial state `(0, 0)`, where both variables share the secret so `X_0` is empty, with a `μ_U` conjunct that has no value on every joint step, is refused with `HyperRefusal::NoPartnerPath` and returns no outcome. With a second instance whose empty `X` is at the same position as the refusal: when the refusing instance is first in order, the refusal ends the item; when the other instance is first, the item returns its `Violated`. | Test (TC-602) |
+| FR-177-AC-13 | Over the closed event-position form `forall` `exists`, one existential partner of a universal tuple holds and another has an atom with no value at position 1: the tuple refutes with the undefined atom at position 1 whether the holding partner is listed before or after the undefined one, and no holding partner witnesses it. | Test (TC-2243) |
 
 ## Dependencies
 

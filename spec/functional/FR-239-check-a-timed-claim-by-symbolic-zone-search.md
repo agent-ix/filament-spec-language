@@ -29,6 +29,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-249
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-364
@@ -156,9 +158,15 @@ edges, automaton states and stored zone bytes.
   covered symbolic state SHALL not be explored, and its covering edge SHALL
   be retained. Retained edges form the symbolic graph that FR-240 and
   FR-244 read.
-- A `TimedInvariant` or `BoundedWindow` item, or a deadlock-freedom item,
-  SHALL be decided by this search, with the admitted-behaviour checks
-  below; a violation SHALL end the search and be concretized by FR-241.
+- A `TimedInvariant` or `BoundedWindow` item whose claim declares no
+  fairness, or a deadlock-freedom item, SHALL be decided by this search,
+  with the admitted-behaviour checks below; a violation SHALL end the search
+  and be concretized by FR-241. A claim that declares a fairness SHALL be
+  decided on FR-240's liveness product, whatever its form, since this search
+  reads no fairness. A TT-1 or TT-2 claim so decided SHALL keep a selected
+  symmetry (FR-159): the engine SHALL check one instance of each orbit
+  (FR-151) on that instance's product, explored unreduced, and a proof
+  SHALL be reduced and carry no certificate (FR-160).
 - **Admitted behaviour.** A violating symbolic state SHALL end the search
   only when some point of its violating set has a time-divergent
   continuation, which the engine SHALL check on the forward closure of
@@ -174,24 +182,50 @@ edges, automaton states and stored zone bytes.
   SHALL stop and return `Stopped(LimitReached, limit)` naming the limit, its
   value and its setting. When the `Cancel` handle is cancelled, it SHALL
   return `Stopped(Cancelled, …)`.
+- **Budget sources.** EN-6's bounds SHALL take the caller's `zone_check.*`
+  values, otherwise the FR-255 defaults of those settings, and SHALL never
+  take the value or the default of a `model_check.*` setting. A timed item's
+  own `temporal.limits.max_states` and `max_transitions` bound its symbolic
+  states and symbolic edges; its `max_check_work` is the work bound. A bound
+  stated both by an item member and by the caller's `zone_check.*` setting is
+  refused as FR-255 states. On an item that reads no timed model these
+  members bound its own engine and state no `zone_check.*` setting.
+- **Task-product symbolic pass.** The symbolic pass over a task product SHALL
+  charge each symbolic state, symbolic transition, stored zone byte and
+  retained byte (`analysis.retained_bytes`) before storing it, each distinct
+  discrete task location against `zone_check.max_automaton_states`, and each unit
+  of work against `zone_check.max_check_work`, and SHALL stop at the first
+  denied charge naming that bound.
 - If an atom of the claim evaluates `Undefined` at a point of a symbolic
-  state the search creates, and that point has a time-divergent
-  continuation, then the engine SHALL end the search with `Violated` at the
-  first such symbolic state in canonical breadth-first order, concretized
-  by FR-241 to such a point, with `kind: UndefinedEvaluation{where,
-  cause}`, `where` naming the position, its time stamp, the discrete state
-  key, the clock valuation and the expression's locus (ADR-026 TV-1,
-  ADR-018 UE-1). An
-  undefined position SHALL rank like any other violation.
+  state the search creates, no fairness is declared, and that point has a
+  time-divergent continuation, then the engine SHALL end the search with
+  `Violated` at the first such symbolic state in canonical breadth-first
+  order, concretized by FR-241 to such a point, with `kind:
+  UndefinedEvaluation{where, cause}`, `where` naming the position, its
+  time stamp, the discrete state key, the clock valuation and the
+  expression's locus (ADR-026 TV-1, ADR-018 UE-1). An undefined position
+  SHALL rank like any other violation.
+- Under a declared fairness, an `Undefined` reading refutes only when an
+  admitted behaviour, time-divergent and fair (FSpec FR-161, FR-416),
+  passes through it. FR-240's product SHALL enter the point as an undefined
+  position, which reads no claim automaton state, is in every automaton
+  acceptance set and keeps taking the model's steps. The engine SHALL
+  return that `Violated` exactly when a fair component lies past such a
+  position, with the prefix of a fair behaviour up to it, ahead of any
+  violating cycle.
 - An expansion that stops on an undecided contract conjunction SHALL return
   `Undecided(UndecidedSuccessor)`; a subject with no initial state,
   `Undecided(NoInitialState)`.
 - An unbounded population root SHALL refuse `RequiresBound` before any
   state is explored, as FR-126 states.
 - **Vacuity.** Before returning `Holds`, the engine SHALL check that some
-  initial symbolic state reaches, on the retained graph, a quiescent state
-  or a time-divergent SCC (FR-240's test); when none does, it SHALL return
-  `Undecided(NoAdmittedBehaviour)` (ADR-026 TD-6).
+  initial symbolic state reaches a quiescent state or a fair time-divergent
+  cycle (FR-240 "Vacuity"); when none does, it SHALL return
+  `Undecided(NoAdmittedBehaviour)` (ADR-026 TD-6). With no fairness
+  declared, every time-divergent SCC of the retained graph is fair. With a
+  fairness declared, the check SHALL precede the claim's products, so no
+  position of a subject with no fair behaviour, an undefined one included,
+  refutes.
 - A run that completes with no violation and passes the vacuity check SHALL
   return `Holds` with the certificate FR-244 builds from the retained
   graph, including its `admitted` path.
@@ -211,6 +245,12 @@ edges, automaton states and stored zone bytes.
 | FR-239-AC-4 | `Settles` over `Rpc` with `max_symbolic_states` 2 returns `Stopped(LimitReached, MaxSymbolicStates)` naming the value 2; with a cancelled `Cancel` handle, `Stopped(Cancelled, …)`; a subject with an unbounded population root refuses `RequiresBound` with no state explored. Two runs of each request give equal outcomes and byte-equal certificates and counterexamples. | Test (TC-694) |
 | FR-239-AC-5 | Over a `Ticker` model (`time dense`; object `t` with `n: Int[0, 2]` and clock `x`; operation `step` with precondition `self.n < 2`, guard `x >= 1`, reset `x` and postcondition `self.n = pre(self.n) + 1`; time invariant `when self.n < 2 { x <= 1 }`; initial `n = 0`) and `always holds(mod_defined(t.n))`, with the function `mod_defined using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }` whose body is checked under `Kernel` (FR-495-AC-3; S3 refuses a possibly-zero `mod` written in a declared clause, FR-337-AC-7), under `model-time`, the state with `n = 2` is quiescent and diverges by its idle tail, and the search returns `Violated` with the timed prefix `step` after delay 1, `step` after delay 1, and `kind: UndefinedEvaluation{where, cause: division-by-zero}`, `where` naming position 2, time stamp 2, the state with `n = 2`, `x = 0` and the locus of the atom `mod_defined(t.n)`. With the unconditional invariant `x <= 1`, the `n = 2` state is a local time-lock: the search returns `Undecided(NoAdmittedBehaviour)` for the claim, since no behaviour diverges, and the time-lock-freedom item is refuted. | Test (TC-710) |
 | FR-239-AC-6 | EN-6 passes an exact fixed-work task product to the FSpec FR-418 reader and returns `Holds` only on its accepted complete certificate. For a product outside that exact gate, a limit stop returns `Stopped` with the FSpec FR-331 task-search record; FR-235 settles it incomplete. A candidate miss without the FSpec FR-364 checked continuation does not settle `Violated`. | Test (TC-704) |
+| FR-239-AC-7 | A timed item with no stated limit and no caller setting runs EN-6 with `max_symbolic_states` 1048576, `max_symbolic_transitions` 16777216, `max_automaton_states` 1048576 and `max_zone_bytes` 1073741824, and with `max_check_work` 100000000 for a task product; changing a `model_check.*` setting changes none of them. | Test |
+| FR-239-AC-8 | Over a task set of one task with period 2, worst-case execution time 1 and deadline 2, the task-product symbolic pass with `max_symbolic_states` 1 stops with `LimitReached{limit: max_symbolic_states, value: 1, setting: zone_check.max_symbolic_states}` having stored at most one symbolic state. | Test |
+| FR-239-AC-9 | An `analyze` request over a timed item accepts `--limit zone_check.max_symbolic_states=2` and `--limit zone_check.max_check_work=2`, and each bounds that item; either setting given twice is refused before any item runs. | Test |
+| FR-239-AC-10 | On the closed timed subject with one `Call` initially at `phase = 0`, operations `block` (`phase = 0` to `phase = 2`) and `go` (`phase = 0` to `phase = 1`), clock `x`, and invariant `Locked when phase = 2 { x <= 0 ms }`, the claim `always holds(c.phase = 1)` with `options.method` absent routes to EN-6 and returns `refuted` at `trace_position: 0`. Its finite bad-prefix counterexample has empty `prefix` and `loop`, and its replay is reproduced; it carries no terminal-stutter marker. | Test |
+| FR-239-AC-11 | Over a `Call` model (`time dense`; object `c` with `phase: Int[0, 1]` and clock `x`; operation `go` with precondition `self.phase = 0` and postcondition `self.phase = 1`; operation `bad` with precondition `6 mod (1 - self.phase) >= 0`; initial `phase = 0`), `bad`'s precondition has no value at the state `go` reaches. The search returns `Violated` with the timed prefix `go` and `kind: UndefinedEvaluation{where, cause: division-by-zero}`. `where` names position 1, the state with `phase = 1`, the locus of the precondition and the transition `bad`. This holds for `always holds(c.phase <= 3)`, for `eventually holds(c.phase = 0)` with no fairness, and for the deadlock-freedom item, whose kind is never `Deadlock`. None returns `Holds` (ADR-018 UE-6). With the unconditional invariant `x <= 1` and no idle tail at `phase = 1`, the safety claim returns `Undecided(NoAdmittedBehaviour)` and the time-lock-freedom item is refuted, as in AC-5. | Test (TC-710) |
+| FR-239-AC-12 | FR-239-AC-11's `eventually holds(c.phase = 0)` under a weak fairness constraint on `go` never returns `Holds`: it returns `Undecided` until the refutation through a fair time-divergent behaviour lands, and then `Violated` with FR-239-AC-7's `kind` and prefix (ADR-018 UE-3, UE-6). | Test (TC-710) |
 
 ## Dependencies
 

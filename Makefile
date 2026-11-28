@@ -339,9 +339,9 @@ ci-clean-build:
 # outside `#[cfg(feature = "std")]` fails here. Own target dir, so no other
 # lane's artifacts are reused (NFR-013).
 build-no-std:
-	rustup target add --toolchain 1.98 thumbv7em-none-eabi
-	rustup run 1.98 cargo build --locked -p fsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
-	rustup run 1.98 cargo clippy --locked -p fsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std" -- -D warnings
+	rustup target add thumbv7em-none-eabi
+	cargo build --locked -p fsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
+	cargo clippy --locked -p fsl-foundation --no-default-features --target thumbv7em-none-eabi --target-dir "$${CARGO_TARGET_DIR:-target}/no-std" -- -D warnings
 	cargo test --locked -p fsl-foundation --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
 	cargo check --locked -p fsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std"
 	cargo clippy --locked -p fsl-package --no-default-features --target-dir "$${CARGO_TARGET_DIR:-target}/no-std" -- -D warnings
@@ -369,7 +369,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # runs the focused conformance lanes.
@@ -483,12 +483,12 @@ string-edge-install:
 # FSL-tree rules gate `ci:` without CG_CLONE.
 #
 # `arch-lint` runs the checks that need only this repository:
-# api-surface-fsl and qualified-core.
+# api-surface-fsl, qualified-core and trusted-base.
 IR_CLONE ?=
 RT_CLONE ?=
 CG_CLONE ?=
 
-.PHONY: arch-lint-direction arch-lint-api-surface arch-lint-api-surface-fsl arch-lint arch-lint-qualified-core
+.PHONY: arch-lint-direction arch-lint-api-surface arch-lint-api-surface-fsl arch-lint arch-lint-qualified-core arch-lint-trusted-base
 
 arch-lint-direction:
 	cargo run --locked -p arch-lint -- direction \
@@ -505,20 +505,28 @@ arch-lint-api-surface-fsl:
 
 # FR-284 (ADR-029 CB-2, CB-3): no FSL core crate depends on a crate above
 # the core, a CG or RT crate, or a frontend crate, and no core crate's
-# shipped source reads ambient input or writes to the process. Needs only
+# shipped source reads ambient input or writes to the process. FR-1051-AC-18
+# also keeps the definitional reference independent of fsl-eval. Needs only
 # this repository and passes on it, so it is part of `ci:`.
 arch-lint-qualified-core:
 	cargo run --locked -p arch-lint -- qualified-core --fsl .
 
-# Runs the two checks that need only this repository.
+# FR-1051: each certificate checker names only its trusted base, shares no
+# other function with the producer and takes no producer-built value; every
+# sharing that stands is an entry of the check's data under an FR-1051 row.
+# Needs only this repository, so it is part of `ci:`.
+arch-lint-trusted-base:
+	cargo run --locked -p arch-lint -- trusted-base --fsl .
+
+# Runs the three checks that need only this repository.
 # `arch-lint-direction` needs IR_CLONE/RT_CLONE/CG_CLONE, and
 # `arch-lint-api-surface` needs CG_CLONE (see above); each runs separately.
-arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
+arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base
 
 
 # The committed performance benchmarks (`fsl-bench/`), one
 # criterion bench per axis group, each runnable by name. `make bench` runs all
-# eleven; `make bench-probe` prints the counts, refusal boundaries and one-shot
+# twelve; `make bench-probe` prints the counts, refusal boundaries and one-shot
 # large-input timings (with peak RSS) the criterion benches do not record.
 # Compare a candidate with current main in one interleaved session; see
 # `fsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
@@ -526,15 +534,39 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 # Not part of `ci:`
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
-BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4
-BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
+BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4 package
+BENCH_GENERIC_AXES := $(filter-out evaluator_kernel package,$(BENCH_AXES))
+BENCH_PACKAGE_FILTER := $(filter package/emit package/read replay/request,$(BENCH_ARGS))
+BENCH_PACKAGE_A_BENCH_TARGET ?= target/package-a-bench
+BENCH_PACKAGE_B_BENCH_TARGET ?= target/package-b-bench
+BENCH_PACKAGE_A_PROBE_TARGET ?= target/package-a-probe
+BENCH_PACKAGE_B_PROBE_TARGET ?= target/package-b-probe
+BENCH_PACKAGE_A_RESULTS ?= target/package-a-results.json
+BENCH_PACKAGE_B_RESULTS ?= target/package-b-results.json
+ifeq ($(strip $(BENCH_PACKAGE_FILTER)),)
+BENCH_PACKAGE_REPORT := report
+else
+BENCH_PACKAGE_REPORT := report-axis $(BENCH_PACKAGE_FILTER)
+endif
 
-.PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
+.PHONY: bench bench-probe bench-package-ab $(addprefix bench-,$(BENCH_AXES))
 
 bench: $(addprefix bench-,$(BENCH_AXES))
 
 $(addprefix bench-,$(BENCH_GENERIC_AXES)): bench-%:
 	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
+
+bench-package:
+	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- start
+	cargo bench --locked -p fsl-bench --bench package -- $(BENCH_ARGS)
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 1
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 10
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 100
+	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- $(BENCH_PACKAGE_REPORT)
+
+bench-package-ab:
+	cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- start
+	cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab "$(BENCH_PACKAGE_A_BENCH_TARGET)" "$(BENCH_PACKAGE_B_BENCH_TARGET)" "$(BENCH_PACKAGE_A_PROBE_TARGET)" "$(BENCH_PACKAGE_B_PROBE_TARGET)" "$(BENCH_PACKAGE_A_RESULTS)" "$(BENCH_PACKAGE_B_RESULTS)"
 
 bench-evaluator_kernel:
 	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start

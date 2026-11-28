@@ -136,6 +136,10 @@ pub struct ItemOptions {
     pub max_task_product_work: Option<std::num::NonZeroU64>,
     /// FR-418's checker work limit, `zone_check.max_check_work` (FR-461).
     pub max_check_work: Option<std::num::NonZeroU64>,
+    /// A schedulability item's `max_states`: EN-6's symbolic states.
+    pub max_states: Option<std::num::NonZeroU64>,
+    /// A schedulability item's `max_transitions`: EN-6's symbolic edges.
+    pub max_transitions: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-739 finite trace population for a finite hyper item.
@@ -564,6 +568,7 @@ pub fn analyze(
             engines,
             limits,
             cancel,
+            certification: request.certification,
         },
     )
 }
@@ -586,6 +591,7 @@ pub(crate) fn analyze_bound<'a>(
         engines,
         limits,
         cancel,
+        certification,
     } = execution;
     let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
@@ -690,7 +696,7 @@ pub(crate) fn analyze_bound<'a>(
         .iter()
         .map(super::AnalyzeItem::requirement)
         .collect::<Vec<_>>();
-    let settled = super::analyze_items(engines, items, cancel);
+    let settled = super::analyze_items(engines, items, cancel, certification);
     let aggregate = super::aggregate(&requirements, &settled);
     let details = settled.iter().map(super::ItemDetail::of).collect();
     let protocol_conformance = settled
@@ -730,6 +736,7 @@ pub(crate) struct AnalyzeExecution<'a> {
     pub(crate) engines: &'a super::Engines,
     pub(crate) limits: &'a super::AnalyzeLimits,
     pub(crate) cancel: &'a filament_exact::Cancel,
+    pub(crate) certification: fsl_replay::CertificationPolicy,
 }
 
 fn check_provision(
@@ -770,12 +777,15 @@ pub(crate) fn dependency_packages(
 ) -> Option<Vec<fsl_replay::HybridProcessDependency>> {
     let mut closure: Vec<fsl_replay::HybridProcessDependency> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    add_dependencies(package, emit, &mut seen, &mut closure)?;
+    add_dependencies(package, package, emit, &mut seen, &mut closure)?;
     Some(closure)
 }
 
-/// `package`'s dependencies after their own, each once.
+/// `package`'s dependencies after their own, each once, with the bytes `root`
+/// linked each at.
+#[implements("FR-640-AC-17")]
 fn add_dependencies(
+    root: &fsl_package::CheckedPackage,
     package: &fsl_package::CheckedPackage,
     emit: fsl_package::EmitLimits,
     seen: &mut std::collections::BTreeSet<String>,
@@ -785,8 +795,8 @@ fn add_dependencies(
         if !seen.insert(identity.to_string()) {
             continue;
         }
-        add_dependencies(dependency, emit, seen, closure)?;
-        let emission = fsl_package::emit_checked(dependency, emit).ok()?;
+        add_dependencies(root, dependency, emit, seen, closure)?;
+        let emission = fsl_package::emit_linked_dependency(root, identity, emit)?.ok()?;
         closure.push(fsl_replay::HybridProcessDependency {
             identity: identity.to_string(),
             package: emission.package().bytes().to_vec(),
@@ -835,12 +845,30 @@ pub(crate) fn simulation<'a>(
         initial: binding.initial.clone(),
         universes: binding.universes.clone(),
         observation: limits.observation,
-        expansion: fsl_eval::simulation::model::ExpansionLimits {
-            max_candidates: u64::MAX,
-        },
+        expansion: limits.expansion,
         meter: limits.accounting,
         emit: limits.emit,
     }
+}
+
+/// The expansion bound of a probability item whose caller names none
+/// (FR-255).
+const PROBABILITY_MAX_CANDIDATES: u64 = 1_000_000;
+
+/// [`simulation`] for a probability item of either engine: the caller's
+/// `expansion.max_candidates`, else the item's own default.
+#[implements("FR-255-AC-23")]
+pub(crate) fn probability_simulation<'a>(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: &'a super::SubjectBinding<'a>,
+    limits: &super::AnalyzeLimits,
+) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
+    let mut request = simulation(input, binding, limits);
+    request.expansion.max_candidates = limits
+        .engines
+        .get(fsl_foundation::Setting::ExpansionMaxCandidates)
+        .unwrap_or(PROBABILITY_MAX_CANDIDATES);
+    request
 }
 
 enum ProbabilityWork<'a> {
@@ -855,8 +883,7 @@ fn probability_work<'a>(
     form: &ProbabilisticItem,
     limits: &super::AnalyzeLimits,
 ) -> Option<ProbabilityWork<'a>> {
-    let mut simulation = simulation(&analysis.model, binding, limits);
-    simulation.expansion.max_candidates = 1_000_000;
+    let simulation = probability_simulation(&analysis.model, binding, limits);
     let claim = analysis
         .package
         .graph()
@@ -960,6 +987,7 @@ fn protocol_analysis_work<'a>(
 }
 
 /// Build either route's native protocol-analysis item from its admitted package.
+#[ix_trace_rs::string_edge]
 pub(super) fn protocol_analysis_item<'a>(
     v2: Box<filament_contract_model::CheckedPackageV2>,
     model_input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
@@ -1089,6 +1117,7 @@ pub(super) fn protocol_analysis_item<'a>(
 
 #[implements("FSpec-FR-348-AC-3")]
 #[implements("FSpec-FR-290-AC-14")]
+#[ix_trace_rs::string_edge]
 fn work<'a>(
     analysis: &'a super::RunInput<'a>,
     binding: &'a super::SubjectBinding<'a>,
@@ -1590,8 +1619,7 @@ fn work<'a>(
                     analysis,
                     binding,
                     *limits,
-                    item.options.max_task_product_work,
-                    item.options.max_check_work,
+                    &item.options,
                     &item.claim,
                     item.request_index,
                 )
@@ -1756,6 +1784,7 @@ fn work<'a>(
 /// `finite_bound_available` (FSpec FR-290-AC-14, FSL FR-940). Only this
 /// checker's refusal reads the extent bit; any other engine's `RequiresBound`
 /// keeps its own disposition.
+#[ix_trace_rs::string_edge]
 pub(super) fn contract_checker_bound<'a>(
     mut built: super::AnalyzeItem<'a>,
     item: &ClaimItem,
@@ -1816,7 +1845,7 @@ mod tests {
     #[trace("FR-741-AC-6", "FR-255-AC-23")]
     #[test]
     fn both_probability_requests_use_the_finite_local_candidate_default() {
-        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
@@ -1870,11 +1899,20 @@ mod tests {
         let snapshots = std::collections::BTreeMap::from([(reference, snapshot.to_vec())]);
         let binding = super::super::document::SubjectSelection::default_over(&snapshots)
             .binding(&packages, &snapshots);
-        let limits = super::super::AnalyzeLimits::unbounded();
+        let limits =
+            super::super::AnalyzeLimits::published(super::super::DeadlineSupply::Unbounded);
         let preflight = super::simulation(&analysis.model, &binding, &limits);
-        assert_eq!(preflight.expansion.max_candidates, u64::MAX);
+        assert_eq!(preflight.expansion.max_candidates, 200_000);
         fsl_eval::simulation::model::ModelSystem::new(preflight)
             .expect("the real native Link subject admits");
+        let mut named = limits;
+        named
+            .engines
+            .set(fsl_foundation::Setting::ExpansionMaxCandidates, 7);
+        named.accounting.work_units = 11;
+        let supplied = super::probability_simulation(&analysis.model, &binding, &named);
+        assert_eq!(supplied.expansion.max_candidates, 7);
+        assert_eq!(supplied.meter.work_units, 11);
         let claim = analysis
             .package
             .graph()
@@ -1939,7 +1977,7 @@ mod tests {
     #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
     #[test]
     fn request_work_forwards_operation_contract_finite_bound_availability() {
-        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
@@ -2031,7 +2069,9 @@ mod tests {
                     &sources,
                     &negotiated,
                     &engines,
-                    &super::super::AnalyzeLimits::unbounded(),
+                    &super::super::AnalyzeLimits::published(
+                        super::super::DeadlineSupply::Unbounded,
+                    ),
                     None,
                 );
                 if backend == crate::contract_check::manifest::BACKEND_ID {

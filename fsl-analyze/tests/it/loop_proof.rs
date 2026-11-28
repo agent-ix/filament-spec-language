@@ -324,6 +324,7 @@ fn analyze_case_items(
                 max_messages: None,
                 max_live_instances: None,
             },
+            engines: Default::default(),
             replay: Box::new(move |payload| {
                 let CounterexampleKind::LoopProof(proof) = &payload.kind else {
                     panic!(
@@ -350,6 +351,7 @@ fn analyze_case_items(
         &Engines::fsl().expect("EN-1 registers"),
         items,
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let (terminals, counterexamples) = split_records(records, &case.checked);
     assert_eq!(

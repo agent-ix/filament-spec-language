@@ -3337,7 +3337,7 @@ mod float_members {
     /// for acceptance assertions that depend on their provenance.
     fn check_clause_with_diagnostics(
         clause: &str,
-    ) -> Result<CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+    ) -> Result<CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
         let body =
             format!("invariant I using v on Config::ConfigVersion at current {{ {clause} }}\n");
         let declarations = admit_and_assemble_with_body(&rule_document(), &body)

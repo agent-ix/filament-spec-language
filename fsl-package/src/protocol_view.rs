@@ -786,6 +786,7 @@ pub fn protocol_execution_view<'p>(
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn control_path(node: &CheckedSemanticNodeV2, protocol_path: &[String]) -> Vec<String> {
     let Some(declaration) = node.declaration.as_ref() else {
         return Vec::new();
@@ -811,6 +812,7 @@ fn control_path(node: &CheckedSemanticNodeV2, protocol_path: &[String]) -> Vec<S
 /// # Errors
 /// Returns the native view refusal for missing members, duplicate ancestry
 /// or a control outside the named protocol's run tree.
+#[ix_trace_rs::string_edge]
 pub(crate) fn control_site_path(
     package: &CheckedPackageV2,
     protocol: &str,
@@ -879,6 +881,7 @@ pub(crate) fn control_site_path(
     selected.ok_or_else(|| missing(control, "run"))
 }
 
+#[ix_trace_rs::string_edge]
 fn control_memory(
     node: &CheckedSemanticNodeV2,
 ) -> Result<Option<fsl_foundation::MemoryModelName>, ViewRefusal> {
@@ -1840,6 +1843,7 @@ fn optional_ordering(
         .transpose()
 }
 
+#[ix_trace_rs::string_edge]
 fn ordering_word(
     node: &Node,
     member: &'static str,

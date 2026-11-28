@@ -18,7 +18,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-267
-    type: references
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-640
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-642
@@ -28,7 +28,7 @@ relationships:
   - target: ix://agent-ix/filament-specification/FR-094
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-352
-    type: references
+    type: depends_on
 ---
 # FR-641: Carry every temporal trace kind and the progress ledger on the clause-run request
 

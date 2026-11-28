@@ -8,9 +8,9 @@
 //! canonicaliser returned for it. Each retained edge `(source, t, target,
 //! π)` becomes the concrete step `σ(t)` to `σ ∘ π⁻¹ (target)`, and `σ`
 //! becomes `σ ∘ π⁻¹`; a successor that was never canonicalised is the same
-//! step with `π` the identity. Every concrete step is checked against an
-//! expansion of the concrete source and counted against the run's
-//! remaining `max_transitions`.
+//! step with `π` the identity. Every lifted step is an admitted canonical
+//! graph edge mapped through the symmetry action and counted against the
+//! run's remaining `max_transitions`.
 //!
 //! Under the trivial group a model path is already concrete. Protocol
 //! paths additionally lift delivery-label canonical edges by re-executing
@@ -23,6 +23,7 @@ use fsl_eval::simulation::{
     EncodingRefusal, ExpansionStop, Permutation, SubjectSystem, SymmetryGroup, TransitionSystem,
 };
 use fsl_replay::{CounterexampleKind, ModelStep};
+use ix_trace_rs::implements;
 
 use super::check::{fault, ModelCheckRefusal};
 
@@ -72,6 +73,9 @@ pub(super) trait Permuter<State, Transition> {
         transition: &ModelTransition,
         permutation: &Permutation,
     ) -> Result<ModelTransition, ExpansionStop>;
+
+    /// Charge one state or transition permutation application to the run.
+    fn charge_permutation_work(&self) -> Result<(), ExpansionStop>;
 }
 
 impl Permuter<ModelSimState, ModelTransition> for ModelSystem<'_> {
@@ -105,6 +109,10 @@ impl Permuter<ModelSimState, ModelTransition> for ModelSystem<'_> {
         permutation: &Permutation,
     ) -> Result<ModelTransition, ExpansionStop> {
         ModelSystem::permute_transition(self, transition, permutation)
+    }
+
+    fn charge_permutation_work(&self) -> Result<(), ExpansionStop> {
+        self.charge_concretisation_work()
     }
 }
 
@@ -188,6 +196,7 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
     ///
     /// [`LiftStop`] when an expansion stops, the budget is spent, or the
     /// concrete step is not a step of the subject.
+    #[implements("FR-161-AC-5")]
     pub(super) fn edge(
         &mut self,
         transition: &S::TransitionId,
@@ -235,29 +244,26 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
         }
         self.budget -= 1;
         self.charged_steps += 1;
+        permuter
+            .charge_permutation_work()
+            .map_err(LiftStop::Expansion)?;
         let step = permuter
             .permute_transition(transition, &self.sigma)
             .map_err(|_| fault("a-concretised-step-encodes"))?;
         let sigma = self.sigma.compose(&permutation.inverse());
+        permuter
+            .charge_permutation_work()
+            .map_err(LiftStop::Expansion)?;
         let next = permuter
             .permute(target, &sigma)
             .map_err(LiftStop::Expansion)?;
         let (bytes, _) = self.system.state_key(&next)?;
         let key = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
-        let expansion = self
-            .system
-            .successors(&self.concrete)
-            .map_err(LiftStop::Expansion)?;
-        let mut matched = false;
-        for (candidate, state) in &expansion.successors {
-            if *candidate == step && self.system.state_key(state)?.0 == key.as_bytes() {
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
-            return Err(fault("a-concretised-step-is-a-subject-step").into());
-        }
+        // The canonical graph admitted this edge at its source state. The
+        // subject symmetry maps its transition identity and target together,
+        // so the lifted edge remains a subject step. Re-expanding the
+        // concrete source here would charge candidate exploration work to
+        // FR-161's permutation allowance.
         self.steps.push(ModelStep {
             transition: step,
             post_state: key.clone(),
@@ -331,5 +337,113 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
             evaluation.site.transition = Some(guard);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_exact::{LimitKind, ScalarLimits};
+    use filament_semantic_value::checking::CheckMode;
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_eval::simulation::{ExpansionLimit, SymmetryClass};
+    use ix_trace_rs::trace;
+
+    fn meter(work_units: u64) -> ScalarLimits {
+        ScalarLimits {
+            work_units,
+            ..crate::counter::UNLIMITED
+        }
+    }
+
+    #[trace("FR-161-AC-5")]
+    #[test]
+    fn lift_charges_two_work_units_per_edge() {
+        let document = crate::counter::symmetric_document();
+        let package = crate::counter::package_with_mode(
+            &document,
+            crate::counter::CONTRACT,
+            CheckMode::Linked,
+        );
+        let mut documents = crate::counter::Documents::new(document);
+        let initial = vec![documents.start("lift-work", &[("a", 0), ("b", 0), ("c", 0)])];
+        let subject = crate::counter::subject(
+            &package,
+            &documents,
+            initial,
+            &["a", "b", "c"],
+            crate::counter::UNLIMITED,
+        );
+        let system = ModelSystem::new(subject.simulation).expect("the counter subject admits");
+        let group = SymmetryGroup {
+            classes: vec![SymmetryClass {
+                population: crate::counter::key("counters"),
+                keys: ["a", "b", "c"].map(str::to_owned).to_vec(),
+            }],
+        };
+        let root = system
+            .initial_iter()
+            .next()
+            .expect("one initial state")
+            .expect("the initial state builds");
+        let (mut canonical, _) = system
+            .canonicalise(&root, &group)
+            .expect("the initial state canonicalises");
+        let (_, mut lift) = match Lift::start(&system, Some(&system), &group, &canonical, 3) {
+            Ok(lift) => lift,
+            Err(LiftStop::Expansion(_)) => panic!("the canonical root lifts"),
+            Err(LiftStop::Transitions) => panic!("the lift has three transition units"),
+            Err(LiftStop::Refusal(_)) => panic!("the canonical root is an initial state"),
+        };
+
+        let mut path = Vec::new();
+        for _ in 0..3 {
+            let (transition, target) = system
+                .successors(&canonical)
+                .expect("the counter expands")
+                .successors
+                .into_iter()
+                .next()
+                .expect("the counter has an enabled increment");
+            let (next, permutation) = system
+                .canonicalise(&target, &group)
+                .expect("the successor canonicalises");
+            path.push((transition, next.clone(), permutation));
+            canonical = next;
+        }
+
+        system.share_evaluation_meter(meter(5));
+        let stop = path.iter().find_map(|(transition, target, permutation)| {
+            match lift.edge(transition, target, permutation) {
+                Ok(()) => None,
+                Err(LiftStop::Expansion(stop)) => Some(stop),
+                Err(LiftStop::Transitions) => panic!("the lift has three transition units"),
+                Err(LiftStop::Refusal(refusal)) => panic!("the lift is well formed: {refusal:?}"),
+            }
+        });
+        assert_eq!(
+            stop.and_then(|stop| stop.limit),
+            Some(ExpansionLimit::EvaluationMeter(LimitKind::WorkUnits))
+        );
+        assert_eq!(lift.charged(), 3);
+
+        let (_, mut exact_lift) = match Lift::start(&system, Some(&system), &group, &root, 3) {
+            Ok(lift) => lift,
+            Err(LiftStop::Expansion(_)) => panic!("the canonical root lifts again"),
+            Err(LiftStop::Transitions) => panic!("the lift has three transition units"),
+            Err(LiftStop::Refusal(_)) => panic!("the root is an initial state"),
+        };
+        system.share_evaluation_meter(meter(6));
+        for (transition, target, permutation) in &path {
+            match exact_lift.edge(transition, target, permutation) {
+                Ok(()) => {}
+                Err(LiftStop::Expansion(_)) => {
+                    panic!("three lifted edges use exactly six work units")
+                }
+                Err(LiftStop::Transitions) => panic!("the lift has three transition units"),
+                Err(LiftStop::Refusal(_)) => panic!("the canonical path lifts"),
+            }
+        }
+        assert_eq!(exact_lift.charged(), 3);
     }
 }

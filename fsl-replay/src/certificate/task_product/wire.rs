@@ -20,6 +20,7 @@ use super::{
 };
 use crate::certificate::closure::CertificateRejection;
 use crate::certificate::{CertificateLocus, CertificateRule};
+use crate::shared_wire::{RationalObject, TransitionIdentity, WireDefect, WireDefectKind};
 use crate::TaskTransitionAction;
 
 /// The largest index or count the wire carries (RFC 8785 exact integers).
@@ -198,6 +199,7 @@ const MAX_TYPED_DEPTH: usize = 64;
 
 /// Checks `value` against the schema's `TypedValue` definition (FSpec
 /// FR-181): a closed object per `type`.
+#[ix_trace_rs::string_edge]
 fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskProductShapeRefusal> {
     if depth > MAX_TYPED_DEPTH {
         return refuse(pointer, TaskProductShapeReason::NotCanonical);
@@ -366,11 +368,9 @@ fn node_id(value: &Value, pointer: &str) -> Result<(), TaskProductShapeRefusal> 
 }
 
 /// Whether two source transitions have one wire spelling. The FR-331 wire
-/// carries an operation as one string (a declaration's `name` or `node`
-/// identity, or the operation text), so a transition read from a certificate
-/// equals the checker's own transition exactly when their wire spellings
-/// agree; structural `==` on a read transition is exact only when both sides
-/// were built from a string-valued operation.
+/// carries an operation as one string, the declaration identity text or a name
+/// (FR-120), so a transition read from a certificate equals the checker's own
+/// transition exactly when their wire spellings agree.
 pub fn same_source_transition(left: &ModelTransition, right: &ModelTransition) -> bool {
     match (
         crate::task_source_transition_wire(left),
@@ -382,28 +382,8 @@ pub fn same_source_transition(left: &ModelTransition, right: &ModelTransition) -
 }
 
 pub(crate) fn rational(value: &Value, pointer: &str) -> Result<Rational, TaskProductShapeRefusal> {
-    let map = object(value, pointer, &["numerator", "denominator"], &[])?;
-    let numerator = integer(member(map, "numerator"), &child(pointer, "numerator"))?;
-    let denominator = integer(member(map, "denominator"), &child(pointer, "denominator"))?;
-    let invalid = || TaskProductShapeRefusal {
-        pointer: pointer.to_owned(),
-        reason: TaskProductShapeReason::NotCanonical,
-    };
-    if denominator.is_zero() || denominator.is_negative() {
-        return Err(invalid());
-    }
-    let reduced = Rational::new(numerator.clone(), denominator.clone()).map_err(|_| invalid())?;
-    if reduced.numerator() != &numerator || reduced.denominator() != &denominator {
-        return Err(invalid());
-    }
-    Ok(reduced)
-}
-
-pub(crate) fn rational_wire(value: &Rational) -> Value {
-    json!({
-        "denominator": value.denominator().to_string(),
-        "numerator": value.numerator().to_string(),
-    })
+    object(value, pointer, &RationalObject::MEMBERS, &[])?;
+    RationalObject::read(value).map_err(|defect| shared_defect(pointer, defect))
 }
 
 fn enumerated<T: Copy>(
@@ -442,42 +422,43 @@ pub(crate) fn action_name(action: TaskTransitionAction) -> &'static str {
         .map_or("", |(name, _)| name)
 }
 
-/// A source transition identity `{type, operation, receiver, arguments}`.
+/// A shared wire value's refusal at `pointer`, in this codec's reasons.
+pub(crate) fn shared_defect(pointer: &str, defect: WireDefect) -> TaskProductShapeRefusal {
+    let reason = match defect.kind {
+        WireDefectKind::Missing => TaskProductShapeReason::Missing,
+        WireDefectKind::UnknownMember => TaskProductShapeReason::UnknownMember,
+        WireDefectKind::WrongKind => TaskProductShapeReason::WrongKind,
+        WireDefectKind::Invalid => TaskProductShapeReason::NotCanonical,
+        WireDefectKind::UnknownVariant => TaskProductShapeReason::UnknownVariant,
+    };
+    TaskProductShapeRefusal {
+        pointer: format!("{pointer}{}", defect.pointer),
+        reason,
+    }
+}
+
+/// A source transition identity, its receiver and arguments checked against
+/// FSpec's `TypedValue`.
 pub(crate) fn source_transition(
     value: &Value,
     pointer: &str,
 ) -> Result<ModelTransition, TaskProductShapeRefusal> {
-    let map = object(
-        value,
-        pointer,
-        &["type", "operation", "receiver", "arguments"],
-        &[],
-    )?;
-    if member(map, "type").as_str() != Some("transition") {
-        return refuse(
-            &child(pointer, "type"),
-            TaskProductShapeReason::UnknownVariant,
-        );
+    let identity = TransitionIdentity::read_within(value, IDENTITY_LIMITS)
+        .map_err(|defect| shared_defect(pointer, defect))?;
+    if let Some(receiver) = value.get("receiver").filter(|receiver| !receiver.is_null()) {
+        typed_value(receiver, &child(pointer, "receiver"), 0)?;
     }
-    let operation = text(member(map, "operation"), &child(pointer, "operation"))?;
-    let typed = |value: &Value, at: String| -> Result<String, TaskProductShapeRefusal> {
-        typed_value(value, &at, 0)?;
-        serde_json::to_string(value).or_else(|_| refuse(&at, TaskProductShapeReason::NotCanonical))
-    };
-    let receiver = match member(map, "receiver") {
-        Value::Null => None,
-        value => Some(typed(value, child(pointer, "receiver"))?),
-    };
     let arguments_at = child(pointer, "arguments");
-    let arguments = array(member(map, "arguments"), &arguments_at)?
-        .iter()
+    for (index, argument) in value
+        .get("arguments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
         .enumerate()
-        .map(|(index, value)| typed(value, child(&arguments_at, index)))
-        .collect::<Result<Vec<_>, _>>()?;
-    let operation = serde_json::to_string(&Value::String(operation))
-        .or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))?;
-    ModelTransition::new(operation, receiver, arguments, IDENTITY_LIMITS)
-        .or_else(|_| refuse(pointer, TaskProductShapeReason::NotCanonical))
+    {
+        typed_value(argument, &child(&arguments_at, index), 0)?;
+    }
+    Ok(identity.into_model())
 }
 
 pub(crate) fn source_transition_wire(
@@ -828,14 +809,14 @@ impl TaskProductCertificate {
             .map(|row| {
                 json!({
                     "arrival": row.arrival.as_str(),
-                    "interarrival": rational_wire(&row.interarrival),
-                    "max_jitter": rational_wire(&row.max_jitter),
+                    "interarrival": RationalObject::value(&row.interarrival),
+                    "max_jitter": RationalObject::value(&row.max_jitter),
                     "max_jobs": row.max_jobs,
-                    "relative_deadline": rational_wire(&row.relative_deadline),
+                    "relative_deadline": RationalObject::value(&row.relative_deadline),
                     "task": row.task,
                     "taskset": row.task_set,
-                    "work_lower": rational_wire(&row.work_lower),
-                    "work_upper": rational_wire(&row.work_upper),
+                    "work_lower": RationalObject::value(&row.work_lower),
+                    "work_upper": RationalObject::value(&row.work_upper),
                 })
             })
             .collect();
@@ -1279,6 +1260,50 @@ mod tests {
         template
     }
 
+    /// FR-120-AC-40 (TC-471): the certificate source-transition reader reads
+    /// an identity text as itself and any other string as a name, and refuses
+    /// a member that is not a string.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn the_source_transition_reader_reads_an_operation_string_by_fr_120() {
+        let read = |operation: Value| {
+            source_transition(
+                &json!({"type": "transition", "operation": operation,
+                        "receiver": null, "arguments": []}),
+                "",
+            )
+        };
+        for (written, identity) in [
+            (
+                r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#,
+                r#"{"node":"ix://test/counters/Counter/increment","package":"test/counters"}"#,
+            ),
+            (r#""{}""#, r#""{}""#),
+            ("tick", r#""tick""#),
+            ("Cell::set", r#""Cell::set""#),
+            (
+                "ix://test/counters/Counter/increment",
+                r#""ix://test/counters/Counter/increment""#,
+            ),
+            ("true", r#""true""#),
+            ("false", r#""false""#),
+            ("null", r#""null""#),
+            ("1", r#""1""#),
+            ("[1]", r#""[1]""#),
+        ] {
+            let transition =
+                read(json!(written)).unwrap_or_else(|error| panic!("{written}: {error}"));
+            assert_eq!(transition.operation(), identity, "{written}");
+            let rewritten = source_transition_wire(&transition).expect("writes");
+            assert_eq!(rewritten["operation"], written, "{written}");
+        }
+        for other in [json!({"name": "tick"}), json!(true), json!(1), json!([1])] {
+            let refused = read(other.clone()).expect_err("not a string");
+            assert_eq!(refused.reason, TaskProductShapeReason::WrongKind, "{other}");
+            assert_eq!(refused.pointer, "/operation", "{other}");
+        }
+    }
+
     /// Receivers and arguments are `TypedValue`s.
     #[trace("TC-371", "FR-418-AC-11")]
     #[test]
@@ -1324,21 +1349,21 @@ mod tests {
             .expect("canonical identity")
     }
 
-    /// A checked transition's node-identity operation is spelled on the wire
-    /// as one string; comparison is by that spelling, and a plain string and
-    /// a `{"name"}` identity are one wire identity.
-    #[trace("TC-371", "FR-418-AC-11")]
+    /// A checked transition's declaration identity is spelled on the wire as
+    /// one string and read back as the same identity; comparison is by that
+    /// spelling.
+    #[trace("TC-371", "FR-418-AC-11", "FR-120-AC-40")]
     #[test]
     fn source_transitions_compare_by_their_wire_spelling() {
         let node = transition(r#"{"node":"n1","package":"p"}"#);
         let named = transition(r#"{"name":"Task::release"}"#);
         let plain = transition(r#""Task::release""#);
         let wire = crate::task_source_transition_wire(&node).expect("wire");
-        assert_eq!(wire["operation"], "n1");
+        assert_eq!(wire["operation"], r#"{"node":"n1","package":"p"}"#);
         let read = source_transition(&wire, "").expect("reads");
-        assert_ne!(read, node, "structural equality sees the flattening");
+        assert_eq!(read, node);
         assert!(same_source_transition(&read, &node));
-        assert!(same_source_transition(&named, &plain));
+        assert!(!same_source_transition(&named, &plain));
         assert!(!same_source_transition(&node, &plain));
         let mut template = TaskTransitionTemplate::from_wire(&template_with(wire)).expect("reads");
         let mut other = template.clone();

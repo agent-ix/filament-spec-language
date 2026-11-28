@@ -22,7 +22,7 @@ fn recursive_depth_failure_is_isolated_in_a_child_process() {
 }
 
 #[test]
-#[ignore = "executed only by the isolated parent recursion test"]
+#[ignore = "overflows its stack: only the parent recursion test, under make ci-default-features, runs it as a child process"]
 #[trace("NFR-141-AC-27")]
 fn recursive_depth_failure_child_mode() {
     fn recurse_to_depth(depth: usize) -> usize {

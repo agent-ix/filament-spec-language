@@ -72,8 +72,9 @@ dependent files fitting their aggregate ceiling.
 
 ### The library entry
 
-FR-640's `RequestOverrides` SHALL gain `limits: Option<&SpineLimits>`, the
-caller's stage limits from the settings operation, and the compile entry
+FR-640's `RequestOverrides` SHALL gain
+`limits: Option<&BTreeMap<Setting, u64>>`, the stage and observation settings
+the caller names, each with its value, and the compile entry
 SHALL take FR-026's `RunLimits` for its intake ceilings
 (`compile_outcome_with_limits_and_overrides(path, limits, overrides)`).
 A compile that is given no limits runs at FR-255's defaults (FR-255-AC-6).
@@ -98,9 +99,9 @@ The command's outcome under the configured limits.
   driver SHALL refuse `invalid-request`, exit 20, naming the setting and
   listing the settings the command accepts, before any file is read.
 - If an operand is malformed, names an unknown setting, has a value that is
-  not a non-negative decimal integer or repeats a name, then the driver
-  SHALL return FR-255 Behavior 6's usage refusal naming the operand, exit 20,
-  before any file is read.
+  not a non-negative decimal integer or repeats a name, then the `fsl`
+  command driver SHALL return FR-255 Behavior 6's usage refusal naming the
+  operand, exit 20, before any file is read.
 - When `fsl compile` is given `--request-bytes` or `--dependent-bytes`, the
   compile SHALL read the request and its dependent files under those
   ceilings, and a refusal at either SHALL name the limit, its value and the
@@ -116,6 +117,13 @@ The command's outcome under the configured limits.
 | FR-869-AC-2 | `compile_outcome_with_limits_and_overrides` over a program holding a 6,000-deep parenthesis nest refuses `stage_limit_exceeded` naming `s1.nodes` under the default limits and compiles with `RequestOverrides::limits` carrying `s1.nodes` 1000000 and the `s1.tokens` and `s1.work_units` it needs; `emit.output_bytes` set to one below the package's byte length refuses naming `emit.output_bytes`. | Test (TC-2461) |
 | FR-869-AC-3 | `fsl parse a b deep.fsl --limit s1.nodes=1000000` over the 6,000-deep nest exits 0, and without `--limit` exits 22 naming `s1.nodes`; `fsl check deep.fsl --limit s1.nodes=1000000` exits 0; `fsl compile req.json --limit s1.nodes=1000000` over a request selecting it exits 0. | Driver test (TC-2462): the `fsl` binary parses the options, so the code ticket adds the test in the filament-driver repository. |
 | FR-869-AC-4 | `fsl parse a b x.fsl --limit s3.nodes=5`, `fsl check x.fsl --limit accounting.work_units=5`, `fsl check x.fsl --limit emit.output_bytes=5` and `fsl compile req.json --limit admission.work_units=5` each exit 20 `invalid-request` naming the setting and the command's accepted settings, before reading a file; `--limit s9.nodes=1`, `--limit s1.nodes=ten` and `--limit s1.nodes=5 --limit s1.nodes=6` each refuse with FR-255 Behavior 6's usage refusal naming the operand. | Driver test (TC-2462) |
+| FR-869-AC-5 | `compile_outcome_with_limits_and_overrides` over a source expression with exactly 1,000 nested Boolean `not` nodes emits a checked package when `s1.nodes` is set to the counted source nodes; with that setting one below the count, it returns the compile stage-limit refusal `stage_limit_exceeded` naming `s1.nodes`. The request's `request_bytes`, source aggregate `dependent_bytes` and emitted `emit.output_bytes` bounds remain independent (FR-869-AC-1/2). | Test (TC-3242) |
+| FR-869-AC-6 | `compile_outcome_with_limits_and_overrides` over the left-associated sum of exactly 10,000 integer terms emits a checked package when `s3.nodes` is set to the counted checked nodes; with `s3.nodes` one below that count, it returns `stage_limit_exceeded` naming `s3.nodes`. A bound one byte below the resulting package length returns the separate `emit.output_bytes` refusal and no partial package. | Test (TC-3242) |
+| FR-869-AC-7 | Compilation of the TC-3242 fixture with exactly 1,000 real enum type declarations, each with two variants, admits `model.declaration_records=3000` and emits a checked package. The 1,000 type rows and 2,000 variant rows are each charged as one model declaration record; at bound 2,999 model intake returns `resource_exhausted`/`insufficient-next-charge`, naming `model.declaration_records`, bound 2,999 and denied count 3000. `s1.tokens`, `s1.nodes` and `emit.output_bytes` retain their separate stage-limit outcomes. | Test (TC-3242) |
+| FR-869-AC-8 | Compilation of TC-3242's 1,000-edge inheritance chain admits `model.ancestor_steps=1000` and returns a checked package; at 999, model normalization returns `resource_exhausted`/`insufficient-next-charge` naming `model.ancestor_steps` and denied count 1000. For the separate 1,000-edge operation-redefinition chain, `model.derivation_facts=1504502` completes normalization and linking as FR-083-AC-5 specifies, but compile returns `stage_limit_exceeded` at the default `emit.output_bytes=16777216`, with actual output count 16777217. This route does not emit a checked package for this variant. At `model.derivation_facts=1504501`, model normalization returns `resource_exhausted`/`insufficient-next-charge`, as FR-083-AC-5 states. | Test (TC-3242) |
+| FR-869-AC-9 | Compilation of TC-3242's package declaring `Sequence<Integer>[0, 100000]` and carrying 100,000 ordered integer values returns `resource_exhausted`/`intake-limit-exceeded` before publishing declarations at its default `model.sequence_maximum=10000`, with `kind=node-count-exceeded`, `bound=10000`, `actual=100000` and `setting=model.sequence_maximum` (FR-506-AC-2/7; FR-255 Behavior 1). With `model.sequence_maximum=100000` and the S1, S3 and emit settings raised to fit the fixture, it emits the checked package. Each setting keeps its own counter and outcome. | Test (TC-3242) |
+| FR-869-AC-10 | Compilation of the accepted 10,000-value ordered sequence visits at most 6 node-ID slots per value during operand-slot emission. Compilation of the accepted 12,000-value ordered sequence completes inverse read-index rewriting with at most 48 work units per value. One inverse work unit is an ID-slot visit, a full path-length inspection allowance for an ID predicate or structural-key lookup, or a structural-key lookup. The count includes source-map entries and node-held IDs. These are conservative implementation-complexity bounds, not caller-visible stage limits, and do not change the independently charged S1, model, S3 or emit counters. | Test (TC-3242) |
+| FR-869-AC-11 | Compilation of the accepted 12,000-value ordered sequence performs the emitter's structural-to-index rewrite and operand-slot-to-index restoration with at most 213 work units per value combined. One work unit is an ID-slot visit, a full path-length inspection allowance for an ID predicate or rewrite, a structural-key lookup, or an operand-row lookup. The structural-to-index count includes source-map, refinement-step, and schedulability sidecar IDs; the operand-slot-to-index count includes every node-held ID. The test reports both subcomponent totals and the combined total, verifies that a repeated-replacement reference path exceeds 2,556,000 units, and asserts byte-identical checked-package output between the reference and one-pass paths. This test-support counter is not a caller-visible stage limit and does not change the independently charged S1, model, S3 or emit counters. | Test |
 
 ## Dependencies
 

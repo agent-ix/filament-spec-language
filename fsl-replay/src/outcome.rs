@@ -55,13 +55,16 @@ use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::certificate::{CertificateLocus, CertificateRule};
+use crate::model_check::settle::ResultLabel;
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
     Certification, CrossCheck, CrossCheckVerdict, DeclineCode, IncompleteCause, InconclusiveCause,
-    InstanceBound, ProofBasis, RecordedWarning, ReportedInconclusiveCause, StaleIdentity,
-    SymmetryBrokenCause, TerminalRecord, TerminalValue, UnavailabilityCause, WeakAccessFailure,
+    InstanceBound, ProofBasis, RecordedWarning, ReportedInconclusiveCause, SettlementBasis,
+    StaleIdentity, SymmetryBrokenCause, TerminalRecord, TerminalValue, UnavailabilityCause,
+    WeakAccessFailure, PROOF_NOT_CERTIFIED_KIND,
 };
 use crate::result::{DisagreementCause, ReplayResult};
+use crate::shared_wire::{StateLocus, TransitionIdentity};
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
     classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
@@ -94,7 +97,7 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 }
 
 /// The document's `format` member.
-pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
+pub const OUTCOME_FORMAT: &str = fsl_foundation::wire_format::WireFormat::Outcome.as_str();
 /// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
 pub const OUTCOME_SCHEMA_1: &str = include_str!("../schemas/filament-outcome-1.schema.json");
 
@@ -433,7 +436,7 @@ pub struct ItemDiagnostic {
 pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<&'static str>,
-    /// A `bounded-search-incomplete` cause's reason.
+    /// A `bounded-search-incomplete` or `idle-tail-undecided` cause's reason.
     #[serde(rename = "reason", skip_serializing_if = "Option::is_none")]
     search_reason: Option<&'static str>,
     #[serde(rename = "where", skip_serializing_if = "Option::is_none")]
@@ -473,6 +476,12 @@ pub struct ItemCause {
     /// A `provider-answer-unconfirmed` cause's `premises` index.
     #[serde(skip_serializing_if = "Option::is_none")]
     premise: Option<u64>,
+    /// A `proof-not-certified` cause's proof basis.
+    #[serde(rename = "basis", skip_serializing_if = "Option::is_none")]
+    proof_basis: Option<Box<ProofBasis>>,
+    /// A `proof-not-certified` cause's certification.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certification: Option<Certification>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rule: Option<CertificateRule>,
     #[serde(rename = "at", skip_serializing_if = "Option::is_none")]
@@ -568,19 +577,22 @@ pub struct ItemCause {
     cross_check: Option<CrossCheckVerdict>,
     /// The model state named by FR-331's probabilistic refusal causes.
     #[serde(skip_serializing_if = "Option::is_none")]
-    state: Option<TimedStateWire>,
+    state: Option<StateLocus>,
+    /// `true` where `not-stochastic` names an idle tail, in `identity`'s place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idle_tail: Option<bool>,
     /// The typed transition identity named by `not-stochastic`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    identity: Option<TimedTransitionWire>,
+    identity: Option<TransitionIdentity<'static>>,
     /// The complete drawn identity of a `not-markov` refusal.
     #[serde(skip_serializing_if = "Option::is_none")]
-    transition: Option<TaskSourceTransitionWire>,
+    transition: Option<TransitionIdentity<'static>>,
     /// The actual count of a `not-markov` draw's model post-states.
     #[serde(skip_serializing_if = "Option::is_none")]
     post_state_count: Option<u64>,
     /// The first two actual distinct model posts, or none for count zero.
     #[serde(skip_serializing_if = "Option::is_none")]
-    post_states: Option<Vec<TimedStateWire>>,
+    post_states: Option<Vec<StateLocus>>,
     /// A clause run's FR-501 indeterminate reason, in the result report's
     /// own spelling; it supplies the cause's `kind`.
     #[serde(flatten)]
@@ -602,64 +614,6 @@ enum ItemCauseStates {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct TimedStateWire {
-    key: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct TimedTransitionWire {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    operation: serde_json::Value,
-    receiver: Option<serde_json::Value>,
-    arguments: Vec<serde_json::Value>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(super) struct TaskSourceTransitionWire {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    operation: String,
-    receiver: Option<serde_json::Value>,
-    arguments: Vec<serde_json::Value>,
-}
-
-/// Select the existing task-source operation spelling without copying it.
-pub(crate) fn task_source_operation<'a>(
-    operation: &'a serde_json::Value,
-    text: &'a str,
-) -> &'a str {
-    // Keep a checked operation's node as the task-source string spelling;
-    // other canonical identities retain their original text.
-    operation
-        .as_str()
-        .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
-        .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
-        .unwrap_or(text)
-}
-
-impl From<&filament_semantic_value::model_transition::ModelTransition>
-    for TaskSourceTransitionWire
-{
-    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
-        let operation: serde_json::Value = serde_json::from_str(identity.operation())
-            .expect("canonical source operation identity");
-        let operation = task_source_operation(&operation, identity.operation()).to_owned();
-        let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
-        Self {
-            kind: "transition",
-            operation,
-            receiver: identity.receiver().map(value),
-            arguments: identity
-                .arguments()
-                .iter()
-                .map(|text| value(text))
-                .collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct TaskTransitionWire {
     #[serde(rename = "type")]
     kind: &'static str,
@@ -669,8 +623,8 @@ struct TaskTransitionWire {
     job: u64,
     slot: u64,
     generation: u64,
-    release: TaskSourceTransitionWire,
-    source_transition: Option<TaskSourceTransitionWire>,
+    release: TransitionIdentity<'static>,
+    source_transition: Option<TransitionIdentity<'static>>,
     demand: serde_json::Value,
     jitter: serde_json::Value,
     deadline: serde_json::Value,
@@ -708,41 +662,17 @@ impl From<&crate::TaskTransitionIdentity> for TaskTransitionWire {
             job: identity.job,
             slot: identity.slot,
             generation: identity.generation,
-            release: TaskSourceTransitionWire::from(&identity.release),
+            release: TransitionIdentity::owned(identity.release.clone()),
             source_transition: identity
                 .source_transition
                 .as_ref()
-                .map(TaskSourceTransitionWire::from),
+                .cloned()
+                .map(TransitionIdentity::owned),
             demand: task_rational(&identity.demand),
             jitter: task_rational(&identity.jitter),
             deadline: task_rational(&identity.deadline),
             priority: identity.priority,
             budget_delta: identity.budget_delta.as_ref().map(task_rational),
-        }
-    }
-}
-
-impl From<&fsl_eval::simulation::StateKey> for TimedStateWire {
-    fn from(key: &fsl_eval::simulation::StateKey) -> Self {
-        use base64::Engine;
-        Self {
-            key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes()),
-        }
-    }
-}
-
-impl From<&filament_semantic_value::model_transition::ModelTransition> for TimedTransitionWire {
-    fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
-        let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
-        Self {
-            kind: "transition",
-            operation: value(identity.operation()),
-            receiver: identity.receiver().map(value),
-            arguments: identity
-                .arguments()
-                .iter()
-                .map(|text| value(text))
-                .collect(),
         }
     }
 }
@@ -853,6 +783,8 @@ impl ItemCause {
             hypothesis: None,
             result: None,
             premise: None,
+            proof_basis: None,
+            certification: None,
             certificate_at: None,
             limit: None,
             defect: None,
@@ -883,6 +815,7 @@ impl ItemCause {
             requested: None,
             recompiled: None,
             state: None,
+            idle_tail: None,
             identity: None,
             transition: None,
             post_state_count: None,
@@ -952,6 +885,13 @@ impl ItemCause {
                 premise,
             }) => {
                 item.premise = Some(*premise);
+            }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::ProofNotCertified {
+                basis,
+                certification,
+            }) => {
+                item.proof_basis = basis.clone();
+                item.certification = Some(*certification);
             }
             ReportedInconclusiveCause::Cause(
                 InconclusiveCause::BoundReached { depth }
@@ -1235,6 +1175,34 @@ pub struct ProtocolConformanceOutput {
     pub prefixes: Option<Vec<ConformancePrefixOutput>>,
 }
 
+impl ProtocolConformanceOutput {
+    /// For a request that requires certified proofs, and an item whose record
+    /// is not a certified proof, every label that would read `proved` reads
+    /// `inconclusive`. Obligation verdicts and the closure record are
+    /// the evidence the engine computed and stay.
+    #[implements("FR-1052-AC-9")]
+    pub fn withhold_proofs(&mut self) {
+        let proved = |label: &str| label == ResultLabel::Proved.as_str();
+        let inconclusive = || ResultLabel::Inconclusive.as_str().to_owned();
+        if proved(&self.global.label) {
+            self.global.label = inconclusive();
+            self.global.basis = SettlementBasis::Unsettled.as_str().to_owned();
+            self.global.complete = false;
+            self.global.cause = Some(PROOF_NOT_CERTIFIED_KIND.to_owned());
+        }
+        for prefix in self.prefixes.iter_mut().flatten() {
+            if proved(&prefix.label) {
+                prefix.label = inconclusive();
+            }
+        }
+        for projection in self.projections.iter_mut().flatten() {
+            if proved(&projection.label) {
+                projection.label = inconclusive();
+            }
+        }
+    }
+}
+
 /// The assessment of the first `observations` observations of a recording.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ConformancePrefixOutput {
@@ -1408,7 +1376,8 @@ impl OutcomeItem {
                 match cause {
                     UnavailabilityCause::NotMarkov(cause) => {
                         item.state = Some((&cause.state).into());
-                        item.transition = Some((&cause.drawn_transition).into());
+                        item.transition =
+                            Some(TransitionIdentity::owned(cause.drawn_transition.clone()));
                         item.post_state_count = Some(cause.post_states);
                         item.post_states =
                             Some(cause.post_state_examples.iter().map(Into::into).collect());
@@ -1464,7 +1433,11 @@ impl OutcomeItem {
                     | UnavailabilityCause::PunctualInterval { .. } => {}
                     UnavailabilityCause::NotStochastic { state, identity } => {
                         item.state = Some(state.into());
-                        item.identity = Some(identity.into());
+                        item.identity = Some(TransitionIdentity::owned(identity.clone()));
+                    }
+                    UnavailabilityCause::NotStochasticIdleTail { state } => {
+                        item.state = Some(state.into());
+                        item.idle_tail = Some(true);
                     }
                     UnavailabilityCause::TimeLockedSample { state } => {
                         item.state = Some(state.into());
@@ -1485,6 +1458,10 @@ impl OutcomeItem {
                         item.value = Some(*value);
                         item.setting = Some(limit.setting());
                         item.required = required.as_ref().map(ToString::to_string);
+                    }
+                    IncompleteCause::IdleTailUndecided(stop) => {
+                        item.state = Some((&stop.state).into());
+                        item.search_reason = Some(stop.reason.as_str());
                     }
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
@@ -1840,25 +1817,8 @@ impl OutcomeItem {
     }
 }
 
-/// The FR-413 claim-bound object a verdict carries (FR-410 `bound`): the
-/// claim's own comparison and threshold, and a quantile's separate `level`.
-pub fn verdict_bound_wire(bound: &statistical::VerdictBound) -> serde_json::Value {
-    let mut value = serde_json::json!({
-        "type": bound.form.bound_type(),
-        "comparison": bound.comparison.as_str(),
-        "threshold": rational_wire(&bound.threshold),
-    });
-    if let Some(level) = &bound.level {
-        value["level"] = rational_wire(level);
-    }
-    value
-}
-
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
-    serde_json::json!({
-        "numerator": value.numerator().to_string(),
-        "denominator": value.denominator().to_string(),
-    })
+    crate::shared_wire::RationalObject::value(value)
 }
 
 fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json::Value {
@@ -1981,6 +1941,12 @@ pub fn omitted_witnesses(verdict: &StatisticalVerdict) -> Vec<OmittedWitness> {
 /// # Errors
 ///
 /// [`CounterexampleWireError`] when a member has no spelling.
+#[implements("FSpec-FR-410-AC-1")]
+#[implements("FSpec-FR-410-AC-2")]
+#[implements("FSpec-FR-410-AC-8")]
+#[implements("FSpec-FR-410-AC-9")]
+#[implements("FSpec-FR-410-AC-10")]
+#[implements("FSpec-FR-410-AC-11")]
 fn statistical_verdict_wire(
     verdict: &StatisticalVerdict,
 ) -> Result<serde_json::Value, CounterexampleWireError> {
@@ -2068,7 +2034,7 @@ fn statistical_verdict_wire(
     // none is today (`omitted_witnesses` says why).
     let mut value = serde_json::json!({
         "decision": decision,
-        "bound": verdict_bound_wire(&verdict.bound),
+        "bound": crate::shared_wire::ProbabilisticBound::from(&verdict.bound),
         "basis": basis,
         "provenance": provenance,
         "tests": tests,
@@ -3213,6 +3179,8 @@ impl OutcomeDocument {
 
     /// The document of a `parse` outcome. Completed S1/S2 work carries its
     /// parsed report, including when S2 later refuses recovered syntax.
+    #[implements("FR-663-AC-1")]
+    #[implements("FR-663-AC-2")]
     pub fn from_parse(result: &Result<Staged<ParsedUnitSource>, FrontEndFailure>) -> Self {
         match result {
             Ok(staged) => {
@@ -3772,6 +3740,7 @@ fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeL
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn package_artifact_pointer(pointer: &str) -> String {
     match pointer.strip_prefix("/package") {
         Some("") => String::new(),
@@ -3932,22 +3901,34 @@ mod tests {
         assert_eq!(generic.hint, None);
     }
 
-    /// FR-181 source transitions retain their canonical operation node when
-    /// the checked identity carries a node/package pair instead of a name.
-    #[trace("FR-237-AC-10", "FSpec-FR-364-AC-23")]
+    /// FR-120-AC-40 (TC-471): the task-source writer writes a declaration
+    /// identity text as itself, and a name identity as the name unless the
+    /// name is spelled like an identity text.
+    #[trace("TC-471", "FR-120-AC-40", "FR-237-AC-10", "FSpec-FR-364-AC-23")]
     #[test]
-    fn task_source_transition_wire_accepts_canonical_operation_nodes() {
-        let transition = filament_semantic_value::model_transition::ModelTransition::new(
-            r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#.to_owned(),
-            None,
-            Vec::new(),
-            quire_canonical::Limits::new(u64::MAX),
-        )
-        .expect("valid canonical model transition");
+    fn task_source_transition_wire_writes_the_declaration_identity_text() {
+        for (identity, written) in [
+            (
+                r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
+                r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
+            ),
+            (r#"{"name":"send"}"#, r#"{"name":"send"}"#),
+            (r#""tick""#, "tick"),
+            (r#""Call::send""#, "Call::send"),
+            (r#""{}""#, r#""{}""#),
+        ] {
+            let transition = filament_semantic_value::model_transition::ModelTransition::new(
+                identity.to_owned(),
+                None,
+                Vec::new(),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .expect("valid canonical model transition");
 
-        let wire = task_source_transition_wire(&transition).expect("canonical operation node");
+            let wire = task_source_transition_wire(&transition).expect("a spelling");
 
-        assert_eq!(wire["operation"], "ix://test/timed/Call/send");
+            assert_eq!(wire["operation"], written, "{identity}");
+        }
     }
 
     #[trace("FR-237-AC-10")]
@@ -4060,18 +4041,36 @@ mod tests {
         .expect("canonical transition values");
         let mut item = ItemCause::kind("not-stochastic");
         item.state = Some((&state).into());
-        item.identity = Some((&transition).into());
+        item.identity = Some(TransitionIdentity::owned(transition.clone()));
 
         let value = serde_json::to_value(item).expect("wire cause serializes");
         assert_eq!(value["kind"], "not-stochastic");
         assert_eq!(value["state"]["key"], "WzAsW11d");
         assert_eq!(value["identity"]["type"], "transition");
-        assert_eq!(
-            value["identity"]["operation"],
-            serde_json::json!({"name":"timeout"})
-        );
+        assert_eq!(value["identity"]["operation"], r#"{"name":"timeout"}"#);
         assert_eq!(value["identity"]["receiver"], serde_json::Value::Null);
         assert_eq!(value["identity"]["arguments"][0]["value"], "1");
+    }
+
+    /// FR-120-AC-40 (TC-471): a cause's `identity` and drawn `transition`
+    /// write a name identity as the bare name.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_cause_writes_a_name_identity_as_the_name() {
+        let transition = filament_semantic_value::model_transition::ModelTransition::new(
+            r#""tick""#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("canonical transition values");
+        let mut item = ItemCause::kind("not-markov");
+        item.identity = Some(TransitionIdentity::owned(transition.clone()));
+        item.transition = Some(TransitionIdentity::owned(transition.clone()));
+
+        let value = serde_json::to_value(item).expect("wire cause serializes");
+        assert_eq!(value["identity"]["operation"], "tick");
+        assert_eq!(value["transition"]["operation"], "tick");
     }
 
     #[trace("TC-639", "FR-204-AC-2", "FR-204-AC-3", "FR-204-AC-4")]
@@ -5224,6 +5223,52 @@ mod tests {
                 expected,
                 "{value:?}"
             );
+        }
+    }
+
+    #[trace("TC-709", "FR-254-AC-8")]
+    #[test]
+    fn the_idle_tail_not_stochastic_cause_names_no_identity_on_the_wire() {
+        let state = fsl_eval::simulation::StateKey::from_canonical_bytes(b"[0,[]]".to_vec());
+        let cause = |value: TerminalValue| {
+            serde_json::to_value(record(1, value)).expect("serializes")["cause"].clone()
+        };
+        let not_stochastic = cause(TerminalValue::Unsupported(
+            UnavailabilityCause::NotStochasticIdleTail {
+                state: state.clone(),
+            },
+        ));
+        assert_eq!(not_stochastic["kind"], "not-stochastic");
+        assert_eq!(not_stochastic["state"]["key"], "WzAsW11d");
+        assert_eq!(not_stochastic["idle_tail"], true);
+        assert_eq!(not_stochastic.get("identity"), None);
+    }
+
+    #[test]
+    fn the_idle_tail_undecided_cause_keeps_its_detail_on_the_wire() {
+        let state = fsl_eval::simulation::StateKey::from_canonical_bytes(b"[0,[]]".to_vec());
+        let cause = |value: TerminalValue| {
+            serde_json::to_value(record(1, value)).expect("serializes")["cause"].clone()
+        };
+        for (reason, name) in [
+            (
+                crate::statistical::IdleTailReason::TimedFormula,
+                "timed-formula",
+            ),
+            (
+                crate::statistical::IdleTailReason::ClockPredicate,
+                "clock-predicate",
+            ),
+        ] {
+            let undecided = cause(TerminalValue::Incomplete(
+                IncompleteCause::IdleTailUndecided(crate::statistical::IdleTailUndecided {
+                    state: state.clone(),
+                    reason,
+                }),
+            ));
+            assert_eq!(undecided["kind"], "idle-tail-undecided");
+            assert_eq!(undecided["state"]["key"], "WzAsW11d");
+            assert_eq!(undecided["reason"], name);
         }
     }
 

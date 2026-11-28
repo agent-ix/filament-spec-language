@@ -33,10 +33,13 @@ mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
 mod reward_interval;
+mod route;
 mod rows;
 mod settle;
 mod unbounded;
 mod witness;
+
+use ix_trace_rs::implements;
 
 /// Actual product-construction events on the current test thread.
 #[cfg(feature = "test-support")]
@@ -106,17 +109,19 @@ pub(crate) fn observe_path_search() {
     });
 }
 
+pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
-pub use build::build_product;
-#[cfg(feature = "test-support")]
-pub use build::{BudgetedProductError, build_product_with_key_budget};
 pub(crate) use build::{
-    admit_in_scope, automaton_refusal, build_retaining_monitor, build_retaining_monitor_in_scope,
-    build_retaining_monitor_with_budget, build_retaining_monitor_with_budget_in_scope,
+    admit_in_scope, automaton_refusal, build_retaining_monitor_in_scope,
+    build_retaining_monitor_with_budget_in_scope,
 };
-pub(crate) use digital::ELAPSED_REWARD;
+#[cfg(feature = "test-support")]
+pub use build::{
+    build_product_with_key_budget, build_product_with_work_scope, BudgetedProductError,
+};
 pub(crate) use digital::model_constraints;
+pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
@@ -128,29 +133,30 @@ pub use fair::{
 pub use fair_interval::decide_fair_reachability_threshold;
 pub(crate) use finite_horizon::round as round_probability;
 pub use finite_horizon::{
-    Dyadic, FhError, FhObjective, FhResult, backward_induction, decide_bounded_event,
+    backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
 };
-pub(crate) use finite_horizon::{QualifiedFhError, decide_measure_exact};
+pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
 pub use fsl_replay::FreeDelayRow;
 pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
+pub(crate) use route::{timed_route, TimedRoute};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 #[cfg(feature = "test-support")]
 pub use unbounded::polling_dense_elimination;
 pub use unbounded::{
-    ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError, UnboundedObjective,
-    UnboundedOutcome, UnboundedResult, avoiding_policy, decide_always, decide_expected_reward,
-    decide_long_run_mdp, decide_long_run_workload, decide_reachability,
-    decide_reachability_threshold, decide_until, decide_until_threshold,
+    avoiding_policy, decide_always, decide_expected_reward, decide_long_run_mdp,
+    decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,
+    decide_until_threshold, ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError,
+    UnboundedObjective, UnboundedOutcome, UnboundedResult,
 };
 pub(crate) use witness::ProducedRandomizedWitness;
 pub use witness::{
-    EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
     action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
+    EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
 };
 pub(crate) use witness::{
-    WitnessWork, choice_index, produce_quantile_witness, produce_randomized_witness,
-    produce_witness_stopping,
+    choice_index, produce_quantile_witness, produce_randomized_witness, produce_witness_stopping,
+    WitnessWork,
 };
 
 pub(crate) fn timed_region_route(
@@ -172,13 +178,13 @@ use filament_exact::{CancelCause, Rational, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::AutomatonError;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{ClauseOutcome, ScheduledIdentity};
 use fsl_eval::simulation::model::{NotMarkov, UndecidedSuccessor};
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{ExpansionStop, NotSimulated};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Span;
 pub use fsl_replay::ExactProbLimits;
 use fsl_replay::{ModelCheckLimit, ProbabilityProductKey};
 use fsl_semantics::check::{CheckedProbabilisticClaim, FormulaNodeId};
@@ -276,13 +282,12 @@ impl ProbKey {
     /// Every product-key member is encoded, including absent controls for
     /// unbounded digital forms. The model member is the full encoded model
     /// and clock state; no Rust `Debug` representation participates.
+    #[implements("FR-125-AC-9")]
     pub fn digital_cycle_identity(&self) -> String {
         let mut identity = String::from("filament.probability-digital-cycle-state/v1;");
         match &self.binding {
             Some(binding) => {
                 identity.push_str("binding=some;");
-                cycle_identity_field(&mut identity, binding.population.package.as_bytes());
-                cycle_identity_field(&mut identity, binding.population.node.as_bytes());
                 cycle_identity_field(&mut identity, binding.key.as_bytes());
             }
             None => identity.push_str("binding=none;"),
@@ -453,6 +458,7 @@ impl PartialOrd for ProbKey {
 }
 
 impl Ord for ProbKey {
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn cmp(&self, other: &Self) -> Ordering {
         self.binding
             .cmp(&other.binding)
@@ -590,7 +596,7 @@ impl ProbProduct {
 }
 
 /// The predicate of a claim an undefined reading names.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UndefinedRead {
     /// The tentative value of a completed weighted fraction.
     FractionValue,
@@ -598,6 +604,10 @@ pub enum UndefinedRead {
     Atom(FormulaNodeId),
     /// A state predicate of the claim's measure or unbounded form.
     Predicate(PredicateRole),
+    /// A contract conjunction of the model, a precondition guard included,
+    /// that the state's expansion evaluated with no value (ADR-018 UE-6): the
+    /// claim need not read the state for it to refute.
+    Contract(Box<fsl_eval::simulation::model::UndefinedContract>),
 }
 
 /// Which predicate of a claim a state predicate is.

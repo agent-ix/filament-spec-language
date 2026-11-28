@@ -26,6 +26,7 @@ use fsl_eval::temporal::{
     evaluate_timed_at, TemporalOutcome, TemporalPosition, TemporalRefusal, TimedTrace,
 };
 use fsl_semantics::check::TemporalProfile;
+use ix_trace_rs::implements;
 
 use super::{
     check_formula, disagreement, disagrees, fault, hints_of, no_value, position_of, refused,
@@ -39,6 +40,7 @@ use crate::model_check::counterexample::{
 };
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::timed::explore::{explore, widen, Closure};
+use crate::timed::model_constants;
 
 /// The timed subject of the recompiled system under the timed model of
 /// `model`, the alias the subject names, bounded by `max_clocks`.
@@ -91,6 +93,13 @@ pub(super) fn settle(
         }
         (CounterexampleKind::TimeLock, _, None) | (_, None, _) => {}
         (_, Some(_), _) => return Err(refused(ModelTraceRefusal::StrayFinalDelay)),
+    }
+    if let Some(formula) = &formula {
+        super::admitted_over(
+            timed.system(),
+            formula.clause,
+            payload.over_binding.as_ref(),
+        )?;
     }
     let Some(replayed) = replay_prefix(timed, payload)? else {
         return Ok((no_value(), Vec::new()));
@@ -461,6 +470,7 @@ fn delay_by(
 /// terminal-stutter loop stands where the idle tail lets time diverge
 /// (FR-231): a quiescent state, or under a tick source a terminal one.
 /// `discrete` holds each position's discrete state key.
+#[implements("FR-236-AC-3")]
 fn close_loop(
     timed: &TimedSystem<'_, '_>,
     positions: &[TimedPosition],
@@ -505,7 +515,12 @@ fn close_loop(
             entry: lasso.entry,
         }));
     }
-    let ceiling = timed.max_constant();
+    // The largest constant of the model, by the core's own walk.
+    let ceiling = model_constants(timed)
+        .into_iter()
+        .max()
+        .cloned()
+        .unwrap_or_else(zero);
     let looped = &positions[lasso.entry + 1..];
     let entry_clocks = entry.state.clocks().values();
     let last_clocks = last.state.clocks().values();

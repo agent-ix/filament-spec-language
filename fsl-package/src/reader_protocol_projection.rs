@@ -34,6 +34,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_semantics::check::wire_id::WireGraph;
+use ix_trace_rs::implements;
 
 use crate::equality_file::{EqualityWitnessRefusal, ReadEqualityRows};
 use crate::introduced_binders::is_sum_identity;
@@ -77,17 +78,24 @@ impl ReaderProtocolProjection {
                             return true;
                         };
                         match declaration.shape() {
-                            filament_semantic_value::declaration::CompositeShape::Record(fields) => {
-                                pending.extend(fields.iter().map(|field| field.value_type().clone()));
+                            filament_semantic_value::declaration::CompositeShape::Record(
+                                fields,
+                            ) => {
+                                pending
+                                    .extend(fields.iter().map(|field| field.value_type().clone()));
                             }
-                            filament_semantic_value::declaration::CompositeShape::Tuple(positions) => {
+                            filament_semantic_value::declaration::CompositeShape::Tuple(
+                                positions,
+                            ) => {
                                 pending.extend(positions.iter().cloned());
                             }
-                            filament_semantic_value::declaration::CompositeShape::Union(members) => {
+                            filament_semantic_value::declaration::CompositeShape::Union(
+                                members,
+                            ) => {
                                 pending.extend(
                                     members
                                         .iter()
-                                    .flat_map(|member| member.positions().iter().cloned()),
+                                        .flat_map(|member| member.positions().iter().cloned()),
                                 );
                             }
                         }
@@ -1151,6 +1159,10 @@ struct WireIndex<'wire> {
     /// Source-object identities joined to this package for source-operation
     /// function signatures. Other reader routes leave this absent.
     source_object_ids: Option<&'wire BTreeMap<CheckedNodeId, filament_exact::EffectiveId>>,
+    /// Direct source-object declarations derived from this package's typed
+    /// source member facts. Other reader routes leave this absent.
+    source_object_declarations:
+        Option<&'wire [filament_semantic_value::declaration::ObjectTypeDeclaration]>,
     /// Whether the walk reads names and term structure for printing an atom,
     /// which needs no exact type of a declaration the identity rows select
     /// (FR-931 "The lowering input").
@@ -1198,6 +1210,7 @@ impl<'wire> WireIndex<'wire> {
             graph,
             identities,
             source_object_ids: None,
+            source_object_declarations: None,
             print: false,
         })
     }
@@ -1613,8 +1626,10 @@ impl<'wire> BareWalker<'wire> {
     pub(crate) fn with_source_objects(
         mut self,
         identities: Option<&'wire BTreeMap<CheckedNodeId, filament_exact::EffectiveId>>,
+        declarations: Option<&'wire [filament_semantic_value::declaration::ObjectTypeDeclaration]>,
     ) -> Self {
         self.index.source_object_ids = identities;
+        self.index.source_object_declarations = declarations;
         self
     }
 
@@ -3414,6 +3429,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// A width-specific IEEE identity (`float32.*` or `float64.*`) names the
     /// width of the float its application yields; a mismatch is an admitted
     /// package the source lowering never writes.
+    #[ix_trace_rs::string_edge]
     fn ieee_width_matches(
         &self,
         id: &CheckedNodeId,
@@ -3692,6 +3708,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
 
     /// `record.project`: a field of a record value, or an attribute of a
     /// model object read through `model.deref` (FR-107's charged read).
+    #[implements("FR-531-AC-64")]
     fn projection(
         &mut self,
         id: &CheckedNodeId,
@@ -3712,10 +3729,68 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             declaration: field_declaration,
             name: field_name,
             read_form,
+            population: _population,
         }) = admitted_operation.member
         else {
             return Err(fault("reader-record-projection-has-admitted-field").into());
         };
+        if let Some(owner) = self
+            .index
+            .source_object_ids
+            .and_then(|source_objects| source_objects.get(field_declaration))
+        {
+            let declarations = self
+                .index
+                .source_object_declarations
+                .ok_or_else(|| fault("reader-source-object-field-has-declarations"))?;
+            let declaration = declarations
+                .iter()
+                .find(|declaration| declaration.key() == *owner)
+                .ok_or_else(|| fault("reader-source-object-owner-has-declaration"))?;
+            let field = declaration
+                .attributes()
+                .iter()
+                .find(|field| field.name() == field_name.as_ref())
+                .ok_or_else(|| fault("reader-source-object-field-is-direct"))?;
+            let operand = self.node(operand_id)?;
+            let explicit_deref = matches!(
+                read_form,
+                Some(filament_contract_model::CheckedFieldReadForm::ExplicitDeref)
+            ) && matches!(
+                &operand.body,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.model.deref")
+            );
+            let reference = match &operand.body {
+                CheckedTerm::Application {
+                    operation,
+                    arguments,
+                    ..
+                } if operation.identity() == Some("filament.op.model.deref") => arguments
+                    .first()
+                    .ok_or_else(|| fault("reader-attribute-deref-has-operand"))?
+                    .clone(),
+                _ => operand_term.clone(),
+            };
+            let child = self.project_argument(id, &reference, context, locals)?;
+            if explicit_deref && context == Context::Root {
+                if let Some(node) = self.nodes.get_mut(child) {
+                    node.absorbed = Some(operand_id.clone());
+                }
+            }
+            return Ok((
+                NodeKind::Attribute {
+                    reference: child,
+                    field: FieldRef::new(owner.clone(), field_name.to_string()),
+                    optional: field.presence() == filament_exact::Presence::Optional,
+                    derefed: matches!(
+                        read_form,
+                        Some(filament_contract_model::CheckedFieldReadForm::ExplicitDeref)
+                    ),
+                },
+                vec![child],
+            ));
+        }
         let selected = self
             .index
             .identities
@@ -4233,12 +4308,8 @@ pub(crate) fn node_value_type(
         }
         Some((WireTag::ScalarType, WireForm::Unit)) if unresolved => {
             let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
-            let unit = match selected(declaration) {
-                Some(Identity::DeclaredUnit(unit)) => Some(unit.clone()),
-                _ => structural(declaration, WireTag::ScalarType, WireForm::Unit)
-                    .map(filament_exact::UnitId::declared),
-            }
-            .ok_or_else(|| fault("reader-unit-has-exact-identity"))?;
+            let unit = declared_unit(index, declaration)
+                .ok_or_else(|| fault("reader-unit-has-exact-identity"))?;
             Ok(ValueType::Quantity(unit))
         }
         Some((WireTag::ScalarType, WireForm::CompoundUnit)) if unresolved => {
@@ -4267,12 +4338,7 @@ pub(crate) fn node_value_type(
                 && error.form.as_deref().and_then(split_tag_form)
                     == Some((WireTag::ScalarType, WireForm::Dimension))
             {
-                let unit = match selected(semantic_type) {
-                    Some(Identity::DeclaredUnit(unit)) => Some(unit.clone()),
-                    _ => structural(semantic_type, WireTag::ScalarType, WireForm::Unit)
-                        .map(filament_exact::UnitId::declared),
-                };
-                if let Some(unit) = unit {
+                if let Some(unit) = declared_unit(index, semantic_type) {
                     return Ok(ValueType::Quantity(unit));
                 }
             }
@@ -4281,7 +4347,150 @@ pub(crate) fn node_value_type(
     }
 }
 
-#[ix_trace_rs::string_edge]
+/// The identity of the declared unit node `declaration`: its selected identity
+/// row, or else its own structural key.
+fn declared_unit(
+    index: &TypeReader<'_>,
+    declaration: &CheckedNodeId,
+) -> Option<filament_exact::UnitId> {
+    let selected = index
+        .identities
+        .declaration_rows()
+        .find(|row| row.structural_node == *declaration)
+        .map(|row| &row.exact_identity);
+    if let Some(filament_contract_model::SelectedExactIdentity::DeclaredUnit(unit)) = selected {
+        return Some(unit.clone());
+    }
+    index
+        .node(declaration)
+        .filter(|node| has_form(node, WireTag::ScalarType, WireForm::Unit))
+        .and_then(|_| index.graph.key(declaration).ok())
+        .map(filament_exact::UnitId::declared)
+}
+
+/// One `Option` or collection layer a type node wraps around its leaf type.
+enum TypeLayer {
+    Option,
+    Collection(
+        filament_exact::CollectionKind,
+        Option<filament_exact::CardinalityBound>,
+    ),
+}
+
+/// The collection kind a composite type node of kind `kind` is, `None` for any
+/// other node.
+fn collection_kind(
+    kind: Option<filament_contract_model::CheckedNodeKind>,
+) -> Option<filament_exact::CollectionKind> {
+    use filament_contract_model::{CheckedNodeKind, CompositeTypeForm};
+    use filament_exact::CollectionKind;
+    match kind? {
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Sequence) => {
+            Some(CollectionKind::Sequence)
+        }
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Set) => Some(CollectionKind::Set),
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Bag) => Some(CollectionKind::Bag),
+        CheckedNodeKind::CompositeType(CompositeTypeForm::OrderedSet) => {
+            Some(CollectionKind::OrderedSet)
+        }
+        _ => None,
+    }
+}
+
+/// The bounds a `collection_bounds` node states.
+fn cardinality_bound(
+    node: &CheckedSemanticNodeV2,
+) -> Result<filament_exact::CardinalityBound, TypeError> {
+    let (Some(min), Some(max)) = (
+        bound_member(&node.body, "min"),
+        bound_member(&node.body, "max"),
+    ) else {
+        return Err(fault("reader-type-collection-bounds-are-admitted").into());
+    };
+    filament_exact::CardinalityBound::new(min, max)
+        .map_err(|_| fault("reader-type-collection-bounds-are-ordered").into())
+}
+
+/// The bounded map the `collection_bounds` node `bounds` declares: the key and
+/// value types of the map node under it, inside the node's own bounds. Bounds
+/// over anything else are unsupported.
+#[implements("FR-740-AC-6")]
+fn bounded_map_type(
+    index: &TypeReader<'_>,
+    bounds: &CheckedSemanticNodeV2,
+) -> Result<ValueType, TypeError> {
+    let base = node_value_type(index, &bounds.semantic_type)?;
+    let ValueType::Map(map) = &base else {
+        return Err(TypeError::Unsupported);
+    };
+    let map = filament_exact::MapType::new(
+        map.key().clone(),
+        map.values().clone(),
+        Some(cardinality_bound(bounds)?),
+    )
+    .map_err(|_| fault("reader-type-map-key-is-a-leaf"))?;
+    Ok(ValueType::map(map))
+}
+
+/// The `Option` and collection layers of type node `id`, outermost first, with
+/// the leaf type node under them. Cardinality bounds belong to the collection
+/// layer they constrain; bounds over any other node (a map) are the leaf
+/// itself, so no bound is ever dropped. `None` for a type that reaches no
+/// leaf: a recursive type stays unsupported instead of looping.
+fn type_layers<'a>(
+    index: &'a TypeReader<'_>,
+    id: &'a CheckedNodeId,
+) -> Result<Option<(Vec<TypeLayer>, &'a CheckedSemanticNodeV2)>, TypeError> {
+    use filament_contract_model::{BoundedDomainForm, CheckedNodeKind, CompositeTypeForm};
+    let mut current = id;
+    let mut layers = Vec::new();
+    // A finite type cannot revisit a type node.
+    for _ in 0..=index.nodes.len() {
+        let node = index.node(current).ok_or(TypeError::Unsupported)?;
+        let (wrapper, layer) = match index.admitted.node_kind(current) {
+            Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::CollectionBounds)) => {
+                let bound = cardinality_bound(node)?;
+                let base = index
+                    .node(&node.semantic_type)
+                    .ok_or(TypeError::Unsupported)?;
+                let Some(kind) = collection_kind(index.admitted.node_kind(&base.node_id)) else {
+                    return Ok(Some((layers, node)));
+                };
+                (base, TypeLayer::Collection(kind, Some(bound)))
+            }
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Option)) => {
+                (node, TypeLayer::Option)
+            }
+            kind => match collection_kind(kind) {
+                Some(kind) => (node, TypeLayer::Collection(kind, None)),
+                None => return Ok(Some((layers, node))),
+            },
+        };
+        let CheckedTerm::Aggregate { members, .. } = &wrapper.body else {
+            return Err(fault("reader-type-layer-has-admitted-aggregate").into());
+        };
+        let [CheckedTerm::Reference { target }] = members.as_slice() else {
+            return Err(fault("reader-type-layer-has-one-element").into());
+        };
+        layers.push(layer);
+        current = target;
+    }
+    Ok(None)
+}
+
+/// `leaf` inside `layers`, which are listed outermost first.
+fn wrap_layers(leaf: ValueType, layers: Vec<TypeLayer>) -> ValueType {
+    layers
+        .into_iter()
+        .rev()
+        .fold(leaf, |value, layer| match layer {
+            TypeLayer::Option => ValueType::option(value),
+            TypeLayer::Collection(kind, bound) => {
+                ValueType::collection(filament_exact::CollectionType::new(kind, value, bound))
+            }
+        })
+}
+
 /// FSL supplies the runtime meaning of the admitted Clock-reference leaf;
 /// the already admitted Option/collection nodes retain their exact wrappers.
 /// Other leaves remain the shared exact projection's responsibility.
@@ -4289,79 +4498,69 @@ fn clock_reference_carrier_type(
     index: &TypeReader<'_>,
     id: &CheckedNodeId,
 ) -> Result<Option<ValueType>, TypeError> {
-    enum Layer {
-        Option,
-        Collection(
-            filament_exact::CollectionKind,
-            Option<filament_exact::CardinalityBound>,
-        ),
-    }
-    use filament_contract_model::{CheckedNodeKind, CompositeTypeForm, ScalarTypeForm};
-    let Some(mut current) = index.node(id).map(|node| &node.semantic_type) else {
+    use filament_contract_model::{CheckedNodeKind, ScalarTypeForm};
+    let Some(carrier) = index.node(id).map(|node| &node.semantic_type) else {
         return Ok(None);
     };
-    let mut layers = Vec::new();
-    let mut bound = None;
-    // A primitive carrier cannot revisit a type node. A recursive type stays
-    // unsupported instead of looping or inventing a primitive representation.
-    for _ in 0..=index.nodes.len() {
-        let node = index.node(current).ok_or(TypeError::Unsupported)?;
-        if index.admitted.node_kind(current)
-            == Some(CheckedNodeKind::ScalarType(ScalarTypeForm::ClockReference))
-        {
-            let mut value = fsl_semantics::model::clock_reference::reference_type();
-            for layer in layers.into_iter().rev() {
-                value = match layer {
-                    Layer::Option => ValueType::option(value),
-                    Layer::Collection(kind, bounds) => ValueType::collection(
-                        filament_exact::CollectionType::new(kind, value, bounds),
-                    ),
-                };
-            }
-            return Ok(Some(value));
-        }
-        if node.node_tag.as_ref() == "bounded_domain"
-            && node.semantic_form.as_ref() == "collection_bounds"
-        {
-            let (Some(min), Some(max)) = (
-                bound_member(&node.body, "min"),
-                bound_member(&node.body, "max"),
-            ) else {
-                return Err(fault("reader-clock-collection-bounds-are-admitted").into());
-            };
-            bound = Some(
-                filament_exact::CardinalityBound::new(min, max)
-                    .map_err(|_| fault("reader-clock-collection-bounds-are-ordered"))?,
-            );
-            current = &node.semantic_type;
-            continue;
-        }
-        let layer = match index.admitted.node_kind(current) {
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Option)) => Layer::Option,
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Sequence)) => {
-                Layer::Collection(filament_exact::CollectionKind::Sequence, bound.take())
-            }
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Set)) => {
-                Layer::Collection(filament_exact::CollectionKind::Set, bound.take())
-            }
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Bag)) => {
-                Layer::Collection(filament_exact::CollectionKind::Bag, bound.take())
-            }
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::OrderedSet)) => {
-                Layer::Collection(filament_exact::CollectionKind::OrderedSet, bound.take())
-            }
-            _ => return Ok(None),
-        };
-        let CheckedTerm::Aggregate { members, .. } = &node.body else {
-            return Err(fault("reader-clock-carrier-has-admitted-aggregate").into());
-        };
-        let [CheckedTerm::Reference { target }] = members.as_slice() else {
-            return Err(fault("reader-clock-carrier-has-one-element").into());
-        };
-        layers.push(layer);
-        current = target;
+    let Some((layers, leaf)) = type_layers(index, carrier)? else {
+        return Ok(None);
+    };
+    if index.admitted.node_kind(&leaf.node_id)
+        != Some(CheckedNodeKind::ScalarType(ScalarTypeForm::ClockReference))
+    {
+        return Ok(None);
     }
-    Ok(None)
+    Ok(Some(wrap_layers(
+        fsl_semantics::model::clock_reference::reference_type(),
+        layers,
+    )))
+}
+
+/// The type the type node `id` declares, as a source-object row's data entry
+/// names it (FSL FR-740 "Source objects"). [`node_value_type`] types a value
+/// node by its semantic type; read that way, a bounded type node would give its
+/// unbounded base, so the bounds are read from the node itself. A bounded form
+/// this does not read is unsupported, never widened to its base.
+#[implements("FR-740-AC-6")]
+pub(crate) fn declared_value_type(
+    index: &TypeReader<'_>,
+    id: &CheckedNodeId,
+) -> Result<ValueType, TypeError> {
+    use filament_contract_model::{
+        BoundedDomainForm, CheckedNodeKind, CompositeTypeForm, ScalarTypeForm,
+    };
+    let (layers, leaf) = type_layers(index, id)?.ok_or(TypeError::Unsupported)?;
+    let value = match index.admitted.node_kind(&leaf.node_id) {
+        Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::IntegerRange)) => {
+            integer_range_type(leaf)?
+        }
+        Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::TextBounds)) => {
+            text_bounds_type(leaf)?
+        }
+        Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::DecimalRange)) => {
+            crate::checked_v2::decimal_range_type(index.admitted, &leaf.node_id)?
+        }
+        // Bounds no layer took are a map's.
+        Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::CollectionBounds)) => {
+            bounded_map_type(index, leaf)?
+        }
+        Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Reference)) => {
+            reference_node_type(index, &leaf.node_id)?
+        }
+        // A quantity's type node is its unit's own node.
+        Some(CheckedNodeKind::ScalarType(ScalarTypeForm::Unit)) => ValueType::Quantity(
+            declared_unit(index, &leaf.node_id)
+                .ok_or_else(|| fault("reader-unit-has-exact-identity"))?,
+        ),
+        Some(CheckedNodeKind::ScalarType(ScalarTypeForm::CompoundUnit)) => ValueType::Quantity(
+            crate::checked_v2::compound_unit(index.admitted, &leaf.node_id)
+                .ok_or_else(|| fault("reader-compound-unit-has-exact-identity"))?,
+        ),
+        // Any other node declares a type only when it is its own semantic type.
+        _ if leaf.semantic_type == leaf.node_id => node_value_type(index, &leaf.node_id)?,
+        _ => return Err(TypeError::Unsupported),
+    };
+    Ok(wrap_layers(value, layers))
 }
 
 /// A reference retains the selected model object's effective identity.
@@ -4466,25 +4665,7 @@ fn is_collection_bounds(form: &str) -> bool {
 /// four bounds exact integers.
 #[ix_trace_rs::string_edge]
 fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeError> {
-    let bound = |wanted: &str| -> Option<filament_exact::Integer> {
-        let CheckedTerm::Aggregate { members, .. } = &node.body else {
-            return None;
-        };
-        members.iter().find_map(|member| {
-            let CheckedTerm::Binding { name, value, .. } = member else {
-                return None;
-            };
-            (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
-                filament_contract_model::CheckedLiteralValue::Integer(bound) => {
-                    bound.to_string().parse().ok()
-                }
-                _ => None,
-            })?
-        })
-    };
-    let interval = |lower: &str, upper: &str| {
-        filament_exact::IntegerInterval::new(bound(lower)?, bound(upper)?).ok()
-    };
+    let interval = |lower: &str, upper: &str| integer_interval(&node.body, lower, upper);
     let numerator = interval("numerator_min", "numerator_max").ok_or(TypeError::Unsupported)?;
     let denominator =
         interval("denominator_min", "denominator_max").ok_or(TypeError::Unsupported)?;
@@ -4493,9 +4674,40 @@ fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeEr
         .map_err(|_| TypeError::Unsupported)
 }
 
-/// The integer a `min` or `max` member of a bounds node holds.
+/// The `Int[min, max]` an `integer_range` node holds.
 #[ix_trace_rs::string_edge]
-fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
+fn integer_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeError> {
+    integer_interval(&node.body, "min", "max")
+        .map(ValueType::Int)
+        .ok_or(TypeError::Unsupported)
+}
+
+/// The `Text[min, max; profile]` a `text_bounds` node holds.
+#[ix_trace_rs::string_edge]
+fn text_bounds_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeError> {
+    let read = || {
+        let profile = match literal_member(&node.body, "text_profile")? {
+            filament_contract_model::CheckedLiteralValue::Text(code) => {
+                filament_exact::TextProfile::from_code(code)?
+            }
+            _ => return None,
+        };
+        filament_exact::TextType::new(
+            bound_member(&node.body, "min")?,
+            bound_member(&node.body, "max")?,
+            profile,
+        )
+        .ok()
+    };
+    read().map(ValueType::Text).ok_or(TypeError::Unsupported)
+}
+
+/// The literal the member `wanted` of a bounds node holds.
+#[ix_trace_rs::string_edge]
+fn literal_member<'a>(
+    body: &'a CheckedTerm,
+    wanted: &str,
+) -> Option<filament_contract_model::CheckedLiteralValue<'a>> {
     let CheckedTerm::Aggregate { members, .. } = body else {
         return None;
     };
@@ -4503,13 +4715,35 @@ fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
         let CheckedTerm::Binding { name, value, .. } = member else {
             return None;
         };
-        (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
-            filament_contract_model::CheckedLiteralValue::Integer(bound) => {
-                bound.to_string().parse::<u64>().ok()
-            }
-            _ => None,
-        })?
+        (name.as_ref() == wanted).then(|| value.literal_read().map(|literal| literal.value))?
     })
+}
+
+/// The exact integer the member `wanted` of a bounds node holds.
+fn integer_member(body: &CheckedTerm, wanted: &str) -> Option<filament_exact::Integer> {
+    match literal_member(body, wanted)? {
+        filament_contract_model::CheckedLiteralValue::Integer(value) => {
+            value.to_string().parse().ok()
+        }
+        _ => None,
+    }
+}
+
+/// The interval between the integer members `lower` and `upper` of a bounds
+/// node.
+fn integer_interval(
+    body: &CheckedTerm,
+    lower: &str,
+    upper: &str,
+) -> Option<filament_exact::IntegerInterval> {
+    filament_exact::IntegerInterval::new(integer_member(body, lower)?, integer_member(body, upper)?)
+        .ok()
+}
+
+/// The count a `min` or `max` member of a bounds node holds.
+#[ix_trace_rs::string_edge]
+fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
+    integer_member(body, wanted)?.to_string().parse().ok()
 }
 
 /// The exact type of a node whose semantic type is a collection, optionally
@@ -4996,6 +5230,7 @@ fn literal_value(
 /// `rational_range`. The exact-type projection of that declaration fails at its
 /// semantic type, the bare `scalar_type/rational`; the bounds are read from
 /// the declaration itself, never from that scalar.
+#[ix_trace_rs::string_edge]
 fn bounded_rational_literal_type(
     error: &filament_contract_model::ExactTypeProjectionError,
     type_id: &CheckedNodeId,

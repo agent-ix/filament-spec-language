@@ -249,6 +249,9 @@ pub enum NotSimulated {
     GeneratorMismatch { supplied: DefinitionRef },
     /// `system.initial()` returned no state to sample from.
     EmptyInitial,
+    /// FR-125 "Instancing": member records give one universe and key two
+    /// types. Only the instancing calls return this.
+    ConflictingIdentity { key: String, types: [DeclarationKey; 2] },
     /// A state or transition identity reached during the walk has no RFC
     /// 8785 encoding under `quire-canonical`.
     KeyEncoding(EncodingRefusal),
@@ -278,7 +281,8 @@ Integration tests in `fsl-eval/tests/it/` call the three entries with a
 bounded or empty `domains` set; a check that needs draw internals is an
 in-crate unit test.
 
-`explore_request` never returns `GeneratorMismatch` or `EmptyInitial`. Any
+`explore_request` never returns `GeneratorMismatch`, `EmptyInitial` or
+`ConflictingIdentity`. Any
 entry, including `replay` (`ReplayError::KeyEncoding`), can refuse a state or
 transition identity reached mid-walk that has no RFC 8785 encoding: a
 `TransitionSystem` is a public trait, and its `Key` and `TransitionId` are
@@ -296,7 +300,8 @@ is not -- and `catalog_code` returns `None` for `RequiresBound`. It is
 `Some(invalid_runtime_input/invalid-value)` for `EmptyInitial`,
 `KeyEncoding` and `Workers`, the same category ADR-014 TR-2 gives a malformed runtime
 request; `GeneratorMismatch` reads the same code for a different reason
-(FR-101-AC-10). `Extent` delegates to whichever of `classify_extent`'s own
+(FR-101-AC-10), and `Some(invalid_runtime_input/conflicting-identity)` for
+`ConflictingIdentity`. `Extent` delegates to whichever of `classify_extent`'s own
 two failure types stopped it: `LimitExceeded`'s own
 `stage_limit_exceeded`/`<kind>-exceeded`, or `InternalFault`'s own
 `runtime_invariant`/`established-invariant-broken`. No code is invented for

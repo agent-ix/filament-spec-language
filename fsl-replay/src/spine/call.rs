@@ -28,7 +28,7 @@ use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
 use filament_semantic_value::declaration::EnvironmentFailure;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::execution::{
-    ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends, execute,
+    execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
 };
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::diagnostic::{Code, Locus, RefusalRecord};
@@ -39,6 +39,7 @@ use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::refusal::OfferedSelection;
 use fsl_semantics::value::environment_stage::membership_failure_code;
+use ix_trace_rs::implements;
 
 use super::lifecycle as front_end;
 use super::run_value::{ArgumentDefect, Forms, ReadStop};
@@ -675,7 +676,7 @@ impl RunRefusal {
     /// the outcome diagnostic carry this same object.
     #[must_use]
     pub fn details(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
         let object = |value: Value| match value {
             Value::Object(members) => Some(members),
             _ => None,
@@ -1110,6 +1111,7 @@ pub(crate) struct CallSources<'a> {
 /// argument admission and evaluation accounting while reusing the checked
 /// package, emitted package and admitted model set.
 #[allow(clippy::too_many_arguments)]
+#[ix_trace_rs::string_edge]
 pub(crate) fn run_compiled(
     checked: &super::CheckedUnit,
     models: &super::AdmittedModels,
@@ -1757,6 +1759,7 @@ fn owner_artifact(value: filament_observation::OwnerArtifact) -> &'static str {
 /// FR-650 "Population argument": FR-084 admission binds each population the
 /// call names for a `Population<T>[N]` parameter, with the parameter's
 /// declared maximum, and FR-089 records its identity in the object context.
+#[implements("FSpec-FR-650-AC-4")]
 pub(super) fn bind_snapshot_populations<'a>(
     objects: &ObjectEnvironment,
     views: impl IntoIterator<Item = &'a fsl_semantics::model::normalize::EffectiveView> + Clone,
@@ -1785,6 +1788,7 @@ pub(super) fn bind_snapshot_populations<'a>(
 
 /// Binds one named population from an already admitted snapshot, preserving
 /// the declared maximum of its parameter.
+#[implements("FSpec-FR-650-AC-4")]
 pub(super) fn bind_snapshot_population(
     objects: ObjectEnvironment,
     models: &[fsl_semantics::model::intake::SelectedModel],
@@ -1801,6 +1805,7 @@ pub(super) fn bind_snapshot_population(
     )
 }
 
+#[implements("FSpec-FR-650-AC-4")]
 fn bind_snapshot_population_views<'a>(
     objects: ObjectEnvironment,
     views: impl IntoIterator<Item = &'a fsl_semantics::model::normalize::EffectiveView>,
@@ -1811,8 +1816,8 @@ fn bind_snapshot_population_views<'a>(
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
-        PopulationMember, admit_binding,
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
     };
 
     let Some(members) = objects.population_members(named) else {

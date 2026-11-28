@@ -96,5 +96,6 @@ pub use timed_window::{
 };
 pub use translate::{
     translate, translate_body, translate_counted, translate_itself, translate_negation,
-    translate_position_negation, AtomSymmetry, AutomatonKind, PropertyAutomaton,
+    translate_position_clause, translate_position_negation, AtomSymmetry, AutomatonKind,
+    PropertyAutomaton,
 };

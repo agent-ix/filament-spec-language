@@ -26,8 +26,11 @@
 //! re-derived from the nodes and edges: that no fair accepting cycle lies
 //! in it.
 //!
-//! A reachable position whose letter is undefined is rejected `BadState`:
-//! the checker does not decide whether such a position diverges.
+//! A position whose letter is undefined is entered as
+//! [`UNDEFINED_POSITION_STATE`], with a fairness or without, and the
+//! component reasons must show that no admitted behaviour passes through
+//! it: past it every automaton acceptance set holds, so a behaviour there
+//! that diverges and takes its positions is a fair accepting one.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -38,14 +41,15 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{Atom, AutomatonError, ClockedEdge, Letter, PositionAutomaton, StateId};
 use fsl_eval::fairness::{analyze, Analysis, Constraint, EdgeLabel, Graph, Identity, Strength};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint};
+use fsl_eval::simulation::model::{states_non_zeno, GuardedStep, ModelSimState, PlaceConstraint};
 use fsl_eval::temporal::{AtomReading, CaptureReading};
-use fsl_semantics::check::CaptureSite;
+use fsl_semantics::check::{CaptureSite, CheckedTemporalClause};
+use ix_trace_rs::implements;
 
 use super::{
-    at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule, Checker,
-    CheckerFault, ComponentReason, Components, FairnessMember, Halt, ProductMark, SilentMove, Step,
-    Successor, ZoneCertificateVerdict,
+    at_edge, at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule,
+    Checker, CheckerFault, ComponentReason, Components, FairnessMember, Halt, ProductMark,
+    SilentMove, Step, Successor, ZoneCertificateVerdict, UNDEFINED_POSITION_STATE,
 };
 use crate::certificate::zone::Zone;
 use crate::proof_result::IncompleteCause;
@@ -60,6 +64,8 @@ pub(super) struct LiveClaim<'c> {
     pub(super) fairness: Vec<FairnessConstraint>,
     /// Each fairness constraint's operation text.
     pub(super) operations: Vec<String>,
+    /// Whether the clause's certificate states the non-Zeno premise.
+    states_non_zeno: bool,
     /// Each letter read, by the state's state key, the instance and whether
     /// it is position 0 of an `on origin` clause with captures; `None` when
     /// undefined.
@@ -83,8 +89,7 @@ impl<'c> LiveClaim<'c> {
         start: StateId,
         letters: &'c dyn ModelLetters,
         instances: Vec<ModelInstance>,
-        capture: CaptureSite,
-        fairness: Vec<FairnessConstraint>,
+        clause: &CheckedTemporalClause,
         operations: Vec<String>,
     ) -> Self {
         Self {
@@ -92,9 +97,10 @@ impl<'c> LiveClaim<'c> {
             start,
             letters,
             instances,
-            capture,
-            fairness,
+            capture: clause.capture_site(),
+            fairness: clause.fairness().to_vec(),
             operations,
+            states_non_zeno: states_non_zeno(clause),
             readings: RefCell::new(BTreeMap::new()),
         }
     }
@@ -280,6 +286,43 @@ impl<O> Checker<'_, '_, O> {
         automaton(live.automaton.borrow_mut().successors(from, letter))
     }
 
+    /// How the position at `state` is taken from `q`: each target automaton
+    /// state with its transition. The behaviour passes an undefined reading
+    /// into [`UNDEFINED_POSITION_STATE`], where it stays, so the component
+    /// reasons must show that no admitted behaviour passes through it
+    /// (FSpec FR-161, FR-416).
+    #[implements("FSpec-FR-161-AC-16")]
+    fn take(
+        &self,
+        instance: usize,
+        q: usize,
+        state: &ModelSimState,
+        initial: bool,
+    ) -> Step<Vec<(usize, ClockedEdge)>, O> {
+        let live = self.live()?;
+        let past = || {
+            vec![(
+                UNDEFINED_POSITION_STATE,
+                ClockedEdge {
+                    target: live.start,
+                    guard: Vec::new(),
+                    resets: Vec::new(),
+                },
+            )]
+        };
+        if q == UNDEFINED_POSITION_STATE {
+            return Ok(past());
+        }
+        let Some(letter) = self.letter(instance, state, initial)? else {
+            return Ok(past());
+        };
+        Ok(self
+            .reads(instance, q, letter)?
+            .into_iter()
+            .map(|read| (read.target.index(), read))
+            .collect())
+    }
+
     /// The checker's automaton state of index `q`, one it has reached.
     fn state_id(&self, q: usize) -> Step<StateId, O> {
         self.live()?
@@ -295,16 +338,14 @@ impl<O> Checker<'_, '_, O> {
     pub(super) fn live_initial(
         &self,
         state: &ModelSimState,
-    ) -> Step<Option<Vec<(usize, usize, ProductMark, Zone)>>, O> {
+    ) -> Step<Vec<(usize, usize, ProductMark, Zone)>, O> {
         let live = self.live()?;
         let mut found = Vec::new();
         // The admission instance is read only when the certificate has one.
         let admission = (0..self.certificate.nodes.len()).any(|node| self.admission(node));
         for instance in 0..live.instances.len() + usize::from(admission) {
-            let Some(letter) = self.letter(instance, state, true)? else {
-                return Ok(None);
-            };
-            for read in self.reads(instance, live.start.index(), letter)? {
+            let taken = self.take(instance, live.start.index(), state, true)?;
+            for (q, read) in taken {
                 let mut zero = Zone::zero(self.dim());
                 self.read_at(&mut zero, &read)?;
                 if zero.is_empty() {
@@ -320,11 +361,11 @@ impl<O> Checker<'_, '_, O> {
                         divergent: false,
                         tail: false,
                     };
-                    found.push((instance, read.target.index(), mark, zone));
+                    found.push((instance, q, mark, zone));
                 }
             }
         }
-        Ok(Some(found))
+        Ok(found)
     }
 
     /// FR-232's enabledness of `step` over clocks: each convex part of its
@@ -531,10 +572,8 @@ impl<O> Checker<'_, '_, O> {
                     if next.is_empty() {
                         continue;
                     }
-                    let Some(letter) = self.letter(instance, step.post(), false)? else {
-                        return reject(CertificateRule::BadState, at_node(node));
-                    };
-                    for read in self.reads(instance, q, letter)? {
+                    let taken = self.take(instance, q, step.post(), false)?;
+                    for (target_q, read) in taken {
                         let mut read_zone = next.clone();
                         self.read_at(&mut read_zone, &read)?;
                         if read_zone.is_empty() {
@@ -550,7 +589,7 @@ impl<O> Checker<'_, '_, O> {
                                 horizon: None,
                                 frees: false,
                                 state_key: post_state_key.clone(),
-                                q: read.target.index(),
+                                q: target_q,
                                 zone: entered,
                                 silent: None,
                                 mark: Some(ProductMark {
@@ -636,10 +675,8 @@ impl<O> Checker<'_, '_, O> {
             }
         }
         if mark.tail || self.idles_at(state)? {
-            let Some(letter) = self.letter(instance, state, false)? else {
-                return reject(CertificateRule::BadState, at_node(node));
-            };
-            for read in self.reads(instance, q, letter)? {
+            let taken = self.take(instance, q, state, false)?;
+            for (target_q, read) in taken {
                 let mut read_zone = zone.clone();
                 self.read_at(&mut read_zone, &read)?;
                 if read_zone.is_empty() {
@@ -652,7 +689,7 @@ impl<O> Checker<'_, '_, O> {
                         horizon: None,
                         frees: false,
                         state_key: state_key.clone(),
-                        q: read.target.index(),
+                        q: target_q,
                         zone: entered,
                         silent: None,
                         mark: Some(ProductMark {
@@ -675,6 +712,7 @@ impl<O> Checker<'_, '_, O> {
 
     /// FR-244's Büchi part: every edge goes to an equal or greater
     /// component, and each component's reason holds.
+    #[implements("FR-245-AC-7")]
     pub(super) fn components(&self) -> Step<(), O> {
         let Some(components) = &self.certificate.components else {
             return super::malformed(super::CertificateMember::Components);
@@ -696,12 +734,7 @@ impl<O> Checker<'_, '_, O> {
                 components.numbering[edge.to],
             ) {
                 if to < from {
-                    return reject(
-                        CertificateRule::BackwardEdge,
-                        CertificateLocus::ZoneEdge {
-                            edge: u64::try_from(index).unwrap_or(u64::MAX),
-                        },
-                    );
+                    return reject(CertificateRule::BackwardEdge, at_edge(index));
                 }
             }
         }
@@ -845,7 +878,9 @@ impl<O> Checker<'_, '_, O> {
                 },
                 _ => fault(CheckerFault::Graph),
             })?;
-        let expected = if Analysis::first_fair_in(&analyses).is_some() {
+        let expected = if !live.states_non_zeno {
+            None
+        } else if Analysis::first_fair_in(&analyses).is_some() {
             Some(crate::certificate::zone_certificate::NonZeno::Assumed)
         } else {
             Some(crate::certificate::zone_certificate::NonZeno::NotRequired)
@@ -950,8 +985,11 @@ impl<O> Checker<'_, '_, O> {
         constraints: &[FairnessMember],
         nested: &Components,
     ) -> Step<bool, O> {
-        for node in 0..self.certificate.nodes.len() {
-            let numbered = nested.numbering[node].is_some();
+        for (node, number) in nested.numbering[..self.certificate.nodes.len()]
+            .iter()
+            .enumerate()
+        {
+            let numbered = number.is_some();
             if !members.contains(&node) {
                 if numbered {
                     return Ok(false);
@@ -994,6 +1032,10 @@ impl<O> Checker<'_, '_, O> {
                     .get(&listed.automaton_state)
                     .copied()
                     .ok_or(fault(CheckerFault::UnreachedNode))?;
+                // Past an undefined reading every automaton set holds.
+                if q == UNDEFINED_POSITION_STATE {
+                    return Ok(true);
+                }
                 let state = self.state_id(q)?;
                 let automaton = live.automaton.borrow();
                 // A set the automaton does not have holds every node.

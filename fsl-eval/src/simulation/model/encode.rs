@@ -25,6 +25,7 @@ use serde_json::Value as Json;
 use filament_checked::key::DeclarationKey;
 use fsl_semantics::check::{EnumBinding, VariantTypeDeclaration};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel};
+use ix_trace_rs::implements;
 
 pub(super) mod bounded;
 mod projection;
@@ -1183,6 +1184,7 @@ pub fn value_json(value: &Value) -> Option<serde_json::Value> {
 /// unions and enums read from `types`, `variants` and `enums`.
 ///
 /// `None` when the value is unencodable.
+#[implements("FR-120-AC-16")]
 pub fn typed_value_json(
     value: &Value,
     types: &TypeEnvironment,
@@ -1210,6 +1212,7 @@ pub fn typed_value_json_with_enum_members(
 }
 
 /// A typed value with enum identities read from an admitted package.
+#[implements("FR-120-AC-16")]
 pub fn package_value_json(
     value: &Value,
     types: &TypeEnvironment,
@@ -1398,6 +1401,7 @@ pub fn declaration_identity_text(key: &DeclarationKey) -> Option<String> {
 
 /// FR-181's state key for a model state (FR-120 "State, state key and
 /// anchor"): the unused members are empty maps.
+#[implements("FR-120-AC-4")]
 pub(super) fn model_key(model: &StateModel, state: &ModelState, typing: Typing<'_>) -> ModelKey {
     ModelKey(projection::model_state(model, state, typing))
 }
@@ -1417,8 +1421,8 @@ pub(super) fn initial_model_key(
 #[cfg(test)]
 mod tests {
     use filament_exact::{
-        CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp, UnitId, Uuid,
-        ValueType, from_admitted,
+        from_admitted, CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp,
+        UnitId, Uuid, ValueType,
     };
     use ix_trace_rs::trace;
 
@@ -1632,7 +1636,7 @@ mod tests {
     /// with the nullary member `none` and the member `tagged(Tag)` (`33…`),
     /// and the values `Tag { sku }`, `Pair(true, -3)` and `none`.
     pub(super) fn declared() -> (TypeEnvironment, impl Fn(i64) -> Value, Value, Value) {
-        use filament_exact::{Presence, UnionMember, UnionValue, from_admitted_slots};
+        use filament_exact::{from_admitted_slots, Presence, UnionMember, UnionValue};
         use filament_semantic_value::declaration::{
             CompositeDeclaration, FieldDeclaration, UnionMemberDeclaration,
         };

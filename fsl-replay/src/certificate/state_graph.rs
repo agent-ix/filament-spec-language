@@ -96,6 +96,7 @@ pub struct StateGraphCertificateRequest<'a> {
 /// the `over` binding is no instance of the subject, the subject has no
 /// initial state, or a state cannot be encoded. A refusal is never an
 /// acceptance.
+#[implements("FR-169-AC-9")]
 pub fn check_state_graph(
     request: &StateGraphCertificateRequest<'_>,
     certificate: &StateGraphCertificate,
@@ -145,7 +146,7 @@ fn bound_over(
                 .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
             for instance in &instances {
                 let bound = system
-                    .bound_reference(parameter.object.clone(), instance)
+                    .written_reference(parameter.object.clone(), instance)
                     .map_err(ClosureRefusal::Fault)?;
                 if bound == *reference {
                     return Ok(Some(bound));

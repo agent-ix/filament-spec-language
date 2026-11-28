@@ -378,6 +378,7 @@ impl Selection {
 
     /// The sidecar of `compiled` under `request`, from the in-process checked
     /// unit. `bytes` only joins each node to its wire id.
+    #[ix_trace_rs::string_edge]
     pub(super) fn derive(
         compiled: &Compiled,
         request: &Request,
@@ -765,6 +766,7 @@ impl Selection {
             package_name: rows.package_name.clone(),
             points: rows.execution_points.clone(),
             temporal_selections,
+            limits: fsl_replay::spine::SpineLimits::default(),
         })
     }
 
@@ -882,6 +884,7 @@ fn has_binding(members: &[CheckedTerm], name: &str) -> bool {
     })
 }
 
+#[ix_trace_rs::string_edge]
 fn check_await(row: &AwaitRow, package: &CheckedPackageV2) -> Result<(), SelectionRefusal> {
     let refused = |axis| SelectionRefusal {
         axis,

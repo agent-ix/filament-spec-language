@@ -189,6 +189,7 @@ fn assert_long_run_dense_limit(name: &str) {
         &engines,
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0]
         .terminal()
@@ -232,6 +233,7 @@ pub(super) fn produce(world: &World, name: &str) -> Vec<u8> {
             world.request(name, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().unwrap();
     terminal
@@ -321,6 +323,7 @@ fn fair_long_run_holds_with_an_independently_checked_component_document() {
             world.request("FairLongRun", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().unwrap_or_else(|| {
         panic!(
@@ -375,6 +378,7 @@ fn long_run_zero_weight_component() {
             world.request("Zero", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0]
         .terminal()
@@ -639,6 +643,7 @@ fn an_event_position_workload_claim_settles_as_its_infinite_trace_twin_does() {
                 world.request("Below", ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
         let terminal = records[0]
             .terminal()
@@ -691,6 +696,7 @@ fn every_scheduler_long_run_claims_settle_instead_of_unsupported() {
             world.request("Settles", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0]
         .terminal()
@@ -712,6 +718,7 @@ fn no_bound_instance_produces_no_document_or_fabricated_probability() {
             world.request("Empty", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let fsl_analyze::analyze::Settlement::Disposed(disposed) = &records[0].settlement else {
         panic!("expected unsupported disposition: {:?}", records[0]);
@@ -1243,6 +1250,7 @@ fn refuted_by_analysis(world: &World, name: &str) -> bool {
             world.request(name, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     records[0].terminal().map(|t| t.value()) == Some(&fsl_replay::TerminalValue::Refuted)
 }

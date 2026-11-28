@@ -872,10 +872,11 @@ fn tc_736_a_100000_term_source_is_refused_at_the_default_stage_limits() {
 /// request whose source holds a function with a 100,000-term sum over a
 /// recursive list parameter, whose assignment (and witness entry) carries a
 /// 100,000-long recursive list, whose `stage_limits` carries raised `s1.*`,
-/// `s3.*` and `emit.output_bytes` settings, and whose `replay.input_bytes` is
-/// raised to fit, replays to the proving run's verdict.
+/// `s3.*`, `i2.*` and `emit.output_bytes` settings, and whose
+/// `replay.input_bytes` is raised to fit, replays to the proving run's
+/// verdict.
 #[test]
-#[ignore = "QSL-3253: deep replay recompilation reaches the fixed emit.output_bytes bound before the raised S1 and S3 settings admit the source"]
+#[ignore = "QSL-2825: memory; the last recorded run of this test aborted at a 12 GiB address-space limit"]
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
     on_small_stack(|| {
         let sum = DeepSum::compile();

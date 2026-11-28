@@ -12,7 +12,7 @@ relationships:
 
 Verify replay of protocol counterexamples: state key, enabledness and package checks, the deadlock check with blocked threads, and lasso fairness over scheduler constraints.
 
-Scope: FR-217-AC-1 to FR-217-AC-7, FR-217-AC-9.
+Scope: FR-217-AC-1 to FR-217-AC-7, FR-217-AC-9 and FR-217-AC-10.
 
 ## Test Procedure
 
@@ -30,6 +30,8 @@ Scope: FR-217-AC-1 to FR-217-AC-7, FR-217-AC-9.
    the request, and replay its counterexample through a request that
    selects no reduction; then with its store removed; then with `cause`
    changed.
+8. Over a protocol with an unbounded root, replay a counterexample from
+   source and from package bytes.
 
 Tag the tests `#[trace("TC-662", "FR-217-AC-n")]`.
 
@@ -48,3 +50,4 @@ Tag the tests `#[trace("TC-662", "FR-217-AC-n")]`.
 - Step 7: `Violated`, cause `UndefinedEvaluation`, one store step, `where.locus`
   naming `Edge`, cause `division-by-zero`; `reproduced-with-evaluated-witness`;
   `inconclusive`, `ReplayParity`, twice.
+- Step 8: both refuse `requires-bound` and run no step.

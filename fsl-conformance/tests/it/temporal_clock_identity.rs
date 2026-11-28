@@ -190,7 +190,10 @@ fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
     let mut resolved = wire.clone();
     fsl_semantics::check::wire_id::resolve_operand_slots(&mut resolved)
         .expect("every operand slot names its emitted node");
-    let clause = wire_node(&resolved, &resolved["temporal_clause_names"][0]["declaration"]);
+    let clause = wire_node(
+        &resolved,
+        &resolved["temporal_clause_names"][0]["declaration"],
+    );
     let over = wire_node(&resolved, &clause["body"]["arguments"][0]["target"]);
     assert_eq!(over["semantic_form"], "parameter");
     let over_id = serde_json::from_value::<CheckedNodeId>(over["node_id"].clone())

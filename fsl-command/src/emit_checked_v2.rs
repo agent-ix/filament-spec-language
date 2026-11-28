@@ -458,6 +458,8 @@ pub(crate) struct Inputs {
     pub(crate) points: StateClauseExecutionPoints,
     /// The clock selections, in request order.
     pub(crate) temporal_selections: Vec<ClockSelection>,
+    /// The compile's stage limits.
+    pub(crate) limits: SpineLimits,
 }
 
 /// A library supplied as `identity`, read from `path` as `bytes`.
@@ -498,6 +500,7 @@ fn read_inputs(request: &Request) -> Result<Inputs, Error> {
         package_name: request.package_name.clone(),
         points,
         temporal_selections: request.temporal_selections.clone(),
+        limits: SpineLimits::default(),
     })
 }
 
@@ -525,6 +528,7 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
         package_name,
         points,
         temporal_selections,
+        limits,
     } = inputs;
     let dependencies = DependencyInput::new(libraries.clone()).map_err(Error::Dependencies)?;
     let unit = source_identity.unwrap_or_else(|| identity("source", &source_path));
@@ -535,7 +539,6 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
         .map_err(|refused| {
             Error::Producer(Box::new(ReplayRefusal::DomainPackages(Box::new(refused))))
         })?;
-    let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let parsed = spine::parse(
         &ParseRequest {

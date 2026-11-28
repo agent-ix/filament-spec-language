@@ -15,35 +15,37 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, CancelCause, ObjectReference};
 use fsl_analyze::model_check::{
-    GraphEdge, ModelCheckRefusal, NodeIndex, SettledStateGraphRun, StateGraphItem,
-    StateGraphRequest, StateGraphRun, check_and_settle_state_graph, check_state_graph,
+    check_and_settle_state_graph, check_state_graph, GraphEdge, ModelCheckRefusal, NodeIndex,
+    SettledStateGraphRun, StateGraphItem, StateGraphRequest, StateGraphRun,
 };
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
     ModelSimState, ModelSystem, PredicateReading, TerminalClass, TerminalModel,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{StopReason, TransitionSystem};
 use fsl_replay::{
-    CounterexampleKind, DEFAULT_MAX_WALK_STEPS, DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED,
-    DisagreementCause, GraphEvidence, GraphReplaySettlement, GraphUndefined, GraphWitness,
-    IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelPath, ModelStep,
-    OpenCause, ReachedLimit, ReplayLimits, RunEnd, SettlementBasis, StateGraphOutcome,
-    TerminalValue, WitnessSource,
+    CounterexampleKind, DisagreementCause, GraphEvidence, GraphReplaySettlement, GraphUndefined,
+    GraphWitness, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelPath,
+    ModelStep, OpenCause, ReachedLimit, ReplayLimits, RunEnd, SettlementBasis, StateGraphOutcome,
+    TerminalValue, WitnessSource, DEFAULT_MAX_WALK_STEPS, DEFAULT_WITNESS_SAMPLES,
+    DEFAULT_WITNESS_SEED,
 };
 use fsl_semantics::check::{PredicateRole, StateGraphForm};
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
-    CAN_STILL_WIN, DIVIDES, Field, Model, Operation, REACHES_THREE, REACHES_TWO, World,
     config_kernel_world, config_kernel_world_over, config_replayable_kernel_world, config_version,
     config_world, config_world_over, counter_kernel_world, detour_world, fork_world, game_world,
-    job_world, job_world_with_claims, ladder_world, por_reachestwo_world,
+    job_world, job_world_with_claims, ladder_world, por_reachestwo_world, Field, Model, Operation,
+    World, CAN_STILL_WIN, DIVIDES, REACHES_THREE, REACHES_TWO,
 };
 
 #[path = "state_graph/replay_contracts.rs"]
 mod replay_contracts;
+#[path = "state_graph/replay_route_rules.rs"]
+pub(crate) mod replay_route_rules;
 
 pub(crate) const AB: &[&str] = &["a", "b"];
 
@@ -61,7 +63,7 @@ pub(crate) fn system<'w>(world: &'w World, keys: &[&str]) -> ModelSystem<'w> {
 #[test]
 fn keyed_model_walks_preserve_the_seeded_trace_and_step_limit() {
     use fsl_eval::simulation::model::{
-        ModelWalkSettings, WalkMemo, sample_model_walk, sample_model_walk_keyed,
+        sample_model_walk, sample_model_walk_keyed, ModelWalkSettings, WalkMemo,
     };
     let world = config_world(REACHES_TWO, &[(0, 0)]);
     let system = system(&world, AB);
@@ -113,7 +115,7 @@ fn keyed_model_walks_preserve_the_seeded_trace_and_step_limit() {
 #[test]
 fn keyed_model_walks_fall_back_at_storage_limits_and_observe_cancellation() {
     use fsl_eval::simulation::model::{
-        ModelWalkSettings, WalkMemo, sample_model_walk, sample_model_walk_keyed,
+        sample_model_walk, sample_model_walk_keyed, ModelWalkSettings, WalkMemo,
     };
     let world = config_world(REACHES_TWO, &[(0, 0)]);
     let sampler =
@@ -546,13 +548,11 @@ fn symmetry_reduction_quotients_state_graph_and_marks_the_proof_reduced() {
     assert_eq!(reduced.graph.stats.nodes, 18);
     assert_eq!(plain.graph.stats.nodes, 27);
     assert_eq!(reduced.graph.stats.edges, 54);
-    assert!(
-        reduced
-            .graph
-            .edges
-            .iter()
-            .any(|edge| edge.permutation != fsl_eval::simulation::Permutation::identity())
-    );
+    assert!(reduced
+        .graph
+        .edges
+        .iter()
+        .any(|edge| edge.permutation != fsl_eval::simulation::Permutation::identity()));
     let StateGraphOutcome::HoldsReduced {
         reductions,
         witnesses: Some(paths),
@@ -560,13 +560,11 @@ fn symmetry_reduction_quotients_state_graph_and_marks_the_proof_reduced() {
     else {
         panic!("the possible claim has a reduced witness")
     };
-    let [
-        fsl_replay::AppliedReduction::Symmetry {
-            groups,
-            orbit,
-            stabiliser,
-        },
-    ] = reductions.as_slice()
+    let [fsl_replay::AppliedReduction::Symmetry {
+        groups,
+        orbit,
+        stabiliser,
+    }] = reductions.as_slice()
     else {
         panic!("symmetry is the applied reduction: {reductions:?}")
     };
@@ -675,13 +673,11 @@ fn always_possible_under_symmetry_returns_holds_reduced_without_witnesses() {
             instance.outcome
         )
     };
-    let [
-        fsl_replay::AppliedReduction::Symmetry {
-            groups,
-            orbit,
-            stabiliser,
-        },
-    ] = reductions.as_slice()
+    let [fsl_replay::AppliedReduction::Symmetry {
+        groups,
+        orbit,
+        stabiliser,
+    }] = reductions.as_slice()
     else {
         panic!("symmetry is the applied reduction: {reductions:?}")
     };
@@ -1592,7 +1588,10 @@ fn state_graph_symmetry_closure_keeps_concrete_initial_roots() {
         2,
         "the graph keeps both concrete initial roots"
     );
-    assert_eq!(result.graph.stats.nodes, 2, "both admitted roots are explored");
+    assert_eq!(
+        result.graph.stats.nodes, 2,
+        "both admitted roots are explored"
+    );
     assert!(matches!(
         result.items[0][0].outcome,
         StateGraphOutcome::NoDecision { .. }
@@ -1644,10 +1643,7 @@ fn each_sampled_witness_records_that_its_walk_reached_the_target() {
         short_walks(),
     ));
     for instance in &shared.items[1] {
-        assert_eq!(
-            instance.walks_stopped, 58,
-            "the premise"
-        );
+        assert_eq!(instance.walks_stopped, 58, "the premise");
     }
     let alone = run(world.request(AB, vec![world.item("ReachesTwo")], short_walks()));
     for (instance, single) in shared.items[0].iter().zip(&alone.items[0]) {
@@ -1754,7 +1750,10 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
     assert_eq!(result.graph.end, RunEnd::Completed);
     let instance = &result.items[0][0];
     let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
-        panic!("the symmetric impossible target is trapped: {:?}", instance.outcome);
+        panic!(
+            "the symmetric impossible target is trapped: {:?}",
+            instance.outcome
+        );
     };
     assert_eq!(stem.initial, 0);
     assert!(stem.steps.is_empty());
@@ -1771,13 +1770,16 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             fsl_replay::GraphEvidence::Trap {
                 stem: stem.clone(),
                 closure: fsl_replay::TrapClosure::StateGraph,
-                over: Some(bound),
+                over: vec![bound],
             },
             &["a", "b", "c"],
             Default::default(),
         )
         .expect("the trap replays over the concrete closure");
-    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
+    assert_eq!(
+        replay.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced
+    );
 
     let job = job_world_with_claims(
         false,
@@ -1790,7 +1792,10 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
     assert_eq!(result.graph.end, RunEnd::Completed);
     let instance = &result.items[0][0];
     let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
-        panic!("the POR impossible target is trapped: {:?}", instance.outcome);
+        panic!(
+            "the POR impossible target is trapped: {:?}",
+            instance.outcome
+        );
     };
     assert_eq!(stem.initial, 0);
     assert!(stem.steps.is_empty());
@@ -1807,13 +1812,16 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             fsl_replay::GraphEvidence::Trap {
                 stem: stem.clone(),
                 closure: fsl_replay::TrapClosure::StateGraph,
-                over: Some(bound),
+                over: vec![bound],
             },
             &["j"],
             Default::default(),
         )
         .expect("the POR trap replays over the concrete closure");
-    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
+    assert_eq!(
+        replay.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced
+    );
 }
 
 // ---------------------------------------------------------------- FR-168
@@ -2138,7 +2146,7 @@ fn settle_undefined(
             GraphEvidence::Undefined {
                 stem: stem.clone(),
                 undefined: undefined.clone(),
-                over: Some(over.clone()),
+                over: vec![over.clone()],
             },
             keys,
             ReplayLimits::default(),
@@ -2218,37 +2226,22 @@ fn an_undefined_operation_guard_is_reported_at_its_contract_site() {
 #[trace("TC-612", "FR-168-AC-12")]
 #[test]
 fn an_undefined_terminal_predicate_is_reported_without_a_claim_predicate() {
-    let model = Model {
-        package: "test/counter",
-        alias: "C",
-        object: "Counter",
-        population: "counters",
-        symmetric: false,
-        fields: vec![Field {
-            name: "value",
-            range: Some((0, 3)),
-        }],
-        operations: vec![Operation {
-            name: "inc",
-            modifies: &["value"],
-        }],
-    };
-    let body = "pre CanInc using v on C::Counter::inc { self.value < 3 }\n\
-        post Inc using v on C::Counter::inc { self.value = pre(self.value) + 1 }\n\
-        terminal Done using v on C when { 6 mod (3 - self.value) = 0 };\n\
+    let body = "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n\
         possible AtThree using v over (c: C::Counter) { c.value = 3 }\n";
-    let world = World::new(model, body, &[&[("c", &[("value", 0)])]]);
-    let result = run(world.request(
-        &["c"],
-        vec![world.item("AtThree")],
-        no_samples(),
-    ));
+    let world = counter_kernel_world("", body);
+    let result = run(world.request(&["c"], vec![world.item("AtThree")], no_samples()));
     let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
-        panic!("undefined terminal predicate: {:?}", result.items[0][0].outcome);
+        panic!(
+            "undefined terminal predicate: {:?}",
+            result.items[0][0].outcome
+        );
     };
     assert_eq!(stem.steps.len(), 3);
     let path_states = positions(&world, &["c"], stem);
-    assert_eq!(world.value(path_states.last().expect("terminal state"), "c", "value"), 3);
+    assert_eq!(
+        world.value(path_states.last().expect("terminal state"), "c", "value"),
+        3
+    );
     assert_eq!(undefined.state_key, stem.steps[2].post_state);
     assert_eq!(undefined.predicate, None);
     assert!(undefined.locus.is_some());
@@ -2271,7 +2264,10 @@ fn an_undefined_selected_state_constraint_is_not_a_boundary() {
     request.reductions.constraint = Some("Half".to_owned());
     let result = run(request);
     let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
-        panic!("undefined state constraint: {:?}", result.items[0][0].outcome);
+        panic!(
+            "undefined state constraint: {:?}",
+            result.items[0][0].outcome
+        );
     };
     // The universe is `{a}` alone, so each state holds one version.
     let versions: Vec<i64> = positions(&world, &["a"], stem)
@@ -2284,7 +2280,10 @@ fn an_undefined_selected_state_constraint_is_not_a_boundary() {
     assert!(undefined.locus.is_some());
     assert_eq!(undefined.transition, None);
     let at = node_of(&result, undefined.state_key.clone());
-    assert_eq!(result.graph.open.get(&at), Some(&OpenCause::UndecidedSuccessor));
+    assert_eq!(
+        result.graph.open.get(&at),
+        Some(&OpenCause::UndecidedSuccessor)
+    );
 }
 
 /// `narrow` refuses 3, outside its result type, so the predicate is refused at
@@ -2303,7 +2302,7 @@ const COUNTER_CLAIMS: &str = "possible AtThree using v over (c: C::Counter) { c.
 /// reproduce an undefined evaluation there. With the refused declaration
 /// false instead, the undefined one refutes. A declaration that intends the
 /// state decides it, whatever the others read.
-#[trace("TC-612", "FR-168-AC-16")]
+#[trace("TC-612", "FR-168-AC-16", "FSpec-FR-391-AC-13")]
 #[test]
 fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
     const UNDEFINED: &str = "terminal Stop using v on N when { remainder(3 - self.value) = 0 };\n";
@@ -2405,7 +2404,7 @@ fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
             GraphEvidence::Undefined {
                 stem,
                 undefined: forged,
-                over: Some(bound_to(&world, &["c"], "c")),
+                over: vec![bound_to(&world, &["c"], "c")],
             },
             &["c"],
             ReplayLimits::default(),
@@ -2441,6 +2440,238 @@ fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
             StateGraphOutcome::Holds { .. }
         ));
     }
+}
+
+fn terminal_alias_world(terminals: &str, possible_item: &str, extra_functions: &str) -> World {
+    let model = Model {
+        package: "test/terminal",
+        alias: "M",
+        object: "Vault",
+        population: "vaults",
+        symmetric: false,
+        fields: vec![Field {
+            name: "l",
+            range: Some((0, 1)),
+        }],
+        operations: vec![Operation {
+            name: "step",
+            modifies: &["l"],
+        }],
+    };
+    let body = format!(
+        "model N = \"test/terminal\";\n\
+         function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
+         {extra_functions}\
+         pre CanStep using v on M::Vault::step {{ self.l < 1 }}\n\
+         post Stepped using v on M::Vault::step {{ self.l = pre(self.l) + 1 }}\n\
+         {terminals}\n\
+         {possible_item}\n"
+    );
+    World::kernel(model, &body, &[&[("v", &[("l", 1)])]])
+}
+
+/// FR-391-AC-13: an unknown terminal keeps the completed node open; a witness
+/// does not make the possible item proved while well-definedness is unchecked.
+#[trace("FSpec-FR-391-AC-13")]
+#[test]
+fn an_unknown_terminal_keeps_a_possible_witness_unchecked() {
+    let body = "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n\
+         terminal Stop using v on N when { narrow(self.value) = 0 };\n\
+         possible AlwaysTrue using v over (c: C::Counter) { true }\n";
+    let world = counter_kernel_world(SECOND_ALIAS, body);
+    let claim = world.claim("AlwaysTrue");
+    let over = bound_to(&world, &["c"], "c");
+    let request = world.request(&["c"], vec![world.item("AlwaysTrue")], no_samples());
+    let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+        let StateGraphOutcome::WitnessedUnchecked { paths, .. } = &instance.outcome else {
+            panic!(
+                "an unknown terminal leaves the witness unchecked: {:?}",
+                instance.outcome
+            );
+        };
+        let witness = paths.first().expect("one initial-state witness");
+        Ok(world.replay_witness(
+            claim,
+            Some(over.clone()),
+            witness.path.clone(),
+            witness.source.clone(),
+            &["c"],
+        ))
+    })
+    .expect("the state-graph run and witness replay complete");
+
+    assert!(matches!(
+        settled.run.items[0][0].outcome,
+        StateGraphOutcome::WitnessedUnchecked { .. }
+    ));
+    assert_eq!(
+        settled.records[0][0].value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::WellDefinednessUnchecked {
+            sources: vec![WitnessSource::Explored]
+        })
+    );
+    assert_eq!(settled.records[0][0].basis, SettlementBasis::Unsettled);
+    let unknown = state_key_where(&world, &["c"], |state| {
+        world.value(state, "c", "value") == 3
+    });
+    assert_eq!(
+        settled.run.graph.open.get(&node_of(&settled.run, unknown)),
+        Some(&OpenCause::UndecidedSuccessor)
+    );
+}
+
+/// FR-391-AC-16: with no possible witness, a refused terminal declaration
+/// keeps the terminal node open and settles the item as undecided-successor.
+#[trace("FSpec-FR-391-AC-16")]
+#[test]
+fn an_unknown_terminal_refuses_a_no_witness_possible_item_as_undecided() {
+    let world = terminal_alias_world(
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on N when { narrow(self.l) = 0 };",
+        "possible Never using v over (x: M::Vault) { false }",
+        "function narrow using v(x: Integer): Int[0, 0] pure { x }\n",
+    );
+    let request = world.request(&["v"], vec![world.item("Never")], no_samples());
+    let settled = check_and_settle_state_graph(request, &Cancel::new(), |_| {
+        panic!("a no-witness item has no evidence to replay")
+    })
+    .expect("the completed state-graph run settles");
+
+    assert_eq!(
+        settled.run.items[0][0].outcome,
+        StateGraphOutcome::NoDecision {
+            end: RunEnd::Completed,
+            open: BTreeSet::from([OpenCause::UndecidedSuccessor]),
+        }
+    );
+    assert_eq!(
+        settled.records[0][0].value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::UndecidedSuccessor)
+    );
+
+    let terminal_path = ModelPath {
+        initial: 0,
+        steps: expected_steps(&world, &["v"], 0, &[]),
+    };
+    let terminal_state = positions(&world, &["v"], &terminal_path)
+        .pop()
+        .expect("the terminal state follows the one step");
+    let TerminalClass::Undecided { model } = system(&world, &["v"])
+        .terminal_class(&terminal_state, false)
+        .expect("terminal declarations are read")
+    else {
+        panic!("the refused second declaration makes the terminal unknown");
+    };
+    assert_eq!((model.label(), model.ordinal()), ("N", 0));
+}
+
+/// FR-391-AC-15 / FR-366-AC-12: an intended terminal declaration wins over
+/// another alias's undefined predicate in either alias placement.
+#[trace("FSpec-FR-391-AC-15", "FSpec-FR-366-AC-12")]
+#[test]
+fn an_intended_terminal_alias_settles_a_possible_item_with_undefined_sibling() {
+    for terminals in [
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on N when { true };",
+        "terminal Done using v on N when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on M when { true };",
+    ] {
+        let world = terminal_alias_world(
+            terminals,
+            "possible AlwaysTrue using v over (x: M::Vault) { true }",
+            "",
+        );
+        let claim = world.claim("AlwaysTrue");
+        let over = bound_to(&world, &["v"], "v");
+        let request = world.request(&["v"], vec![world.item("AlwaysTrue")], no_samples());
+        let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+            let StateGraphOutcome::Witnessed { paths, .. } = &instance.outcome else {
+                panic!(
+                    "intended terminal keeps the witness decisive: {:?}",
+                    instance.outcome
+                );
+            };
+            let witness = paths.first().expect("one initial-state witness");
+            Ok(world.replay_witness(
+                claim,
+                Some(over.clone()),
+                witness.path.clone(),
+                witness.source.clone(),
+                &["v"],
+            ))
+        })
+        .expect("the state-graph run and witness replay complete");
+
+        assert!(settled.run.graph.open.is_empty());
+        assert!(matches!(
+            settled.run.items[0][0].outcome,
+            StateGraphOutcome::Witnessed { .. }
+        ));
+        assert!(matches!(
+            settled.records[0][0].value,
+            TerminalValue::Proved { .. }
+        ));
+        assert_eq!(
+            settled.records[0][0].basis,
+            SettlementBasis::DecisiveWitness
+        );
+    }
+}
+
+/// FR-391-AC-17: when every terminal declaration is undefined, undefined
+/// evidence naming the first declaration replays and refutes the item.
+#[trace("FSpec-FR-391-AC-17")]
+#[test]
+fn undefined_terminal_aliases_refute_with_replayed_first_declaration() {
+    let world = terminal_alias_world(
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on N when { q(1 - self.l) = 0 };",
+        "possible Never using v over (x: M::Vault) { false }",
+        "",
+    );
+    let over = bound_to(&world, &["v"], "v");
+    let settled = settle_undefined(&world, &["v"], "Never", &over);
+    let StateGraphOutcome::Undefined { stem, undefined } = &settled.run.items[0][0].outcome else {
+        panic!(
+            "both terminal predicates are undefined: {:?}",
+            settled.run.items[0][0].outcome
+        );
+    };
+
+    assert_eq!(settled.run.graph.end, RunEnd::Completed);
+    assert_eq!(settled.records[0][0].value, TerminalValue::Refuted);
+    assert_eq!(
+        settled.records[0][0].basis,
+        SettlementBasis::DecisiveCounterexample
+    );
+    assert_eq!(undefined.predicate, None);
+    assert_eq!(
+        undefined.cause,
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+    );
+    let terminal_state = positions(&world, &["v"], stem)
+        .pop()
+        .expect("terminal state is the initial state");
+    let model_system = system(&world, &["v"]);
+    let TerminalClass::Undefined {
+        model: first_terminal,
+        ..
+    } = model_system
+        .terminal_class(&terminal_state, false)
+        .expect("terminal declarations are read")
+    else {
+        panic!("the first declaration defines the undefined terminal row");
+    };
+    assert_eq!((first_terminal.label(), first_terminal.ordinal()), ("M", 0));
+    assert_eq!(
+        undefined.locus,
+        model_system.terminal_locus(&first_terminal)
+    );
+    assert_eq!(world.value(&terminal_state, "v", "l"), 1);
+    assert!(matches!(
+        settled.records[0][0].undefined,
+        Some(ref evidence) if evidence == undefined
+    ));
 }
 
 /// `Low` holds only at `versionNumber = 0`.
@@ -2652,4 +2883,72 @@ fn a_state_graph_claim_is_instanced_over_the_subjects_universe() {
         result.items[0]
     );
     assert_eq!(bound(&result, 1), vec![None]);
+}
+
+/// FSpec FR-331 `State`, FR-393 `ModelPath`, `Where` and `GraphStep`: graph
+/// evidence writes each model state as `{key}`, from a settled run.
+#[trace("FSpec-FR-393")]
+#[test]
+fn graph_evidence_states_match_the_provider_schema() {
+    // The reference receiver form is a separate known gap (QSL-2790).
+    fn null_receivers(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(members) => {
+                if let Some(receiver) = members.get_mut("receiver") {
+                    *receiver = serde_json::Value::Null;
+                }
+                members.values_mut().for_each(null_receivers);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(null_receivers),
+            _ => {}
+        }
+    }
+    let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
+        quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_replayable_kernel_world(guard, REACHES_TWO, &["a"], &[vec![0]]);
+    let over = bound_to(&world, &["a"], "a");
+    let settled = settle_undefined(&world, &["a"], "ReachesTwo", &over);
+    let StateGraphOutcome::Undefined { stem, undefined } = &settled.run.items[0][0].outcome else {
+        panic!("an undefined evaluation");
+    };
+    let claim = world.claim("ReachesTwo");
+    let mut wire = fsl_replay::graph_evidence_wire(
+        &GraphEvidence::Undefined {
+            stem: stem.clone(),
+            undefined: undefined.clone(),
+            over: Vec::new(),
+        },
+        fsl_replay::StateGraphPropertyForm::Possible,
+        None,
+        None,
+        &[],
+        claim.occurrence(),
+    )
+    .expect("the evidence is spelled");
+    null_receivers(&mut wire);
+    let key = |octets: &[u8]| {
+        serde_json::json!({"key": base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD, octets)})
+    };
+    assert_eq!(
+        wire["undefined"]["where"]["state_key"],
+        key(undefined.state_key.as_bytes())
+    );
+    assert_eq!(
+        wire["stem"]["steps"][0]["post_state"],
+        key(stem.steps[0].post_state.as_bytes())
+    );
+    for (definition, instance) in [
+        ("ModelPath", &wire["stem"]),
+        ("Where", &wire["undefined"]["where"]),
+        ("GraphStep", &wire["stem"]["steps"][0]),
+    ] {
+        let schema = crate::provider_schema_support::provider_definition(definition);
+        if let Err(errors) = schema.validate(instance) {
+            let errors: Vec<_> = errors
+                .map(|error| format!("{} at {}", error, error.instance_path))
+                .collect();
+            panic!("{definition}: {errors:?}\n  instance: {instance}");
+        };
+    }
 }

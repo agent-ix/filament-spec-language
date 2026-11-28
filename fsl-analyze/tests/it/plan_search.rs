@@ -1185,11 +1185,12 @@ fn source_policy_instances_share_the_request_work_counter() {
     );
 }
 
-/// Closing an unmet eventual policy rejects the candidate; quantifying the
-/// same policy over an empty population holds vacuously.
+/// Closing an unmet eventual policy rejects the candidate; the low-level
+/// clause reader retains logical empty-quantifier semantics. Plan search
+/// rejects an empty requested policy before reaching this reader.
 #[test]
 #[trace("FSpec-FR-803")]
-fn source_policy_acceptance_requires_closed_truth_and_preserves_vacuity() {
+fn source_policy_acceptance_requires_closed_truth_and_raw_clause_reading() {
     use filament_exact::Meter;
     use fsl_analyze::plan_source::SourcePlan;
     use fsl_eval::simulation::model::{read_clause, ClauseReading};
@@ -3609,16 +3610,16 @@ fn positive_source_policy_accounting_and_cancellation_keep_the_original_session(
 }
 
 /// The budgeted model-owned instance collector preserves ordinary ordering,
-/// two-instance source bindings and empty-population policy vacuity.
+/// two-instance source bindings and the empty listing.
 #[test]
 #[trace("FR-1011", "FR-1012", "FSpec-FR-803")]
-fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials() {
+fn positive_source_policy_instances_preserve_order_and_original_denials() {
     use filament_exact::{CancelCause, LimitKind, Meter, ScalarLimits};
     use fsl_analyze::plan_source::SourcePlan;
     use fsl_eval::automaton::PolicyStateError;
     for start in [
         vec![
-            ("z", json!({"number":{"integer":"0"}})),
+            ("b", json!({"number":{"integer":"0"}})),
             ("a", json!({"number":{"integer":"0"}})),
         ],
         vec![],
@@ -3644,7 +3645,7 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
                     .iter()
                     .map(|instance| instance.key.as_str())
                     .collect::<Vec<_>>(),
-                ["z", "a"]
+                ["b", "a"]
             );
             let error = system
                 .instances_with_meter(
@@ -3669,7 +3670,7 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
         .unwrap();
         let state = system.initial().remove(0);
         let MonitorStep::Continue(bytes) = rules.policy_start(0, &state).unwrap() else {
-            panic!("all instances safe or vacuous")
+            panic!("all admitted instances are safe")
         };
         assert!(rules.policy_accepts(0, &bytes, &state).unwrap());
         for cause in [CancelCause::Requested, CancelCause::Deadline] {
@@ -3681,6 +3682,30 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
             assert!(matches!(error,PolicyStateError::Cancelled(actual) if actual == cause));
         }
     }
+}
+
+/// FR-1012 policy instancing uses FR-125's admitted keys, so a key that is
+/// only available for a later operation is not monitored as an instance.
+#[test]
+#[trace("TC-520", "FR-125-AC-8", "FR-125-AC-10")]
+fn source_policy_instances_exclude_unadmitted_universe_keys() {
+    use filament_exact::Meter;
+
+    let world = source_policy_world(&[("c", json!({"value": {"integer": "0"}}))]);
+    let system = ModelSystem::new(world.subject(&["c", "created-later"], UNLIMITED).simulation)
+        .expect("the population is bounded");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let actual = system
+        .instances_with_meter(&node.clause().over().1, &mut Meter::new(UNLIMITED))
+        .expect("the metered listing succeeds");
+
+    assert_eq!(
+        actual
+            .iter()
+            .map(|instance| instance.key.as_str())
+            .collect::<Vec<_>>(),
+        ["c"]
+    );
 }
 
 /// Positive unsupported forms remain explicit; staged monitor support does
@@ -3708,4 +3733,111 @@ fn positive_source_policy_stage_boundary_keeps_required_future_forms_explicit() 
             "{formula}"
         );
     }
+}
+
+fn undefined_guard_world() -> World {
+    let document =
+        filament_specification::published_file(&format!("{FIXTURE}model.semantic-ir.json"))
+            .expect("FSpec publishes the counter model")
+            .to_vec();
+    World::with_kernel_functions(
+        Domain {
+            package: "example/plan-counter",
+            object: "Counter",
+            population: "counters",
+            document,
+        },
+        &format!("{CONTRACTS}pre Gap using v on M::Counter::inc {{ q(2 - self.value) >= 0 }}\n"),
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
+        model_world::INFINITE,
+        &[],
+        &[("c", json!({"value": {"integer": "1"}}))],
+    )
+}
+
+/// A contract conjunction with no value at a reachable state is no disabled
+/// step (ADR-018 UE-6). `inc`'s guard `6 mod (2 - value) >= 0` has no value
+/// at the reachable value 2, so a goal at 8 and a goal at 21 are each
+/// `incomplete` with the `ContractUndefined` cause naming `Gap`, never
+/// `optimal`, `infeasible` or certified.
+fn undefined_guard(goal: i64) {
+    let world = undefined_guard_world();
+    let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation).expect("admits");
+    let mut rules = Counter::new(&world, &system, goal);
+    let result = run(
+        &mut rules,
+        &system,
+        (0, 5),
+        PlanSearchLimits::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Incomplete);
+    assert!(!result.certified);
+    assert!(result.certificate.is_none());
+    assert!(result.plan.is_none(), "no plan is reported past the guard");
+    assert!(result.objective.is_none());
+    assert!(matches!(
+        &result.cause,
+        Some(PlanStopCause::ContractUndefined { clause, .. }) if clause == "Gap"
+    ));
+}
+
+#[test]
+#[trace("FR-1012-AC-9")]
+fn a_goal_reached_through_an_undefined_guard_is_incomplete() {
+    undefined_guard(8);
+}
+
+#[test]
+#[trace("FR-1012-AC-9")]
+fn a_goal_past_an_undefined_guard_is_not_infeasible() {
+    undefined_guard(21);
+}
+
+/// The native candidate walk, which source plan requests use, names the
+/// undecided clause, not the operation: from the value 1 `inc` completes at
+/// 2, and from 2 its `Gap` guard has no value.
+#[test]
+#[trace("FR-1012-AC-9")]
+fn a_native_candidate_event_names_the_clause_with_no_value() {
+    use fsl_eval::simulation::model::{
+        ClauseOutcome, NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = undefined_guard_world();
+    let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation).expect("admits");
+    let order = native_order(&system, &["inc"]);
+    let mut next = None;
+    system
+        .visit_plan_candidates(&system.initial()[0], &order, None, &mut |event| {
+            if let Event::Completed { state, .. } = event {
+                next = Some(state.clone());
+            }
+            Control::Continue
+        })
+        .unwrap();
+    let mut undefined = Vec::new();
+    system
+        .visit_plan_candidates(
+            &next.expect("inc completes at 1"),
+            &order,
+            None,
+            &mut |event| {
+                if let Event::Undetermined {
+                    clause, outcome, ..
+                } = event
+                {
+                    undefined.push((
+                        clause.to_owned(),
+                        matches!(
+                            outcome,
+                            ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_)
+                        ),
+                    ));
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    assert_eq!(undefined, [("Gap".to_owned(), true)]);
 }

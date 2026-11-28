@@ -11,6 +11,7 @@ use filament_exact::{
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
 };
+use ix_trace_rs::implements;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -169,6 +170,7 @@ pub(super) enum Space {
 impl Space {
     /// The space of `value_type`; `None` for a type with no finite space
     /// here (a recursive record, or a field FR-120 does not enumerate).
+    #[implements("FR-120-AC-22", "FR-120-AC-23", "FR-120-AC-25")]
     fn of(
         value_type: &ValueType,
         objects: &[ObjectReference],
@@ -2229,6 +2231,7 @@ mod tests {
     /// ADR-027 ST-11: a union over finite members enumerates every member
     /// with every combination of its payload, in declaration order, and is
     /// written as FR-120's union form.
+    #[trace("TC-1270", "FR-120-AC-25")]
     #[test]
     fn a_union_attempt_type_enumerates_every_member() {
         use filament_exact::UnionMember;
@@ -2275,7 +2278,7 @@ mod tests {
     /// FR-120 "Applications": a model-variant union's cases are ordered by
     /// ascending UTF-8 bytes of their names, whatever their declared order:
     /// `Zed` declared before `Alpha` still lists `Alpha` first.
-    #[trace("TC-1270")]
+    #[trace("TC-1270", "FR-120-AC-25")]
     #[test]
     fn a_variant_union_orders_its_cases_by_name() {
         use filament_exact::UnionMember;

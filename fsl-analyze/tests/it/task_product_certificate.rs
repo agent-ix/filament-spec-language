@@ -612,7 +612,10 @@ fn the_certificate_is_the_reachable_closure() {
         rejected(extra),
         (
             CertificateRule::ExtraEdge,
-            CertificateLocus::ZoneEdge { edge: count as u64 }
+            CertificateLocus::ZoneEdge {
+                edge: count as u64,
+                verdict: None
+            }
         )
     );
     let nodes = built.certificate.nodes.len();

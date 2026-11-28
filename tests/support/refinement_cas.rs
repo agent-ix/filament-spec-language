@@ -881,6 +881,17 @@ impl World {
         self.cas_initial.clone()
     }
 
+    /// A distinct concrete initial snapshot with the same mapped value and
+    /// `busyA` set, for checking aggregate initial-state accounting.
+    pub fn concrete_initial_busy_a(&mut self) -> DocumentRef {
+        let fields = json!({
+            "value": {"integer": "0"},
+            "tmpA": {"integer": "0"}, "busyA": {"boolean": true},
+            "tmpB": {"integer": "0"}, "busyB": {"boolean": false},
+        });
+        snapshot(CAS, (fields, &self.keys), &mut self.snapshots)
+    }
+
     /// The object keys each population holds.
     pub fn object_keys(&self) -> &[String] {
         &self.keys

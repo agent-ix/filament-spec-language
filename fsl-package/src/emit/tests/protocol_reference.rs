@@ -9,9 +9,9 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_semantics::check::{CheckCause, CheckRefusal};
+use fsl_semantics::check::{CheckCause, SemanticCheckRefusal};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::*;
 
@@ -49,7 +49,7 @@ fn selecting(declarations: &str) -> String {
 }
 
 /// The refusals the spine-model unit `text` checks to.
-fn refusals(text: &str) -> Vec<CheckRefusal> {
+fn refusals(text: &str) -> Vec<SemanticCheckRefusal> {
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
     assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles")
@@ -103,12 +103,10 @@ const ATTEMPT_ROOT: &str = "attempt Update by R on Config::ConfigVersion::attemp
 fn a_non_control_root_emits_a_protocol_node_with_a_valid_profile_alias() {
     let graph = check_attempt_unit(&rooted(ATTEMPT_ROOT, true, false), false)
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
-    assert!(
-        graph
-            .semantic_graph()
-            .nodes()
-            .any(|node| node.node_tag() == fsl_semantics::check::NodeTag::Protocol)
-    );
+    assert!(graph
+        .semantic_graph()
+        .nodes()
+        .any(|node| node.node_tag() == fsl_semantics::check::NodeTag::Protocol));
 }
 
 /// FR-880-AC-8: a post-test repeat in an attempt-bearing protocol is admitted
@@ -175,17 +173,14 @@ fn a_later_attempt_protocol_lowers_after_an_earlier_refusal() {
     let package = CheckedPackage::link(checked);
     let results = emit_checked_with_protocol_results(&package)
         .expect("the later protocol with an attempt emits independently");
-    let [
-        ProtocolEmissionResult::Refused {
-            declaration: refused,
-            ..
-        },
-        ProtocolEmissionResult::Emitted {
-            declaration: emitted,
-            nodes,
-            ..
-        },
-    ] = results.results()
+    let [ProtocolEmissionResult::Refused {
+        declaration: refused,
+        ..
+    }, ProtocolEmissionResult::Emitted {
+        declaration: emitted,
+        nodes,
+        ..
+    }] = results.results()
     else {
         panic!("the independent results retain both declarations");
     };
@@ -501,11 +496,9 @@ fn repeated_references_share_one_carrier_and_retain_both_occurrences() {
         .as_array()
         .expect("the carrier occurrences");
     assert_eq!(occurrences.len(), 2);
-    assert!(
-        occurrences
-            .iter()
-            .all(|occurrence| occurrence["role"] == "expression")
-    );
+    assert!(occurrences
+        .iter()
+        .all(|occurrence| occurrence["role"] == "expression"));
     let ordinals: Vec<_> = occurrences
         .iter()
         .map(|occurrence| occurrence["ordinal"].as_u64().expect("ordinal"))
@@ -976,12 +969,10 @@ fn protocol_nodes_are_stable_around_unrelated_declarations() {
         // alone name no node (FR-322).
         let graph = WireGraph::of_package_value(&resolved_wire).unwrap();
         let resolved_nodes = nodes(&resolved_wire);
-        let mut pending = vec![
-            resolved_nodes
-                .iter()
-                .position(|node| node["node_id"] == clause_wire)
-                .expect("the clause is a node"),
-        ];
+        let mut pending = vec![resolved_nodes
+            .iter()
+            .position(|node| node["node_id"] == clause_wire)
+            .expect("the clause is a node")];
         let mut reached = std::collections::BTreeSet::new();
         let mut closure = Vec::new();
         while let Some(at) = pending.pop() {

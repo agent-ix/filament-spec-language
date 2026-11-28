@@ -8,10 +8,10 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_forms::ProtocolNodeKind;
 use ix_trace_rs::trace;
 
-use super::{HEADER, assemble, assemble_with, checks, protocol_causes, refusals};
+use super::{assemble, assemble_with, checks, protocol_causes, refusals, HEADER};
 use crate::check::protocol_clause::{CausalEdge, EdgeKind, Port, PortRef, ProtocolNodeId};
 use crate::check::refusal::{ArmFault, ObservationReason, ProtocolAnchorCause, SlotKind};
-use crate::check::{CheckRefusal, CheckedAwait, CheckedDeadline, CheckedGraph};
+use crate::check::{CheckedAwait, CheckedDeadline, CheckedGraph, SemanticCheckRefusal};
 
 /// A protocol `Flow` with roles `R` and `S` on `M::Actor`, a record type
 /// `Plain`, the `members` written before `run` and the `run` control.
@@ -75,7 +75,7 @@ fn located<'t>(text: &'t str, cause: &ProtocolAnchorCause) -> &'t str {
     &text[span.start..span.end]
 }
 
-fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
+fn catalog(refusal: &SemanticCheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
 }
 
@@ -176,7 +176,7 @@ fn three_nested_levels_check_with_their_paths() {
 }
 
 /// The one refusal of `source`, with its cause and the unit's text.
-fn only(source: &str) -> (String, CheckRefusal, ProtocolAnchorCause) {
+fn only(source: &str) -> (String, SemanticCheckRefusal, ProtocolAnchorCause) {
     let (text, found) = refusals(source);
     let [refusal] = found.as_slice() else {
         panic!("{source}: one refusal, got {found:?}");
@@ -387,11 +387,9 @@ fn an_await_after_a_later_control_is_a_cycle() {
             attempt("Work")
         ),
     ));
-    assert!(
-        edges(&graph)
-            .iter()
-            .any(|edge| edge.kind == EdgeKind::RepeatBack)
-    );
+    assert!(edges(&graph)
+        .iter()
+        .any(|edge| edge.kind == EdgeKind::RepeatBack));
 }
 
 /// An `await` after `Start` matching `matched`, with `within` and an empty
@@ -526,7 +524,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
         )
         .expect_err("an await under no temporal profile refuses");
     // The protocol profile's emission refusal is not this check's subject.
-    let found: Vec<CheckRefusal> = found
+    let found: Vec<SemanticCheckRefusal> = found
         .into_iter()
         .filter(|refusal| {
             !matches!(
@@ -846,7 +844,8 @@ fn located_causes(source: &str) -> Vec<(ProtocolAnchorCause, String)> {
     "FR-218-AC-17",
     "FR-218-AC-18",
     "FR-884-AC-1",
-    "FR-884-AC-5"
+    "FR-884-AC-5",
+    "FR-513-AC-12"
 )]
 #[test]
 fn a_decision_reads_only_listed_facts_of_its_owner() {
@@ -985,6 +984,35 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
         }),
         "the duplicate same-spelled binder is refused before guard checking: {same_name_refusals:?}"
     );
+    let right_binder = same_spelled_other_owner
+        .rfind("rx: Plain")
+        .expect("the receive in the right branch declares rx")
+        + HEADER.len();
+    assert!(
+        same_name_refusals.iter().any(|(cause, _)| {
+            matches!(cause,
+                ProtocolAnchorCause::Shadow {
+                    name,
+                    shadowed: crate::check::refusal::ShadowedDeclaration::Binder(_),
+                    span,
+                } if name == "rx" && span.start == right_binder)
+        }),
+        "the later right-branch binder owns the shadow refusal: {same_name_refusals:?}"
+    );
+    assert!(
+        !same_name_refusals.iter().any(|(cause, at)| {
+            at == "true"
+                && matches!(cause,
+                    ProtocolAnchorCause::SlotClause {
+                        node,
+                        slot: SlotKind::Finish,
+                        cause,
+                        ..
+                    } if node == "End"
+                        && matches!(cause.as_ref(), crate::check::CheckCause::AmbiguousName { name, .. } if name == "rx"))
+        }),
+        "a literal finish predicate does not carry the duplicate-name refusal: {same_name_refusals:?}"
+    );
     for (binder, node) in [
         (
             "applied",
@@ -1049,11 +1077,7 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
     );
 
     let over = located_causes(&received(&pick("S", "", "input.ready", "not input.ready")));
-    let [
-        (ProtocolAnchorCause::SlotModelState { node, slot, .. }, at),
-        _,
-    ] = over.as_slice()
-    else {
+    let [(ProtocolAnchorCause::SlotModelState { node, slot, .. }, at), _] = over.as_slice() else {
         panic!("two model-state refusals, got {over:?}");
     };
     assert_eq!(

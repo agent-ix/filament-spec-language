@@ -12,6 +12,7 @@ use filament_exact::{
 };
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObject};
+use ix_trace_rs::implements;
 use quire_canonical::{Error, Limits, Sink, Writer};
 
 use super::{DeclarationRecord, Enc, KeyNames, Placeholder, Typing};
@@ -132,8 +133,7 @@ pub(super) type InitialOverrides = BTreeMap<usize, BTreeMap<DeclarationKey, Valu
 
 /// Object-key renames a canonical symmetry permutation applies to identities
 /// and nested references during virtual key projection.
-pub(super) type InitialRenaming =
-    Vec<(Vec<filament_exact::UniverseId>, BTreeMap<String, String>)>;
+pub(super) type InitialRenaming = Vec<(Vec<filament_exact::UniverseId>, BTreeMap<String, String>)>;
 
 enum Frame {
     Object {
@@ -1015,6 +1015,7 @@ fn project_clock_shell<S: ValueSink>(sink: &mut S) -> Result<(), S::Error> {
     })
 }
 
+#[implements("FR-120-AC-4")]
 pub(super) fn project_model_state<S: ValueSink>(
     sink: &mut S,
     model: &StateModel,
@@ -1158,6 +1159,7 @@ pub(super) fn project_reference_parts<S: StructuralSink>(
     })
 }
 
+#[implements("FR-120-AC-16")]
 pub(super) fn project_unit<S: ValueSink>(sink: &mut S, source: &UnitId) -> Result<(), S::Error> {
     sink.begin_object()?;
     if let Some(node) = source.declared_key() {
@@ -1196,6 +1198,7 @@ fn pending_slot<'a>(value: &'a FieldValue, normalize: bool) -> ValueTask<'a> {
     }
 }
 
+#[implements("FR-120-AC-16")]
 pub(super) fn project_value<'a, S: ValueSink>(
     sink: &mut S,
     value: &'a Value,
