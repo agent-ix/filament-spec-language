@@ -977,3 +977,110 @@ fn an_incomplete_partner_before_an_undefined_one_does_not_hide_it() {
 fn an_incomplete_partner_after_an_undefined_one_does_not_hide_it() {
     assert_eq!(partner_search_with_incomplete(false), (0, 1));
 }
+
+/// A `match` that refuses `μ_E` at a joint step whose existential input is 1
+/// unless the previous step read was input 0: a partner `[1]` is refused at
+/// joint 1, a partner `[0, 1]` is read through to joint 2.
+struct RefusedAtOne<'w> {
+    seams: crate::hyper_world::Seams<'w>,
+    last: std::cell::Cell<Option<i64>>,
+}
+
+impl StepMatch for RefusedAtOne<'_> {
+    fn universal(
+        &self,
+        instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        self.seams.universal(instance, steps, meter)
+    }
+
+    fn existential(
+        &self,
+        _instance: &[ParameterBinding],
+        steps: &[StepLabel<'_>],
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        let input = steps.get(1).and_then(crate::hyper_world::input_of);
+        let previous = self.last.replace(input);
+        if input == Some(1) && previous != Some(0) {
+            filament_exact::Meter::new(crate::counter::ZERO)
+                .charge(filament_exact::Charge::new(
+                    filament_exact::ChargePoint::GraphExpand,
+                ))
+                .map_err(|incomplete| fsl_eval::hyper::MatchIncomplete {
+                    conjunct: 0,
+                    incomplete,
+                })?;
+        }
+        Ok(MatchReading::Holds)
+    }
+}
+
+/// ADR-023 HV-8 HP-3 and FR-177 "Ranking findings": the finding at the least
+/// joint position is the tuple's. Partner `[1]` is refused at joint 1 and
+/// partner `[0, 1]` has an atom with no value at position 2 (`l = 1` there),
+/// so by hand the refused stop ranks first and the tuple is `Undecided`,
+/// whichever partner is listed first.
+fn partner_search_refused_before_undefined(refused_first: bool) -> String {
+    use fsl_eval::hyper::search_partner;
+    let world = World::new_with_kernel_function(
+        GUARDED,
+        false,
+        &[(0, 0)],
+        "hyper Part using ep over behaviours (v: V::Vault) \
+         forall trace a of V exists trace b of V \
+         match { a.step.Vault::step.i = b.step.Vault::step.i } \
+         { eventually [2, 3] holds(quotient(1 - v.l @ b) >= 1) }",
+        QUOTIENT,
+    );
+    let seams = world.seams();
+    let systems = seams.per_trace();
+    let a = walk(systems[0], &[]);
+    let refused = walk(systems[1], &[1]);
+    let undefined = walk(systems[1], &[0, 1]);
+    let partners = if refused_first {
+        vec![refused, undefined]
+    } else {
+        vec![undefined, refused]
+    };
+    let matcher = RefusedAtOne {
+        seams: world.seams(),
+        last: std::cell::Cell::new(None),
+    };
+    let instance = crate::hyper_world::instance();
+    let cancel = Cancel::new();
+    let inputs = ClosedInputs {
+        clause: &world.clause,
+        instance: &instance,
+        letters: &seams,
+        matcher: &matcher,
+        meter: UNLIMITED,
+        cancel: &cancel,
+    };
+    format!(
+        "{:?}",
+        search_partner(&inputs, &[&a], &[partners.as_slice()], 100)
+    )
+}
+
+#[trace("TC-2243", "FR-177-AC-13")]
+#[test]
+fn a_partner_refused_at_joint_1_ranks_before_an_undefined_one_at_joint_2() {
+    let settled = partner_search_refused_before_undefined(true);
+    assert!(
+        settled.starts_with("Stopped(MatchUndetermined") && settled.contains("position: 1"),
+        "{settled}"
+    );
+}
+
+#[trace("TC-2243", "FR-177-AC-13")]
+#[test]
+fn an_undefined_partner_at_joint_2_listed_first_does_not_outrank_a_refusal_at_joint_1() {
+    let settled = partner_search_refused_before_undefined(false);
+    assert!(
+        settled.starts_with("Stopped(MatchUndetermined") && settled.contains("position: 1"),
+        "{settled}"
+    );
+}

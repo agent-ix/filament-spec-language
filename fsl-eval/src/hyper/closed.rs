@@ -453,6 +453,10 @@ pub fn shortest_undefined(
     Ok(None)
 }
 
+/// The position of a stop the body's evaluator does not place: it ranks after
+/// every placed finding.
+pub const UNPLACED: u64 = u64::MAX;
+
 /// What reading a tuple of closed executions settles (FR-173 "Event-position
 /// form", ADR-023 HM-3).
 #[derive(Debug)]
@@ -472,12 +476,22 @@ pub enum ClosedVerdict {
     },
     /// A `match` conjunct was refused or incomplete at a joint step
     /// (ADR-023 HV-4).
-    MatchUndetermined,
+    MatchUndetermined {
+        /// The joint position the refused step enters (FR-177 "Ranking
+        /// findings").
+        position: u64,
+    },
     /// A `match` conjunct or an atom of the body has no value on the tuple
     /// (ADR-023 HV-8).
     Undefined(Box<ClosedUndefined>),
     /// The evaluation meter ran out.
-    Incomplete(filament_exact::LimitKind),
+    Incomplete {
+        /// The joint position where the reading stopped, [`UNPLACED`] when the
+        /// body's evaluator reports none (FR-177 "Ranking findings").
+        position: u64,
+        /// The counter that ran out.
+        limit: filament_exact::LimitKind,
+    },
     /// An invariant of the evaluation broke.
     Fault(InternalFault),
 }
@@ -581,7 +595,9 @@ pub fn match_closed_step(
     match reading {
         Ok(MatchReading::Fault(fault)) => Err(ClosedVerdict::Fault(fault)),
         Ok(reading) => Ok(reading),
-        Err(_) => Err(ClosedVerdict::MatchUndetermined),
+        Err(_) => Err(ClosedVerdict::MatchUndetermined {
+            position: u64::try_from(joint).unwrap_or(u64::MAX),
+        }),
     }
 }
 
@@ -659,7 +675,11 @@ pub fn judge_closed_tuple(
                     }));
                     break 'joints;
                 }
-                Ok(_) => return ClosedVerdict::MatchUndetermined,
+                Ok(_) => {
+                    return ClosedVerdict::MatchUndetermined {
+                        position: u64::try_from(joint).unwrap_or(u64::MAX),
+                    }
+                }
                 Err(verdict) => return verdict,
             }
         }
@@ -720,9 +740,10 @@ fn judge_closed_body(inputs: &ClosedInputs<'_>, executions: &[&ClosedExecution])
             }
             closed_fault("an-undefined-closed-atom-is-found")
         }
-        Ok(TemporalOutcome::Incomplete(incomplete)) => {
-            ClosedVerdict::Incomplete(incomplete.limit_kind)
-        }
+        Ok(TemporalOutcome::Incomplete(incomplete)) => ClosedVerdict::Incomplete {
+            position: UNPLACED,
+            limit: incomplete.limit_kind,
+        },
         Ok(
             TemporalOutcome::WindowLimitReached(_)
             | TemporalOutcome::Pending
@@ -812,9 +833,12 @@ pub enum PartnerSearch {
 /// one whose position is earliest is reported, the first in list order on a
 /// tie (ADR-018 UE-4, ADR-023 HV-8, FR-177), whatever holding partner comes
 /// before or after it. Only when none is undefined does a holding partner
-/// witness, and a partner whose reading was refused or incomplete leaves the
-/// tuple undecided only when no partner is undefined or holds; a fault ends
-/// the search at once.
+/// witness. A partner whose reading was refused or incomplete is ranked by the
+/// joint position where it stopped (ADR-023 HV-8 HP-3, FR-177 "Ranking
+/// findings"): one that stops at a position before the earliest undefined
+/// partner's leaves the tuple undecided, and at the same position the
+/// undefined partner ranks first; with no partner undefined or holding the
+/// earliest stop leaves it undecided. A fault ends the search at once.
 pub fn search_partner(
     inputs: &ClosedInputs<'_>,
     universal: &[&ClosedExecution],
@@ -864,21 +888,41 @@ pub fn search_partner(
                 }
             }
             fault @ ClosedVerdict::Fault(_) => return PartnerSearch::Stopped(fault),
-            stopped @ (ClosedVerdict::MatchUndetermined | ClosedVerdict::Incomplete(_)) => {
-                undecided.get_or_insert(stopped);
+            stopped @ (ClosedVerdict::MatchUndetermined { .. }
+            | ClosedVerdict::Incomplete { .. }) => {
+                let at = stop_position(&stopped);
+                if undecided
+                    .as_ref()
+                    .map_or(true, |best| at < stop_position(best))
+                {
+                    undecided = Some(stopped);
+                }
             }
         }
     }
-    match earliest {
-        Some((found, existentials)) => PartnerSearch::Undefined {
+    // FR-177 "Ranking findings": the finding at the least joint position is the
+    // instance's, and at one position an undefined evaluation comes before a
+    // refused or incomplete one.
+    match (earliest, undecided) {
+        (Some((found, _)), Some(stopped)) if stop_position(&stopped) < found.position => {
+            PartnerSearch::Stopped(stopped)
+        }
+        (Some((found, existentials)), _) => PartnerSearch::Undefined {
             found,
             existentials,
         },
-        None if witnessed => PartnerSearch::Witnessed,
-        None => match undecided {
-            Some(stopped) => PartnerSearch::Stopped(stopped),
-            None => PartnerSearch::Exhausted { position },
-        },
+        (None, _) if witnessed => PartnerSearch::Witnessed,
+        (None, Some(stopped)) => PartnerSearch::Stopped(stopped),
+        (None, None) => PartnerSearch::Exhausted { position },
+    }
+}
+
+/// The joint position a refused or incomplete verdict stopped at.
+fn stop_position(verdict: &ClosedVerdict) -> u64 {
+    match verdict {
+        ClosedVerdict::MatchUndetermined { position }
+        | ClosedVerdict::Incomplete { position, .. } => *position,
+        _ => UNPLACED,
     }
 }
 
@@ -932,8 +976,8 @@ pub fn read_closed_undefined(
         ClosedVerdict::UniversalUnmatched | ClosedVerdict::ExistentialUnmatched => {
             return ClosedRead::Unmatched;
         }
-        stopped @ (ClosedVerdict::MatchUndetermined
-        | ClosedVerdict::Incomplete(_)
+        stopped @ (ClosedVerdict::MatchUndetermined { .. }
+        | ClosedVerdict::Incomplete { .. }
         | ClosedVerdict::Fault(_)) => return ClosedRead::Stopped(stopped),
         ClosedVerdict::Holds | ClosedVerdict::Violated { .. } => {}
     }
