@@ -230,6 +230,20 @@ fn report_refuses_a_missing_per_size_probe() {
 
 #[test]
 #[trace("NFR-141-AC-7")]
+fn starting_invocation_clears_previous_criterion_estimates() {
+    let target = TempTarget::new();
+    target.write_estimate(EVALUATOR_KERNEL_AXIS, "sum", 5, 100.0);
+    let stale = estimate_path(&target.0, EVALUATOR_KERNEL_AXIS, "sum", 5);
+    assert!(stale.exists());
+
+    evaluator_cost::start_invocation(&target.0)
+        .expect("the benchmark invocation is initialized");
+
+    assert!(!stale.exists(), "prior Criterion estimates are removed");
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
 fn emitted_candidate_artifact_uses_dynamic_evaluator_traversal_allocations() {
     let target = TempTarget::new();
     let run_id = evaluator_cost::start_invocation(&target.0)

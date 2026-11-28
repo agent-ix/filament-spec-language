@@ -106,6 +106,7 @@ impl ReportRole {
 #[implements("NFR-141-AC-7")]
 pub fn start_invocation(target: &Path) -> io::Result<u128> {
     fs::create_dir_all(target)?;
+    clear_criterion_estimates(target)?;
     match fs::remove_file(target.join(ROUND_MARKER)) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -118,6 +119,21 @@ pub fn start_invocation(target: &Path) -> io::Result<u128> {
     fs::write(target.join(RUN_MARKER), run_id.to_string())?;
     fs::write(target.join(PROBES), "")?;
     Ok(run_id)
+}
+
+fn clear_criterion_estimates(target: &Path) -> io::Result<()> {
+    for (axis, _) in PROFILE_AXES {
+        let criterion = target.join("criterion").join(axis.replace('/', "_"));
+        let cases = expected_cases(axis).map_err(|error| io::Error::other(error.to_string()))?;
+        for (case, size) in cases {
+            match fs::remove_file(criterion_path(&criterion, axis, case, size)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Start a round that `emit_report` will append to the A or B result file.
@@ -308,8 +324,6 @@ pub fn emit_report(target: &Path, axis: &str, role: ReportRole) -> Result<PathBu
     let expected = expected_cases(axis)?;
     let probes = read_probes(target, run_id, axis)?;
     let criterion = target.join("criterion").join(axis.replace('/', "_"));
-    let marker_time =
-        UNIX_EPOCH + std::time::Duration::from_nanos(u64::try_from(run_id).unwrap_or(u64::MAX));
     let mut rows = Vec::with_capacity(expected.len());
 
     for (case, size) in expected {
@@ -319,7 +333,7 @@ pub fn emit_report(target: &Path, axis: &str, role: ReportRole) -> Result<PathBu
             .ok_or_else(|| {
                 io::Error::other(format!("missing allocation probe for {axis}/{case}/{size}"))
             })?;
-        let estimate = estimate(&criterion_path(&criterion, axis, case, size), marker_time)?;
+        let estimate = estimate(&criterion_path(&criterion, axis, case, size))?;
         let wall_time_ns = estimate.point_estimate_ns;
         let child_count = probe.child_traversal_allocation_count;
         let allocation_share = if probe.evaluation_allocation_count == 0 {
@@ -962,13 +976,7 @@ struct Estimate {
     ci_half_width_ns: f64,
 }
 
-fn estimate(path: &Path, marker_time: SystemTime) -> Result<Estimate, Box<dyn Error>> {
-    let metadata = fs::metadata(path)?;
-    if metadata.modified()? <= marker_time {
-        return Err(
-            io::Error::other(format!("stale Criterion estimate: {}", path.display())).into(),
-        );
-    }
+fn estimate(path: &Path) -> Result<Estimate, Box<dyn Error>> {
     let estimates: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
     let point_estimate_ns = estimates["mean"]["point_estimate"]
         .as_f64()
