@@ -316,7 +316,7 @@ pub fn settle_smt_proof(
     limits: &crate::CertificateCheckLimits,
     cancel: &Cancel,
 ) -> TerminalValue {
-    settle_smt_proof_with_evidence(request, outcome, limits, cancel).value
+    settle_smt_proof_with_evidence(request, outcome, None, limits, cancel).value
 }
 
 /// The terminal result and FR-621 checker evidence of an SMT proof settlement.
@@ -331,9 +331,18 @@ pub struct SmtProofSettlement {
     checker: Option<CertificateChecker>,
     /// The domain-separated digests of the canonical queries FR-314 checked.
     query_digests: Option<Vec<[u8; 32]>>,
+    /// The SMT backend's cross-check run CG handed beside the outcome
+    /// (FR-290-AC-16); `None` when CG handed none.
+    cross_check: Option<crate::CrossCheckRun>,
 }
 
 impl SmtProofSettlement {
+    /// The cross-check run CG handed beside the outcome, for FR-290's table.
+    #[must_use]
+    pub fn cross_check(&self) -> Option<&crate::CrossCheckRun> {
+        self.cross_check.as_ref()
+    }
+
     /// The FR-331 terminal result.
     #[must_use]
     pub fn value(&self) -> &TerminalValue {
@@ -368,11 +377,13 @@ pub fn smt_query_digest(query: &[u8]) -> [u8; 32] {
 /// Settle an SMT proof and retain the FR-621 checker evidence for its writer.
 ///
 /// This is the production entry point for callers that write an FR-621 item:
-/// it runs FR-314 once, returning the settled terminal and the checker identity
+/// it runs FR-314 once, keeping CG's `cross_check` run for FR-290's table and returning the settled terminal and the checker identity
 /// only when that check accepted the certificate.
+#[ix_trace_rs::implements("FR-290-AC-16")]
 pub fn settle_smt_proof_with_evidence(
     request: &CertificateRequest<'_>,
     outcome: &SmtProofOutcome,
+    cross_check: Option<crate::CrossCheckRun>,
     limits: &crate::CertificateCheckLimits,
     cancel: &Cancel,
 ) -> SmtProofSettlement {
@@ -382,6 +393,7 @@ pub fn settle_smt_proof_with_evidence(
             value: Row::of_smt_check(Err(rejection), basis).value,
             checker: None,
             query_digests: None,
+            cross_check,
         };
     }
     let Some(certificate) = &outcome.certificate else {
@@ -392,6 +404,7 @@ pub fn settle_smt_proof_with_evidence(
             },
             checker: None,
             query_digests: None,
+            cross_check,
         };
     };
     let check = check_smt_proof(request, &outcome.basis, certificate, limits, cancel);
@@ -410,6 +423,7 @@ pub fn settle_smt_proof_with_evidence(
         value: Row::of_smt_check(check, basis).value,
         checker,
         query_digests,
+        cross_check,
     }
 }
 

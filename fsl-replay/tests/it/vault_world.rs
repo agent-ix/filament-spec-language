@@ -1076,6 +1076,7 @@ mod tp4 {
                     basis: SmtProofBasis::BoundedComplete { depth: 3 },
                     certificate,
                 },
+                None,
                 &CertificateCheckLimits::default(),
                 &Cancel::new(),
             );
@@ -1289,6 +1290,108 @@ mod tp4 {
         }
     }
 
+    /// FR-290-AC-16, through the production route: the SMT handoff
+    /// (`settle_smt_proof_with_evidence`, given CG's cross-check run beside
+    /// cvc5's outcome) settles the terminal record, and the record's outcome
+    /// item shows the cross-check, with no hand-called `with_cross_check`.
+    /// Expected values are the AC's: certified beside Z3 `Proved` is `proved`,
+    /// `certified`, `cross_check` `{z3, proved}`; certified beside Z3
+    /// `Refuted` keeps `proved`, `certified`, verdict `refuted`; uncertified
+    /// beside Z3 `Refuted` is `inconclusive`, `CrossCheckDisagreement
+    /// {z3, primary: Proved, cross_check: Refuted}`; no cross-check ran keeps
+    /// the `cross-check-absent{z3}` warning and no `cross_check`.
+    #[trace("TC-774", "FR-290-AC-16")]
+    #[test]
+    fn the_smt_handoff_settles_its_cross_check_into_the_terminal_record() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let clause = match request.item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            _ => unreachable!("fixture is a clause"),
+        };
+        let query = encode_smt_query(
+            &request.subject,
+            SmtItem::Clause(clause),
+            SmtQueryKind::Unrolling { depth: 3 },
+            &request.smt_encoding,
+        )
+        .expect("depth 3 reaches the TP-2 horizon");
+        let certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                proof: bounded_always_refutation(&query, &[0, 1, 2, 3]),
+                query,
+            },
+        };
+        let z3 = |verdict| {
+            Some(CrossCheckRun::Ran(CrossCheck {
+                tool: "z3".to_owned(),
+                verdict,
+            }))
+        };
+        let item = |certificate, cross_check| {
+            let settlement = settle_smt_proof_with_evidence(
+                &request,
+                &SmtProofOutcome {
+                    basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                    certificate,
+                },
+                cross_check,
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            );
+            let record = TerminalRecord::from_smt_settlement(
+                RequestIndex::new(0),
+                BackendId::new("cvc5"),
+                &settlement,
+            );
+            serde_json::to_value(OutcomeItem::from_terminal(&record)).expect("item serializes")
+        };
+        let proved = |certification: &str, verdict: &str| {
+            json!({"result": "proved", "certification": certification,
+                "cross_check": {"tool": "z3", "verdict": verdict}})
+        };
+        let members = |item: &Json, names: &[&str]| {
+            Json::Object(
+                names
+                    .iter()
+                    .filter_map(|name| Some(((*name).to_owned(), item.get(*name)?.clone())))
+                    .collect(),
+            )
+        };
+        let proof = ["result", "certification", "cross_check"];
+
+        let certified = item(Some(certificate.clone()), z3(CrossCheckVerdict::Proved));
+        assert_eq!(members(&certified, &proof), proved("certified", "proved"));
+        let certified = item(Some(certificate.clone()), z3(CrossCheckVerdict::Refuted));
+        assert_eq!(members(&certified, &proof), proved("certified", "refuted"));
+
+        let disagreeing = item(None, z3(CrossCheckVerdict::Refuted));
+        assert_eq!(
+            members(&disagreeing, &["result", "cause"]),
+            json!({"result": "inconclusive", "cause": {
+                "kind": "cross-check-disagreement", "tool": "z3",
+                "primary": "proved", "cross_check": "refuted"}})
+        );
+
+        let unchecked = item(
+            Some(certificate.clone()),
+            Some(CrossCheckRun::Absent {
+                tool: "z3".to_owned(),
+            }),
+        );
+        assert_eq!(
+            members(&unchecked, &["result", "certification", "warnings"]),
+            json!({"result": "proved", "certification": "certified",
+                "warnings": [{"code": "cross-check-absent", "tool": "z3"}]})
+        );
+        assert!(unchecked.get("cross_check").is_none());
+
+        // Nothing handed: the settlement stands as it was.
+        let bare = item(Some(certificate), None);
+        assert!(bare.get("cross_check").is_none() && bare.get("warnings").is_none());
+    }
+
     /// A report the cross-check table cannot settle, and a serialized member
     /// outside FSpec FR-331's spelling, are refused.
     #[trace("TC-774")]
@@ -1303,11 +1406,17 @@ mod tp4 {
         };
         let tested = TerminalRecord::tested(index, BackendId::new("cvc5"));
         assert_eq!(
-            tested.clone().with_cross_check(z3("z3")).map_err(|e| e.refusal),
+            tested
+                .clone()
+                .with_cross_check(z3("z3"))
+                .map_err(|e| e.refusal),
             Err(CrossCheckRefusal::NoTableRow)
         );
         assert_eq!(
-            tested.clone().with_cross_check(z3("")).map_err(|e| e.refusal),
+            tested
+                .clone()
+                .with_cross_check(z3(""))
+                .map_err(|e| e.refusal),
             Err(CrossCheckRefusal::EmptyTool)
         );
         assert_eq!(
