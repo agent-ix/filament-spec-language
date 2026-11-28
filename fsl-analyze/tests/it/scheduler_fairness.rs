@@ -554,6 +554,7 @@ pub(crate) fn check_refusal(body: &str) -> SemanticCheckRefusal {
     let text = unit_text(body);
     let packages = package_input([document.as_slice()]).unwrap();
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("agent-ix", "counter"),
         "counter.native",
         text.as_bytes(),
@@ -569,7 +570,7 @@ pub(crate) fn check_refusal(body: &str) -> SemanticCheckRefusal {
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&fsl_cst::ParserContext::new(), text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let mut refusals = PackageDeclarations::assemble(

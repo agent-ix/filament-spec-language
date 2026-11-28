@@ -271,8 +271,7 @@ fn compile(scenario: &Scenario) -> Result<Compiled, String> {
     let identity = SourceIdentity::new("fspec", id);
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
-    let parsed = spine::parse(&qsl3309_parser_context,
-        &ParseRequest {
+    let parsed = spine::parse(&ParseRequest {
             source: &identity,
             path: "finite-window.native",
             bytes: text.as_bytes(),
@@ -306,7 +305,7 @@ fn compile(scenario: &Scenario) -> Result<Compiled, String> {
         .collect::<Vec<_>>();
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .map_err(|error| format!("{id}: packages: {error:?}"))?;
-    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .map_err(|error| format!("{id}: select: {error:?}"))?
         .into_value();
     let unit = spine::check_with_temporal_selections_and_execution_points(

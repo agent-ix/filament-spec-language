@@ -527,8 +527,7 @@ fn check_unit(unit: &str, model: Option<String>) -> Result<Observed, String> {
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
     let identity = SourceIdentity::new("fspec", "ix://example/config/source/boundary");
-    let parsed = match spine::parse(&qsl3309_parser_context,
-        &ParseRequest {
+    let parsed = match spine::parse(&ParseRequest {
             source: &identity,
             path: "boundary.native",
             bytes: unit.as_bytes(),
@@ -539,7 +538,7 @@ fn check_unit(unit: &str, model: Option<String>) -> Result<Observed, String> {
         Ok(parsed) => parsed.into_value(),
         Err(error) => return Ok(refusal_of(error)),
     };
-    let models = match spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel) {
+    let models = match spine::select(&parsed, &packages, limits.model, &cancel) {
         Ok(models) => models.into_value(),
         Err(error) => return Ok(refusal_of(error)),
     };
