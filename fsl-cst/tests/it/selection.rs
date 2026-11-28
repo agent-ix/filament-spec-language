@@ -12,6 +12,7 @@ use ix_trace_rs::trace;
 #[trace("FSpec-TC-180", "FSpec-FR-131-AC-2")]
 #[test]
 fn selection_validation_locates_each_invalid_component_for_every_declaration_kind() {
+    let context = fsl_cst::ParserContext::new();
     assert_eq!(
         DefinitionRef::new("agent-ix", "").unwrap_err(),
         InvalidDefinitionComponent::Identity
@@ -49,6 +50,7 @@ fn selection_validation_locates_each_invalid_component_for_every_declaration_kin
             let invalid_literal = format!("\"{identity}\"");
             let expected_start = source.find(&invalid_literal).unwrap();
             let parsed = parse(
+                &context,
                 SourceIdentity {
                     authority: "test".into(),
                     identity: format!("test:{declaration_kind}-{invalid_component}"),
@@ -80,11 +82,13 @@ fn selection_validation_locates_each_invalid_component_for_every_declaration_kin
 #[trace("TC-442", "FR-056-AC-9")]
 #[test]
 fn a_model_names_only_its_domain_package_identity() {
+    let context = fsl_cst::ParserContext::new();
     let parse_model = |model: &str| {
         let source = format!(
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"acme/profile\";\n{model}\nrecord R {{ datum: Integer; }}"
         );
         parse(
+            &context,
             SourceIdentity::new("test", "test:model"),
             "model.native",
             source.as_bytes(),
@@ -120,9 +124,11 @@ fn a_model_names_only_its_domain_package_identity() {
 #[trace("FSpec-FR-307-AC-6", "FSpec-TC-227")]
 #[test]
 fn an_import_names_only_its_library_identity() {
+    let context = fsl_cst::ParserContext::new();
     let parse_import = |import: &str| {
         let source = import_unit(import);
         parse(
+            &context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             source.as_bytes(),
@@ -193,7 +199,9 @@ fn token_offset(import: &str, token: &str) -> Option<usize> {
 
 /// Parses `text` as a unit of the selection tests.
 fn parse_unit(id: &str, text: &str) -> fsl_cst::ParsedSource {
+    let context = fsl_cst::ParserContext::new();
     parse(
+        &context,
         SourceIdentity {
             authority: "test".into(),
             identity: format!("test:{id}"),

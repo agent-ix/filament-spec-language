@@ -20,8 +20,9 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     model Config = \"example/config-version\";\n";
 
 fn parse(declarations: &str) -> (String, fsl_cst::ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1170,8 +1171,9 @@ fn raised() -> fsl_cst::Limits {
 
 /// Build `declarations` under [`raised`] S1 limits.
 fn build_raised(declarations: &str) -> ParsedUnit {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

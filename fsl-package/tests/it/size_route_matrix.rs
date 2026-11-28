@@ -85,6 +85,7 @@ fn sequence_source() -> String {
 
 fn checked_package(source_text: &str) -> CheckedPackage {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-3570-package"),
         "unit.native",
         source_text.as_bytes(),

@@ -260,6 +260,7 @@ impl World {
         starts: &[&[Object<'_>]],
         mode: CheckMode,
     ) -> Self {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let document = model.document();
         let packages = package_input([document.as_slice()]).unwrap();
         let text = format!(
@@ -268,7 +269,7 @@ impl World {
              model {} = \"{}\";\n{body}",
             model.alias, model.package
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("agent-ix", "graph"),
             "graph.native",
             text.as_bytes(),
@@ -284,7 +285,7 @@ impl World {
         )
         .expect("the model selection admits")
         .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
         })
         .expect("the operation clauses parse");
         let mut declarations = PackageDeclarations::assemble(

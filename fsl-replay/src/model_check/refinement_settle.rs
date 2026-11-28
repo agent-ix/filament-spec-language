@@ -267,10 +267,10 @@ pub fn settle_refinement_safety(
         ),
         SafetyOutcome::Holds { certificate, .. } => {
             match check_simulation_certificate(certified, certificate, limits, cancel) {
-                Err(SimulationRefusal::Stale {
+                Err(SimulationRefusal::Undeclared {
                     certificate,
-                    request,
-                }) => Row::stale_refinement(certificate, request),
+                    declared,
+                }) => Row::stale_refinement(certificate, declared),
                 Err(SimulationRefusal::Subject(refusal)) => Row::of_check(Err(refusal), || {
                     Row::proved(ProofBasis::Exhaustive, SettlementBasis::ClosedScope)
                 }),

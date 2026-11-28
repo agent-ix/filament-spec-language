@@ -10,6 +10,8 @@
 //! a measured result, so every constructor returns it as an error for the
 //! axis's smallest-size test to fail on.
 
+use ix_trace_rs::implements;
+
 use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
@@ -22,10 +24,10 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    admit_unit, meaning, package_input, PackageInput, SelectedModels,
+    PackageInput, SelectedModels, admit_unit, meaning, package_input,
 };
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 /// The native Boolean type reference.
 pub const BOOLEAN: &str = "ix://filament/native/Boolean";
@@ -359,6 +361,7 @@ struct PreparedModel {
 #[derive(Default)]
 pub struct ModelSetupCache {
     entries: BTreeMap<Vec<u8>, Vec<PreparedModel>>,
+    parser: fsl_cst::ParserContext,
 }
 
 impl ModelSetupCache {
@@ -367,38 +370,47 @@ impl ModelSetupCache {
     ///
     /// # Errors
     /// [`WorldError`] naming the stage that refused this case.
+    #[implements("NFR-141-AC-10")]
     pub fn build(&mut self, model: &Model) -> Result<World, WorldError> {
-        World::build_using(model, Some(self))
+        World::build_using(model, Some(&mut self.entries), &self.parser)
     }
 }
 
 impl World {
-    /// `model`, checked.
+    /// Builds the world using an explicit parser context.
     ///
     /// # Errors
-    ///
-    /// [`WorldError`] naming the stage that refused the generated unit.
-    pub fn build(model: &Model) -> Result<Self, WorldError> {
-        Self::build_using(model, None)
+    /// WorldError naming the stage that refused the generated unit.
+    #[implements("NFR-141-AC-10")]
+    pub fn build_with_context(
+        model: &Model,
+        parser: &fsl_cst::ParserContext,
+    ) -> Result<Self, WorldError> {
+        Self::build_using(model, None, parser)
     }
 
-    fn build_using(model: &Model, cache: Option<&mut ModelSetupCache>) -> Result<Self, WorldError> {
+    fn build_using(
+        model: &Model,
+        cache: Option<&mut BTreeMap<Vec<u8>, Vec<PreparedModel>>>,
+        parser: &fsl_cst::ParserContext,
+    ) -> Result<Self, WorldError> {
         let document = model.document();
         let unit = model.unit();
-        let parsed = fsl_cst::parse(
-            fsl_foundation::SourceIdentity::new("bench", "mc"),
-            "mc.native",
-            unit.as_bytes(),
-            fsl_cst::Limits::default(),
-        )
-        .map_err(|e| refused("S1", e))?;
+        let parsed = parser
+            .parse(
+                fsl_foundation::SourceIdentity::new("bench", "mc"),
+                "mc.native",
+                unit.as_bytes(),
+                fsl_cst::Limits::default(),
+            )
+            .map_err(|e| refused("S1", e))?;
         if !parsed.is_admissible() {
             return Err(refused("S1", parsed.diagnostics()));
         }
         let built = fsl_forms::build_unit(&parsed).map_err(|e| refused("S2", e))?;
         let prepared = cache
             .as_ref()
-            .and_then(|cache| cache.entries.get(&document))
+            .and_then(|entries| entries.get(&document))
             .and_then(|entries| {
                 entries
                     .iter()
@@ -416,19 +428,15 @@ impl World {
             )
             .map_err(|e| refused("model selection", e))?
             .with_parsed_operation_clauses(|text| {
-                fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+                fsl_forms::parse_clause_text(parser, text, fsl_cst::Limits::default())
             })
             .map_err(|e| refused("operation clauses", e))?;
             if let Some(cache) = cache {
-                cache
-                    .entries
-                    .entry(document)
-                    .or_default()
-                    .push(PreparedModel {
-                        selections: built.selections().models.clone(),
-                        packages: packages.clone(),
-                        models: models.clone(),
-                    });
+                cache.entry(document).or_default().push(PreparedModel {
+                    selections: built.selections().models.clone(),
+                    packages: packages.clone(),
+                    models: models.clone(),
+                });
             }
             (packages, models)
         };

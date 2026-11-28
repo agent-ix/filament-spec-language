@@ -51,6 +51,7 @@ fn operation_site(
     let (unit, _) = config_version_unit_and_packages();
     let document = config_version_domain_document();
     call_site(
+        &fsl_cst::ParserContext::new(),
         source(),
         crate::CallSiteUnit::new(
             "fixture".to_owned(),
@@ -138,6 +139,7 @@ fn locate<S: crate::CallSiteSelection>(
     selection: &S,
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         source(),
         crate::CallSiteUnit::new("fixture".to_owned(), "call-site.native", unit.as_bytes()),
         [document],
@@ -425,6 +427,7 @@ fn function_site_names_its_function_node_and_declaration_occurrence() {
         function q using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
     let site = |unit: &str, name: &str| {
         call_site(
+            &fsl_cst::ParserContext::new(),
             source(),
             crate::CallSiteUnit::new("fixture".to_owned(), "pq.native", unit.as_bytes()),
             [],
@@ -527,6 +530,7 @@ fn function_site_names_its_function_node_and_declaration_occurrence() {
 fn call_site_refuses_an_unsupplied_domain_package_as_model_intake() {
     let (unit, _) = two_operation_unit(true);
     let refusal = call_site(
+        &fsl_cst::ParserContext::new(),
         source(),
         crate::CallSiteUnit::new("fixture".to_owned(), "call-site.native", unit.as_bytes()),
         [],
@@ -565,6 +569,7 @@ fn call_site_refusal_codes_for_operations_clauses_and_intake() {
     assert_eq!(refusal.code(), fsl_foundation::Code::MissingDeclaration);
 
     let refusal = call_site(
+        &fsl_cst::ParserContext::new(),
         source(),
         crate::CallSiteUnit::new("fixture".to_owned(), "call-site.native", unit.as_bytes()),
         [],

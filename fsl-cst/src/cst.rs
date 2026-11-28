@@ -973,7 +973,7 @@ impl LosslessCst {
 #[cfg(test)]
 mod tests {
     use super::{LosslessCst, Production, SourceChange};
-    use crate::{parse, Limits};
+    use crate::{parse, Limits, ParserContext};
     use fsl_foundation::{SourceIdentity, Span};
 
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n";
@@ -989,7 +989,9 @@ mod tests {
     }
 
     fn cst(text: &str) -> LosslessCst {
+        let context = ParserContext::new();
         let parsed = parse(
+            &context,
             SourceIdentity {
                 authority: "test".into(),
                 identity: "test:cst-unit".into(),

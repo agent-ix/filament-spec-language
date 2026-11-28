@@ -59,8 +59,9 @@ fn world() -> World {
 }
 
 fn world_of(unit_text: &str) -> World {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input(std::iter::empty::<&[u8]>()).expect("no model documents");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "test:hybrid-provider"),
         "hybrid.native",
         unit_text.as_bytes(),

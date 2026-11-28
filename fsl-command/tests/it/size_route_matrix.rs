@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Compile-route probes for the QSL-3457 route-by-size matrix.
 
-use std::path::{Path, PathBuf};
+use std::{path::{Path, PathBuf}, time::Instant};
 
 use filament_exact::Cancel;
 use fsl_analyze::provider::ProviderOptions;
@@ -11,6 +11,71 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 const NESTED: usize = 1_000;
+
+#[derive(Default)]
+struct ProbeStats {
+    node_id_slots: usize,
+    read_work: usize,
+    write: fsl_package::test_support::WriteIndexDiagnostics,
+    document: fsl_package::test_support::DocumentNodeDiagnostics,
+    retained: fsl_package::test_support::S4RetainedCounts,
+    phases: fsl_package::test_support::S4PhaseTimes,
+    starts: Vec<(fsl_package::test_support::S4Phase, Instant)>,
+}
+
+impl ProbeStats {
+    fn record(&mut self, event: fsl_package::test_support::EmitProbeEvent<'_>) {
+        use fsl_package::test_support::{EmitProbeEvent as E, S4Phase as P};
+        match event {
+            E::NodeIdSlotVisited => self.node_id_slots += 1,
+            E::ReadIndexWork(units) => self.read_work = self.read_work.saturating_add(units),
+            E::WriteIndexDiagnostics(value) => self.write = fsl_package::test_support::WriteIndexDiagnostics {
+                linear_work_units: value.linear_work_units,
+                repeated_scan_work_units: value.repeated_scan_work_units,
+                one_pass_id_slots: value.one_pass_id_slots,
+                changed_ids: value.changed_ids,
+                structural_key_lookups: value.structural_key_lookups,
+            },
+            E::DocumentNodeDiagnostics(value) => self.document = fsl_package::test_support::DocumentNodeDiagnostics {
+                linear_work_units: value.linear_work_units,
+                repeated_scan_work_units: value.repeated_scan_work_units,
+                one_pass_id_slots: value.one_pass_id_slots,
+                changed_ids: value.changed_ids,
+                operand_row_lookups: value.operand_row_lookups,
+            },
+            E::RetainedCounts(value) => self.retained = fsl_package::test_support::S4RetainedCounts {
+                graph_node_count: value.graph_node_count,
+                exact_declaration_count: value.exact_declaration_count,
+                exact_field_count: value.exact_field_count,
+                keep_nodes: value.keep_nodes,
+                document_node_count: value.document_node_count,
+            },
+            E::PhaseStarted(phase) => self.starts.push((phase, Instant::now())),
+            E::PhaseFinished(phase) => {
+                if let Some(at) = self.starts.iter().rposition(|(started, _)| *started == phase) {
+                    let (_, started) = self.starts.remove(at);
+                    let elapsed = started.elapsed().as_micros();
+                    let target = match phase {
+                        P::PreLockGraphTemporal => &mut self.phases.pre_lock_graph_temporal_us,
+                        P::Lock => &mut self.phases.lock_us,
+                        P::Inspection => &mut self.phases.inspection_us,
+                        P::Index => &mut self.phases.index_us,
+                        P::ProducerTemporalClaimTerm => &mut self.phases.producer_temporal_claim_term_us,
+                        P::SourceRequirementOperand => &mut self.phases.source_requirement_operand_us,
+                        P::FinalEncode => &mut self.phases.final_encode_us,
+                        P::RetainedPostEncode => &mut self.phases.retained_post_encode_us,
+                        P::RetainedSummary => &mut self.phases.retained_summary_us,
+                        P::RetainedDisposition => &mut self.phases.retained_disposition_us,
+                        P::RetainedEmissionAssembly => &mut self.phases.retained_emission_assembly_us,
+                        P::RetainedIdentitySelection => &mut self.phases.retained_identity_selection_us,
+                    };
+                    *target = target.saturating_add(elapsed);
+                }
+            }
+            E::TypedGraph(_, _) => {}
+        }
+    }
+}
 
 fn compile_request(directory: &Path, source: &str) -> PathBuf {
     std::fs::write(directory.join("program.native"), source).expect("source writes");
@@ -927,13 +992,19 @@ fn compile_has_bounded_operand_rewrite_candidates_at_ten_thousand() {
         ..RequestOverrides::default()
     };
 
-    fsl_package::test_support::reset_node_id_rewrite_slot_visits();
-    let outcome =
-        command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
-            .expect("the 10,000-value sequence compiles with the raised independent limits");
+    let mut stats = ProbeStats::default();
+    let mut observer = |event: fsl_package::test_support::EmitProbeEvent<'_>| stats.record(event);
+    let mut probe = fsl_package::test_support::EmissionProbe::new(&mut observer);
+    let outcome = command::compile_outcome_with_probe(
+        &path,
+        RunLimits::default(),
+        &overrides,
+        &mut probe,
+    )
+    .expect("the 10,000-value sequence compiles with the raised independent limits");
     assert!(!outcome.package_bytes().is_empty());
 
-    let slot_visits = fsl_package::test_support::node_id_rewrite_slot_visits();
+    let slot_visits = stats.node_id_slots;
     assert!(
         slot_visits <= 60_000,
         "10,000-value operand rewrite visited {slot_visits} ID slots; expected at most 60,000"
@@ -988,26 +1059,23 @@ fn compile_has_bounded_combined_index_rewrite_work_at_twelve_thousand() {
     };
 
     const MAX_WORK_UNITS: usize = N * 48;
-    let (repeated_read_work, repeated_package_bytes, repeated_write_index, repeated_document_node) =
-        fsl_package::test_support::with_repeated_compile_index_rewrites(|| {
-            fsl_package::test_support::with_repeated_read_index_rewrite(|| {
-                fsl_package::test_support::reset_read_index_rewrite_work_units();
-                fsl_package::test_support::reset_write_index_diagnostics();
-                let outcome = command::compile_outcome_with_limits_and_overrides(
-                    &path,
-                    RunLimits::default(),
-                    &overrides,
-                )
-                .expect("the 12,000-value sequence compiles with repeated reference rewrites");
-                assert!(!outcome.package_bytes().is_empty());
-                (
-                    fsl_package::test_support::read_index_rewrite_work_units(),
-                    outcome.package_bytes().to_vec(),
-                    fsl_package::test_support::write_index_diagnostics(),
-                    fsl_package::test_support::document_node_diagnostics(),
-                )
-            })
-        });
+    let mut repeated_stats = ProbeStats::default();
+    let mut repeated_observer = |event: fsl_package::test_support::EmitProbeEvent<'_>| repeated_stats.record(event);
+    let mut repeated_probe = fsl_package::test_support::EmissionProbe::new(&mut repeated_observer);
+    repeated_probe.force_repeated_compile_index_rewrites();
+    repeated_probe.force_repeated_read_index_rewrite();
+    let repeated_outcome = command::compile_outcome_with_probe(
+        &path,
+        RunLimits::default(),
+        &overrides,
+        &mut repeated_probe,
+    )
+    .expect("the 12,000-value sequence compiles with repeated reference rewrites");
+    assert!(!repeated_outcome.package_bytes().is_empty());
+    let repeated_read_work = repeated_stats.read_work;
+    let repeated_package_bytes = repeated_outcome.package_bytes().to_vec();
+    let repeated_write_index = repeated_stats.write;
+    let repeated_document_node = repeated_stats.document;
     assert!(
         repeated_read_work > MAX_WORK_UNITS,
         "repeated read-index replacement used only {repeated_read_work} instrumented work units; expected it to exceed {MAX_WORK_UNITS}"
@@ -1027,16 +1095,20 @@ fn compile_has_bounded_combined_index_rewrite_work_at_twelve_thousand() {
         repeated_package_bytes.len(),
     );
 
-    fsl_package::test_support::reset_read_index_rewrite_work_units();
-    fsl_package::test_support::reset_write_index_diagnostics();
-    fsl_package::test_support::reset_s4_phase_times();
-    let outcome =
-        command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
-            .expect("the 12,000-value sequence compiles with the raised independent limits");
+    let mut stats = ProbeStats::default();
+    let mut observer = |event: fsl_package::test_support::EmitProbeEvent<'_>| stats.record(event);
+    let mut probe = fsl_package::test_support::EmissionProbe::new(&mut observer);
+    let outcome = command::compile_outcome_with_probe(
+        &path,
+        RunLimits::default(),
+        &overrides,
+        &mut probe,
+    )
+    .expect("the 12,000-value sequence compiles with the raised independent limits");
     assert!(!outcome.package_bytes().is_empty());
     assert_eq!(outcome.package_bytes(), repeated_package_bytes);
-    let write_index = fsl_package::test_support::write_index_diagnostics();
-    let document_rewrite = fsl_package::test_support::document_node_diagnostics();
+    let write_index = stats.write;
+    let document_rewrite = stats.document;
     let one_pass_work = write_index.linear_work_units + document_rewrite.linear_work_units;
     let repeated_default_work =
         write_index.repeated_scan_work_units + document_rewrite.repeated_scan_work_units;
@@ -1079,8 +1151,8 @@ fn compile_has_bounded_combined_index_rewrite_work_at_twelve_thousand() {
         write_index.linear_work_units + document_rewrite.linear_work_units,
         write_index.repeated_scan_work_units + document_rewrite.repeated_scan_work_units,
     );
-    let retained = fsl_package::test_support::s4_phase_times();
-    let retained_counts = fsl_package::test_support::s4_retained_counts();
+    let retained = stats.phases;
+    let retained_counts = stats.retained;
     eprintln!(
         "QSL3570_RETAINED_PHASE values={N} retained_summary_us={} disposition_us={} emission_assembly_us={} identity_selection_us={} graph_nodes={} exact_declarations={} exact_fields={} keep_nodes={} document_nodes={}",
         retained.retained_summary_us,
@@ -1094,7 +1166,7 @@ fn compile_has_bounded_combined_index_rewrite_work_at_twelve_thousand() {
         retained_counts.document_node_count,
     );
 
-    let work_units = fsl_package::test_support::read_index_rewrite_work_units();
+    let work_units = stats.read_work;
     assert!(
         work_units <= MAX_WORK_UNITS,
         "12,000-value read-index rewrite used {work_units} work units; expected at most 48 per value"

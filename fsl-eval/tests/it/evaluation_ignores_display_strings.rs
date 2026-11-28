@@ -46,7 +46,8 @@ fn limits(work_units: u64) -> ScalarLimits {
 /// what evaluation produced that does not embed source offsets: the outcome,
 /// the loss count and how many charges the meter admitted.
 fn run(source: &str, entry: &str, argument: i64, work_units: u64) -> (String, usize, u64) {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),

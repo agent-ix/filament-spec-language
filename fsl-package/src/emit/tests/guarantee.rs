@@ -72,6 +72,7 @@ enum Failure {
 }
 
 fn compile_with(unit: &str, documents: &[Value]) -> Result<CheckedPackage, Failure> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes: Vec<Vec<u8>> = documents
         .iter()
         .map(|document| serde_json::to_vec(document).expect("the fixture serializes"))
@@ -79,6 +80,7 @@ fn compile_with(unit: &str, documents: &[Value]) -> Result<CheckedPackage, Failu
     let packages =
         fsl_semantics::model::intake::package_input(bytes.iter().map(Vec::as_slice)).unwrap();
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:guarantee"),
         "program.native",
         unit.as_bytes(),

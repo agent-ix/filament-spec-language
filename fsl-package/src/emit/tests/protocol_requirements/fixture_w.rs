@@ -358,6 +358,7 @@ fn tc134_checked_v2_retains_static_refund_provenance() {
 #[trace("FR-048-AC-6", "FR-048-AC-7", "TC-134")]
 #[test]
 fn tc134_attempt_bounds_and_provenance_mutations_are_checked() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for count in ["1", "18446744073709551615"] {
         let source = tc134_source()
             .replace(
@@ -420,6 +421,7 @@ fn tc134_attempt_bounds_and_provenance_mutations_are_checked() {
          model M = \"acme/orders\";\n{overflow}\n"
     );
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "tc134-overflow"),
         "tc134.native",
         overflow_unit.as_bytes(),

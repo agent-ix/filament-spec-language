@@ -147,6 +147,7 @@ pub fn replay_request(
             .map_err(|error| format!("function name: {error:?}"))?])
         .map_err(|error| format!("qualified function name: {error:?}"))?;
     let site = fsl_replay::call_site(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("bench", "package"),
         fsl_replay::CallSiteUnit::new("package", "package.native", unit.as_bytes()),
         fixture.documents.iter().map(Vec::as_slice),

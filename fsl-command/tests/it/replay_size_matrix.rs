@@ -27,6 +27,51 @@ struct CompilePhaseTimes {
     retained_counts: fsl_package::test_support::S4RetainedCounts,
 }
 
+#[derive(Default)]
+struct EmitterProbeStats {
+    phases: fsl_package::test_support::S4PhaseTimes,
+    retained: fsl_package::test_support::S4RetainedCounts,
+    starts: Vec<(fsl_package::test_support::S4Phase, Instant)>,
+}
+
+impl EmitterProbeStats {
+    fn record(&mut self, event: fsl_package::test_support::EmitProbeEvent<'_>) {
+        use fsl_package::test_support::{EmitProbeEvent as E, S4Phase as P};
+        match event {
+            E::RetainedCounts(value) => self.retained = fsl_package::test_support::S4RetainedCounts {
+                graph_node_count: value.graph_node_count,
+                exact_declaration_count: value.exact_declaration_count,
+                exact_field_count: value.exact_field_count,
+                keep_nodes: value.keep_nodes,
+                document_node_count: value.document_node_count,
+            },
+            E::PhaseStarted(phase) => self.starts.push((phase, Instant::now())),
+            E::PhaseFinished(phase) => {
+                if let Some(at) = self.starts.iter().rposition(|(started, _)| *started == phase) {
+                    let (_, started) = self.starts.remove(at);
+                    let elapsed = started.elapsed().as_micros();
+                    let target = match phase {
+                        P::PreLockGraphTemporal => &mut self.phases.pre_lock_graph_temporal_us,
+                        P::Lock => &mut self.phases.lock_us,
+                        P::Inspection => &mut self.phases.inspection_us,
+                        P::Index => &mut self.phases.index_us,
+                        P::ProducerTemporalClaimTerm => &mut self.phases.producer_temporal_claim_term_us,
+                        P::SourceRequirementOperand => &mut self.phases.source_requirement_operand_us,
+                        P::FinalEncode => &mut self.phases.final_encode_us,
+                        P::RetainedPostEncode => &mut self.phases.retained_post_encode_us,
+                        P::RetainedSummary => &mut self.phases.retained_summary_us,
+                        P::RetainedDisposition => &mut self.phases.retained_disposition_us,
+                        P::RetainedEmissionAssembly => &mut self.phases.retained_emission_assembly_us,
+                        P::RetainedIdentitySelection => &mut self.phases.retained_identity_selection_us,
+                    };
+                    *target = target.saturating_add(elapsed);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn unlimited_scalar_limits() -> filament_exact::ScalarLimits {
     filament_exact::ScalarLimits {
         integer_bits: u64::MAX,
@@ -99,14 +144,22 @@ fn package_bytes(
         .expect("qualified function name");
     let site = fsl_replay::locate_in_checked(&checked, "qsl-3570", &name)
         .expect("the function site is located");
-    fsl_package::test_support::reset_s4_phase_times();
+    let mut probe_stats = EmitterProbeStats::default();
+    let mut observer = |event: fsl_package::test_support::EmitProbeEvent<'_>| probe_stats.record(event);
+    let mut probe = fsl_package::test_support::EmissionProbe::new(&mut observer);
     let package_started = Instant::now();
-    let emitted = spine::package(&checked, limits.package, &Cancel::new())
+    let emitted = spine::package_with_temporal_selections_and_probe(
+        &checked,
+        &[],
+        limits.package,
+        &Cancel::new(),
+        &mut probe,
+    )
         .expect("the checked package emits")
         .into_value();
     let package_emit_ms = package_started.elapsed().as_millis();
-    let emitter = fsl_package::test_support::s4_phase_times();
-    let retained_counts = fsl_package::test_support::s4_retained_counts();
+    let emitter = probe_stats.phases;
+    let retained_counts = probe_stats.retained;
     (
         emitted.package().bytes().to_vec(),
         site,

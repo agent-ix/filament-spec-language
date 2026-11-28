@@ -50,7 +50,9 @@ fn byte_strings() -> BoxedStrategy<Vec<u8>> {
 }
 
 fn parse(bytes: &[u8]) -> Result<ParsedSource, ()> {
+    let context = fsl_cst::ParserContext::new();
     fsl_cst::parse(
+        &context,
         SourceIdentity::new("agent-ix", "source-bytes"),
         "generated.native",
         bytes,

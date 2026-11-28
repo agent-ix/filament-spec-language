@@ -1138,11 +1138,14 @@ mod tests {
         (code.code(), code.cause())
     }
 
-    fn reader_refusal(code: Code, cause: Option<&str>) -> PackageAdmissionRefusal {
+    fn reader_refusal(
+        code: Code,
+        cause: Option<filament_contract_model::CheckedPackageRefusalCause>,
+    ) -> PackageAdmissionRefusal {
         PackageAdmissionRefusal {
             limit: None,
             code,
-            cause: cause.map(str::to_owned),
+            cause,
             pointer: None,
             identity: None,
             host_allocation_failure: None,
@@ -1196,7 +1199,10 @@ mod tests {
             settled(&Unavailable::Refused(none)),
             ("invalid_package", "invalid-value")
         );
-        let named = reader_refusal(Code::InvalidPackage, Some("ambiguous-name"));
+        let named = reader_refusal(
+            Code::InvalidPackage,
+            Some(filament_contract_model::CheckedPackageRefusalCause::AmbiguousName),
+        );
         assert_eq!(
             settled(&Unavailable::Refused(named)),
             ("invalid_package", "ambiguous-name")

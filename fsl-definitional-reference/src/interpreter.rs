@@ -635,6 +635,59 @@ impl ReferenceClockState {
     }
 }
 
+impl ReferenceClockState {
+    /// Waits `delay`, then fires `operation`: every checked guard of the
+    /// operation holds, its zero resets apply, and every checked time
+    /// invariant holds after the wait and after the resets. `None` means the
+    /// step is not enabled. Invariants are conjunctions of single-clock
+    /// bounds, so they are convex in time and checking the wait's endpoint
+    /// covers every instant of it.
+    pub fn fire(
+        &self,
+        model: &TimedModel,
+        delay: &Rational,
+        operation: &str,
+    ) -> Result<Option<Self>, ReferenceRefusal> {
+        let waited = self.delay(delay)?;
+        if !waited.holds_every_invariant(model)? {
+            return Ok(None);
+        }
+        let mut seen = false;
+        for (index, guard) in model.guards().iter().enumerate() {
+            if guard.operation().declaration.name() == operation {
+                seen = true;
+                if !waited.satisfies_guard(model, index)? {
+                    return Ok(None);
+                }
+            }
+        }
+        if !seen
+            && !model
+                .resets()
+                .iter()
+                .any(|reset| reset.operation().declaration.name() == operation)
+        {
+            return Err(unsupported("operation without checked clock clauses"));
+        }
+        let mut after = waited;
+        for (index, reset) in model.resets().iter().enumerate() {
+            if reset.operation().declaration.name() == operation {
+                after = after.apply_zero_resets(model, index)?;
+            }
+        }
+        Ok(after.holds_every_invariant(model)?.then_some(after))
+    }
+
+    fn holds_every_invariant(&self, model: &TimedModel) -> Result<bool, ReferenceRefusal> {
+        for index in 0..model.invariants().len() {
+            if !self.satisfies_invariant(model, index)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 fn clock_comparison(
     value: &Rational,
     operator: fsl_semantics::check::ClockOp,

@@ -140,7 +140,8 @@ const GUARDED: &str = "language \"ix:native\" edition \"1-draft\";\n\
     function q using v(a: Integer, b: Integer): Integer pure { if b != 0 then a div b else 0 }\n";
 
 fn guarded_package() -> CheckedPackage {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("filament", "guarded.native"),
         "guarded.native",
         GUARDED.as_bytes(),

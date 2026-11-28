@@ -9,7 +9,8 @@ use ix_trace_rs::trace;
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n";
 
 fn parse(text: &str) -> fsl_cst::ParsedSource {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity {
             authority: "test".into(),
             identity: "test:cst-identity".into(),

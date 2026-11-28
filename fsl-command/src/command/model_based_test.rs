@@ -7,8 +7,8 @@ use serde_json::Value;
 use fsl_foundation::Code;
 
 use super::{
-    package_name, wire, FormalSource, Intake, PreparedModelBasedTestRun, PreparedRun, Result,
-    RunCause,
+    FormalSource, Intake, PreparedModelBasedTestRun, PreparedRun, Result, RunCause, package_name,
+    wire,
 };
 
 /// Limits and selection admitted by the direct model-based test member.
@@ -433,7 +433,11 @@ pub(super) fn prepare(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = super::package_input_from_selected_models(&request.models, &domain_sources)?;
+    let packages = super::package_input_from_selected_models(
+        intake.parser_context(),
+        &request.models,
+        &domain_sources,
+    )?;
     let libraries = request
         .libraries
         .iter()
@@ -485,7 +489,7 @@ pub(super) fn prepare(
         path: source.source().path(),
         bytes: source.source().text().as_bytes(),
     };
-    let parsed = fsl_replay::spine::parse_selecting_extensions(
+    let parsed = fsl_replay::spine::parse_selecting_extensions_context(
         &parse_request,
         fsl_replay::spine::ProfileCatalogInput {
             catalog: &extension_catalog,
@@ -493,6 +497,7 @@ pub(super) fn prepare(
         },
         limits.source,
         &cancel,
+        intake.parser_context(),
     )
     .map_err(failure)?
     .into_value();

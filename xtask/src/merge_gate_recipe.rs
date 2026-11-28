@@ -69,6 +69,7 @@ struct TestSelector {
     timed: bool,
     threads: Option<usize>,
     no_match_is_note: bool,
+    features: Vec<String>,
 }
 
 #[derive(Default)]
@@ -1225,6 +1226,9 @@ impl TestSelector {
         if self.package == "fsl-semantics" && matches!(&self.target, TestTarget::Integration(_)) {
             arguments.extend(["--features".to_owned(), "test-support".to_owned()]);
         }
+        if !self.features.is_empty() {
+            arguments.extend(["--features".to_owned(), self.features.join(",")]);
+        }
         match &self.target {
             TestTarget::Library => arguments.push("--lib".to_owned()),
             TestTarget::Integration(name) => {
@@ -1631,6 +1635,7 @@ fn run_with_verified_main(
         output.push_str("NO CARGO: spec-only change.\n");
         return Ok(output);
     }
+    apply_required_features(workspace_root, &mut recipe, runner)?;
     if preflight_requested {
         let selectors = recipe.selectors.iter().cloned().collect::<Vec<_>>();
         let binaries = build_test_binaries(workspace_root, &selectors, runner)?;
@@ -1660,8 +1665,8 @@ fn run_with_verified_main(
             }
         }
     }
-    for target in compile_targets(&recipe) {
-        output.push_str(&format!("{}\n", no_run_command(&target)));
+    for (target, features) in compile_targets(&recipe) {
+        output.push_str(&format!("{}\n", no_run_command(&target, &features)));
     }
     for selector in &recipe.selectors {
         output.push_str(&format!("{}\n", selector.display()));
@@ -1959,6 +1964,7 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
                     timed: false,
                     threads: None,
                     no_match_is_note: false,
+                    features: Vec::new(),
                 },
             );
         }
@@ -2075,6 +2081,7 @@ fn apply_rule(workspace_root: &Path, path: &str, rule: &Rule, recipe: &mut Recip
                     timed: false,
                     threads: rule.threads,
                     no_match_is_note: false,
+                    features: Vec::new(),
                 },
             ),
             LibRule::NamedModules => add_named_library_modules(workspace_root, recipe, package)?,
@@ -2549,6 +2556,7 @@ fn add_library(recipe: &mut Recipe, package: &str, filter: String, no_match_is_n
             timed: false,
             threads: None,
             no_match_is_note,
+            features: Vec::new(),
         },
     );
 }
@@ -2567,6 +2575,7 @@ fn add_package_replay_controls(recipe: &mut Recipe) {
             timed: false,
             threads: None,
             no_match_is_note: true,
+            features: Vec::new(),
         },
     );
 }
@@ -2671,6 +2680,7 @@ fn add_integration_target(
             timed: false,
             threads: None,
             no_match_is_note: false,
+            features: Vec::new(),
         },
     );
 }
@@ -2687,20 +2697,95 @@ fn add_large_input(recipe: &mut Recipe, input: &LargeInput) {
             timed: true,
             threads: Some(1),
             no_match_is_note: false,
+            features: Vec::new(),
         },
     );
 }
 
-fn compile_targets(recipe: &Recipe) -> BTreeSet<(String, TestTarget)> {
+fn compile_targets(recipe: &Recipe) -> BTreeMap<(String, TestTarget), Vec<String>> {
     recipe
         .selectors
         .iter()
-        .map(|selector| (selector.package.clone(), selector.target.clone()))
+        .map(|selector| {
+            (
+                (selector.package.clone(), selector.target.clone()),
+                selector.features.clone(),
+            )
+        })
         .collect()
 }
 
-fn no_run_command(target: &(String, TestTarget)) -> String {
+/// The cargo features a `cargo test` command must enable to build `target`,
+/// read from the `required-features` of the matching `[[test]]` target in
+/// `cargo metadata` output. Library targets declare none.
+fn target_required_features(
+    metadata: &serde_json::Value,
+    package: &str,
+    target: &TestTarget,
+) -> Vec<String> {
+    let TestTarget::Integration(name) = target else {
+        return Vec::new();
+    };
+    let features = metadata["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|candidate| candidate["name"].as_str() == Some(package))
+        .flat_map(|candidate| candidate["targets"].as_array().into_iter().flatten())
+        .filter(|candidate| {
+            candidate["name"].as_str() == Some(name)
+                && candidate["kind"]
+                    .as_array()
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind == "test"))
+        })
+        .flat_map(|candidate| {
+            candidate["required-features"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|feature| feature.as_str().map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    features.into_iter().collect()
+}
+
+fn apply_required_features(
+    workspace_root: &Path,
+    recipe: &mut Recipe,
+    runner: &dyn CommandRunner,
+) -> Result<()> {
+    if recipe.selectors.is_empty() {
+        return Ok(());
+    }
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let arguments = os_args(&["metadata", "--no-deps", "--format-version", "1"]);
+    let output = runner
+        .run(workspace_root, &cargo, &arguments)
+        .map_err(|error| Error::MergeGateRecipe(format!("cannot run cargo metadata: {error}")))?;
+    if !output.success {
+        return Err(Error::MergeGateRecipe(format!(
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    let metadata = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .map_err(|error| Error::MergeGateRecipe(format!("cargo metadata is not JSON: {error}")))?;
+    recipe.selectors = std::mem::take(&mut recipe.selectors)
+        .into_iter()
+        .map(|mut selector| {
+            selector.features =
+                target_required_features(&metadata, &selector.package, &selector.target);
+            selector
+        })
+        .collect();
+    Ok(())
+}
+
+fn no_run_command(target: &(String, TestTarget), features: &[String]) -> String {
     let mut command = format!("cargo test --locked -p {}", target.0);
+    if !features.is_empty() {
+        command.push_str(&format!(" --features {}", features.join(",")));
+    }
     match &target.1 {
         TestTarget::Library => command.push_str(" --lib"),
         TestTarget::Integration(name) => command.push_str(&format!(" --test {name}")),
@@ -3164,6 +3249,22 @@ fn build_test_binaries(
                 }
             }
         }
+        let features = package_selectors
+            .iter()
+            .flat_map(|selector| selector.features.iter())
+            .collect::<BTreeSet<_>>();
+        if !features.is_empty() {
+            arguments.extend([
+                OsString::from("--features"),
+                OsString::from(
+                    features
+                        .into_iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+            ]);
+        }
         if package == "fsl-semantics"
             && package_selectors
                 .iter()
@@ -3382,6 +3483,13 @@ mod tests {
                     || (is_git
                         && args.first().is_some_and(|arg| arg == "merge-base")
                         && self.merge_fails);
+            if !is_git && args.first().is_some_and(|arg| arg == "metadata") {
+                return Ok(ProcessOutput {
+                    success: true,
+                    stdout: b"{\"packages\":[]}".to_vec(),
+                    stderr: Vec::new(),
+                });
+            }
             if !is_git && args.contains(&"--no-run".to_owned()) {
                 let package = args
                     .windows(2)
@@ -3487,6 +3595,7 @@ mod tests {
             timed: false,
             threads: None,
             no_match_is_note: false,
+            features: Vec::new(),
         }
     }
 
@@ -4289,7 +4398,10 @@ mod tests {
             .calls
             .borrow()
             .iter()
-            .all(|(program, _)| program == "git"));
+            .all(|(program, arguments)| program == "git"
+                || arguments
+                    .first()
+                    .is_some_and(|argument| argument == "metadata")));
     }
 
     #[test]
@@ -4327,6 +4439,7 @@ mod tests {
             timed: false,
             threads: None,
             no_match_is_note: false,
+            features: Vec::new(),
         };
         let recipe = Recipe {
             selectors: BTreeSet::from([
@@ -4360,6 +4473,9 @@ mod tests {
                 "cargo test --locked -p fsl-analyze --test it -- alpha\n",
                 "cargo test --locked -p fsl-analyze --test it -- beta\n",
                 "cargo test --locked -p fsl-command --test it -- command\n",
+                "cargo fmt --all -- --check\n",
+                "cargo run --locked -p xtask -- string-edge\n",
+                "cargo run --locked -p xtask -- canonical-types\n",
                 "cargo check --locked --workspace --all-targets\n",
             )
         );
@@ -4424,6 +4540,7 @@ mod tests {
                 timed: false,
                 threads: None,
                 no_match_is_note: true,
+                features: Vec::new(),
             }]),
             notes: BTreeSet::new(),
         };
@@ -4446,6 +4563,9 @@ mod tests {
                 "# PR head fixture-head; origin/main fixture-main; merge-base fixture-base\n",
                 "OVERLAP: none\n",
                 "VERDICT: ACCEPT (recipe paths do not overlap main changes)\n",
+                "cargo fmt --all -- --check\n",
+                "cargo run --locked -p xtask -- string-edge\n",
+                "cargo run --locked -p xtask -- canonical-types\n",
                 "NOTE: no named tests match the local module filter Some(\"missing_local_module::\") in fsl-analyze\n",
                 "cargo check --locked --workspace --all-targets\n",
             )
@@ -4692,6 +4812,64 @@ mod tests {
             .all(|selector| selector.filter.is_some()));
     }
 
+    struct MetadataRunner<'a> {
+        inner: &'a FakeRunner,
+    }
+
+    impl CommandRunner for MetadataRunner<'_> {
+        fn run(
+            &self,
+            cwd: &Path,
+            program: &OsStr,
+            arguments: &[OsString],
+        ) -> std::io::Result<ProcessOutput> {
+            if arguments
+                .first()
+                .is_some_and(|argument| argument == "metadata")
+            {
+                let output = Command::new(program)
+                    .current_dir(cwd)
+                    .args(arguments)
+                    .output()?;
+                return Ok(ProcessOutput {
+                    success: output.status.success(),
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                });
+            }
+            self.inner.run(cwd, program, arguments)
+        }
+    }
+
+    #[test]
+    fn recipe_emits_required_features_of_test_targets() {
+        let recipe = plan(workspace_root(), &["fsl-source/tests/it/quire_source.rs"]);
+        let fake = FakeRunner::new();
+        let runner = MetadataRunner { inner: &fake };
+        let output = run_with_verified_main(
+            workspace_root(),
+            &[OsString::from("fsl-source/tests/it/quire_source.rs")],
+            &runner,
+            recipe,
+            MainCheck {
+                head: "h".to_owned(),
+                main: "m".to_owned(),
+                merge_base: "b".to_owned(),
+                overlaps: BTreeSet::new(),
+            },
+        )
+        .expect("recipe");
+        assert!(
+            output.contains(
+                "cargo test --locked -p fsl-source --features quire-extraction --test it --no-run\n"
+            ),
+            "{output}"
+        );
+        for line in output.lines().filter(|line| line.contains("-p fsl-source")) {
+            assert!(line.contains("--features quire-extraction"), "{line}");
+        }
+    }
+
     #[test]
     fn semantics_integration_commands_enable_test_support() {
         let source_objects = plan(
@@ -4851,6 +5029,7 @@ mod tests {
             timed: false,
             threads: None,
             no_match_is_note: false,
+            features: Vec::new(),
         };
         assert_eq!(
             whole.command(true),

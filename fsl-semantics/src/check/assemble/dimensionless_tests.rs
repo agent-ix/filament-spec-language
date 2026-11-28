@@ -22,6 +22,7 @@ use ix_trace_rs::trace;
 )]
 #[test]
 fn source_assembly_keeps_empty_derived_dimension_dimensionless() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = concat!(
         "language \"ix:native\" edition \"1-draft\";\n",
         "profile v = \"filament.value.complete/v1\";\n",
@@ -31,7 +32,7 @@ fn source_assembly_keeps_empty_derived_dimension_dimensionless() {
         "unit one : N = rational(1, 1);\n",
         "function dimensions using v(l: Quantity<m>, n: Quantity<one>): Boolean pure { true }\n",
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "dimensionless-derived-unit"),
         "dimensionless.native",
         source.as_bytes(),

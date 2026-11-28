@@ -700,14 +700,12 @@ fn a_protocol_subject_refuses_its_bindings() {
 #[test]
 #[trace("TC-521", "FR-126-AC-26")]
 fn protocol_refuses_at_max_states_before_settling_the_crossing_initial_state() {
-    use fsl_eval::simulation::protocol::constructed_initial_states;
     use fsl_replay::{IncompleteCause, ModelCheckLimit, ReachedLimit};
 
     for (starts, constructed) in [([0, 1, 2, 3], 1), ([0, 0, 1, 2], 1)] {
         let case = Case::new(&fill_unit("self.v = 0", ""), &starts);
         let mut limits = ModelCheckLimits::default();
         limits.limits.max_states = 1;
-        let before = constructed_initial_states();
         let outcome = check_protocol(
             ProtocolCheckRequest {
                 temporal_clock_selections: &[],
@@ -739,7 +737,7 @@ fn protocol_refuses_at_max_states_before_settling_the_crossing_initial_state() {
             "{outcome:?}"
         );
         assert_eq!(
-            constructed_initial_states() - before,
+            outcome.stats().constructed_protocol_initial_states,
             constructed,
             "{starts:?}"
         );
@@ -751,18 +749,16 @@ fn protocol_refuses_at_max_states_before_settling_the_crossing_initial_state() {
 #[test]
 #[trace("TC-521", "FR-126-AC-26")]
 fn direct_reachability_refuses_before_settling_the_first_initial_state() {
-    use fsl_eval::simulation::protocol::constructed_initial_states;
 
     let case = Case::new(&fill_unit("self.v <= 1", ""), &[0]);
     let subject = case.subject("Fill");
     let system = sc_system(&subject);
-    let before = constructed_initial_states();
     let refusal = system
         .reachable(NonZeroUsize::new(1).expect("one worker"), 0)
         .expect_err("a nonempty initial set exceeds a zero-state budget");
 
     assert_eq!(refusal, ReachRefusal::Limit(Limit::States(0)));
-    assert_eq!(constructed_initial_states() - before, 0);
+    assert_eq!(system.constructed_initial_count(), 0);
 }
 
 /// Part of FR-205-AC-4 (TC-650): two initial snapshots give two initial

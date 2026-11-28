@@ -216,6 +216,7 @@ pub fn check_with_profiles(
     profiles: &str,
     declarations: &str,
 ) -> Result<Checked, Vec<Refused>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = document(archive);
     let packages = package_input([document.as_slice()]).unwrap();
     let text = format!(
@@ -228,6 +229,7 @@ pub fn check_with_profiles(
          {declarations}\n",
     );
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-1076"),
         "tc-1076.native",
         text.as_bytes(),

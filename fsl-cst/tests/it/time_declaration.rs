@@ -8,8 +8,9 @@ use ix_trace_rs::trace;
 pub(super) const PREFIX: &str = "language \"ix:native\" edition \"1-draft\";\nprofile p = \"filament.value.complete/v1\";\n// durée\n";
 
 pub(super) fn accepts(declaration: &str, production: Production) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{PREFIX}{declaration}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:temporal-near-misses"),
         "near-misses.native",
         text.as_bytes(),
@@ -46,8 +47,9 @@ pub(super) fn refuses(declaration: &str, token: &str, expected: &str) {
 }
 
 pub(super) fn refuses_at(declaration: &str, token: &str, width: usize, expected: &str) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{PREFIX}{declaration}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:temporal-near-misses"),
         "near-misses.native",
         text.as_bytes(),

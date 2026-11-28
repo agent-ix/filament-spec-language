@@ -538,8 +538,13 @@ impl Totals {
         }
     }
 
+    #[implements("FR-126-AC-26")]
     fn stats(&self) -> RunStats {
         RunStats {
+            #[cfg(feature = "test-support")]
+            generated_model_initial_states: 0,
+            #[cfg(feature = "test-support")]
+            constructed_protocol_initial_states: 0,
             product_states: self.states,
             product_edges: self.edges,
             stutter_edges: 0,

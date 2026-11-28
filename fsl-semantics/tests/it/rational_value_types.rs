@@ -430,11 +430,12 @@ fn an_unbounded_ratio_refuses_as_a_tuple_position_and_a_variant_payload() {
 }
 
 fn source_refusals(declarations: &str) -> Result<(), Vec<(Code, Option<String>)>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{declarations}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "rational-types"),
         "rational-types.native",
         source.as_bytes(),

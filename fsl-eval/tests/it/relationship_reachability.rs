@@ -112,6 +112,7 @@ fn declared_end(role: &str, multiplicity: Option<Multiplicity>) -> DeclaredEnd {
 /// `orders`, the operation `reroute(target)` and `Order/next` and
 /// `Order/link`, checked with the four clauses of [`CLAUSES`].
 fn orders_package(shape: Shape, declarations: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let relationship = |relationship_key, direction, source: DeclaredEnd, target: DeclaredEnd| {
         DomainPackageRecord::Relationship(RelationshipRecord {
             key: relationship_key,
@@ -216,7 +217,7 @@ fn orders_package(shape: Shape, declarations: &str) -> CheckedPackage {
         ModelNormalizationLimits::UNLIMITED,
     )
     .expect("the model admits");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-1048"),
         "unit.native",
         unit.as_bytes(),

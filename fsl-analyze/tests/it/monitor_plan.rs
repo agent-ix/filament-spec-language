@@ -84,6 +84,7 @@ pub(crate) fn checked_clause_on(
     let source = SourceIdentity::new("agent-ix", "monitor-plan");
     let unit = unit_source(formula, extra, real_time, activation);
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         source.clone(),
         "monitor.native",
         unit.as_bytes(),
@@ -99,7 +100,11 @@ pub(crate) fn checked_clause_on(
     )
     .expect("model admission")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(
+            &fsl_cst::ParserContext::new(),
+            text,
+            fsl_cst::Limits::default(),
+        )
     })
     .expect("operation clauses parse");
     let mut declarations = PackageDeclarations::assemble(
@@ -918,6 +923,7 @@ fn position_counted(profile: &str, formula: &str) -> CheckedPackage {
         .replace("filament.temporal.timed/v1", profile)
         .replace("clock \"model-time\"", "clock \"model-steps\"");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         source,
         "monitor.native",
         unit.as_bytes(),
@@ -932,7 +938,11 @@ fn position_counted(profile: &str, formula: &str) -> CheckedPackage {
     )
     .expect("model admission")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(
+            &fsl_cst::ParserContext::new(),
+            text,
+            fsl_cst::Limits::default(),
+        )
     })
     .expect("operation clauses parse");
     let graph = PackageDeclarations::assemble(

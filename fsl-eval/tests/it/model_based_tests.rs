@@ -17,7 +17,8 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 #[trace("TC-2102", "FR-752-AC-3")]
 #[test]
 fn a_model_based_test_plan_preserves_step_clause_domain_and_case_bound() {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         UNIT.as_bytes(),

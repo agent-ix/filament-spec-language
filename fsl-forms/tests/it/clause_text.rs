@@ -7,10 +7,11 @@ use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 fn unit_clause_body(body: &str) -> Expression {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile p = \"filament.value.complete/v1\";\npre Clause using p on M::T::op {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -30,8 +31,9 @@ fn unit_clause_body(body: &str) -> Expression {
 #[trace("FR-103-AC-8", "TC-993")]
 #[test]
 fn clause_text_parses_as_a_unit_clause_body() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for text in ["not self.placed", "self.placed and not pre(self.placed)"] {
-        let parsed = parse_clause_text(text, fsl_cst::Limits::default()).expect("parses");
+        let parsed = parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default()).expect("parses");
         assert_eq!(parsed, unit_clause_body(text), "{text}");
     }
 }
@@ -41,12 +43,13 @@ fn clause_text_parses_as_a_unit_clause_body() {
 #[trace("FR-103-AC-8", "TC-993")]
 #[test]
 fn clause_text_that_is_not_one_expression_refuses() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     assert!(matches!(
-        parse_clause_text("self.placed and", fsl_cst::Limits::default()),
+        parse_clause_text(&qsl3309_parser_context, "self.placed and", fsl_cst::Limits::default()),
         Err(ClauseTextRefusal::Source(_) | ClauseTextRefusal::Forms(_))
     ));
     assert!(matches!(
-        parse_clause_text(
+        parse_clause_text(&qsl3309_parser_context,
             "true } pre Other using p on M::T::op { false",
             fsl_cst::Limits::default()
         ),

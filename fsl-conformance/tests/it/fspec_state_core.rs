@@ -526,8 +526,7 @@ fn check_unit(unit: &str, model: Option<String>) -> Result<Observed, String> {
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
     let identity = SourceIdentity::new("fspec", "ix://example/config/source/boundary");
-    let parsed = match spine::parse(
-        &ParseRequest {
+    let parsed = match spine::parse(&ParseRequest {
             source: &identity,
             path: "boundary.native",
             bytes: unit.as_bytes(),

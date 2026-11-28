@@ -29,7 +29,8 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn checked_source_object(
     source: &[u8],
 ) -> (CheckedPackage, filament_contract_model::CheckedPackageV2) {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:public-source-object-rows"),
         "program.native",
         source,

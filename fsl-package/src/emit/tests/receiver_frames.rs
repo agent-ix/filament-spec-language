@@ -804,6 +804,7 @@ fn a_scope_or_a_scoped_delete_changes_the_node_id() {
 #[trace("TC-573", "FR-154-AC-4")]
 #[test]
 fn the_two_scopes_of_one_field_differ_in_the_node_and_both_at_once_refuse_at_intake() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_checked::key::DeclarationKey;
     use fsl_semantics::model::intake::{admit_unit, UnitIntakeCause};
     use fsl_semantics::model::refusal::ModelRefusalCause;
@@ -821,6 +822,7 @@ fn the_two_scopes_of_one_field_differ_in_the_node_and_both_at_once_refuse_at_int
     });
     let UnitParts { unit, packages, .. } = unit_of(&["own"], &[("own", both)]);
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:tc-573"),
         "program.native",
         unit.as_bytes(),

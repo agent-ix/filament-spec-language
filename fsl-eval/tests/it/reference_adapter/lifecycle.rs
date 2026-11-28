@@ -679,11 +679,12 @@ pub(crate) fn a_charging_body_runs_each_transition_once_and_keeps_the_childs_los
 /// `f(): Float32[nearest-even]` over two NaN constants, whose sum records an
 /// invalid-operation loss.
 fn loss_package() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function f using v(): Float32[nearest-even] pure \
          { float32(bits: 0x7fc00012) + float32(bits: 0xff800021) }\n";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

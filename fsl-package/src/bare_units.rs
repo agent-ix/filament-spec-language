@@ -539,6 +539,7 @@ mod tests {
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}"
         );
         let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("fixture", name),
             "unit.native",
             source.as_bytes(),

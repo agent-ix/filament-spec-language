@@ -846,6 +846,7 @@ fn conflicting_long_run_identity_refuses_before_key_enumeration() {
 #[trace("TC-1401", "FR-201-AC-29")]
 #[test]
 fn conflicting_identity_precedes_source_provision_and_compilation() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_replay::{
         check_probability_certificate_source, ByteProvision, DefinitionSourceRef,
         ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
@@ -872,6 +873,7 @@ fn conflicting_identity_precedes_source_provision_and_compilation() {
     };
     let check = |certificate: &[u8]| {
         check_probability_certificate_source(
+            &qsl3309_parser_context,
             ProbabilitySourceRequest {
                 source: &source,
                 expected_source: &expected,

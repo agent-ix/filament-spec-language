@@ -3669,11 +3669,12 @@ fn decimal_loss(loss: &ValueLoss) -> DecimalLoss {
 }
 
 fn observed(case: &SourceCase) -> Observation {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{}",
         case.declarations
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("qualification", "source"),
         "vector.native",
         source.as_bytes(),
@@ -4677,6 +4678,7 @@ fn qsl3060_members_have_explicit_source_qualification_status() {
 /// declarations the row names, in its adapted source.
 #[test]
 fn unit_graph_rows_retain_the_names_the_standard_states() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use TopologyRetained::{Scale, TargetName};
     let dimension = |name: &str| TopologyRetained::Dimension {
         name: name.to_owned(),
@@ -4711,7 +4713,7 @@ fn unit_graph_rows_retain_the_names_the_standard_states() {
              profile v = \"filament.value.complete/v1\";\n{}",
             case.declarations
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("qualification", "unit-names"),
             "vector.native",
             source.as_bytes(),

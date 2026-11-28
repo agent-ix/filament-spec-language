@@ -16,12 +16,13 @@ use ix_trace_rs::trace;
 use std::collections::BTreeSet;
 
 fn package() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("fsl-eval", "coverage.native");
     let bytes = b"language \"ix:native\" edition \"1-draft\";\n\
         profile v = \"filament.value.complete/v1\";\n\
         function inc using v(x: Int[0, 9]): Int[0, 10] pure { let y = x in y + 1 }\n\
         function calls_inc using v(x: Int[0, 9]): Int[0, 10] pure { inc(x) }\n";
-    let parsed = fsl_cst::parse(source, "coverage.native", bytes, fsl_cst::Limits::default())
+    let parsed = fsl_cst::parse(&qsl3309_parser_context, source, "coverage.native", bytes, fsl_cst::Limits::default())
         .expect("source parses");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let unit = build_unit(&parsed).expect("forms build");

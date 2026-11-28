@@ -1453,6 +1453,7 @@ impl AnalyzeRefusal {
         self.refusal_document().with_empty_analyze_members()
     }
 
+    #[implements("FR-110-AC-16")]
     fn refusal_document(&self) -> OutcomeDocument {
         match self {
             Self::EffectDecision(refusal) => {
@@ -1484,7 +1485,7 @@ impl AnalyzeRefusal {
                     if refusal.code == fsl_foundation::Code::MissingImport {
                         Some(refusal.catalog_cause())
                     } else {
-                        refusal.cause.as_deref()
+                        refusal.reader_cause()
                     },
                     refusal.code.as_str(),
                     None,

@@ -25,6 +25,7 @@ const NO_LOOP: &str =
 /// The unit over fixture R holding `declarations`, with the extra populations
 /// `extra`, and its text.
 fn unit(extra: &[(&str, &str)], declarations: &str) -> (String, DeclarationsOrRefusal) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let package = package(extra);
     let identity = package.model_selection.identity.clone();
     let text = format!(
@@ -41,7 +42,7 @@ fn unit(extra: &[(&str, &str)], declarations: &str) -> (String, DeclarationsOrRe
     )
     .expect("the model admits");
     let built = crate::model_operations::parse_and_build(&text);
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-1054"),
         "unit.native",
         text.as_bytes(),

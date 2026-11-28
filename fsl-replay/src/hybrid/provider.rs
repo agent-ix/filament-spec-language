@@ -15,12 +15,12 @@ use serde_json::Value;
 
 use super::{SolverBudget, SolverCoverage, SolverMethod, SolverOutcome, SolverResult, SolverStop};
 use crate::hybrid_replay::{
-    read_certificate, CertificateRefusal, Expect, ExpressionSite, HybridCertificate,
-    HybridCounterexample, RefusalCode, TermLocus,
+    CertificateRefusal, Expect, ExpressionSite, HybridCertificate, HybridCounterexample,
+    RefusalCode, TermLocus, read_certificate,
 };
 use crate::proof_result::{
-    read_plugin_basis, read_plugin_hybrid_counterexample_over, read_plugin_inconclusive_cause_over,
-    InconclusiveCause, PluginResultRefusal, ProofBasis, ValueFault,
+    InconclusiveCause, PluginResultRefusal, ProofBasis, ValueFault, read_plugin_basis,
+    read_plugin_hybrid_counterexample_over, read_plugin_inconclusive_cause_over,
 };
 
 /// One hybrid item's solve request (FR-750): the checked claim and the model
@@ -274,10 +274,12 @@ impl HybridAnswer {
                         // FSpec FR-193 admits only a `bounded-solver` or an
                         // `inductive-solver` basis on a hybrid claim.
                         _ => {
-                            return Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
-                                pointer: "/basis/type".to_owned(),
-                                cause: ValueFault::InvalidValue,
-                            }))
+                            return Err(HybridEntryRefusal::Entry(
+                                PluginResultRefusal::Malformed {
+                                    pointer: "/basis/type".to_owned(),
+                                    cause: ValueFault::InvalidValue,
+                                },
+                            ));
                         }
                     },
                 )
@@ -295,7 +297,7 @@ impl HybridAnswer {
                         return Err(HybridEntryRefusal::NotRead(spelling_of(
                             "inconclusive",
                             cause,
-                        )))
+                        )));
                     }
                 };
                 // An unclassified method over no coverage: the settlement of
@@ -327,7 +329,7 @@ impl HybridAnswer {
                         return Err(HybridEntryRefusal::NotRead(spelling_of(
                             "incomplete",
                             cause,
-                        )))
+                        )));
                     }
                 };
                 HybridVerdict::Solved(SolverResult {

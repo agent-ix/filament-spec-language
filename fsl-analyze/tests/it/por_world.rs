@@ -285,6 +285,7 @@ impl Fixture {
         objects: &[Obj],
         universes: &[(&str, &[&str])],
     ) -> Self {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let document = document(types, populations);
         let packages = package_input([document.as_slice()]).unwrap();
         let declared = clauses
@@ -305,7 +306,7 @@ impl Fixture {
              function Noop using v(): Boolean pure {{ true }}\n{}\n{declared}",
             contracts.join("\n"),
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("agent-ix", "por"),
             "por.native",
             text.as_bytes(),
@@ -321,7 +322,7 @@ impl Fixture {
         )
         .expect("the model selection admits")
         .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
         })
         .expect("the operation clauses parse");
         let graph = PackageDeclarations::assemble(

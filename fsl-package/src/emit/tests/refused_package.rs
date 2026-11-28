@@ -3,6 +3,7 @@
 //! refusal, never as a fault of a later step.
 
 use super::*;
+use crate::package_admission::{cause_spelling, CauseSpellingSerializer};
 use crate::PackageAdmissionRefusal;
 
 /// The emission of a package with one function, one member of whose wire
@@ -46,16 +47,22 @@ fn a_refused_read_carries_the_readers_code_cause_and_pointer() {
 #[test]
 #[trace("FR-286-AC-2")]
 fn a_refusal_spells_the_readers_cause_or_its_codes_default() {
-    let refusal = |code, cause: Option<&str>| PackageAdmissionRefusal {
-        limit: None,
-        code,
-        cause: cause.map(str::to_owned),
-        pointer: Some("/claim_names/2".to_owned()),
-        identity: None,
-        host_allocation_failure: None,
+    let refusal = |code, cause: Option<filament_contract_model::CheckedPackageRefusalCause>| {
+        PackageAdmissionRefusal {
+            limit: None,
+            code,
+            cause,
+            pointer: Some("/claim_names/2".to_owned()),
+            identity: None,
+            host_allocation_failure: None,
+        }
     };
     assert_eq!(
-        refusal(Code::InvalidPackage, Some("missing-member")).catalog_cause(),
+        refusal(
+            Code::InvalidPackage,
+            Some(filament_contract_model::CheckedPackageRefusalCause::MissingMember)
+        )
+        .catalog_cause(),
         "missing-member"
     );
     assert_eq!(
@@ -69,5 +76,38 @@ fn a_refusal_spells_the_readers_cause_or_its_codes_default() {
     assert_eq!(
         refusal(Code::MissingImport, None).catalog_cause(),
         "missing-selection"
+    );
+}
+
+/// The reader cause spelling is taken from the upstream enum serialization.
+#[trace("TC-3217", "FR-110-AC-16")]
+#[test]
+fn cause_spelling_matches_the_upstream_serialized_variant() {
+    use filament_contract_model::CheckedPackageRefusalCause as Cause;
+
+    for cause in [
+        Cause::MissingName,
+        Cause::OperationLawMismatch,
+        Cause::ClockReadOutsideConstraint,
+    ] {
+        let serialized = serde_json::to_value(cause).expect("the cause serializes");
+        assert_eq!(
+            cause_spelling(cause).expect("the cause is a unit variant"),
+            serialized
+                .as_str()
+                .expect("the cause serializes as a string")
+        );
+    }
+
+    #[derive(serde::Serialize)]
+    enum NotUnit {
+        Unit,
+        Wrapped(u8),
+    }
+    assert!(serde::Serialize::serialize(&NotUnit::Wrapped(1), CauseSpellingSerializer).is_err());
+    assert_eq!(
+        serde::Serialize::serialize(&NotUnit::Unit, CauseSpellingSerializer)
+            .expect("unit variants serialize"),
+        "Unit"
     );
 }

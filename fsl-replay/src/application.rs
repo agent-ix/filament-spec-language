@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-485: in-process checked-closure acquisition and application through the replay facade.
 
+use ix_trace_rs::implements;
+
 use filament_checked::node::NodeKind;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use filament_eval::{
     Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, LiveContext, Progress,
@@ -515,11 +516,13 @@ impl CheckedClosureHandle {
     }
 
     /// Create a fresh registry over the designated FSL adapter and leaf scheduler.
+    #[implements("FR-284-AC-4")]
     pub fn registry(&self) -> ApplicationRegistry {
         ApplicationRegistry {
             acquisition: Arc::clone(&self.acquisition),
             inner: Registry::new(PackageClosure::new(Arc::clone(&self.package))),
             host_bindings: BTreeSet::new(),
+            child_request_slot: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -882,10 +885,12 @@ pub struct ApplicationRegistry {
     acquisition: Arc<()>,
     inner: Registry<Adapter>,
     host_bindings: BTreeSet<NodeKey>,
+    child_request_slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
 impl ApplicationRegistry {
     /// Bind a generated body after checking acquisition identity.
+    #[implements("FR-284-AC-4")]
     pub fn register(
         &mut self,
         selection: &CallableSelection,
@@ -898,7 +903,10 @@ impl ApplicationRegistry {
         let admission = self.inner.register(
             selection.key.clone(),
             signature,
-            ChildRequestTrackingFactory(factory),
+            ChildRequestTrackingFactory {
+                factory,
+                child_request_slot: Arc::clone(&self.child_request_slot),
+            },
         );
         if admission == Admission::Accepted {
             self.host_bindings.insert(selection.key.clone());
@@ -910,6 +918,7 @@ impl ApplicationRegistry {
     ///
     /// The caller's `limits` are forwarded unchanged; set `held` when an
     /// enclosing application already owns live frames.
+    #[implements("FR-284-AC-4")]
     pub fn begin_call<'a>(
         &mut self,
         selection: &CallableSelection,
@@ -923,14 +932,23 @@ impl ApplicationRegistry {
         }
         let host_root = self.host_bindings.contains(&selection.key);
         let child_requested = Arc::new(AtomicBool::new(false));
-        self.inner
-            .begin_call(
-                selection.key.clone(),
-                arguments,
-                limits,
-                &environment.0,
-                meter,
-            )
+        *self
+            .child_request_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(Arc::clone(&child_requested));
+        let begun = self.inner.begin_call(
+            selection.key.clone(),
+            arguments,
+            limits,
+            &environment.0,
+            meter,
+        );
+        *self
+            .child_request_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        begun
             .map(|inner| CheckedApplicationSession {
                 inner,
                 host_root,
@@ -944,6 +962,7 @@ impl ApplicationRegistry {
     ///
     /// Use [`Self::begin_call`] when this call inherits a caller's bound or
     /// held live-occurrence count.
+    #[implements("FR-284-AC-4")]
     pub fn begin_call_default<'a>(
         &mut self,
         selection: &CallableSelection,
@@ -976,6 +995,7 @@ pub struct CheckedApplicationSession<'a> {
 
 impl<'a> CheckedApplicationSession<'a> {
     /// Take one leaf transition, consuming this session.
+    #[implements("FR-284-AC-4")]
     pub fn step(self) -> CheckedApplicationProgress<'a> {
         let host_root = self.host_root;
         let held = self.held;
@@ -983,7 +1003,6 @@ impl<'a> CheckedApplicationSession<'a> {
         // Every admitted frame charges at least one occurrence, so a count
         // above `held` proves the registered root was pushed successfully.
         let host_root_opened = host_root && self.inner.live_occurrences() > held;
-        let _active_request = ActiveChildRequest::enter(Arc::clone(&child_requested));
         match self.inner.step() {
             Progress::Runnable(inner) => CheckedApplicationProgress::Runnable(Self {
                 inner,
@@ -1010,55 +1029,47 @@ impl<'a> CheckedApplicationSession<'a> {
     }
 }
 
-struct ChildRequestTrackingFactory<F>(F);
+struct ChildRequestTrackingFactory<F> {
+    factory: F,
+    child_request_slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+}
 
 impl<F: BodyFactory> BodyFactory for ChildRequestTrackingFactory<F> {
+    #[implements("FR-284-AC-4")]
     fn begin(&self) -> Box<dyn Body> {
-        Box::new(ChildRequestTrackingBody(self.0.begin()))
+        let tracker = self
+            .child_request_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(Arc::clone);
+        Box::new(ChildRequestTrackingBody {
+            body: self.factory.begin(),
+            tracker,
+        })
     }
 }
 
-struct ChildRequestTrackingBody(Box<dyn Body>);
+struct ChildRequestTrackingBody {
+    body: Box<dyn Body>,
+    tracker: Option<Arc<AtomicBool>>,
+}
 
 impl Body for ChildRequestTrackingBody {
+    #[implements("FR-284-AC-4")]
     fn resume(
         &mut self,
         input: Resume,
         context: &mut LiveContext,
         meter: &mut Meter,
     ) -> Result<Transition, BodyFailure> {
-        let transition = self.0.resume(input, context, meter)?;
+        let transition = self.body.resume(input, context, meter)?;
         if matches!(&transition, Transition::Call(_)) {
-            ACTIVE_CHILD_REQUEST.with(|active| {
-                if let Some(tracker) = active.borrow().as_ref() {
-                    tracker.store(true, Ordering::Relaxed);
-                }
-            });
+            if let Some(tracker) = &self.tracker {
+                tracker.store(true, Ordering::Relaxed);
+            }
         }
         Ok(transition)
-    }
-}
-
-thread_local! {
-    // Body::resume has no session argument; this scoped tracker keeps child
-    // requests associated with the CheckedApplicationSession being stepped.
-    static ACTIVE_CHILD_REQUEST: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
-}
-
-struct ActiveChildRequest(Option<Arc<AtomicBool>>);
-
-impl ActiveChildRequest {
-    fn enter(tracker: Arc<AtomicBool>) -> Self {
-        let previous = ACTIVE_CHILD_REQUEST.with(|active| active.replace(Some(tracker)));
-        Self(previous)
-    }
-}
-
-impl Drop for ActiveChildRequest {
-    fn drop(&mut self) {
-        ACTIVE_CHILD_REQUEST.with(|active| {
-            active.replace(self.0.take());
-        });
     }
 }
 
@@ -1650,7 +1661,9 @@ mod tests {
         let name =
             crate::QualifiedName::new(vec![crate::Identifier::new("f").expect("identifier")])
                 .expect("function name");
+        let parser_context = fsl_cst::ParserContext::new();
         let site = crate::call_site(
+            &parser_context,
             identity("unit"),
             crate::CallSiteUnit::new("fixture", "unit.native", source.as_bytes()),
             [],

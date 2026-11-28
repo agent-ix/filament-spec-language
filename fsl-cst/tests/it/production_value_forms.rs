@@ -16,7 +16,8 @@ fn expression(body: &str) -> String {
 }
 
 fn parse(source: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:production-value-forms"),
         "production-value-forms.native",
         source.as_bytes(),

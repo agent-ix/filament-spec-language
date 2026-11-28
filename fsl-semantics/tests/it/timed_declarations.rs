@@ -861,6 +861,7 @@ const SELECTED_TIMED: &str = "dimension Time;\nunit ms : Time = rational(1, 1);\
 #[trace("TC-685", "FR-230-AC-7")]
 #[test]
 fn a_unit_without_the_timed_facet_refuses_every_timed_construct() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let declarations = admit_and_assemble_with_body(&document(), UNSELECTED_TIMED)
         .expect("S2 retains every grammar-valid timed form");
     let refusals = declarations
@@ -913,7 +914,7 @@ fn a_unit_without_the_timed_facet_refuses_every_timed_construct() {
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{clocks}"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "fr-230-ac-7"),
         "unit.native",
         text.as_bytes(),
@@ -1489,6 +1490,7 @@ pub(crate) fn assemble_selected_as(
     String,
     Result<fsl_semantics::check::PackageDeclarations, fsl_semantics::check::AssemblyRefusal>,
 ) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
     use fsl_semantics::model::intake::{admit_unit, package_input};
     let inputs = package_input(packages.iter().map(|(_, _, bytes)| bytes.as_slice())).unwrap();
@@ -1510,7 +1512,7 @@ pub(crate) fn assemble_selected_as(
         ModelNormalizationLimits::default(),
     )
     .unwrap_or_else(|refusal| panic!("I1 admits the packages: {refusal:?}"));
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new(authority, identity),
         "unit.native",
         text.as_bytes(),

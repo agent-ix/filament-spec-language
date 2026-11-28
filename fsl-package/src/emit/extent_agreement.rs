@@ -664,8 +664,10 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 /// `declarations` checked from source text through S1 to S4, emitted at
 /// its form spans and read back by IR's v2 reader.
 fn emit_text(declarations: &str) -> (CheckedPackage, Value, Box<CheckedPackageV2>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

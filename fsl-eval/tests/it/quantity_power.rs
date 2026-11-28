@@ -251,11 +251,12 @@ fn kernel_mode_evaluates_a_zero_base_under_a_negative_exponent_to_division_by_ze
 /// The checked-body expression of function `r2` in `functions`, read through
 /// S1 and S2 (the unit is not checked: Linked mode would refuse it).
 fn r2_body(functions: &str) -> fsl_forms::Expression {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{functions}"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

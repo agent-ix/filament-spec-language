@@ -84,6 +84,7 @@ const UNIT: &str = "dimension Time;\n\
 
 /// Compile `declarations` as one complete-V1 unit into a checked package.
 fn package_of(declarations: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let elements = SEQUENCE_ELEMENTS
         .iter()
         .map(ToString::to_string)
@@ -94,7 +95,7 @@ fn package_of(declarations: &str) -> CheckedPackage {
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{declarations}"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

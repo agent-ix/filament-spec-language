@@ -117,6 +117,7 @@ fn declared_end(
 /// Fixture **orders**: `Sys` holds Pumps (`parts`), a Pump sits in a Tank
 /// (`home`; `pump` from the Tank), `Part` is the supertype of Pump and Tank.
 fn orders_package(shape: Shape) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let relationship =
         |relationship_key: DeclarationKey, source: DeclaredEnd, target: DeclaredEnd| {
             DomainPackageRecord::Relationship(RelationshipRecord {
@@ -164,7 +165,7 @@ fn orders_package(shape: Shape) -> CheckedPackage {
         ModelNormalizationLimits::UNLIMITED,
     )
     .expect("the model admits");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-1034"),
         "unit.native",
         unit.as_bytes(),

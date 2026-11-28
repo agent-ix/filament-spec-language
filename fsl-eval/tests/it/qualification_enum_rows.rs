@@ -28,11 +28,12 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 fn source_declarations(body: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{body}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("qualification", "enum-row"),
         "enum-row.native",
         source.as_bytes(),

@@ -99,13 +99,14 @@ fn assemble_with(
     declarations: &str,
     unwritten: bool,
 ) -> (String, PackageDeclarations) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (profile, declarations) = match declarations.split_once('\n') {
         Some((first, rest)) if first.starts_with("profile ") => (format!("{first}\n"), rest),
         _ => (String::new(), declarations),
     };
     let header = HEADER.replacen("model M", &format!("{profile}model M"), 1);
     let text = format!("{header}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

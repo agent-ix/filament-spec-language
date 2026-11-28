@@ -259,6 +259,7 @@ struct Compiled {
 }
 
 fn compile(scenario: &Scenario) -> Result<Compiled, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let id = &scenario.id;
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -270,8 +271,7 @@ fn compile(scenario: &Scenario) -> Result<Compiled, String> {
     let identity = SourceIdentity::new("fspec", id);
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
-        &ParseRequest {
+    let parsed = spine::parse(&ParseRequest {
             source: &identity,
             path: "finite-window.native",
             bytes: text.as_bytes(),
@@ -281,7 +281,7 @@ fn compile(scenario: &Scenario) -> Result<Compiled, String> {
     )
     .map_err(|error| format!("{id}: parse: {error:?}"))?
     .into_value();
-    let cst = fsl_cst::parse(
+    let cst = fsl_cst::parse(&qsl3309_parser_context,
         identity,
         "finite-window.native",
         text.as_bytes(),

@@ -41,7 +41,8 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 #[trace("FR-091-AC-12", "FR-091-AC-13", "TC-399")]
 #[test]
 fn a_function_compiled_from_source_is_called_by_name() {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         UNIT.as_bytes(),
@@ -243,12 +244,13 @@ fn package_of(declarations: &str) -> CheckedPackage {
 
 /// A kernel package with the profile needed by the FR-403 division vector.
 fn package_with_truncating_division(declarations: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          {declarations}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -285,12 +287,13 @@ fn package_with_truncating_division(declarations: &str) -> CheckedPackage {
 }
 
 fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          {declarations}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -397,12 +400,13 @@ fn completes_true(package: &CheckedPackage, name: &str) -> bool {
 }
 
 fn operator_declarations(body: &str, parameters: &str, result: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function op using v({parameters}): {result} pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "division"),
         "division.native",
         text.as_bytes(),
@@ -709,6 +713,7 @@ fn complete_value_slash_promotes_integers_only_with_a_rational_context() {
 #[trace("FR-495-AC-6", "FSpec-TC-192")]
 #[test]
 fn state_only_and_complete_clause_slash_keep_the_rational_context_explicit() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let clauses = [
         ("invariant", "invariant I using v on O at current"),
         ("pre", "pre P using v on O::f"),
@@ -729,7 +734,7 @@ fn state_only_and_complete_clause_slash_keep_the_rational_context_explicit() {
                  object O {{ operation f(): Boolean; }}\n\
                  {clause} {{ {body} }}\n"
             );
-            let parsed = fsl_cst::parse(
+            let parsed = fsl_cst::parse(&qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("a", "state-division"),
                 "state-division.native",
                 text.as_bytes(),

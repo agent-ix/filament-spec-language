@@ -44,8 +44,9 @@ fn assemble(declarations: &str) -> (String, PackageDeclarations) {
 
 /// [`assemble`] under `header` in place of [`HEADER`].
 fn assemble_with(header: &str, declarations: &str) -> (String, PackageDeclarations) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{header}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -174,8 +175,9 @@ fn checks(declarations: &str) -> CheckedGraph {
 /// S1, S2 and the assembler over `declarations` (against
 /// [`m_actor_model`]), expecting the assembler to refuse.
 fn assembly_errors(declarations: &str) -> Vec<crate::check::AssemblyError> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

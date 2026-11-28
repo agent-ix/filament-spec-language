@@ -67,6 +67,7 @@ fn timestamped<R>(
     body: &str,
     inspect: impl FnOnce(&fsl_semantics::check::CheckedTemporalClause) -> R,
 ) -> R {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -75,7 +76,7 @@ fn timestamped<R>(
          unit ms : Time = rational(1, 1000) * s;\n\
          temporal C using t0 over (c: Quantity<ms>) clock \"events\" on origin {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -517,13 +518,14 @@ fn event_clause<R>(
     body: &str,
     inspect: impl FnOnce(&fsl_semantics::check::CheckedTemporalClause) -> R,
 ) -> R {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t0 = \"{EVENT}\";\n{prelude}\
          temporal C using t0 over ({over}) clock \"events\" on origin {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

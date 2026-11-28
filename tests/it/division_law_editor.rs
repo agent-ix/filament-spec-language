@@ -24,7 +24,7 @@ fn the_header_profile_catalog_admits_each_integer_division_law() {
              profile d = \"{law}\";\n\
              record Reading {{ datum: Integer; }}\n"
         );
-        let parsed = complete::parse_with_catalog(
+        let parsed = complete::parse_with_catalog(&complete::CompleteParser::new(),
             SourceIdentity::new("test", "test:law-editor"),
             "law.native",
             source.as_bytes(),

@@ -28,6 +28,7 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn a_declared_domain_is_built_through_the_facade_alone() {
     let name = QualifiedName::new(vec![Identifier::new("p").unwrap()]).unwrap();
     let site = call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", UNIT.as_bytes()),
         [],

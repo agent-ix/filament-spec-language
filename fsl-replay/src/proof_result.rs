@@ -40,10 +40,15 @@ use ix_trace_rs::implements;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
+mod cross_check;
 mod plugin;
 mod plugin_read;
 mod plugin_replay;
 mod tool_failure;
+pub use cross_check::{
+    CrossCheck, CrossCheckRefusal, CrossCheckRefused, CrossCheckRun, CrossCheckVerdict,
+    RecordedWarning,
+};
 pub use plugin::{read_plugin_cause_kind, FslOnlyCause, PluginResultRefusal, ValueFault};
 pub(crate) use plugin_read::{child, first_undefined, name_order};
 pub use plugin_read::{
@@ -936,6 +941,15 @@ impl UnavailabilityCause {
 /// (ADR-013 C-09) and a second spelling of it must be unrepresentable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InconclusiveCause {
+    /// The primary SMT solver and its independent cross-check disagree.
+    CrossCheckDisagreement {
+        /// The cross-checking tool.
+        tool: String,
+        /// The primary solver's verdict.
+        primary: CrossCheckVerdict,
+        /// The independent solver's verdict.
+        cross_check: CrossCheckVerdict,
+    },
     /// FR-059's recording assessment found an undecided obligation or an
     /// open/contradicted closure premise without a run limit.
     OpenHistory,
@@ -1302,8 +1316,10 @@ impl InconclusiveCause {
     }
 
     /// The cause's FR-331 wire spelling.
+    #[implements("FR-290-AC-16")]
     pub const fn as_str(&self) -> &'static str {
         match self {
+            Self::CrossCheckDisagreement { .. } => "cross-check-disagreement",
             Self::OpenHistory => "open-history",
             Self::KaniVacuousProof => KANI_VACUOUS_PROOF_KIND,
             Self::BoundReached { .. } => "bound-reached",
@@ -1348,8 +1364,10 @@ impl InconclusiveCause {
 
     /// Bytes this cause adds to an encoded record beyond its fixed size:
     /// the nested witness records and failure of a parity disagreement.
+    #[implements("FR-069-AC-4")]
     fn measured_bytes(&self) -> usize {
         match self {
+            Self::CrossCheckDisagreement { tool, .. } => tool.len(),
             Self::KaniVacuousProof
             | Self::OpenHistory
             | Self::BoundReached { .. }
@@ -1661,6 +1679,9 @@ pub struct TerminalRecord {
     /// and are completed with the envelope's manifest identity on read.
     backend: Option<BackendId>,
     value: TerminalValue,
+    /// What the SMT backend reported of its independent cross-check: a run
+    /// on a `proved` record alone, or the warning that none ran (FR-290).
+    cross_check: Option<CrossCheckRun>,
     replay: Option<ReplayResult>,
     protocol_analysis_key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
     protocol_analysis_root: Option<crate::RuntimeValuePath>,
@@ -1768,6 +1789,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: false,
+            cross_check: None,
         })
     }
 
@@ -2230,6 +2252,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2278,6 +2301,7 @@ impl TerminalRecord {
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2307,6 +2331,7 @@ impl TerminalRecord {
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2327,6 +2352,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2504,6 +2530,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: Some(detail),
             disposed: false,
+            cross_check: None,
         }
     }
 
@@ -2533,6 +2560,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: Some(detail),
             disposed: false,
+            cross_check: None,
         }
     }
 
@@ -2560,6 +2588,7 @@ impl TerminalRecord {
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
+            cross_check: None,
         }
     }
 
@@ -2600,6 +2629,7 @@ impl TerminalRecord {
             disposition_detail: disposed.then(serde_json::Map::new),
             diagnostic_detail: None,
             disposed,
+            cross_check: None,
             exact_certificate: None,
             exact_certificate_document: None,
             exact_counterpart_document: None,
@@ -2634,6 +2664,7 @@ impl TerminalRecord {
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: false,
+            cross_check: None,
         }
     }
 
@@ -2831,8 +2862,9 @@ pub struct BackendProviderSource {
 /// The reader's own measurement of `source`'s encoded size (FR-069-AC-4):
 /// the provider and record backend identities' byte lengths, a fixed
 /// per-item allowance for the index and terminal value, and the retained
-/// replay and nested cause bytes. No caller-declared number can understate
-/// an oversized item list past the bound (B3).
+/// replay, cross-check and nested cause bytes. No caller-declared number can
+/// understate an oversized item list past the bound (B3).
+#[implements("FR-069-AC-4")]
 fn measured_encoded_bytes(source: &BackendProviderSource) -> usize {
     source.backend_identity.len()
         + source
@@ -2843,6 +2875,7 @@ fn measured_encoded_bytes(source: &BackendProviderSource) -> usize {
                     + std::mem::size_of::<TerminalValue>()
                     + record.value().measured_bytes()
                     + record.backend().map_or(0, |backend| backend.as_str().len())
+                    + record.cross_check_bytes()
                     + record
                         .replay_result()
                         .map_or(0, crate::result::measured_encoded_bytes)

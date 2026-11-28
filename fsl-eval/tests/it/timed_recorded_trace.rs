@@ -44,7 +44,8 @@ fn unit(clock: &str, body: &str) -> String {
 /// (FR-933), `None` for no configuration. The check takes it as the request
 /// path does, keyed by clock name.
 fn check(text: &str, timed_unit: Option<&str>) -> Vec<Result<CheckedTemporalClause, String>> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

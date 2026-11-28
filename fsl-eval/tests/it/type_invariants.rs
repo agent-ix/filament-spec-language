@@ -227,7 +227,8 @@ fn compile_unit(document: &Value, body: &str) -> (Compiled, Packages) {
 }
 
 fn compile_parsed(unit: &str, packages: &Packages) -> Compiled {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc1050"),
         "tc1050.native",
         unit.as_bytes(),
@@ -243,11 +244,11 @@ fn compile_parsed(unit: &str, packages: &Packages) -> Compiled {
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the kept operation clauses parse");
     let models = match models.with_parsed_type_invariants(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     }) {
         Ok(models) => models,
         Err(failure) => return Compiled::Unparsed(failure.clause, failure.member),

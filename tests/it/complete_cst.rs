@@ -2,6 +2,7 @@
 //! Complete-V1 incremental editing over the lossless CST (`complete::{apply_edit,
 //! apply_edits}`). The layer-1-only CST construction/recovery tests that used to
 //! live here moved to `fsl-cst/tests/it/complete_cst.rs`.
+use ix_trace_rs::trace;
 use filament_spec_language::complete::{self, SourceEdit};
 use fsl_cst::{CompleteCause, CompleteCode, HostCause, Limits, SourceChange};
 use fsl_foundation::{SourceIdentity, Span};
@@ -37,6 +38,7 @@ fn identity() -> SourceIdentity {
 
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-3")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn incremental_edit_reuses_only_unchanged_byte_correspondent_nodes() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -46,7 +48,7 @@ fn incremental_edit_reuses_only_unchanged_byte_correspondent_nodes() {
     )
     .unwrap();
     let start = SOURCE.find("if true then").unwrap() + 3;
-    let edited = complete::apply_edit(
+    let edited = complete::apply_edit(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         SourceEdit {
@@ -92,6 +94,7 @@ fn incremental_edit_reuses_only_unchanged_byte_correspondent_nodes() {
 
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-3")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn stable_identity_survives_unrelated_preceding_sibling_insertion() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -108,7 +111,7 @@ fn stable_identity_survives_unrelated_preceding_sibling_insertion() {
             end: record_start + "record Reading".len(),
         })
         .unwrap();
-    let inserted = complete::apply_edit(
+    let inserted = complete::apply_edit(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         SourceEdit {
@@ -155,6 +158,7 @@ fn stable_identity_survives_unrelated_preceding_sibling_insertion() {
 
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-3")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn stable_identity_survives_unrelated_whitespace_inside_one_ancestor() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -172,7 +176,7 @@ fn stable_identity_survives_unrelated_whitespace_inside_one_ancestor() {
         })
         .unwrap();
     let label = SOURCE.find("label: Option").unwrap();
-    let edited = complete::apply_edit(
+    let edited = complete::apply_edit(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         SourceEdit {
@@ -214,6 +218,7 @@ fn stable_identity_survives_unrelated_whitespace_inside_one_ancestor() {
 
 #[trace("FSpec-TC-223", "FSpec-FR-303-AC-3")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn stale_and_overlapping_incremental_changes_refuse_with_typed_codes() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -227,7 +232,7 @@ fn stale_and_overlapping_incremental_changes_refuse_with_typed_codes() {
         replacement: " ".into(),
     };
     assert_eq!(
-        complete::apply_edits(
+        complete::apply_edits(&complete::CompleteParser::new(),
             &parsed,
             SourceIdentity {
                 identity: "test:stale".into(),
@@ -241,7 +246,7 @@ fn stale_and_overlapping_incremental_changes_refuse_with_typed_codes() {
         CompleteCause::Host(HostCause::EditPredecessor)
     );
     assert_eq!(
-        complete::apply_edits(
+        complete::apply_edits(&complete::CompleteParser::new(),
             &parsed,
             identity(),
             &[edit.clone(), edit],
@@ -254,6 +259,7 @@ fn stale_and_overlapping_incremental_changes_refuse_with_typed_codes() {
 }
 
 #[test]
+#[trace("NFR-141-AC-10")]
 fn invalid_caller_edit_ranges_refuse_without_panicking() {
     let text = format!("{SOURCE}\r\n// 😀");
     let parsed = fsl_cst::parse(
@@ -287,7 +293,7 @@ fn invalid_caller_edit_ranges_refuse_without_panicking() {
             },
         ),
     ] {
-        let refusal = complete::apply_edit(
+        let refusal = complete::apply_edit(&complete::CompleteParser::new(),
             &parsed,
             identity(),
             SourceEdit {
@@ -310,6 +316,7 @@ fn invalid_caller_edit_ranges_refuse_without_panicking() {
 }
 
 #[test]
+#[trace("NFR-141-AC-10")]
 fn oversized_single_and_aggregate_replacements_refuse_before_reparse() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -322,7 +329,7 @@ fn oversized_single_and_aggregate_replacements_refuse_before_reparse() {
         source_bytes: SOURCE.len(),
         ..Limits::default()
     };
-    let single = complete::apply_edit(
+    let single = complete::apply_edit(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         SourceEdit {
@@ -336,7 +343,7 @@ fn oversized_single_and_aggregate_replacements_refuse_before_reparse() {
     // admits, so it now reports `stage_limit_exceeded`.
     assert_eq!(single.code, CompleteCode::StageLimitExceeded);
 
-    let aggregate = complete::apply_edits(
+    let aggregate = complete::apply_edits(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         &[
@@ -357,6 +364,7 @@ fn oversized_single_and_aggregate_replacements_refuse_before_reparse() {
 
 #[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn insertion_inside_crlf_falls_back_to_full_lexing() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -366,7 +374,7 @@ fn insertion_inside_crlf_falls_back_to_full_lexing() {
     )
     .unwrap();
     let between = SOURCE.find("\r\n").unwrap() + 1;
-    let edited = complete::apply_edit(
+    let edited = complete::apply_edit(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         SourceEdit {
@@ -393,6 +401,7 @@ fn insertion_inside_crlf_falls_back_to_full_lexing() {
 
 #[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn incremental_boundary_whitespace_keeps_the_root_on_the_full_document() {
     for (case, source, at, replacement) in [
         ("leading", format!(" {SOURCE}"), 0, "\t"),
@@ -405,7 +414,7 @@ fn incremental_boundary_whitespace_keeps_the_root_on_the_full_document() {
             Limits::default(),
         )
         .unwrap();
-        let edited = complete::apply_edit(
+        let edited = complete::apply_edit(&complete::CompleteParser::new(),
             &parsed,
             identity(),
             SourceEdit {
@@ -439,6 +448,7 @@ fn incremental_boundary_whitespace_keeps_the_root_on_the_full_document() {
 
 #[trace("FSpec-TC-223", "FSpec-FR-303-AC-3")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn adjacent_half_open_edits_are_not_overlaps() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -447,7 +457,7 @@ fn adjacent_half_open_edits_are_not_overlaps() {
         Limits::default(),
     )
     .unwrap();
-    let edited = complete::apply_edits(
+    let edited = complete::apply_edits(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         &[
@@ -470,6 +480,7 @@ fn adjacent_half_open_edits_are_not_overlaps() {
 /// changes either refuses as a foreign predecessor.
 #[trace("TC-424", "FR-001-AC-5")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn an_edit_that_changes_a_source_label_refuses() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -493,7 +504,7 @@ fn an_edit_that_changes_a_source_label_refuses() {
         },
     ] {
         assert_eq!(
-            complete::apply_edits(
+            complete::apply_edits(&complete::CompleteParser::new(),
                 &parsed,
                 next.clone(),
                 std::slice::from_ref(&edit),
@@ -505,7 +516,7 @@ fn an_edit_that_changes_a_source_label_refuses() {
             "{next:?}"
         );
     }
-    assert!(complete::apply_edits(
+    assert!(complete::apply_edits(&complete::CompleteParser::new(),
         &parsed,
         identity(),
         std::slice::from_ref(&edit),
@@ -519,6 +530,7 @@ fn an_edit_that_changes_a_source_label_refuses() {
 /// region.
 #[trace("TC-424", "FR-001-AC-12")]
 #[test]
+#[trace("NFR-141-AC-10")]
 fn a_stale_edit_predecessor_refuses_as_a_source_map_with_no_region() {
     let parsed = fsl_cst::parse(
         identity(),
@@ -531,7 +543,7 @@ fn a_stale_edit_predecessor_refuses_as_a_source_map_with_no_region() {
         range: Span { start: 0, end: 0 },
         replacement: " ".into(),
     };
-    let refused = complete::apply_edits(
+    let refused = complete::apply_edits(&complete::CompleteParser::new(),
         &parsed,
         SourceIdentity {
             identity: "test:stale".into(),

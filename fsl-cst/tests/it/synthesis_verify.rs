@@ -60,6 +60,7 @@ fn verification_plan_refuses_near_misses() {
 #[test]
 #[trace("FSpec-FR-802-AC-1")]
 fn step_sum_objective_reads_only_at_the_objective_root() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for objective in [
         "minimize Reach.steps.sum(s => 2)",
         "minimize Reach.steps.sum(s => if s.operation = M::Op::charge then 0.10 else 0.05)",
@@ -76,7 +77,7 @@ fn step_sum_objective_reads_only_at_the_objective_root() {
     }
     // The formatter writes the form back as it reads it.
     let source = "language \"ix:native\" edition \"1-draft\";\nprofile p = \"filament.value.complete/v1\";\nsynthesis Reach using p grammar M::G domain M::D minimize   Reach.steps.sum( s=>if s.index=0 then 0.10 else 0.05 )+1 satisfies { true };\n";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:step-sum-format"),
         "step-sum.native",
         source.as_bytes(),
@@ -84,7 +85,7 @@ fn step_sum_objective_reads_only_at_the_objective_root() {
     )
     .expect("valid source identity and UTF-8");
     let formatted = fsl_cst::format::format(&parsed).expect("an admissible parse formats");
-    let reparsed = fsl_cst::parse(
+    let reparsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:step-sum-format"),
         "step-sum.native",
         formatted.as_bytes(),
@@ -123,7 +124,7 @@ fn step_sum_objective_reads_only_at_the_objective_root() {
         ),
     ] {
         let text = format!("{PREFIX}{bad}");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("test", "test:step-sum-refusal"),
             "step-sum.native",
             text.as_bytes(),

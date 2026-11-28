@@ -800,7 +800,10 @@ fn run_timed(
         Ok(binding) => binding,
         Err(error) => return graph_failure(error, &limits, subject),
     };
-    if !holds {
+    // A set `tamper` (test support) builds the certificate of the claim's own
+    // graph even where the bound fails, so a test can alter it and show the
+    // checker rejecting it; unset, a failed bound is refuted as always.
+    if !holds && tamper.is_none() {
         // FR-202: `Bounds` never becomes a bounded refutation, so the exact
         // budget is what stopped the run.
         if interval.is_some() {

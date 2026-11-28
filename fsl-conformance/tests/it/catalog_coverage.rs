@@ -606,8 +606,7 @@ fn try_compile_supplied(
     let parsed = if supplies.extensions.is_empty() {
         spine::parse(&request, limits.source, &cancel)
     } else {
-        spine::parse_selecting_extensions(
-            &request,
+        spine::parse_selecting_extensions(&request,
             ProfileCatalogInput {
                 catalog: &extension_catalog(supplies.extensions),
                 limits: PackageLimits::default(),

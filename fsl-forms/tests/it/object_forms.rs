@@ -31,8 +31,9 @@ abstract object Shape { population shapes; }
 ";
 
 fn parse(declarations: &str) -> (String, fsl_cst::ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

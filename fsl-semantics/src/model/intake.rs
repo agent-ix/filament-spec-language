@@ -43,7 +43,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use agent_ix_extraction_frontend::lift::{lift, LiftOutcome, LiftRequest};
+use agent_ix_extraction_frontend::lift::{LiftOutcome, LiftRequest, lift};
 use agent_ix_extraction_frontend::{Diagnostic, Refusal};
 use serde_json::Value;
 
@@ -65,9 +65,9 @@ use filament_exact::{
     DecimalType, Integer, IntegerInterval, Presence, RationalDomain, RoundingMode, TextProfile,
     TextType, ValueType,
 };
+use fsl_foundation::IntakeLimits;
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 use fsl_foundation::source::{LocatedSpan, Position};
-use fsl_foundation::IntakeLimits;
 use ix_trace_rs::implements;
 use quire_canonical::Node;
 
@@ -210,16 +210,16 @@ pub fn native_budget_setting(
 mod model_unit;
 mod unit;
 pub use model_unit::{
-    compile_model_unit, compile_model_unit_with_causes, is_model_unit_source,
-    package_input_from_sources, CompiledModelUnit,
+    CompiledModelUnit, compile_model_unit, compile_model_unit_with_causes, is_model_unit_source,
+    package_input_from_sources,
 };
 pub(crate) use unit::SelectedModelsParts;
 pub use unit::{
-    admit_unit, admit_unit_with_cancel, admit_units_with_cancel, NormalizedModel,
-    OperationClauseFailure, SelectedModel, SelectedModels, TypeInvariantFailure, UnitIntakeCause,
-    UnitIntakeRefusal,
+    NormalizedModel, OperationClauseFailure, SelectedModel, SelectedModels, TypeInvariantFailure,
+    UnitIntakeCause, UnitIntakeRefusal, admit_unit, admit_unit_with_cancel,
+    admit_units_with_cancel,
 };
-pub(crate) use unit::{normalize_model_with_provenance, NormalizedModelProvenance};
+pub(crate) use unit::{NormalizedModelProvenance, normalize_model_with_provenance};
 
 /// A Quire meaning id (FR-208): the sole legitimate way to determine what a
 /// construct or type definition IS. Kind names and modules are never
@@ -1124,13 +1124,15 @@ pub type PackageInput = BTreeMap<String, Vec<u8>>;
 /// `invalid_package`/`conflicting-definition` (one domain package per
 /// identity). Each document is read here under no byte limit, and again when
 /// a selection admits it under the caller's `intake.input_bytes`.
+#[implements("NFR-141-AC-10")]
 pub fn package_input<'a>(
     documents: impl IntoIterator<Item = &'a [u8]>,
 ) -> Result<PackageInput, ModelRefusal> {
     let mut input = PackageInput::new();
+    let parser_context = fsl_cst::ParserContext::new();
     for bytes in documents {
-        if model_unit::looks_like_model_unit(bytes) {
-            let compiled = model_unit::compile_model_unit_bytes(bytes)?;
+        if model_unit::looks_like_model_unit(&parser_context, bytes) {
+            let compiled = model_unit::compile_model_unit_bytes(&parser_context, bytes)?;
             if input
                 .insert(compiled.identity().to_owned(), compiled.bytes().to_vec())
                 .is_some()
@@ -3165,18 +3167,17 @@ fn read_operation_parameter(
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
     let value_type = read_member_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
-    let presence = match ctx.str_field("presence")? {
-        "required" => Presence::Required,
-        "optional" => Presence::Optional,
-        other => {
-            return Err(ctx.malformed_in(
+    let presence =
+        match ctx.str_field("presence")? {
+            "required" => Presence::Required,
+            "optional" => Presence::Optional,
+            other => return Err(ctx.malformed_in(
                 "presence",
                 format!(
                     "{other:?} is not required/optional, the only presences this reader recognizes"
                 ),
-            ))
-        }
-    };
+            )),
+        };
     Ok(OperationParameterRecord {
         key: declaration_key(package, node),
         value_type,
@@ -3543,7 +3544,7 @@ pub(super) fn read_persistence_interface(
                         "{}.persists[{position}]: names no type of this domain package: {}",
                         ctx.at, target.node
                     ),
-                })
+                });
             }
         }
     }
@@ -3869,7 +3870,7 @@ fn read_value_bounds(
                 return Err(constraint_ctx.malformed_in(
                     "keyword",
                     format!("{other:?} states no bound on a clock or a quantity"),
-                ))
+                ));
             }
         };
         let value = constraint
@@ -4140,18 +4141,17 @@ fn read_field_member(
     // lower bound; any other value is `malformed-declaration` per the
     // Presence row, refusing rather than aborting, so a future FCD pin
     // widening this enum degrades to a refusal, not a crash.
-    let presence = match ctx.str_field("presence")? {
-        "required" => Presence::Required,
-        "optional" => Presence::Optional,
-        other => {
-            return Err(ctx.malformed_in(
+    let presence =
+        match ctx.str_field("presence")? {
+            "required" => Presence::Required,
+            "optional" => Presence::Optional,
+            other => return Err(ctx.malformed_in(
                 "presence",
                 format!(
                     "{other:?} is not required/optional, the only presences this reader recognizes"
                 ),
-            ))
-        }
-    };
+            )),
+        };
     let subsets = ctx.identity_keys(package, "subsets")?;
     let redefines = ctx
         .opt_str_field("redefines")
@@ -4424,7 +4424,7 @@ pub(super) fn read_namespace(
         let at = NodeCtx::new(ctx.value, format!("{}.members[{position}]", ctx.at));
         match type_meanings.get(member.node.as_str()) {
             Some(&meaning::NAMESPACE) => {
-                return Err(at.malformed("a namespace cannot contain a namespace"))
+                return Err(at.malformed("a namespace cannot contain a namespace"));
             }
             Some(_) => {}
             None => {
@@ -4438,7 +4438,7 @@ pub(super) fn read_namespace(
                         "{}: names no type of this domain package: {}",
                         at.at, member.node
                     ),
-                })
+                });
             }
         }
     }
@@ -4632,7 +4632,7 @@ fn read_value_type(
                     constraint,
                     &constraint_at,
                     format!("{}:constraints:{other}", meaning::VALUE_TYPE),
-                ))
+                ));
             }
         }
     }
@@ -4704,7 +4704,7 @@ fn read_text_value_type(
                 return Err(at_constraint(
                     &constraint_at,
                     &format!("constraints:{other}"),
-                ))
+                ));
             }
         }
         seen.push((keyword, constraint_at, operands));
@@ -4872,7 +4872,12 @@ fn read_rational_value_type(
         bounds[index] = value;
     }
 
-    let [numerator_min, numerator_max, denominator_min, denominator_max] = bounds;
+    let [
+        numerator_min,
+        numerator_max,
+        denominator_min,
+        denominator_max,
+    ] = bounds;
     if numerator_min > numerator_max || denominator_min < 1 || denominator_min > denominator_max {
         return Err(unsupported_member(
             ctx.value,
@@ -4999,7 +5004,7 @@ fn read_endpoint(
             return Err(ctx.malformed_in(
                 "direction",
                 format!("{other:?} is not a direction this reader recognizes"),
-            ))
+            ));
         }
         None => None,
     };
@@ -5059,7 +5064,7 @@ fn read_connection(
             return Err(ctx.malformed_in(
                 "flowDirection",
                 format!("{other:?} is not a direction this reader recognizes"),
-            ))
+            ));
         }
     };
     Ok(RelationshipRecord {
@@ -5145,7 +5150,7 @@ fn read_relationship(
             return Err(ctx.malformed_in(
                 "direction",
                 format!("{other:?} is not a direction this reader recognizes"),
-            ))
+            ));
         }
     };
     Ok(RelationshipRecord {
@@ -5231,7 +5236,7 @@ fn read_population(
             return Err(ctx.malformed_in(
                 "kind",
                 format!("resolves to {other:?}, not {:?}", meaning::POPULATION),
-            ))
+            ));
         }
         None => return Err(ctx.malformed_in("kind", "names no constructs[] entry")),
     }
@@ -5264,7 +5269,7 @@ fn read_population(
             return Err(ctx.malformed_in(
                 "extent",
                 format!("{other:?} is not closed/open, the only extents this reader recognizes"),
-            ))
+            ));
         }
     };
     // FR-150: the `symmetric` marker is optional and Boolean; absent is
@@ -5795,7 +5800,9 @@ fn check_rational_member_constraints(
                         .and_then(Value::as_array)
                         .is_some_and(|items| !items.is_empty())
                 {
-                    let at = format!("$.types[{type_position}].operations[{operation_position}].params[{parameter_position}]");
+                    let at = format!(
+                        "$.types[{type_position}].operations[{operation_position}].params[{parameter_position}]"
+                    );
                     refusals.push(malformed_member(
                         parameter,
                         &at,
@@ -6586,7 +6593,7 @@ fn resolve_frame_array(
                     frame.span,
                     entry,
                     at,
-                ))
+                ));
             }
             Some(kind) if expected.contains(kind) => {
                 let key = declaration_key(package, entry);
@@ -6601,7 +6608,7 @@ fn resolve_frame_array(
                     frame.span,
                     entry,
                     at,
-                ))
+                ));
             }
         }
     }
@@ -6686,7 +6693,7 @@ fn resolve_receiver_modifies(
                     frame.span,
                     entry,
                     at,
-                ))
+                ));
             }
             Some(FrameEntryKind::Field) => index
                 .field_owners
@@ -8079,15 +8086,17 @@ mod tests {
             })
             .collect();
         let cyclic_cache = std::cell::RefCell::new(HashMap::new());
-        assert!(decimal_type_for_identity(
-            package,
-            &types,
-            &cyclic_positions,
-            &cyclic_cache,
-            &identity(0),
-        )
-        .expect("a cycle is a non-Decimal result for the ordinary alias-cycle refusal")
-        .is_none());
+        assert!(
+            decimal_type_for_identity(
+                package,
+                &types,
+                &cyclic_positions,
+                &cyclic_cache,
+                &identity(0),
+            )
+            .expect("a cycle is a non-Decimal result for the ordinary alias-cycle refusal")
+            .is_none()
+        );
     }
 
     #[trace("FSpec-FR-154-AC-39", "FSpec-FR-154-AC-40", "FSpec-FR-154-AC-41")]
@@ -11521,9 +11530,11 @@ mod tests {
             assert!(refusals[0].detail.contains(&format!(
                 "/ir/types/0/constraints/{position}/operands/value"
             )));
-            assert!(refusals[0]
-                .detail
-                .contains("agent-ix.semantic-ir.INVALID_OPERAND"));
+            assert!(
+                refusals[0]
+                    .detail
+                    .contains("agent-ix.semantic-ir.INVALID_OPERAND")
+            );
         }
     }
 

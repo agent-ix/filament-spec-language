@@ -10,12 +10,12 @@ use super::cst::{
 };
 use super::diagnostic::{CompleteCause, HostCause};
 use super::grammar::{self, Grammar, Rule, Terminal};
-use super::{CompleteCode, CompleteDiagnostic, ExtensionForms, ParsedSource};
+use super::{CompleteCode, CompleteDiagnostic, ExtensionForms, ParsedSource, ParserContext};
 use crate::lexer::Limits;
 use crate::token::{Kind, LexError};
 use filament_exact::Cancel;
 use fsl_foundation::selection::{
-    valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
+    ImportSelection, ModelSelection, ProfileSelection, SourceSelections, valid_selection_identity,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
 use ix_trace_rs::implements;
@@ -47,25 +47,137 @@ type Scan = (
 pub(crate) const DEFAULT_SYNTAX_DIAGNOSTICS: usize = 100;
 const EXPECTED_ALTERNATIVE_BOUND: usize = 12;
 
-#[derive(Clone, Debug)]
-struct Failure {
-    position: usize,
-    expected: BTreeSet<String>,
+#[cfg(test)]
+std::thread_local! {
+    static TERMINAL_DESCRIPTION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-impl Failure {
-    fn expected(position: usize, expected: String) -> Self {
-        Self {
-            position,
-            expected: BTreeSet::from([expected]),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Expected<'g> {
+    Terminal(&'g Terminal),
+    Production(Production),
+    Text(&'static str),
+}
+
+impl Expected<'_> {
+    #[implements("NFR-141-AC-8")]
+    fn description(self) -> String {
+        match self {
+            Self::Terminal(terminal) => terminal.description(),
+            Self::Production(production) => format!("{production:?}"),
+            Self::Text(text) => (*text).into(),
         }
     }
 
+    #[implements("NFR-141-AC-8")]
+    fn matches_spelling(self, spelling: &str) -> bool {
+        match self {
+            Self::Terminal(
+                Terminal::Exact(value) | Terminal::Literal(value) | Terminal::ContextualWord(value),
+            ) => *value == spelling,
+            Self::Terminal(Terminal::ExtensionKeyword(value)) => value.as_ref() == spelling,
+            _ => false,
+        }
+    }
+}
+
+const INLINE_EXPECTATIONS: usize = 4;
+
+#[derive(Clone, Debug)]
+struct ExpectedSet<'g> {
+    inline: [Option<Expected<'g>>; INLINE_EXPECTATIONS],
+    inline_len: usize,
+    overflow: Vec<Expected<'g>>,
+}
+
+impl<'g> ExpectedSet<'g> {
+    #[implements("NFR-141-AC-8")]
+    fn one(expected: Expected<'g>) -> Self {
+        let mut inline = [None; INLINE_EXPECTATIONS];
+        inline[0] = Some(expected);
+        Self {
+            inline,
+            inline_len: 1,
+            overflow: Vec::new(),
+        }
+    }
+
+    #[implements("NFR-141-AC-8")]
+    fn iter(&self) -> impl Iterator<Item = Expected<'g>> + '_ {
+        self.inline[..self.inline_len]
+            .iter()
+            .flatten()
+            .chain(self.overflow.iter())
+            .copied()
+    }
+
+    #[implements("NFR-141-AC-8")]
+    fn insert(&mut self, expected: Expected<'g>) {
+        if self.iter().any(|existing| existing == expected) {
+            return;
+        }
+        if self.inline_len < INLINE_EXPECTATIONS {
+            self.inline[self.inline_len] = Some(expected);
+            self.inline_len += 1;
+        } else {
+            self.overflow.push(expected);
+        }
+    }
+
+    #[implements("NFR-141-AC-8")]
+    fn extend(&mut self, other: &Self) {
+        for expected in other.iter() {
+            self.insert(expected);
+        }
+    }
+
+    #[implements("NFR-141-AC-8")]
+    fn contains_spelling(&self, spelling: &str) -> bool {
+        self.iter()
+            .any(|expected| expected.matches_spelling(spelling))
+    }
+
+    #[implements("NFR-141-AC-8")]
+    fn contains_description(&self, description: &str) -> bool {
+        self.iter()
+            .any(|expected| matches!(expected, Expected::Text(value) if value == description))
+    }
+
+    #[implements("NFR-141-AC-8")]
+    fn descriptions(&self) -> BTreeSet<String> {
+        self.iter().map(Expected::description).collect()
+    }
+
+    #[implements("NFR-141-AC-8")]
+    fn joined_descriptions(&self) -> String {
+        self.descriptions()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(" or ")
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Failure<'g> {
+    position: usize,
+    expected: ExpectedSet<'g>,
+}
+
+impl<'g> Failure<'g> {
+    #[implements("NFR-141-AC-8")]
+    fn expected(position: usize, expected: Expected<'g>) -> Self {
+        Self {
+            position,
+            expected: ExpectedSet::one(expected),
+        }
+    }
+
+    #[implements("NFR-141-AC-8")]
     fn merge(mut self, other: Self) -> Self {
         match other.position.cmp(&self.position) {
             std::cmp::Ordering::Greater => other,
             std::cmp::Ordering::Equal => {
-                self.expected.extend(other.expected);
+                self.expected.extend(&other.expected);
                 self
             }
             std::cmp::Ordering::Less => self,
@@ -137,34 +249,35 @@ fn format_expected(
     format!("expected {}", alternatives.join(" or "))
 }
 
-#[implements("FR-762-AC-7")]
+#[implements(
+    "FR-762-AC-7",
+    "NFR-141-AC-8",
+    "NFR-141-AC-9",
+    "NFR-141-AC-10"
+)]
 #[ix_trace_rs::string_edge]
 pub(super) fn parse(
     source: Source,
     limits: Limits,
     cancel: &Cancel,
     forms: &ExtensionForms,
+    context: &ParserContext,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
     let custom_grammar =
         (!forms.productions().is_empty()).then(|| grammar::complete_v1_with(forms));
-    let grammar = match custom_grammar.as_ref() {
-        Some(grammar) => grammar,
-        None => grammar::complete_v1(),
-    };
+    let grammar = custom_grammar.as_ref().unwrap_or(&context.grammar);
     let custom_compounds = custom_grammar
         .as_ref()
         .map(grammar::complete_compound_spellings);
-    let compounds = match custom_compounds.as_deref() {
-        Some(compounds) => compounds,
-        None => grammar::default_compound_spellings(),
-    };
+    let compounds = custom_compounds
+        .as_deref()
+        .unwrap_or(&context.compound_spellings);
     let custom_reserved_words = custom_grammar
         .as_ref()
         .map(grammar::complete_reserved_words);
-    let reserved_words = match custom_reserved_words.as_ref() {
-        Some(reserved_words) => reserved_words,
-        None => grammar::default_reserved_words(),
-    };
+    let reserved_words = custom_reserved_words
+        .as_ref()
+        .unwrap_or(&context.reserved_words);
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, compounds, cancel)?;
     if diagnostics.len() > limits.diagnostics {
@@ -487,7 +600,7 @@ fn parse_with_declaration_recovery(
     }
 
     loop {
-        let mut engine = Engine::new(grammar, reserved_words, &tokens, limits, cancel);
+        let mut engine = Engine::new(&grammar, reserved_words, &tokens, limits, cancel);
         match engine.production(Production::CompleteUnit, 0) {
             Outcome::Match(_) => {
                 append_omitted_diagnostic(
@@ -655,12 +768,7 @@ fn parse_with_declaration_recovery(
                             |code| (code, CompleteCause::UnsupportedSelection),
                         )
                     };
-                    let expected = failure
-                        .expected
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" or ");
+                    let expected = failure.expected.joined_descriptions();
                     let message = tokens
                         .get(failure.position)
                         .filter(|_| declaration_form)
@@ -671,7 +779,7 @@ fn parse_with_declaration_recovery(
                                     format_expected(
                                         &tokens,
                                         failure.position,
-                                        &failure.expected,
+                                        &failure.expected.descriptions(),
                                         reserved_words,
                                     )
                                 },
@@ -745,7 +853,10 @@ fn parse_with_declaration_recovery(
                 let has_lexical_error = lexical_spans
                     .iter()
                     .any(|span| span.start < region.end && region.start < span.end);
-                if next.is_none() && !has_lexical_error && failure.expected.contains(";") {
+                if next.is_none()
+                    && !has_lexical_error
+                    && failure.expected.contains_description(";")
+                {
                     let insertion_span = failure_span(source, &tokens, failure.position);
                     let mut inserted = tokens.clone();
                     inserted.insert(
@@ -759,15 +870,11 @@ fn parse_with_declaration_recovery(
                             spelling: ";".into(),
                         },
                     );
-                    let mut retry = Engine::new(grammar, reserved_words, &inserted, limits, cancel);
+                    let mut retry =
+                        Engine::new(&grammar, reserved_words, &inserted, limits, cancel);
                     if let Outcome::Match(_) = retry.production(Production::CompleteUnit, 0) {
                         let span = failure_span(source, &tokens, failure.position);
-                        let expected = failure
-                            .expected
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(" or ");
+                        let expected = failure.expected.joined_descriptions();
                         let message = derived_form(&tokens, &failure).map_or_else(
                             // Explain query type arguments at the parser's
                             // failure point before falling back to grammar details.
@@ -776,7 +883,7 @@ fn parse_with_declaration_recovery(
                                 format_expected(
                                     &tokens,
                                     failure.position,
-                                    &failure.expected,
+                                    &failure.expected.descriptions(),
                                     reserved_words,
                                 )
                             },
@@ -817,25 +924,14 @@ fn parse_with_declaration_recovery(
                 }
                 if !has_lexical_error {
                     let span = failure_span(source, &tokens, failure.position);
-                    let expected = failure
-                        .expected
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" or ");
                     let message = derived_form(&tokens, &failure)
-                        .or_else(|| {
-                            declared_type_name_hint(
-                                &tokens,
-                                &Failure::expected(failure.position, expected.clone()),
-                            )
-                        })
+                        .or_else(|| declared_type_name_hint(&tokens, failure.position))
                         .map_or_else(
                             || {
                                 format_expected(
                                     &tokens,
                                     failure.position,
-                                    &failure.expected,
+                                    &failure.expected.descriptions(),
                                     reserved_words,
                                 )
                             },
@@ -1294,7 +1390,7 @@ fn recover_at_protocol_delimiter(
             },
         );
     }
-    let mut engine = Engine::new(grammar, reserved_words, &recovered, limits, cancel);
+    let mut engine = Engine::new(&grammar, reserved_words, &recovered, limits, cancel);
     let Outcome::Match(_) = engine.production(Production::CompleteUnit, 0) else {
         return None;
     };
@@ -1317,7 +1413,7 @@ fn selection_prelude_nodes(
         }
     }
 
-    let mut engine = Engine::new(grammar, reserved_words, tokens, limits, cancel);
+    let mut engine = Engine::new(&grammar, reserved_words, tokens, limits, cancel);
     let Outcome::Match(mut position) = engine.production(Production::Header, 0) else {
         return Vec::new();
     };
@@ -2134,8 +2230,9 @@ fn interval_bounds(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic
 /// FR-611: the message for `previous`, `next` or `weak until` written where
 /// a temporal formula admits an operator, naming the derived form that
 /// expresses it (FSpec FR-092 "Derived forms"); `None` for any other failure.
+#[implements("FR-611-AC-1", "NFR-141-AC-8")]
 #[ix_trace_rs::string_edge]
-fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
+fn derived_form(tokens: &[Significant], failure: &Failure<'_>) -> Option<&'static str> {
     const FORMULA_STARTS: [&str; 16] = [
         "holds",
         "(",
@@ -2156,7 +2253,7 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
     ];
     let word = tokens.get(failure.position)?;
     let follower = tokens.get(failure.position + 1)?;
-    let admits = |operator: &str| failure.expected.contains(&format!("`{operator}`"));
+    let admits = |operator: &str| failure.expected.contains_spelling(operator);
     let starts_formula = || FORMULA_STARTS.contains(&follower.spelling.as_ref());
     match word.spelling.as_ref() {
         "previous" if admits("once") && starts_formula() => {
@@ -2177,8 +2274,7 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
 /// Explain that query type arguments take declared names, not inline types,
 /// when parsing stops at the type argument.
 #[ix_trace_rs::string_edge]
-fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
-    let position = failure.position;
+fn declared_type_name_hint(tokens: &[Significant], position: usize) -> Option<&'static str> {
     let is_query = |at: usize| {
         tokens.get(at).is_some_and(|token| {
             matches!(token.spelling.as_ref(), "count" | "sum" | "fold" | "reduce")
@@ -2288,12 +2384,12 @@ struct Refusal {
 
 /// Result of matching one rule at one position.
 #[derive(Debug)]
-enum Outcome {
+enum Outcome<'g> {
     /// Matched; the value is the position after the match.
     Match(usize),
     /// Did not match; the failure is recoverable by an enclosing choice,
     /// option or repetition.
-    No(Failure),
+    No(Failure<'g>),
     /// A resource ceiling was hit; fatal for the whole parse.
     Exhausted(Refusal),
 }
@@ -2320,7 +2416,7 @@ enum Frame<'g> {
         index: usize,
         position: usize,
         first: usize,
-        failure: Option<Failure>,
+        failure: Option<Failure<'g>>,
     },
     /// The optional rule is being matched at `position`.
     Optional { position: usize, first: usize },
@@ -2343,7 +2439,7 @@ enum Step<'g> {
     /// Start matching a production at a position.
     Production(Production, usize),
     /// Hand an outcome to the innermost suspended frame.
-    Return(Outcome),
+    Return(Outcome<'g>),
 }
 
 /// Interpreter steps the work budget allows per significant token.
@@ -2444,7 +2540,7 @@ struct Engine<'a> {
     /// arm no longer needs it. Consulted only if the call's overall outcome
     /// is [`Outcome::No`]: a successful parse never reports it, so this
     /// never changes what a valid input produces.
-    farthest_failure: Option<Failure>,
+    farthest_failure: Option<Failure<'a>>,
     /// The longest `frames` and `pending` grew, for the stack-charge test.
     #[cfg(test)]
     peak: (usize, usize),
@@ -2499,7 +2595,7 @@ impl<'a> Engine<'a> {
     /// so `farthest_failure` always holds the deepest position any attempt
     /// reached this call, independent of which frame later discards its own
     /// copy of the same failure.
-    fn fail(&mut self, failure: Failure) -> Outcome {
+    fn fail(&mut self, failure: Failure<'a>) -> Outcome<'a> {
         self.farthest_failure = Some(match self.farthest_failure.take() {
             Some(farthest) => farthest.merge(failure.clone()),
             None => failure.clone(),
@@ -2507,7 +2603,7 @@ impl<'a> Engine<'a> {
         Outcome::No(failure)
     }
 
-    fn work_exhausted(&self) -> Outcome {
+    fn work_exhausted(&self) -> Outcome<'a> {
         Outcome::Exhausted(Refusal {
             limit: SyntaxLimit::Work {
                 bound: self.maximum_steps,
@@ -2516,7 +2612,7 @@ impl<'a> Engine<'a> {
         })
     }
 
-    fn nodes_exhausted(&self) -> Outcome {
+    fn nodes_exhausted(&self) -> Outcome<'a> {
         Outcome::Exhausted(Refusal {
             limit: SyntaxLimit::Nodes {
                 bound: self.limits.nodes,
@@ -2566,7 +2662,7 @@ impl<'a> Engine<'a> {
     /// happen to fail at the same position for unrelated reasons must not
     /// blend their `expected` sets the way two alternatives of the same
     /// `Choice` deliberately do.
-    fn production(&mut self, production: Production, position: usize) -> Outcome {
+    fn production(&mut self, production: Production, position: usize) -> Outcome<'a> {
         self.frames.clear();
         self.pending.clear();
         self.farthest_failure = None;
@@ -2660,7 +2756,10 @@ impl<'a> Engine<'a> {
         }
         let grammar = self.grammar;
         let Some(rule) = grammar.get(&production) else {
-            return Step::Return(self.fail(Failure::expected(position, format!("{production:?}"))));
+            return Step::Return(self.fail(Failure::expected(
+                position,
+                Expected::Production(production),
+            )));
         };
         self.frames.push(Frame::Production {
             production,
@@ -2692,7 +2791,7 @@ impl<'a> Engine<'a> {
             Rule::Choice(rules) => {
                 let Some(head) = rules.first() else {
                     return Step::Return(
-                        self.fail(Failure::expected(position, "alternative".into())),
+                        self.fail(Failure::expected(position, Expected::Text("alternative"))),
                     );
                 };
                 self.frames.push(Frame::Choice {
@@ -2732,7 +2831,7 @@ impl<'a> Engine<'a> {
     /// the end of a repetition) truncates `pending` to where the failed
     /// attempt began, so the attempt's matches leave the tree. They stay in
     /// the store, where a memoized one can still be reused.
-    fn resume(&mut self, frame: Frame<'a>, outcome: Outcome) -> Step<'a> {
+    fn resume(&mut self, frame: Frame<'a>, outcome: Outcome<'a>) -> Step<'a> {
         match frame {
             Frame::Production {
                 production,
@@ -2877,7 +2976,10 @@ impl<'a> Engine<'a> {
                 } else {
                     Step::Return(match failure {
                         Some(failure) => Outcome::No(failure),
-                        None => self.fail(Failure::expected(end, "repeated production".into())),
+                        None => self.fail(Failure::expected(
+                            end,
+                            Expected::Text("repeated production"),
+                        )),
                     })
                 }
             }
@@ -2885,18 +2987,18 @@ impl<'a> Engine<'a> {
     }
 
     #[ix_trace_rs::string_edge]
-    fn terminal(&mut self, terminal: &Terminal, position: usize) -> Outcome {
+    fn terminal(&mut self, terminal: &'a Terminal, position: usize) -> Outcome<'a> {
         let accepted = match terminal {
             Terminal::End => {
                 return if position == self.tokens.len() {
                     Outcome::Match(position)
                 } else {
-                    self.fail(Failure::expected(position, "end of source".into()))
+                    self.fail(Failure::expected(position, Expected::Text("end of source")))
                 };
             }
             _ => {
                 let Some(token) = self.tokens.get(position) else {
-                    return self.fail(Failure::expected(position, terminal.description()));
+                    return self.fail(Failure::expected(position, Expected::Terminal(terminal)));
                 };
                 match terminal {
                     Terminal::Exact(value)
@@ -2925,7 +3027,7 @@ impl<'a> Engine<'a> {
                         return if spellings.contains(&token.spelling.as_ref()) {
                             Outcome::Match(position)
                         } else {
-                            self.fail(Failure::expected(position, terminal.description()))
+                            self.fail(Failure::expected(position, Expected::Terminal(terminal)))
                         };
                     }
                     Terminal::Bound => {
@@ -2968,7 +3070,10 @@ impl<'a> Engine<'a> {
                                         .is_none_or(|before| before.spelling.as_ref() != "::")
                             });
                         if intrinsic && token.spelling.as_ref() == ")" {
-                            return self.fail(Failure::expected(position, "an expression".into()));
+                            return self.fail(Failure::expected(
+                                position,
+                                Expected::Text("an expression"),
+                            ));
                         }
                         token.spelling.as_ref() == ")"
                     }
@@ -2981,14 +3086,17 @@ impl<'a> Engine<'a> {
             }
         };
         if !accepted {
-            return self.fail(Failure::expected(position, terminal.description()));
+            return self.fail(Failure::expected(position, Expected::Terminal(terminal)));
         }
         Outcome::Match(position + 1)
     }
 }
 
 impl Terminal {
+    #[implements("NFR-141-AC-8")]
     fn description(&self) -> String {
+        #[cfg(test)]
+        TERMINAL_DESCRIPTION_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
         match self {
             Self::Exact(value) | Self::Literal(value) | Self::ContextualWord(value) => {
                 format!("`{value}`")
@@ -3117,14 +3225,15 @@ mod tests {
     fn work(text: &str) -> (usize, usize) {
         let source = source(text);
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(grammar);
+        let compounds = grammar::complete_compound_spellings(&grammar);
+        let reserved_words = grammar::complete_reserved_words(&grammar);
         let cancel = Cancel::new();
         let (_, significant, diagnostics, _) =
             scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let mut engine = Engine::new(
-            grammar,
-            grammar::default_reserved_words(),
+            &grammar,
+            &reserved_words,
             &significant,
             Limits::default(),
             &cancel,
@@ -3132,6 +3241,55 @@ mod tests {
         let outcome = engine.production(Production::CompleteUnit, 0);
         assert!(matches!(outcome, Outcome::Match(_)), "{outcome:?}");
         (engine.steps, significant.len())
+    }
+
+    #[ix_trace_rs::trace("NFR-141-AC-8")]
+    #[test]
+    fn successful_parse_defers_expected_terminal_descriptions() {
+        TERMINAL_DESCRIPTION_CALLS.with(|calls| calls.set(0));
+        work(&function("x"));
+        let descriptions = TERMINAL_DESCRIPTION_CALLS.with(std::cell::Cell::get);
+        assert_eq!(
+            descriptions, 0,
+            "successful parses do not format expectations"
+        );
+    }
+
+    #[ix_trace_rs::trace("NFR-141-AC-8")]
+    #[test]
+    fn diagnostic_expectations_keep_sorted_unique_descriptions() {
+        let z = Terminal::Exact("z");
+        let a = Terminal::Literal("a");
+        let duplicate = Terminal::Exact("a");
+        let mut expected = ExpectedSet::one(Expected::Terminal(&z));
+        expected.insert(Expected::Terminal(&a));
+        expected.insert(Expected::Terminal(&duplicate));
+
+        assert_eq!(
+            expected.descriptions().into_iter().collect::<Vec<_>>(),
+            ["`a`", "`z`"]
+        );
+    }
+
+    #[ix_trace_rs::trace("FR-611-AC-1", "NFR-141-AC-8")]
+    #[test]
+    fn derived_form_matches_extension_keyword_expectations() {
+        let tokens = [
+            Significant {
+                kind: None,
+                span: Span { start: 0, end: 8 },
+                spelling: "previous".into(),
+            },
+            Significant {
+                kind: None,
+                span: Span { start: 9, end: 13 },
+                spelling: "true".into(),
+            },
+        ];
+        let once = Terminal::ExtensionKeyword("once".into());
+        let failure = Failure::expected(0, Expected::Terminal(&once));
+
+        assert!(derived_form(&tokens, &failure).is_some());
     }
 
     /// The parser's `frames` and `pending` stacks grow by at most a
@@ -3159,18 +3317,14 @@ mod tests {
             )
             .expect("test source");
             let grammar = grammar::complete_v1();
-            let compounds = grammar::complete_compound_spellings(grammar);
+            let compounds = grammar::complete_compound_spellings(&grammar);
+            let reserved_words = grammar::complete_reserved_words(&grammar);
             let cancel = Cancel::new();
             let (_, significant, diagnostics, _) =
                 scan(&source, unlimited, &compounds, &cancel).expect("scan");
             assert!(diagnostics.is_empty(), "{diagnostics:?}");
-            let mut engine = Engine::new(
-                grammar,
-                grammar::default_reserved_words(),
-                &significant,
-                unlimited,
-                &cancel,
-            );
+            let mut engine =
+                Engine::new(&grammar, &reserved_words, &significant, unlimited, &cancel);
             let outcome = engine.production(Production::CompleteUnit, 0);
             assert!(matches!(outcome, Outcome::Match(_)), "{outcome:?}");
             let tokens = significant.len();
@@ -3242,15 +3396,16 @@ mod tests {
     #[test]
     fn nested_trailing_comma_work_is_linear_in_depth() {
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(grammar);
+        let compounds = grammar::complete_compound_spellings(&grammar);
+        let reserved_words = grammar::complete_reserved_words(&grammar);
         let steps = |depth: usize| {
             let source = source(&nested_trailing_comma(depth));
             let cancel = Cancel::new();
             let (_, significant, _, _) =
                 scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
             let mut engine = Engine::new(
-                grammar,
-                grammar::default_reserved_words(),
+                &grammar,
+                &reserved_words,
                 &significant,
                 Limits::default(),
                 &cancel,
@@ -3286,6 +3441,7 @@ mod tests {
     #[test]
     fn deep_brackets_never_overflow_the_stack() {
         on_bounded_stack(|| {
+            let parser_context = ParserContext::new();
             let limits = Limits::default();
             // Deeper than the node ceiling can hold for parentheses.
             let depth = 6_000;
@@ -3309,6 +3465,7 @@ mod tests {
                     limits,
                     &Cancel::new(),
                     &ExtensionForms::default(),
+                    &parser_context,
                 ) {
                     Ok(parsed) => assert!(parsed.is_admissible()),
                     Err(refusal) => {
@@ -3337,6 +3494,7 @@ mod tests {
                 limits,
                 &Cancel::new(),
                 &ExtensionForms::default(),
+                &parser_context,
             )
             .expect("2000 nested Option<...> fit the node ceiling");
             assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
