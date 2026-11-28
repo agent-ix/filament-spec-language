@@ -7,7 +7,8 @@ use fsl_foundation::SourceIdentity;
 const README: &str = include_str!("../../../README.md");
 
 fn parse(text: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "readme-snippets"),
         "readme.native",
         text.as_bytes(),

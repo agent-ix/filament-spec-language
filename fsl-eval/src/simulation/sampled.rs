@@ -19,6 +19,7 @@ use std::rc::Rc;
 use filament_exact::{Cancel, CancelCause, Identifier, Integer, Rational, Value};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_semantics::check::Workload;
+use ix_trace_rs::implements;
 
 use crate::simulation::choice::{
     weighted_choice_counted, ChoicePoint, TotalAboveDrawRange, WeightsRefusal,
@@ -29,7 +30,7 @@ use crate::simulation::model::probabilistic::{
     order_key, same_rewards, same_values, sorted_by_key,
 };
 use crate::simulation::model::{
-    Action, ModelSimState, ModelSystem, NotMarkov, TransitionId, BROKEN,
+    Action, ModelSimState, ModelSystem, NotMarkov, TransitionId, UndefinedContract, BROKEN,
 };
 use crate::simulation::sample::is_pinned_sampler;
 
@@ -109,6 +110,11 @@ pub enum SampleStop {
     /// FR-189 settles it as an undecided successor.
     #[error("a contract conjunction was undecided during a sampled step")]
     UndecidedSuccessor,
+    /// A contract conjunction, a precondition guard included, had no value
+    /// at a state the walk expanded (ADR-018 UE-6): the walk is refuted, not
+    /// undecided.
+    #[error("a contract conjunction was undefined during a sampled step: {0:?}")]
+    UndefinedContract(UndefinedContract),
     /// A choice's scaled total exceeds `2^256`.
     #[error(transparent)]
     TotalAboveDrawRange(TotalAboveDrawRange),
@@ -276,7 +282,7 @@ pub struct ProbabilisticSampler<'s, 'a> {
     /// undecided there, by state key. It grows with the states a run visits;
     /// no FR-191 budget bounds it, a known memory cost over a large
     /// reachable space.
-    actions: BTreeMap<StateKey, Option<Rc<[Action]>>>,
+    actions: BTreeMap<StateKey, Result<Rc<[Action]>, Option<UndefinedContract>>>,
     /// The draw digests computed.
     digests: u64,
 }
@@ -331,6 +337,7 @@ impl<'s, 'a> ProbabilisticSampler<'s, 'a> {
     }
 
     /// `from`'s enabled actions, expanded once per state key.
+    #[implements("FR-189-AC-21")]
     #[allow(
         clippy::result_large_err,
         reason = "FR-188 pins SampleStop::NotMarkov(NotMarkov), whose scheduled identity carries a receiver reference"
@@ -339,12 +346,19 @@ impl<'s, 'a> ProbabilisticSampler<'s, 'a> {
         let actions = match self.actions.get(&from.key) {
             Some(known) => known.clone(),
             None => {
-                let actions = self.system.enabled_actions(&from.state)?.ok().map(Rc::from);
+                let actions = self
+                    .system
+                    .enabled_actions(&from.state)?
+                    .map(Rc::from)
+                    .map_err(|undecided| undecided.undefined);
                 self.actions.insert(from.key.clone(), actions.clone());
                 actions
             }
         };
-        actions.ok_or(SampleStop::UndecidedSuccessor)
+        actions.map_err(|undefined| match undefined {
+            Some(contract) => SampleStop::UndefinedContract(contract),
+            None => SampleStop::UndecidedSuccessor,
+        })
     }
 
     /// Whether `from` is terminal: no action is enabled there, so its step

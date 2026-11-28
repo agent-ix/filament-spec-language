@@ -45,7 +45,8 @@ fn first_rule() -> &'static str {
 }
 
 fn check(source: &str) -> Result<CheckedGraph, Vec<(Code, Option<&'static str>)>> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "readme-first-rule"),
         "readme-first-rule.fsl",
         source.as_bytes(),

@@ -14,20 +14,23 @@
 //! fsl-bench-probe model <types> <depth> <members> # record counts, outcomes
 //! fsl-bench-probe mc <axis> <sizes...>      # one model-check, reach, key or sample run
 //! fsl-bench-probe mc-marginal <axis> <small...> -- <large...>  # marginal bytes per state
+//! fsl-bench-probe package <emit|read|replay/request> <1|10|100> # isolated timed-package probe
 //! ```
 //!
 //! `check` measures one input per process because peak RSS is process-wide
 //! and monotone (`fsl_bench::rss`); run it once per size.
 
 use std::num::NonZeroUsize;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::time::Instant;
 
 use fsl_bench::check::{self, call_head, completed_with_five, linked_chain};
 use fsl_bench::mc::{self, AxisError, Work};
 use fsl_bench::model::{self, ModelShape};
-use fsl_bench::parse::{self, ParseOutcome};
+use fsl_bench::package;
+use fsl_bench::parse::{self, ParseOutcome, ParseSession};
 use fsl_bench::rss::peak_rss_kib;
+use fsl_cst::ParserContext;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -39,7 +42,7 @@ const VOLUME_SIZES: [usize; 6] = [100, 500, 1_000, 2_000, 3_000, 4_000];
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: fsl-bench-probe parse | cst | check <chain|independent|self-recursive|text-cluster|deep-wide|deep-wide-chain> <N> | eval <N> | model <types> <depth> <members> | mc <axis> <sizes...> | mc-marginal <axis> <sizes...> -- <sizes...>"
+        "usage: fsl-bench-probe parse | cst | check <chain|independent|self-recursive|text-cluster|deep-wide|deep-wide-chain> <N> | eval <N> | model <types> <depth> <members> | mc <axis> <sizes...> | mc-marginal <axis> <sizes...> -- <sizes...> | package <emit|read|replay/request> <1|10|100>"
     );
     ExitCode::from(2)
 }
@@ -68,11 +71,11 @@ fn describe(outcome: &ParseOutcome) -> String {
     }
 }
 
-fn probe_parse() {
+fn probe_parse(session: &ParseSession) {
     let mut max_admitted = None;
     for depth in 0..=64 {
         let text = parse::nested_source(depth);
-        let outcome = ParseOutcome::of(&parse::parse(&text));
+        let outcome = ParseOutcome::of(&parse::parse(session, &text));
         println!(
             "parse.depth depth={depth} bytes={} {}",
             text.len(),
@@ -88,7 +91,7 @@ fn probe_parse() {
     );
     for functions in VOLUME_SIZES {
         let text = parse::volume_source(functions);
-        let outcome = ParseOutcome::of(&parse::parse(&text));
+        let outcome = ParseOutcome::of(&parse::parse(session, &text));
         println!(
             "parse.volume functions={functions} bytes={} {}",
             text.len(),
@@ -97,7 +100,7 @@ fn probe_parse() {
     }
 }
 
-fn probe_cst() {
+fn probe_cst(session: &ParseSession) {
     let mut inputs: Vec<(String, String)> = VOLUME_SIZES
         .iter()
         .map(|&functions| {
@@ -111,7 +114,7 @@ fn probe_cst() {
         (0..=4).map(|depth| (format!("nested depth={depth}"), parse::nested_source(depth))),
     );
     for (label, text) in inputs {
-        match parse::parse(&text) {
+        match parse::parse(session, &text) {
             Ok(parsed) if parsed.is_admissible() => {
                 println!(
                     "cst.nodes {label} source_bytes={} nodes={}",
@@ -181,6 +184,218 @@ fn probe_eval(functions: usize) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// One isolated package or replay request, with setup excluded from elapsed
+/// time and process peak RSS retained for the size.
+#[string_edge]
+fn probe_package(axis: &str, count: usize) -> ExitCode {
+    if axis == "replay/request" {
+        return probe_isolated_replay(count);
+    }
+    probe_package_fixture(axis, count)
+}
+
+fn probe_package_fixture(axis: &str, count: usize) -> ExitCode {
+    let fixture = match package::fixture(count) {
+        Ok(fixture) => fixture,
+        Err(error) => {
+            eprintln!("package fixture refused: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let read_identity =
+        fsl_semantics::library::LibraryName::new("package").expect("benchmark library identity");
+    let read_limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let witness_supplier = fsl_package::SourceWitnessSupplier::new(&fixture.emission);
+    let started = Instant::now();
+    let parse_calls: Option<u64> = None;
+    let checked_package = fixture.checked.package();
+    let succeeded = match axis {
+        "emit" => fsl_package::emit_package(
+            checked_package,
+            |location| checked_package.graph().region(location),
+            fsl_package::EmitLimits::new(1 << 32),
+        )
+        .is_ok(),
+        "read" => fsl_package::read_evaluation_emission(
+            checked_package,
+            &fixture.emission,
+            read_identity,
+            &fixture.packages,
+            read_limits,
+            fsl_package::EmitLimits::new(1 << 32),
+            witness_supplier,
+        )
+        .is_ok(),
+        _ => {
+            eprintln!("unknown package axis: {axis}");
+            return ExitCode::from(2);
+        }
+    };
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1e3;
+    let peak_rss = rss();
+    let parse_calls =
+        parse_calls.map_or_else(|| "unavailable".to_owned(), |calls| calls.to_string());
+    println!(
+        "axis={axis} M={count} wall_ms={elapsed_ms:.6} peak_rss_kib={peak_rss} parse_calls_per_source_document={parse_calls} source_documents=1 succeeded={succeeded}"
+    );
+    if succeeded {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn probe_isolated_replay(count: usize) -> ExitCode {
+    let artifact_dir = std::env::temp_dir().join(format!(
+        "fsl-bench-replay-probe-{}-{count}",
+        std::process::id()
+    ));
+    if let Err(error) = std::fs::create_dir_all(&artifact_dir) {
+        eprintln!("create replay probe artifact directory: {error}");
+        return ExitCode::FAILURE;
+    }
+    let artifact_path = artifact_dir.join("request.json");
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            eprintln!("locate replay probe executable: {error}");
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
+        }
+    };
+    let preparation = Command::new(&executable)
+        .arg("package-fixture-worker")
+        .arg(count.to_string())
+        .arg(&artifact_path)
+        .output();
+    match preparation {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            eprintln!(
+                "replay fixture preparation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!("start replay fixture preparation: {error}");
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
+        }
+    }
+    let replay = Command::new(&executable)
+        .arg("package-replay-worker")
+        .arg(count.to_string())
+        .arg(&artifact_path)
+        .output();
+    let replay = match replay {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("start isolated replay worker: {error}");
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
+        }
+    };
+    let report = String::from_utf8_lossy(&replay.stdout);
+    print!("{report}");
+    if !replay.status.success() {
+        eprint!("{}", String::from_utf8_lossy(&replay.stderr));
+    }
+    let row = report
+        .lines()
+        .find(|line| line.starts_with("axis=replay/request "));
+    let write_result = row.map_or_else(
+        || Err("isolated replay worker did not emit a report row".to_owned()),
+        |row| write_replay_probe_report(count, row),
+    );
+    let _ = std::fs::remove_dir_all(&artifact_dir);
+    if let Err(error) = write_result {
+        eprintln!("write replay probe report: {error}");
+        return ExitCode::FAILURE;
+    }
+    if replay.status.success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn prepare_replay_probe_artifact(count: usize, path: &std::path::Path) -> ExitCode {
+    let fixture = match package::fixture(count) {
+        Ok(fixture) => fixture,
+        Err(error) => {
+            eprintln!("package fixture refused: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let unit = package::source(count);
+    let request = match package::replay_request(&fixture, &unit) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("replay request refused: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match package::write_replay_probe_artifact(path, &request) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("prepare replay probe artifact: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn replay_probe_worker(count: usize, path: &std::path::Path) -> ExitCode {
+    let request = match package::read_replay_probe_artifact(path) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("replay probe request reconstruction failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let limits = fsl_replay::ReplayLimits::default().with_input_bytes(1 << 30);
+    let started = Instant::now();
+    #[cfg(feature = "counters")]
+    let (result, parse_calls) = fsl_bench::counters::replay_with_parse_calls(request, limits);
+    #[cfg(not(feature = "counters"))]
+    let (result, parse_calls) = (fsl_replay::replay(request, limits), 0_u64);
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1e3;
+    let peak_rss = rss();
+    let succeeded = result.is_ok();
+    println!(
+        "axis=replay/request M={count} wall_ms={elapsed_ms:.6} peak_rss_kib={peak_rss} parse_calls_per_source_document={parse_calls} source_documents=1 succeeded={succeeded}"
+    );
+    if peak_rss == "unavailable" {
+        eprintln!("replay/request requires a numeric peak RSS measurement");
+        return ExitCode::FAILURE;
+    }
+    if succeeded {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn write_replay_probe_report(count: usize, row: &str) -> Result<(), String> {
+    let path = if let Some(path) = std::env::var_os("FSL_PACKAGE_PROBE_REPORT") {
+        std::path::PathBuf::from(path)
+    } else {
+        std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("target"))
+            .join("package-probe-report")
+            .join(format!("replay-{count}"))
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| "replay probe report path has no parent directory".to_owned())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("create replay probe report directory: {error}"))?;
+    std::fs::write(&path, row.as_bytes())
+        .map_err(|error| format!("write {}: {error}", path.display()))
+}
+
 fn probe_model(shape: ModelShape, members: usize) -> ExitCode {
     let document = model::document(shape);
     let bytes = document.len();
@@ -228,14 +443,14 @@ fn probe_model(shape: ModelShape, members: usize) -> ExitCode {
 
 /// One parse of `functions` declarations with every S1 limit raised to fit
 /// it: wall time and outcome.
-fn probe_parse_volume(functions: usize) -> ExitCode {
+fn probe_parse_volume(functions: usize, session: &ParseSession) -> ExitCode {
     let text = parse::volume_source(functions);
     let limits = fsl_cst::Limits::default()
         .with_source_bytes(usize::MAX)
         .with_tokens(usize::MAX)
         .with_nodes(usize::MAX);
     let started = Instant::now();
-    let parsed = parse::parse_with(&text, limits);
+    let parsed = parse::parse_with(session, &text, limits);
     let s1 = started.elapsed().as_millis();
     let outcome = ParseOutcome::of(&parsed);
     let started = Instant::now();
@@ -253,7 +468,8 @@ fn probe_parse_volume(functions: usize) -> ExitCode {
 /// timed. The `Work` and the seconds the run took.
 /// `#[string_edge]`: this CLI boundary selects a benchmark axis from its word.
 #[string_edge]
-fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
+#[implements("NFR-141-AC-10")]
+fn run_axis(axis: &str, sizes: &[usize], parser: &ParserContext) -> Result<(Work, f64), AxisError> {
     let at = |index: usize| {
         sizes
             .get(index)
@@ -268,27 +484,27 @@ fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
     match axis {
         "state_graph" | "state_graph_symmetric" => {
             let symmetric = axis == "state_graph_symmetric";
-            let world = mc::ring_state_graph(at(0)?, at(1)?, symmetric)?;
+            let world = mc::ring_state_graph(at(0)?, at(1)?, symmetric, parser)?;
             timed(&mut || mc::run_state_graph(&world, symmetric))
         }
         "safety" | "deadlock" => {
-            let world = mc::ring_safety(at(0)?, at(1)?)?;
+            let world = mc::ring_safety(at(0)?, at(1)?, parser)?;
             timed(&mut || mc::run_safety(&world, axis == "deadlock").map(|(work, _)| work))
         }
         "liveness" => {
-            let world = mc::ring_liveness(at(0)?, at(1)?)?;
+            let world = mc::ring_liveness(at(0)?, at(1)?, parser)?;
             timed(&mut || mc::run_liveness(&world).map(|(work, _)| work))
         }
         "frame_candidates" => {
-            let world = mc::wide(at(0)?, at(1)?)?;
+            let world = mc::wide(at(0)?, at(1)?, parser)?;
             timed(&mut || mc::run_frame_candidates(&world))
         }
         "observation" => {
-            let world = mc::observation(at(0)?)?;
+            let world = mc::observation(at(0)?, parser)?;
             timed(&mut || mc::run_observation(&world))
         }
         "reach_1" | "reach_2" | "reach_4" | "reach_all" => {
-            let world = mc::protocol(at(0)?)?;
+            let world = mc::protocol(at(0)?, parser)?;
             let limit = match axis {
                 "reach_1" => workers(1),
                 "reach_2" => workers(2),
@@ -298,14 +514,14 @@ fn run_axis(axis: &str, sizes: &[usize]) -> Result<(Work, f64), AxisError> {
             timed(&mut || mc::run_reach(&world, limit))
         }
         "encode" => {
-            let world = mc::keys(at(0)?, at(1)?)?;
+            let world = mc::keys(at(0)?, at(1)?, parser)?;
             let system =
                 ModelSystem::new(world.simulation()).map_err(|e| AxisError(format!("{e:?}")))?;
             timed(&mut || mc::run_encode(&system))
         }
         "sample" => {
             let epsilon = u32::try_from(at(0)?).map_err(|e| AxisError(e.to_string()))?;
-            let world = mc::service(epsilon)?;
+            let world = mc::service(epsilon, parser)?;
             timed(&mut || mc::run_sample(&world))
         }
         other => Err(AxisError(format!("unknown axis {other}"))),
@@ -330,8 +546,9 @@ fn size_lists(arguments: &[String]) -> Result<(Vec<usize>, Vec<usize>), String> 
 
 /// `mc <axis> <sizes...>`: one run, one process: states/s, edges/s or
 /// samples/s, and peak RSS.
-fn probe_axis(axis: &str, sizes: &[usize]) -> ExitCode {
-    match run_axis(axis, sizes) {
+#[implements("NFR-141-AC-10")]
+fn probe_axis(axis: &str, sizes: &[usize], parser: &ParserContext) -> ExitCode {
+    match run_axis(axis, sizes, parser) {
         Ok((work, seconds)) => {
             println!(
                 "axis={axis} sizes={sizes:?} {} secs={seconds:.6} peak_rss_kib={}",
@@ -350,7 +567,8 @@ fn probe_axis(axis: &str, sizes: &[usize]) -> ExitCode {
 /// `mc-marginal <axis> <small sizes...> -- <large sizes...>`: the small run
 /// then the large one in one process, so the peak is monotone, and the
 /// bytes the large run added per state it added.
-fn probe_marginal(axis: &str, arguments: &[String]) -> ExitCode {
+#[implements("NFR-141-AC-10")]
+fn probe_marginal(axis: &str, arguments: &[String], parser: &ParserContext) -> ExitCode {
     let (small, large) = match size_lists(arguments) {
         Ok(lists) => lists,
         Err(error) => {
@@ -358,11 +576,11 @@ fn probe_marginal(axis: &str, arguments: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let (Ok((first, _)), Some(before)) = (run_axis(axis, &small), peak_rss_kib()) else {
+    let (Ok((first, _)), Some(before)) = (run_axis(axis, &small, parser), peak_rss_kib()) else {
         eprintln!("marginal: the small run or its peak RSS is unavailable");
         return ExitCode::FAILURE;
     };
-    let (Ok((second, _)), Some(after)) = (run_axis(axis, &large), peak_rss_kib()) else {
+    let (Ok((second, _)), Some(after)) = (run_axis(axis, &large, parser), peak_rss_kib()) else {
         eprintln!("marginal: the large run or its peak RSS is unavailable");
         return ExitCode::FAILURE;
     };
@@ -398,19 +616,21 @@ fn rates(work: &Work, seconds: f64) -> String {
 
 /// `#[string_edge]`: dispatches the probe's command-line subcommand words.
 #[string_edge]
+#[implements("NFR-141-AC-10")]
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let parser = ParseSession::new();
     match arguments.first().map(String::as_str) {
         Some("parse") => {
-            probe_parse();
+            probe_parse(&parser);
             ExitCode::SUCCESS
         }
         Some("parse-volume") => match size(arguments.get(1)) {
-            Some(functions) => probe_parse_volume(functions),
+            Some(functions) => probe_parse_volume(functions, &parser),
             None => usage(),
         },
         Some("cst") => {
-            probe_cst();
+            probe_cst(&parser);
             ExitCode::SUCCESS
         }
         Some("check") => match (arguments.get(1), size(arguments.get(2))) {
@@ -420,6 +640,24 @@ fn main() -> ExitCode {
         Some("eval") => match size(arguments.get(1)) {
             Some(functions) => probe_eval(functions),
             None => usage(),
+        },
+        Some("package") => match (arguments.get(1), size(arguments.get(2))) {
+            (Some(axis), Some(count)) if package::MODEL_COUNTS.contains(&count) => {
+                probe_package(axis, count)
+            }
+            _ => usage(),
+        },
+        Some("package-fixture-worker") => match (size(arguments.get(1)), arguments.get(2)) {
+            (Some(count), Some(path)) if package::MODEL_COUNTS.contains(&count) => {
+                prepare_replay_probe_artifact(count, std::path::Path::new(path))
+            }
+            _ => usage(),
+        },
+        Some("package-replay-worker") => match (size(arguments.get(1)), arguments.get(2)) {
+            (Some(count), Some(path)) if package::MODEL_COUNTS.contains(&count) => {
+                replay_probe_worker(count, std::path::Path::new(path))
+            }
+            _ => usage(),
         },
         Some("model") => match (
             size(arguments.get(1)),
@@ -433,7 +671,7 @@ fn main() -> ExitCode {
         },
         Some("mc") => match arguments.get(1) {
             Some(axis) => match size_lists(&arguments[2..]) {
-                Ok((sizes, rest)) if rest.is_empty() => probe_axis(axis, &sizes),
+                Ok((sizes, rest)) if rest.is_empty() => probe_axis(axis, &sizes, parser.context()),
                 Ok(_) => usage(),
                 Err(error) => {
                     eprintln!("{error}");
@@ -443,7 +681,7 @@ fn main() -> ExitCode {
             None => usage(),
         },
         Some("mc-marginal") => match arguments.get(1) {
-            Some(axis) => probe_marginal(axis, &arguments[2..]),
+            Some(axis) => probe_marginal(axis, &arguments[2..], parser.context()),
             None => usage(),
         },
         _ => usage(),

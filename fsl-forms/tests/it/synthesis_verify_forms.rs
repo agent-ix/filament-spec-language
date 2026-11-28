@@ -33,8 +33,9 @@ const PICK_MAX: &str = "synthesis Pick using p grammar Digit domain Digit \
 /// The one declaration form S2 builds for `declaration`, or the S1/S2
 /// refusal rendered by its `Debug` form.
 fn built_form(declaration: &str) -> Result<DeclarationForm, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declaration}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -52,8 +53,9 @@ fn built_form(declaration: &str) -> Result<DeclarationForm, String> {
 }
 
 fn synthesis_form(declaration: &str) -> Result<SynthesisForm, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declaration}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

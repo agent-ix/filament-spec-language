@@ -355,6 +355,7 @@ fn assemble(body: &str) -> PackageDeclarations {
 
 /// [`assemble`] over `document`.
 fn assemble_over(document: &[u8], body: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (unit, packages) = service_unit_over(document, body);
     let built = parse_and_build(&unit);
     let models = admit_unit(
@@ -364,10 +365,10 @@ fn assemble_over(document: &[u8], body: &str) -> PackageDeclarations {
     )
     .unwrap_or_else(|refusal| panic!("I1 refused: {refusal:?}"))
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .unwrap_or_else(|failure| panic!("a kept operation clause does not parse: {failure:?}"));
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-620"),
         "unit.native",
         unit.as_bytes(),
@@ -915,8 +916,9 @@ fn exact_values_are_bounded_as_written() {
 #[trace("TC-620", "FR-185-AC-2")]
 #[test]
 fn a_bare_negative_weight_is_refused_at_s1() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (unit, _) = service_unit("random Server::attempt(d) ~ { 1: -1 };");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-620"),
         "unit.native",
         unit.as_bytes(),

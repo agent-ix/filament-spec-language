@@ -229,11 +229,6 @@ pub fn settle_statistical(
                         state: state.clone(),
                     }
                 }
-                StatisticalUnsupported::TimeLockedSample { state } => {
-                    UnavailabilityCause::TimeLockedSample {
-                        state: state.clone(),
-                    }
-                }
             }))
         }
     }
@@ -787,15 +782,6 @@ mod tests {
             race["cause"]["identity"]["operation"],
             r#"{"name":"timeout"}"#
         );
-
-        let lock = settle(&StatisticalOutcome::Unsupported {
-            cause: StatisticalUnsupported::TimeLockedSample { state },
-            provenance: provenance(),
-        });
-        let lock = wire(lock);
-        assert_eq!(lock["result"], "unsupported");
-        assert_eq!(lock["cause"]["kind"], "time-locked-sample");
-        assert_eq!(lock["cause"]["state"]["key"], "WzAsW11d");
     }
 
     /// FR-192's refusal rows: `NoTest` settles `inconclusive`,

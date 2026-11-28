@@ -79,8 +79,9 @@ fn law_header(alias: &str, law: &str) -> String {
 /// The assembled declarations of a unit with `headers` and `declarations`,
 /// with no caller-supplied division law; `Err` renders an assembly refusal.
 fn assemble(headers: &str, declarations: &str) -> Result<PackageDeclarations, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{headers}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "division-law"),
         "division-law.native",
         text.as_bytes(),

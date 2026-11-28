@@ -3,8 +3,8 @@
 
 use filament_exact::Cancel;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_foundation::Setting;
 use fsl_foundation::diagnostic::{LimitKind, StageFailure};
+use fsl_foundation::Setting;
 use fsl_replay::spine::{self, ParseRequest, SpineLimits};
 use fsl_replay::{DependencyInput, SourceIdentity};
 use ix_trace_rs::trace;

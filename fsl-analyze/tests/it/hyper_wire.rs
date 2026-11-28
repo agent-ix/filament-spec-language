@@ -9,6 +9,78 @@ use crate::hyper_world::{
     non_interference, opaque, request_files_over_starts, Vault, EQUAL_INPUTS, STARTS,
 };
 
+/// FR-125-AC-21: a single-existential hyper claim with bounded but empty
+/// universes reports `NoInstance` rather than refusing the analysis.
+#[trace("TC-520", "TC-3219", "FR-125-AC-13", "FR-125-AC-21")]
+#[test]
+fn qsl_3366_single_existential_over_an_empty_universe_reports_no_instance() {
+    let clause = "hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V { eventually always holds(v.l @ b = 1) }";
+    let (unit, model, _) = request_files_over_starts(Vault::Secure, false, &STARTS, clause);
+    let mut provision = fsl_semantics::model::observation::DocumentProvision::new();
+    crate::hyper_world::snapshot(&mut provision, "s0", &[], None, None);
+    let bytes = provision.into_values().next().expect("one snapshot");
+    let ws = Workspace::new("hyper-wire-single-empty-universe");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &[bytes],
+        json!({"items": [{"claim": "Possible", "temporal": {"witness_samples": 0}}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(
+        item["record"]["result"],
+        "inconclusive",
+        "{}",
+        run.document()
+    );
+    assert_eq!(
+        item["record"]["cause"]["kind"],
+        "no-instance",
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-125-AC-21: no initial state takes precedence over an empty universe.
+#[trace("TC-520", "TC-3219", "FR-125-AC-13", "FR-125-AC-21")]
+#[test]
+fn qsl_3366_single_existential_without_initial_state_reports_no_initial_state() {
+    let clause = "hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V { eventually always holds(v.l @ b = 1) }";
+    let (unit, model, _) = request_files_over_starts(Vault::Secure, false, &STARTS, clause);
+    let mut provision = fsl_semantics::model::observation::DocumentProvision::new();
+    crate::hyper_world::snapshot(&mut provision, "s0", &[], None, None);
+    let bytes = provision.into_values().next().expect("one snapshot");
+    let ws = Workspace::new("hyper-wire-single-no-initial-state");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &[bytes],
+        json!({
+            "items": [{"claim": "Possible", "temporal": {"witness_samples": 0}}],
+            "subject": {
+                "initial_states": [],
+                "universes": [{"authority": "test", "identity": "s0"}],
+                "proof_bounds": []
+            }
+        }),
+    ));
+    let item = run.item(0);
+    assert_eq!(
+        item["record"]["result"],
+        "inconclusive",
+        "{}",
+        run.document()
+    );
+    assert_eq!(
+        item["record"]["cause"]["kind"],
+        "no-initial-state",
+        "{}",
+        run.document()
+    );
+}
+
 #[trace("TC-1591", "FR-631-AC-1", "FR-181-AC-1", "FR-163-AC-1")]
 #[test]
 fn analyze_hyper_single_existential_holds_and_refutes() {

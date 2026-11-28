@@ -208,6 +208,7 @@ struct Subject {
 
 /// The fixture `document` checked with `clauses` as its unit.
 fn subject(document: Vec<u8>, clauses: &[&str]) -> Subject {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
@@ -215,7 +216,7 @@ fn subject(document: Vec<u8>, clauses: &[&str]) -> Subject {
          function Noop using v(): Boolean pure {{ true }}\n{}\n",
         clauses.join("\n"),
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "fr-155"),
         "fr-155.native",
         unit.as_bytes(),
@@ -231,7 +232,7 @@ fn subject(document: Vec<u8>, clauses: &[&str]) -> Subject {
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the kept operation clauses parse");
     let declarations = PackageDeclarations::assemble(

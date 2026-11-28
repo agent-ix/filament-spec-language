@@ -1456,6 +1456,7 @@ impl AnalyzeRefusal {
         self.refusal_document().with_empty_analyze_members()
     }
 
+    #[implements("FR-110-AC-16")]
     fn refusal_document(&self) -> OutcomeDocument {
         match self {
             Self::EffectDecision(refusal) => {
@@ -1487,7 +1488,7 @@ impl AnalyzeRefusal {
                     if refusal.code == fsl_foundation::Code::MissingImport {
                         Some(refusal.catalog_cause())
                     } else {
-                        refusal.cause.as_deref()
+                        refusal.reader_cause()
                     },
                     refusal.code.as_str(),
                     None,
@@ -2575,6 +2576,9 @@ pub struct AnalyzeRecord {
     pub exact_probabilistic: Option<Box<ExactProbabilityEvidence>>,
     /// The independently replayed EN-5 probabilistic counterexample.
     pub probabilistic_counterexample: Option<Spelled<fsl_replay::ReproducedProbabilityWitness>>,
+    /// Why an `incomplete` EN-5 item left digital clocks: the region process
+    /// it needs is not built (ADR-038 RL-3).
+    pub region_cause: Option<fsl_eval::simulation::model::RegionCause>,
     /// The object an EN-1 clause counterexample's `over` parameter is bound
     /// to, which only the run's subject can name (FSpec FR-364).
     pub over_reference: Option<ObjectReference>,
@@ -2656,6 +2660,7 @@ impl AnalyzeRecord {
             contract_check: None,
             exact_probabilistic: None,
             probabilistic_counterexample: None,
+            region_cause: None,
             over_reference: None,
             refinement_steps: None,
             protocol_subject: None,
@@ -3047,6 +3052,21 @@ pub fn analyze_items(
     records
 }
 
+/// The occurrence, request index, temporal form and method of one state-graph
+/// item built through [`test_support_state_graph_item`].
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy)]
+pub struct StateGraphItemTarget<'a> {
+    /// The occurrence the item checks.
+    pub key: &'a OccurrenceKey,
+    /// The request index of the item.
+    pub index: RequestIndex,
+    /// The temporal form requested.
+    pub form: &'a TemporalItem,
+    /// The requested method, if any.
+    pub method: Option<&'a str>,
+}
+
 /// Run one state-graph item through the real analyze settlement path.
 ///
 /// This adapter is available only to integration tests that exercise the
@@ -3058,14 +3078,18 @@ pub fn test_support_state_graph_item<'a>(
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
-    key: &OccurrenceKey,
-    index: RequestIndex,
-    form: &TemporalItem,
-    method: Option<&str>,
+    target: &StateGraphItemTarget<'_>,
     cancel: &Cancel,
 ) -> Option<AnalyzeRecord> {
     let item = state_graph_item::state_graph_item(
-        analysis, binding, limits, provision, key, index, form, method,
+        analysis,
+        binding,
+        limits,
+        provision,
+        target.key,
+        target.index,
+        target.form,
+        target.method,
     )?;
     analyze_items(
         engines,
@@ -3675,8 +3699,13 @@ fn settle(
             ..record(terminal(report.terminal), None)
         },
         EngineReport::Exact(exact) => {
+            let region_cause = match exact.as_ref() {
+                exact::ExactReport::Settled(stop) => stop.region_cause(),
+                _ => None,
+            };
             let (settled_record, evidence, counterexample) = exact.settle(index, backend);
             let mut settled = record(terminal(settled_record), None);
+            settled.region_cause = region_cause;
             settled.exact_probabilistic = evidence;
             settled.probabilistic_counterexample =
                 counterexample.map(|(found, wire)| Spelled { found, wire });

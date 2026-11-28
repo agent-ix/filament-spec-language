@@ -32,15 +32,15 @@ use std::{
 };
 
 use filament_contract_model::{
-    encode_checked_package_v2, BoundedDomainForm, CheckedNodeId, CheckedNodeKind,
-    CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedPackageV2ReadResult,
-    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedTerm,
+    BoundedDomainForm, CheckedNodeId, CheckedNodeKind, CheckedPackageEvidence,
+    CheckedPackageReadLimits, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedPackageV2ReadResult, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
+    CheckedTerm, encode_checked_package_v2,
 };
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_forms::{BuiltinType, Expression, FunctionDeclaration, TypeForm, TypeFormHead};
-use fsl_foundation::{source::provenance::SourceRegion, Span};
-use fsl_package::{read_import_view, AdmittedPackages, CheckedPackage, V2ReadLimits};
+use fsl_foundation::{Span, source::provenance::SourceRegion};
+use fsl_package::{AdmittedPackages, CheckedPackage, V2ReadLimits, read_import_view};
 use fsl_semantics::{
     check::{PackageDeclarations, RewardEvaluator},
     library::LibraryName,
@@ -247,8 +247,10 @@ fn with_population_package<T>(
 fn assemble(
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<PackageDeclarations, Error> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let stage = |stage| move |detail: String| Error::Assemble { stage, detail };
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         spine_model::unit().as_bytes(),

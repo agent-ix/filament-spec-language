@@ -10,6 +10,8 @@
 //! [`fsl_package::BarePackage`] of the admitted package. No source is read or
 //! compiled, and no refusal falls back to source.
 
+use ix_trace_rs::implements;
+
 use std::path::Path;
 
 use fsl_replay::CertificationPolicy;
@@ -142,6 +144,7 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
 /// The request-stage refusal of a package the strict reader refused, with
 /// the reader's pointer under `/request/package` (FR-1039).
 #[ix_trace_rs::string_edge]
+#[implements("FR-110-AC-16")]
 fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     if let Some(failure) = refusal.host_allocation_failure {
         return RunCause::AnalyzePackage {
@@ -154,9 +157,9 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
             ),
         };
     }
+    let cause = refusal.reader_cause();
     let fsl_package::PackageAdmissionRefusal {
         code,
-        cause,
         pointer,
         identity,
         ..
@@ -183,7 +186,7 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
             let pointer = format!("/request/package{pointer}");
             return RunCause::AnalyzePackage {
                 code,
-                cause,
+                cause: cause.map(str::to_owned),
                 pointer: Some(pointer.clone()),
                 message: format!("{label} at {pointer}: no artifact evidence supplies {identity}"),
             };
@@ -191,7 +194,7 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         // FR-1039: a recorded model selection with no `models` entry.
         return RunCause::AnalyzePackage {
             code,
-            cause,
+            cause: cause.map(str::to_owned),
             pointer: Some("/request/models".to_owned()),
             message: format!("{label} at /request/models: no models entry supplies {identity}"),
         };
@@ -199,7 +202,7 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
     let pointer = format!("/request/package{}", pointer.unwrap_or_default());
     RunCause::AnalyzePackage {
         code,
-        cause,
+        cause: cause.map(str::to_owned),
         message: format!("{label} at {pointer}"),
         pointer: Some(pointer),
     }
@@ -823,7 +826,7 @@ pub(super) fn admit_files(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let supplied = super::package_input_from_selected_models(&request.models, &documents).map_err(
+    let supplied = super::package_input_from_selected_models(intake.parser_context(), &request.models, &documents).map_err(
         |cause| match cause {
             RunCause::ClauseRequest { member, reason } => invalid(&member, reason),
             cause => cause,

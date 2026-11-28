@@ -299,6 +299,21 @@ fn emit_checked(package: &CheckedPackage) -> Result<Emission, EmitRefusal> {
     super::emit_checked(package, ceiling())
 }
 
+fn emit_checked_with_typed_graph(
+    package: &CheckedPackage,
+) -> (Emission, (Vec<filament_contract_model::CheckedSemanticNodeV2>, Vec<filament_contract_model::CheckedSourceMapEntry>)) {
+    let mut typed_graph = None;
+    let mut observer = |event: crate::test_support::EmitProbeEvent<'_>| {
+        if let crate::test_support::EmitProbeEvent::TypedGraph(nodes, map) = event {
+            typed_graph = Some((nodes.to_vec(), map.to_vec()));
+        }
+    };
+    let mut probe = crate::test_support::EmissionProbe::new(&mut observer);
+    let emission = super::emit_checked_with_probe(package, ceiling(), &mut probe)
+        .expect("the package emits");
+    (emission, typed_graph.expect("the observer received the typed graph"))
+}
+
 /// The entry with an explicit ceiling for a measured large fixture.
 fn emit_checked_with_limits(
     package: &CheckedPackage,
@@ -411,7 +426,7 @@ fn operand_slot_rows_preserve_the_retained_document_graph() {
         ceiling(),
     )
     .expect("the package emits");
-    assert_eq!(document_nodes(graph).unwrap(), typed);
+    assert_eq!(document_nodes(graph, &mut NoopEmitProbe).unwrap(), typed);
     assert!(matches!(read_back(&emission), Read::Verified { .. }));
 }
 
@@ -427,9 +442,11 @@ fn one_pass_operand_rewrite_preserves_package_bytes() {
     ));
 
     let one_pass = emit_checked(&package).expect("the package emits with one-pass rewrites");
-    let repeated = with_repeated_operand_rewrite(|| {
-        emit_checked(&package).expect("the package emits with repeated rewrites")
-    });
+    let mut events = |_: crate::test_support::EmitProbeEvent<'_>| {};
+    let mut probe = crate::test_support::EmissionProbe::new(&mut events);
+    probe.force_repeated_operand_rewrite();
+    let repeated = super::emit_checked_with_probe(&package, ceiling(), &mut probe)
+        .expect("the package emits with repeated rewrites");
 
     assert_eq!(one_pass.package().bytes(), repeated.package().bytes());
 }
@@ -472,7 +489,7 @@ fn operand_slot_numbering_visits_only_identity_paths_in_canonical_order() {
         graph_version: GRAPH_V2.into(),
         nodes,
         operand_rows: rows,
-    })
+    }, &mut NoopEmitProbe)
     .unwrap();
     assert_eq!(restored[0].body, foreign);
     let mut authored = json!({"semantic_graph": {"nodes": restored}});
@@ -1103,6 +1120,7 @@ fn a_float_sum_carries_the_ieee_law_and_its_rounding_mode() {
         type F = Float64[nearest-even];\n\
         function total using v(s: Sequence<F>[0, 4]): F pure { sum<F>(x in s: x) }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1176,6 +1194,7 @@ fn a_carried_sum_lowers_to_its_identity_with_the_carriers_rounding_mode() {
         function ld using v(s: Sequence<Ld>[0, 1]): Ld pure { sum<Ld>(x in s: x) }\n\
         function lr using v(s: Sequence<Lr>[0, 1]): Lr pure { sum<Lr>(x in s: x) }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1328,6 +1347,7 @@ fn written_nodes(package: &CheckedPackage) -> Vec<Value> {
         &mut [],
         &mut [],
         &ForeignNodes::default(),
+        &mut NoopEmitProbe,
     )
     .expect("every operand is written");
     nodes
@@ -2650,6 +2670,7 @@ const SPINE_TEXT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 #[test]
 fn source_text_compiles_through_the_spine_and_reads_back_verified() {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         SPINE_TEXT.as_bytes(),
@@ -3008,6 +3029,7 @@ fn try_package_from_text(declarations: &str) -> Result<CheckedPackage, Vec<Seman
          {declarations}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -3187,6 +3209,7 @@ fn the_strict_reader_decides_every_text_literal_vector_as_specified() {
 fn spine_compile_package() -> CheckedPackage {
     const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/spine-compile.native");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine"),
         "program.native",
         FIXTURE,
@@ -3244,6 +3267,7 @@ fn assemble_with_models_in(
     limits.tokens = limits.tokens.max(unit.len());
     limits.nodes = limits.nodes.max(unit.len().saturating_mul(16));
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", source_identity),
         "program.native",
         unit,
@@ -3613,6 +3637,7 @@ fn an_unknown_model_type_refuses_at_the_assembler_and_a_missing_package_at_intak
     let unknown = fixture.replace("w: Reference<M::Widget>", "w: Reference<M::Nope>");
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT]).unwrap();
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         unknown.as_bytes(),
@@ -3659,6 +3684,7 @@ fn an_unknown_model_type_refuses_at_the_assembler_and_a_missing_package_at_intak
 /// `unit`'s S2 selections.
 fn unit_selections(unit: &str) -> Vec<fsl_foundation::selection::ModelSelection> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         unit.as_bytes(),
@@ -3680,6 +3706,7 @@ fn unit_selections(unit: &str) -> Vec<fsl_foundation::selection::ModelSelection>
 fn a_model_declaration_with_no_admitted_package_refuses_at_the_assembler() {
     let fixture = spine_model::unit();
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         fixture.as_bytes(),
@@ -4268,6 +4295,7 @@ fn check_attempt_unit(
     with_sub: bool,
 ) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-309"),
         "program.native",
         unit.as_bytes(),
@@ -4328,6 +4356,7 @@ fn emit_attempt_unit(unit: &str, with_sub: bool) -> AttemptEmission {
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     assert_eq!(emission.omitted, []);
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-309"),
         "program.native",
         unit.as_bytes(),
@@ -4337,6 +4366,7 @@ fn emit_attempt_unit(unit: &str, with_sub: bool) -> AttemptEmission {
     let formatted = fsl_cst::format::format_with_limit(&parsed, usize::MAX)
         .expect("the admitted attempt formats");
     let reparsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-309"),
         "program.native",
         formatted.as_bytes(),
@@ -4688,6 +4718,7 @@ pub(crate) fn package_from_text(declarations: &str) -> (String, CheckedPackage) 
          {declarations}"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

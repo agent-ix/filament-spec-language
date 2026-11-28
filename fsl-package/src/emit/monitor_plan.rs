@@ -18,6 +18,7 @@ use std::{
 use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use filament_exact::Rational;
+use ix_trace_rs::{implements, trace};
 
 use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 
@@ -388,9 +389,10 @@ fn emit_monitor_plan(
     limits: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let ids = &StructuralIds::default();
+    let mut probe = super::NoopEmitProbe;
     let mut nodes = base.resolved_graph().nodes.clone();
     let mut source_map = base.source_map().to_vec();
-    read_index_segments(ids, &mut nodes, &mut source_map)?;
+    read_index_segments(ids, &mut nodes, &mut source_map, &mut probe)?;
     // The inspection map is read from the structural form, before the
     // graph goes to wire form for the edits. The clause is selected in that
     // form too, by its own identity.
@@ -416,6 +418,7 @@ fn emit_monitor_plan(
         &mut [],
         &mut [],
         &ForeignNodes::default(),
+        &mut probe,
     )?;
     // The generated nodes belong to the package being compiled, which the
     // selected clause is a node of (a domain package's nodes may come first).
@@ -1356,6 +1359,7 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+#[implements("FSpec-FR-322-AC-309")]
 pub(super) fn finish(
     base: &CheckedPackageV2,
     retained: &Emission,
@@ -1465,7 +1469,8 @@ pub(super) fn finish(
         .map_err(EmitRefusal::from)
     })?;
     let retained_nodes = super::RetainedNodes::of(&semantic_graph);
-    let nodes = super::document_nodes(semantic_graph)?;
+    let mut probe = super::NoopEmitProbe;
+    let nodes = super::document_nodes(semantic_graph, &mut probe)?;
     #[cfg(test)]
     WRITTEN_NODES.with(|written| *written.borrow_mut() = nodes.clone());
     let mut rows = carry_rows(retained, changes);
@@ -1554,7 +1559,7 @@ mod tests {
     /// The production final writer rekeys body origins with all four entries,
     /// keeping helper rows and checker coordinates intact. Scalar bodies let
     /// the strict reader check this independently of record-value traversal.
-    #[ix_trace_rs::trace("FR-251-AC-9", "FSpec-FR-322-AC-309")]
+    #[trace("FSpec-FR-322-AC-309")]
     #[test]
     fn final_writer_rekeys_four_entry_body_origins_and_refuses_a_stale_origin() {
         let (_, checked) = super::super::tests::package_from_text(

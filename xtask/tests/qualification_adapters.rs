@@ -355,12 +355,13 @@ fn replay_fixture_source(source: &str) -> Fixture {
 }
 
 fn kernel_replay_fixture_source(source: &str) -> Fixture {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_replay::spine;
 
     let identity = fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native");
     let limits = fsl_replay::CallerLimits::default();
     let cancel = filament_exact::Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &spine::ParseRequest {
             source: &identity,
             path: "inputs/unit.native",
@@ -371,7 +372,7 @@ fn kernel_replay_fixture_source(source: &str) -> Fixture {
     )
     .expect("the undefined function parses")
     .into_value();
-    let models = spine::select(
+    let models = spine::select(&qsl3309_parser_context,
         &parsed,
         &std::collections::BTreeMap::new(),
         limits.spine.model,

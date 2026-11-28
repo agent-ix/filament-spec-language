@@ -24,7 +24,10 @@ fsl-eval = { path = "../fsl-eval" }
 # `deep_input`: the S1-to-S4 spine compile the deep-input fuzz target drives.
 fsl-replay = { path = "../fsl-replay" }
 # The model-check, state-graph, statistical and protocol axes (`src/mc.rs`).
-fsl-analyze = { path = "../fsl-analyze" }
+# The fsl-replay test route enables replay's test-support RunStats fields.
+# Keep the analysis crate's cfgs aligned while this benchmark-only crate is
+# built as fsl-replay's dev-dependency.
+fsl-analyze = { path = "../fsl-analyze", features = ["test-support"] }
 # The symmetry declaration a state-graph request carries.
 fsl-route = { path = "../fsl-route" }
 filament-exact = { workspace = true }
@@ -35,6 +38,7 @@ filament-semantic-value = { workspace = true }
 filament-eval = { workspace = true }
 # The package document's bytes are its RFC 8785 encoding (ADR-013:113).
 quire-canonical = { workspace = true }
+serde = { workspace = true }
 serde_json = "1.0.151"
 # FR-064: the probe's two command-line dispatch functions carry
 # `#[string_edge]`, since `xtask string-edge` scans this crate.
@@ -47,7 +51,7 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 
 # Off by default: the workload counters of `src/counters.rs`.
 [features]
-counters = []
+counters = ["fsl-replay/bench-counters"]
 property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]
 
 [dev-dependencies]
@@ -100,6 +104,10 @@ harness = false
 
 [[bench]]
 name = "en4"
+harness = false
+
+[[bench]]
+name = "package"
 harness = false
 
 [lints.rust]

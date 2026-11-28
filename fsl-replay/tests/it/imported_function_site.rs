@@ -80,6 +80,7 @@ fn selected<S: fsl_replay::CallSiteSelection>(
     selection: &S,
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", unit.as_bytes()),
         [],
@@ -93,6 +94,7 @@ fn selected<S: fsl_replay::CallSiteSelection>(
 /// function: the site FR-121-AC-32 requires the imported selection to equal.
 fn standalone(body: &str, name: &str) -> CallSite<FunctionSite> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "units"),
         fsl_replay::CallSiteUnit::new(
             "test/units".to_owned(),

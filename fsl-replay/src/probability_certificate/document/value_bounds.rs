@@ -10,6 +10,7 @@
 //! two spellings, and the base's checker compares every member with its own
 //! derivation.
 
+use ix_trace_rs::implements;
 use serde_json::{json, Value};
 
 use super::*;
@@ -124,10 +125,11 @@ fn side_of(kind: &str) -> Option<SubsystemBoundKind> {
 /// they certify and their policy hints; `None` when `bytes` is not a
 /// proof-role bound document.
 ///
-/// An `upper` document carries no `ranking` (the exact reader's required
-/// member is written empty); a `lower` document's missing `ranking` is left
-/// for the exact reader to name. The `policy` member is removed from the exact
-/// document and returned unchecked for the base's checker to resolve.
+/// An `upper` document carries no `ranking` unless its reward base requires
+/// upper properness; an expected-reward `lower` carries no ranking. The
+/// `policy` member is removed from the exact document and returned unchecked
+/// for the base's checker to resolve.
+#[implements("FR-1042-AC-19", "FR-1042-AC-25", "FR-1042-AC-26")]
 pub(super) fn unwrap(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
@@ -236,7 +238,10 @@ pub(super) fn unwrap(
                     }
                 }
                 SubsystemBoundKind::Lower if reward => {
-                    root.entry("ranking").or_insert_with(|| json!([]));
+                    if root.contains_key("ranking") {
+                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
+                    }
+                    root.insert("ranking".into(), json!([]));
                 }
                 SubsystemBoundKind::Lower => {}
             }
@@ -263,6 +268,7 @@ pub(super) fn unwrap(
 }
 
 /// The proof-role spelling of the base's exact `document` bytes for `side`.
+#[implements("FR-1042-AC-19", "FR-1042-AC-25", "FR-1042-AC-26")]
 pub(super) fn wrap(
     exact: &[u8],
     side: SubsystemBoundKind,
@@ -310,7 +316,9 @@ pub(super) fn wrap(
                 root.remove("ranking");
                 root.remove("policy");
             }
-        } else if side == SubsystemBoundKind::Upper && !reward {
+        } else if (side == SubsystemBoundKind::Upper && !reward)
+            || (side == SubsystemBoundKind::Lower && reward)
+        {
             root.remove("ranking");
         }
     }

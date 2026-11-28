@@ -65,6 +65,35 @@ unsound, and the checker rejects a certificate that states it.
   states paired with corners, each delay edge carrying the exact elapsed time
   between corners, whose minimum and maximum are the dense infimum and
   supremum.
+- Interim, until the symbolic region MDP of ADR-038 RL-3 replaces it
+  (QSL-3495): a claim whose reason for the region route is a strict constraint
+  (`Region(Strict)` in the route admission table) SHALL be decided by the
+  existing grid walk, and its verdict is only as sound as the dense oracle
+  rows that pin it. A strict claim with a second cause takes the grid walk
+  only for the pairs a green oracle row covers, which the table
+  `STRICT_GRID_WALK` declares as data:
+
+  | Second cause | Dense oracle rows |
+  |---|---|
+  | time-lock | `row_3444_two_clock_regions_bounded_minimum_routes`, `a_delay_reaches_the_region_between_two_clocks_integer_crossings` |
+  | other formula | `row_3468_time_lock_strict_routes`, `a_region_delay_instant_is_not_a_predicate_position` |
+  | other elapsed measure | `elapsed_quantile_altered_upper_value_is_rejected`, `elapsed_quantile_at_least_is_certified_over_regions`, `elapsed_quantile_tight_search_refutes` |
+
+  The strict `two_clocks` rows `row_3444_two_clock_regions_minimum_routes`,
+  `row_3444_two_clock_regions_maximum_routes` and
+  `row_3444_two_clock_regions_bounded_maximum_routes` pin strictness alone
+  (FR-922-AC-4 subject A). Every other strict claim with a second cause (mixed
+  delays, fairness, an unweighted time fraction, a delay weight, a later
+  position) takes that cause's outcome, `incomplete` or declined. The time-lock
+  rows read a locked run as FSpec FR-416 "How claims read a time-lock" states
+  (ADR-038 RL-7): `row_3468_time_lock_closed_early_routes` is live;
+  `row_3468_time_lock_closed_later_routes` waits on the region MDP
+  (QSL-3495) and is ignored until then, and its live companion
+  `row_3468_time_lock_closed_later_settles_incomplete` pins the interim
+  outcome. The interim's stated limit: the grid walk is not checked against
+  the dense oracle for a claim outside these rows, and a wrong verdict there
+  is a defect of the interim, closed by the region MDP of QSL-3495 (After
+  alpha).
 - The checker SHALL refuse `ObjectiveMismatch` for a digital document over a
   claim the region route decides (FR-204 Admission "Route"), and for a region
   document over a claim the digital route decides.

@@ -36,6 +36,11 @@ pub use input::{
 pub use relation_input::{ModelRelationDescriptor, ModelRelationTuple};
 mod sim_state;
 pub use sim_state::ModelSimState;
+mod outcome;
+pub use outcome::{
+    admitted_refutation, admitted_start, claim_start, states_non_zeno, TimedVacuity,
+    LOCKED_RUN_TERMINAL,
+};
 mod operation_coverage;
 pub use operation_coverage::{
     model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverage,
@@ -74,6 +79,7 @@ mod terminal;
 mod timed;
 mod walk;
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
@@ -99,7 +105,6 @@ use fsl_semantics::model::observation::{
 };
 use fsl_semantics::model::operation::OperationDeclaration;
 use fsl_semantics::model::state::{StateField, StateModel};
-use ix_trace_rs::implements;
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
@@ -233,16 +238,20 @@ pub use task_product::{
     TaskTransitionAction, TaskTransitionIdentity,
 };
 pub use terminal::{TerminalClass, TerminalModel};
-pub use timed::{
-    advance_timed, sample_timed, sample_timed_from, sample_timed_race, BehaviourLetters,
-    BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal,
-    PlaceConstraint, ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock,
-    TimedAdvance, TimedBehaviour, TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep,
-    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleEnd, TimedSampleStop,
-    TimedSchedulerChoice, TimedSite, TimedState, TimedStop, TimedSubjectRefusal, TimedSystem,
-    TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
+pub use timed::admission::{
+    en5_admission, workload_mean_time, Admission, AdmissionRow, ClaimForm, DelayClass, FreeSubject,
+    ReadFrom, RegionCause, RouteConditions, SearchItem, EN1_DIGITAL, EN5_DIGITAL, STRICT_GRID_WALK,
 };
-pub(crate) use walk::{Applied, Budget};
+pub use timed::{
+    advance_timed, sample_timed, sample_timed_from, sample_timed_race, step_rewards,
+    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DelayInterval, GuardedStep,
+    GuardedSteps, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
+    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
+    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, UndecidedReading, DEFAULT_MAX_CLOCKS,
+};
+pub(crate) use walk::{Applied, CandidateCount};
 
 /// A non-empty, canonically ordered set of admitted claim instances.
 ///
@@ -252,6 +261,12 @@ pub(crate) use walk::{Applied, Budget};
 pub struct ClaimInstances(Vec<ModelInstance>);
 
 impl ClaimInstances {
+    /// The first instance in canonical order.
+    pub fn first(&self) -> &ModelInstance {
+        // The private field is only constructed after checking non-emptiness.
+        &self.0[0]
+    }
+
     /// All instances in canonical order.
     pub fn as_slice(&self) -> &[ModelInstance] {
         &self.0
@@ -853,6 +868,8 @@ pub struct ModelSystem<'a> {
     /// The clock-collection and presence-bit ranges each initial state takes
     /// every combination of; the combinations are generated on demand.
     initial_stages: Vec<InitialStage>,
+    #[cfg(feature = "test-support")]
+    generated_initial: std::sync::atomic::AtomicU64,
     /// The generated initial states, built by the first caller that needs a
     /// slice or an index; [`TransitionSystem::initial_iter`] never builds it.
     initial_all: std::sync::OnceLock<Vec<ModelSimState>>,
@@ -1881,6 +1898,8 @@ impl<'a> ModelSystem<'a> {
             universes,
             initial_base: initial,
             initial_stages,
+            #[cfg(feature = "test-support")]
+            generated_initial: std::sync::atomic::AtomicU64::new(0),
             initial_all: std::sync::OnceLock::new(),
             reference_bindings,
             admitted_types,
@@ -4559,9 +4578,11 @@ fn ranged<'s>(
 
 /// Every state of `base` under every combination of `stages`, in `stages`
 /// order: each stage's combinations of a state follow it in place.
+#[implements("FR-126-AC-26")]
 fn generated<'s>(
     base: &'s [ModelSimState],
     stages: &'s [InitialStage],
+    #[cfg(feature = "test-support")] generated_initial: &'s std::sync::atomic::AtomicU64,
 ) -> Box<dyn Iterator<Item = ModelSimState> + 's> {
     fn through<'s>(
         state: ModelSimState,
@@ -4577,24 +4598,15 @@ fn generated<'s>(
     let states = base
         .iter()
         .flat_map(move |state| through(state.clone(), stages));
-    let states = states.inspect(|_| count_generated_initial_state());
-    Box::new(states)
-}
-
-#[cfg(feature = "test-support")]
-thread_local! {
-    static GENERATED_INITIAL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Number of initial model states generated by this thread.
-#[cfg(feature = "test-support")]
-pub fn generated_initial_states() -> u64 {
-    GENERATED_INITIAL.with(std::cell::Cell::get)
-}
-
-pub(super) fn count_generated_initial_state() {
     #[cfg(feature = "test-support")]
-    GENERATED_INITIAL.with(|count| count.set(count.get().saturating_add(1)));
+    let states = states.inspect(|_| {
+        let _ = generated_initial.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |count| Some(count.saturating_add(1)),
+        );
+    });
+    Box::new(states)
 }
 
 #[cfg(test)]

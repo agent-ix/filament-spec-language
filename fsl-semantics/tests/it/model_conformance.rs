@@ -1173,6 +1173,7 @@ fn r08e_and_r08f_an_established_interval_admits_only_when_contained() {
 #[trace("TC-911", "FR-082-AC-9")]
 #[test]
 fn a_wide_domain_and_a_literal_above_i64_max_are_decided_exactly() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use crate::model_operations::parse_and_build;
     use filament_semantic_value::checking::CheckingLimits;
     use fsl_semantics::check::{CheckCause, PackageDeclarations, RefinementObligation};
@@ -1246,7 +1247,7 @@ fn a_wide_domain_and_a_literal_above_i64_max_are_decided_exactly() {
         )
         .expect("actual private normalization owner");
         let built = parse_and_build(&unit);
-        let raw = fsl_cst::parse(
+        let raw = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "tc-911"),
             "unit.native",
             unit.as_bytes(),

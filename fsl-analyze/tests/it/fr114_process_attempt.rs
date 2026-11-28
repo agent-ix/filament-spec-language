@@ -124,6 +124,7 @@ fn check_flow_attempt_unit(
     source: &str,
 ) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-2090-fr114"),
         "program.native",
         source.as_bytes(),

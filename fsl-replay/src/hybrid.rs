@@ -1244,7 +1244,9 @@ mod tests {
     /// FR-447's `Braking` and `SlowEnough`, with the declared initial set
     /// empty because the `Moving` condition is outside its invariant.
     fn no_initial_state_fixture() -> (CheckedGraph, CheckedHybridClaim) {
+        let parser_context = fsl_cst::ParserContext::new();
         let parsed = fsl_cst::parse(
+            &parser_context,
             SourceIdentity::new("agent-ix", "qsl-1035"),
             "program.native",
             NO_INITIAL_STATE_SOURCE.as_bytes(),

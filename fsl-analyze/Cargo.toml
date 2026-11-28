@@ -17,6 +17,7 @@ description = "ADR-011 §6.1 layer A: in-process analysis engines, including ret
 # and its arithmetic is its own, so the checker recomputes it independently.
 [dependencies]
 fsl-eval = { path = "../fsl-eval" }
+fsl-cst = { path = "../fsl-cst" }
 fsl-forms = { path = "../fsl-forms" }
 # ADR-011 §6.1 layer H: the reference hybrid provider (FR-1019) this crate
 # registers as `Engine::hybrid_reference`.
@@ -34,9 +35,9 @@ fsl-route = { path = "../fsl-route" }
 filament-checked = { workspace = true }
 filament-semantic-value = { workspace = true }
 quire-canonical = { workspace = true }
-# QSL-2815: product-key encoding embeds the already canonical model key with
-# the merged CanonicalValue writer API, isolated from transitive v0.3.2 users.
-quire-canonical-api = { package = "quire-canonical", git = "https://github.com/agent-ix/quire-canonical", rev = "3b542158649da80c3003a8b6799af90d1feb7b52", default-features = false }
+# QSL-2815: product-key encoding uses the workspace canonical API pin.
+# The v0.3.3 release includes the CanonicalValue reader and writer API.
+
 # Strict admission authenticates the plan root final clause binding.
 filament-contract-model = { workspace = true }
 # The observation owner admits progress associations independently of FSL.
@@ -58,14 +59,14 @@ serde_json = "1.0.151"
 # and the candidate that `Por::ample` decides on. Only the dev-dependency on
 # this crate enables the feature; no shipped build has the methods.
 [features]
-test-support = []
+test-support = ["fsl-eval/test-support", "fsl-replay/test-support"]
 
 [dev-dependencies]
 fsl-definitional-reference = { path = "../fsl-definitional-reference" }
 fsl-certificate-mutation = { path = "../fsl-certificate-mutation" }
 # QSL-3162: exercise the real CG temporal SMT runner against FSL's production
 # typed settlement API; kept dev-only because CG is not an analysis runtime dep.
-filament-contract-codegen = { git = "https://github.com/agent-ix/filament-contract-codegen", rev = "c2db8337b9a2db1a0070f43bc1aad3fdc00944a8" }
+filament-contract-codegen = { git = "https://github.com/agent-ix/filament-contract-codegen", rev = "e1c5bd65f5da228bbfc9156bac4f27903ba81766" }
 # FR-940-AC-24 compares complete tuple-evaluation charge logs on both routes.
 filament-exact = { workspace = true, features = ["test-support"] }
 filament-specification = { workspace = true }

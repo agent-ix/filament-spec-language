@@ -47,7 +47,8 @@ fn identity() -> SourceIdentity {
 )]
 #[test]
 fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -62,6 +63,12 @@ fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
     );
     assert!(parsed.is_admissible());
     assert_eq!(parsed.cst().render(), SOURCE.as_bytes());
+    for token in parsed.cst().tokens() {
+        assert_eq!(
+            token.spelling(),
+            &SOURCE.as_bytes()[token.span().start..token.span().end],
+        );
+    }
     assert_eq!(parsed.source().text(), SOURCE);
     // Distinct occurrences never collapse to one identity: nodes that share
     // one exact span (an `Expression` wrapping an `Implication` wrapping ...)
@@ -125,7 +132,8 @@ fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-1")]
 #[test]
 fn exact_syntax_node_limit_admits_the_boundary_and_refuses_one_less() {
-    let baseline = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let baseline = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -138,7 +146,7 @@ fn exact_syntax_node_limit_admits_the_boundary_and_refuses_one_less() {
         ..Limits::default()
     };
     assert!(
-        fsl_cst::parse(identity(), "complete.native", SOURCE.as_bytes(), exact,)
+        fsl_cst::parse(&qsl3309_parser_context, identity(), "complete.native", SOURCE.as_bytes(), exact,)
             .unwrap()
             .is_admissible()
     );
@@ -147,7 +155,7 @@ fn exact_syntax_node_limit_admits_the_boundary_and_refuses_one_less() {
         ..Limits::default()
     };
     assert_eq!(
-        fsl_cst::parse(identity(), "complete.native", SOURCE.as_bytes(), below,)
+        fsl_cst::parse(&qsl3309_parser_context, identity(), "complete.native", SOURCE.as_bytes(), below,)
             .unwrap_err()
             .code,
         // The node ceiling is a `SyntaxLimit` kind the catalog
@@ -159,7 +167,8 @@ fn exact_syntax_node_limit_admits_the_boundary_and_refuses_one_less() {
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-1")]
 #[test]
 fn token_limit_charges_every_retained_cst_leaf_at_the_exact_boundary() {
-    let baseline = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let baseline = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -171,7 +180,7 @@ fn token_limit_charges_every_retained_cst_leaf_at_the_exact_boundary() {
         tokens: leaf_count,
         ..Limits::default()
     };
-    let accepted = fsl_cst::parse(identity(), "complete.native", SOURCE.as_bytes(), exact).unwrap();
+    let accepted = fsl_cst::parse(&qsl3309_parser_context, identity(), "complete.native", SOURCE.as_bytes(), exact).unwrap();
     assert_eq!(accepted.cst().tokens().len(), leaf_count);
     assert!(accepted.is_admissible());
 
@@ -181,7 +190,7 @@ fn token_limit_charges_every_retained_cst_leaf_at_the_exact_boundary() {
         ..Limits::default()
     };
     let refusal =
-        fsl_cst::parse(identity(), "complete.native", SOURCE.as_bytes(), below).unwrap_err();
+        fsl_cst::parse(&qsl3309_parser_context, identity(), "complete.native", SOURCE.as_bytes(), below).unwrap_err();
     assert_eq!(refusal.code, CompleteCode::StageLimitExceeded);
     assert_eq!(refusal.byte_span().unwrap().start, first_excess.start);
     assert_eq!(refusal.byte_span().unwrap().end, first_excess.end);
@@ -191,7 +200,7 @@ fn token_limit_charges_every_retained_cst_leaf_at_the_exact_boundary() {
         ("comment-leaf", "// retained"),
         ("invalid-leaf", "@"),
     ] {
-        let refusal = fsl_cst::parse(
+        let refusal = fsl_cst::parse(&qsl3309_parser_context,
             identity(),
             "complete.native",
             source.as_bytes(),
@@ -210,8 +219,9 @@ fn token_limit_charges_every_retained_cst_leaf_at_the_exact_boundary() {
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-1")]
 #[test]
 fn large_single_lexeme_refuses_at_the_first_excess_leaf() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!("0x{}", "f".repeat(900_000));
-    let refusal = fsl_cst::parse(
+    let refusal = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "large.native",
         source.as_bytes(),
@@ -229,8 +239,9 @@ fn large_single_lexeme_refuses_at_the_first_excess_leaf() {
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-2")]
 #[test]
 fn invalid_source_retains_bytes_and_exposes_recovery_without_admission() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = "language \"ix:native\" edition \"1-draft\"; profile C = \"filament.value.complete/v1\"; record Broken { value: Integer }";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "broken.native",
         source.as_bytes(),
@@ -250,7 +261,8 @@ fn invalid_source_retains_bytes_and_exposes_recovery_without_admission() {
 #[trace("FSpec-TC-222", "FSpec-FR-302-AC-3")]
 #[test]
 fn rendering_an_exchanged_clone_from_the_same_cst_succeeds() {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "clone.native",
         SOURCE.as_bytes(),
@@ -270,8 +282,9 @@ fn rendering_an_exchanged_clone_from_the_same_cst_succeeds() {
 #[trace("FSpec-TC-188", "FSpec-FR-143-AC-10")]
 #[test]
 fn r04_a_sum_declaration_is_invalid_syntax_at_variant() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\nvariant V { A, B }";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity {
             authority: "test".into(),
             identity: "test:tc-188".into(),
@@ -297,8 +310,9 @@ fn r04_a_sum_declaration_is_invalid_syntax_at_variant() {
 const RECOVERY_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n";
 
 fn recover(body: &str) -> (String, fsl_cst::ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{RECOVERY_HEADER}{body}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "recovery.native",
         text.as_bytes(),
@@ -351,11 +365,17 @@ fn two_independent_syntax_errors_give_two_diagnostics() {
     );
 }
 
-#[trace("TC-2149", "FR-762-AC-2")]
+#[trace("TC-2149", "FR-762-AC-2", "FR-762-AC-3")]
 #[test]
 fn two_invalid_tokens_give_two_invalid_token_diagnostics() {
     let (text, parsed) =
         recover("record A { x: $; }\nrecord B { y: Integer; }\nrecord C { z: $; }\n");
+    for name in ["record A", "record C"] {
+        let start = byte_at(&text, name);
+        assert!(parsed.cst().nodes().iter().any(|node| {
+            node.production() == Production::Declaration && node.span().start == start
+        }));
+    }
     let first = byte_at(&text, "$");
     let second = text.rfind('$').expect("two dollars");
     let found: Vec<_> = parsed
@@ -508,8 +528,9 @@ fn a_recovered_unit_is_never_admitted() {
 
 /// Parse `body` after the recovery header under `limits`.
 fn recover_under(body: &str, limits: Limits) -> Result<fsl_cst::ParsedSource, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{RECOVERY_HEADER}{body}");
-    fsl_cst::parse(identity(), "recovery.native", text.as_bytes(), limits)
+    fsl_cst::parse(&qsl3309_parser_context, identity(), "recovery.native", text.as_bytes(), limits)
         .map_err(|diagnostic| diagnostic.to_string())
 }
 

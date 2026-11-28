@@ -487,6 +487,40 @@ fn small(x: i64) -> ReplayRequestWire {
     )
 }
 
+fn assert_public_replay_uses_noop_counter(
+    replay: impl FnOnce() -> Result<ReplayResult, ReplayRefusal>,
+) {
+    reset_noop_parse_calls();
+    let result = replay();
+    assert!(result.is_ok(), "public replay succeeds: {result:?}");
+    assert!(
+        noop_parse_call_count() > 0,
+        "public replay records parser-boundary calls through NoopParseCallCounter"
+    );
+}
+
+#[trace("NFR-141-AC-22")]
+#[test]
+fn public_non_counter_replay_entries_use_the_zero_sized_noop_counter() {
+    let wire = small(1);
+    let limits = ReplayLimits::default();
+    assert_public_replay_uses_noop_counter(|| replay(wire.clone(), limits));
+    assert_public_replay_uses_noop_counter(|| {
+        replay_with_temporal_selections(wire.clone(), &[], limits)
+    });
+    assert_public_replay_uses_noop_counter(|| {
+        replay_with_cancel(wire.clone(), limits, &filament_exact::Cancel::new())
+    });
+    assert_public_replay_uses_noop_counter(|| {
+        replay_with_cancel_and_temporal_selections(
+            wire,
+            &[],
+            limits,
+            &filament_exact::Cancel::new(),
+        )
+    });
+}
+
 /// FR-640-AC-11 / FR-862-AC-2: a nullary entry replay with no input
 /// assignments is a claim-free plain call. Its result supplies the verdict,
 /// so `true` settles `reproduced-without-witness` as `success`.
@@ -1520,6 +1554,7 @@ fn call_site_with_a_dependency_input_keys_a_request_replay_accepts() {
     let importing = Importing::new();
     let locate = |dependencies: &crate::DependencyInput| {
         crate::call_site(
+            &fsl_cst::ParserContext::new(),
             SourceIdentity::new(AUTHORITY, IDENTITY),
             crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
             [],
@@ -1577,6 +1612,7 @@ fn locate_q_with_units(
     }])
     .expect("one library under one identity");
     crate::call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new(AUTHORITY, IDENTITY),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
         [],
@@ -1648,6 +1684,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     let proved_source = proved();
     let compiled = spine(&proved_source, &BTreeMap::new());
     let refusal = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         unit_source.clone(),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, proved_source.as_bytes()),
         [],
@@ -1670,6 +1707,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     // A unit with a syntax error: `Compile` carries the recompile's code.
     let broken = format!("language \"ix:native\" edition \"1-draft\";\n{PROFILE}function {{\n");
     let refusal = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         unit_source.clone(),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, broken.as_bytes()),
         [],
@@ -1706,6 +1744,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
 
     // AC-4's `Import`: no dependency input, and no `dependencies` entry.
     let refusal = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         unit_source,
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
         [],
@@ -2415,6 +2454,7 @@ fn parity_request(function: &str, bind: impl FnOnce(NodeKey) -> ReplaySource) ->
 /// replay refuses before the identity is read.
 fn minted_identity(source: &str, function: &str) -> crate::ObligationIdentity {
     let site = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new(AUTHORITY, IDENTITY),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, source.as_bytes()),
         [],

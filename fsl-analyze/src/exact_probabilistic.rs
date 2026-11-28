@@ -33,6 +33,7 @@ mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
 mod reward_interval;
+mod route;
 mod rows;
 mod settle;
 mod unbounded;
@@ -137,6 +138,7 @@ pub use finite_horizon::{
 pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
 pub use fsl_replay::FreeDelayRow;
 pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
+pub(crate) use route::{timed_route, TimedRoute};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 #[cfg(feature = "test-support")]
@@ -594,7 +596,7 @@ impl ProbProduct {
 }
 
 /// The predicate of a claim an undefined reading names.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UndefinedRead {
     /// The tentative value of a completed weighted fraction.
     FractionValue,
@@ -602,6 +604,10 @@ pub enum UndefinedRead {
     Atom(FormulaNodeId),
     /// A state predicate of the claim's measure or unbounded form.
     Predicate(PredicateRole),
+    /// A contract conjunction of the model, a precondition guard included,
+    /// that the state's expansion evaluated with no value (ADR-018 UE-6): the
+    /// claim need not read the state for it to refute.
+    Contract(Box<fsl_eval::simulation::model::UndefinedContract>),
 }
 
 /// Which predicate of a claim a state predicate is.

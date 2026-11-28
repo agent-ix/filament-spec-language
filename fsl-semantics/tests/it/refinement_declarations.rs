@@ -535,8 +535,9 @@ pub(crate) fn assemble(
     models: &[(&str, &str, &[u8])],
     body: &str,
 ) -> (String, Result<PackageDeclarations, AssemblyRefusal>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (text, packages) = unit_text(profiles, models, body);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-540"),
         "unit.native",
         text.as_bytes(),
@@ -1698,6 +1699,36 @@ fn mismatched_composite_reference_shapes_are_refused() {
             },
             "{mismatch}"
         );
+    }
+}
+
+/// FR-135-AC-20 (TC-540 step 14): a record, a tuple and a union pair with
+/// their own kind only; each row naming a field of another composite kind
+/// refuses `ill_typed`/`type-mismatch` at the row's expression.
+#[trace("TC-540", "FR-135-AC-20")]
+#[test]
+fn a_row_never_pairs_composites_of_different_kinds() {
+    let (spec, concrete) = nested_models();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+    for (row, at) in [
+        ("box = self.pair;", "self.pair"),
+        ("box = self.holder;", "self.holder"),
+        ("pair = self.box;", "self.box"),
+        ("pair = self.holder;", "self.holder"),
+        ("holder = self.box;", "self.box"),
+        ("holder = self.pair;", "self.pair"),
+    ] {
+        let found = refused(&models, &nested_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{row}"
+        );
+        assert_eq!(refusal.at, at, "{row}");
     }
 }
 

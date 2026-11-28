@@ -819,7 +819,7 @@ pub(super) fn run_bytes(
         })
         .collect();
     let package_name = super::package_name(source.source().identity());
-    let compiled = crate::emit_checked_v2::compile_inputs(crate::emit_checked_v2::Inputs {
+    let compiled = crate::emit_checked_v2::compile_inputs(intake.parser_context(), crate::emit_checked_v2::Inputs {
         source_path: directory.join(&program.source.file),
         source_identity: Some(source.source().identity().clone()),
         source: source.source().text().as_bytes().to_vec(),
@@ -839,8 +839,11 @@ pub(super) fn run_bytes(
         },
         other => refused("/request/synthesis", other.to_string()),
     })?;
-    let model_documents =
-        super::package_input_from_selected_models(&request.models, &model_sources)?;
+    let model_documents = super::package_input_from_selected_models(
+        intake.parser_context(),
+        &request.models,
+        &model_sources,
+    )?;
     let read_limits = spine.imports;
     let admitted = fsl_package::admit_checked_package(
         compiled.emitted.package().bytes(),

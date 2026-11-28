@@ -170,7 +170,11 @@ pub struct GraphEdge {
 
 /// The counts of one exploration.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[implements("FR-126-AC-26")]
 pub struct GraphStats {
+    /// Model initial states generated during this exploration (test-support attribution).
+    #[cfg(feature = "test-support")]
+    pub generated_model_initial_states: u64,
     /// Distinct nodes discovered.
     pub nodes: u64,
     /// Edges retained.

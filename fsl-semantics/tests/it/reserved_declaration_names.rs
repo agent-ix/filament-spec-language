@@ -18,8 +18,9 @@ const SPELLINGS: [&str; 4] = ["helper", "rec", "cast", "Tuple"];
 /// Parse, build and check `body` under `1-draft`, after the declared
 /// `profile` lines.
 fn checks(profile: &str, body: &str) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{profile}{body}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "ordinary-identifier-spellings"),
         "ordinary.native",
         text.as_bytes(),

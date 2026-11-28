@@ -49,11 +49,12 @@ fn limits(work_units: u64) -> ScalarLimits {
 }
 
 fn package_of(declarations: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{declarations}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "deep-values"),
         "deep-values.native",
         text.as_bytes(),

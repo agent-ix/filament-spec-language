@@ -455,9 +455,10 @@ fn world_built_in_with_protocol_selection_and_source(
     source_identity: &str,
     checked_package: &str,
 ) -> World {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input(documents.iter().copied()).unwrap();
     let unit = unit_text(package, profiles, body);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", source_identity),
         "fr-239.native",
         unit.as_bytes(),
@@ -473,7 +474,7 @@ fn world_built_in_with_protocol_selection_and_source(
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the kept operation clauses parse");
     let mut declarations = PackageDeclarations::assemble(
@@ -633,6 +634,7 @@ pub(crate) fn refining_from(
     body: &str,
     abstract_inflight: bool,
 ) -> Result<Refining, Vec<(String, String, String)>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input([abstract_document, concrete_document]).unwrap();
     let abstract_package = serde_json::from_slice::<Json>(abstract_document).expect("JSON")
         ["package"]["identity"]
@@ -647,7 +649,7 @@ pub(crate) fn refining_from(
          model A = \"{abstract_package}\";\n\
          model M = \"{PACKAGE}\";\n{body}",
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "fr-430"),
         "fr-430.native",
         unit.as_bytes(),
@@ -663,7 +665,7 @@ pub(crate) fn refining_from(
     )
     .expect("the model selections admit")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the kept operation clauses parse");
     let declarations = PackageDeclarations::assemble(

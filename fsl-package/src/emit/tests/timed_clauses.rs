@@ -147,16 +147,18 @@ fn assert_declared_order(wire: &Value) {
     );
 }
 
-/// The typed nodes and source map the last emission on this thread built.
+/// The admitted typed nodes and source map written in `wire`.
 fn admitted_graph(
-    _wire: &Value,
+    wire: &Value,
 ) -> (
     Vec<filament_contract_model::CheckedSemanticNodeV2>,
     Vec<filament_contract_model::CheckedSourceMapEntry>,
 ) {
-    crate::emit::TIMED_GRAPH
-        .with(|held| held.borrow().clone())
-        .expect("the emission built a timed graph")
+    (
+        serde_json::from_value(wire["semantic_graph"]["nodes"].clone())
+            .expect("typed semantic nodes"),
+        serde_json::from_value(wire["source_map"].clone()).expect("source map entries"),
+    )
 }
 
 /// FR-230-AC-54, FSpec FR-322-AC-261, FR-322-AC-263 and
@@ -1574,10 +1576,12 @@ fn point_bound_emission(
     body: &str,
     points: &[(&str, ExecutionPointKind)],
 ) -> (crate::emit::Emission, Value) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_contract_model::{AnchorName, ExecutionPoint};
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let unit = clocked_unit(body);
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         unit.as_bytes(),

@@ -207,14 +207,14 @@ pub enum View<'a, S = (), T = (), F = ()> {
 
 mod result_views;
 pub use result_views::{
-    inspect_counterexample, inspect_model_check_graph, inspect_outcome, inspect_state_graph,
-    inspect_trace, AssignmentView, CounterexampleView, ModelCheckStateGraphView, OutcomeView,
-    StateGraphView, TracePositionView, TraceView,
+    AssignmentView, CounterexampleView, ModelCheckStateGraphView, OutcomeView, StateGraphView,
+    TracePositionView, TraceView, inspect_counterexample, inspect_model_check_graph,
+    inspect_outcome, inspect_state_graph, inspect_trace,
 };
 
 mod render;
 pub use render::{
-    render_outcome, render_view, stage_word, RenderCause, RenderForm, RenderSources, Rendered,
+    RenderCause, RenderForm, RenderSources, Rendered, render_outcome, render_view, stage_word,
 };
 
 /// Inspect a checked package, using the package's typed emission metadata.
@@ -413,8 +413,8 @@ fn id_names_key(id: &CheckedNodeId, key: &NodeKey) -> bool {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        inspect_node, inspect_outcome, inspect_package, EntryBudget, InspectCause, InspectLimits,
-        NodeSelector, View,
+        EntryBudget, InspectCause, InspectLimits, NodeSelector, View, inspect_node,
+        inspect_outcome, inspect_package,
     };
     use filament_exact::{Cancel, CancelCause, Location, NodeKey, Origin, Role};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
@@ -432,8 +432,10 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn emitted_spine_package() -> (fsl_package::CheckedPackage, fsl_package::Emission) {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/spine-compile.native");
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:inspect"),
             "program.native",
             FIXTURE,
@@ -500,15 +502,17 @@ pub(crate) mod tests {
             + view.requirements.len()
             + view.capability_report.len()) as u64;
         assert!(selected_entries > 0);
-        assert!(inspect_package(
-            &package,
-            &emission,
-            InspectLimits {
-                max_view_entries: selected_entries,
-            },
-            &Cancel::new(),
-        )
-        .is_ok());
+        assert!(
+            inspect_package(
+                &package,
+                &emission,
+                InspectLimits {
+                    max_view_entries: selected_entries,
+                },
+                &Cancel::new(),
+            )
+            .is_ok()
+        );
         assert!(matches!(
             inspect_package(
                 &package,
@@ -552,29 +556,33 @@ pub(crate) mod tests {
         };
         assert_eq!(view.node.key(), node_key);
         assert!(!view.occurrences.is_empty());
-        assert!(view
-            .occurrences
-            .iter()
-            .all(|occurrence| !occurrence.regions.is_empty()));
-        assert!(view
-            .occurrences
-            .iter()
-            .all(|occurrence| occurrence.key.node() == &node_key));
+        assert!(
+            view.occurrences
+                .iter()
+                .all(|occurrence| !occurrence.regions.is_empty())
+        );
+        assert!(
+            view.occurrences
+                .iter()
+                .all(|occurrence| occurrence.key.node() == &node_key)
+        );
         let selected_entries = view
             .occurrences
             .iter()
             .map(|occurrence| 1 + occurrence.regions.len())
             .sum::<usize>() as u64;
-        assert!(inspect_node(
-            &package,
-            &emission,
-            &NodeSelector::Node(node_key.clone()),
-            InspectLimits {
-                max_view_entries: selected_entries,
-            },
-            &Cancel::new(),
-        )
-        .is_ok());
+        assert!(
+            inspect_node(
+                &package,
+                &emission,
+                &NodeSelector::Node(node_key.clone()),
+                InspectLimits {
+                    max_view_entries: selected_entries,
+                },
+                &Cancel::new(),
+            )
+            .is_ok()
+        );
         assert!(matches!(
             inspect_node(
                 &package,

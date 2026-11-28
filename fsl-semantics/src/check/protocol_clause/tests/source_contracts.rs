@@ -244,6 +244,7 @@ mod population_fixture {
 #[trace("FR-218-AC-28", "FR-884-AC-5")]
 #[test]
 fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use crate::model::domain_package::{DomainPackageRecord, Extent, PopulationRecord};
     use filament_checked::key::DeclarationKey;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
@@ -263,7 +264,7 @@ fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
             true,
         ),
     ] {
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

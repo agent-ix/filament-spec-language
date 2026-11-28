@@ -23,7 +23,7 @@ use crate::proof_result::{
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
-use fsl_foundation::{BackendId, RequestIndex};
+use fsl_foundation::RequestIndex;
 
 const PRODUCER: &str = "producer@1";
 const CONSUMER: &str = "consumer@1";

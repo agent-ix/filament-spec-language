@@ -2,6 +2,7 @@
 //! FR-126 Outputs (ADR-018 LA-3, LA-5): what an EN-1 run returns, which
 //! FR-127's settlement map settles.
 
+use ix_trace_rs::implements;
 use crate::certificate::scc::ProofCertificate;
 use crate::model_check::counterexample::TemporalCounterexample;
 use crate::model_check::limits::ReachedLimit;
@@ -12,13 +13,21 @@ use crate::proof_result::{
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::fairness::PropertyForm;
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_eval::simulation::model::TimedVacuity;
 use fsl_eval::simulation::protocol::WeakAccessShape;
 use fsl_eval::simulation::SubjectTransition;
 use fsl_foundation::ReductionKind;
 
 /// The counts of one run, whatever ended it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[implements("FR-126-AC-26")]
 pub struct RunStats {
+    /// Model initial states generated in this run (test-support attribution).
+    #[cfg(feature = "test-support")]
+    pub generated_model_initial_states: u64,
+    /// Protocol initial states constructed in this run (test-support attribution).
+    #[cfg(feature = "test-support")]
+    pub constructed_protocol_initial_states: u64,
     /// Distinct product states created.
     pub product_states: u64,
     /// Product edges explored.
@@ -86,6 +95,17 @@ impl UndecidedCause {
             Self::InstanceBoundReached { bound, states } => {
                 InconclusiveCause::InstanceBoundReached { bound, states }
             }
+        }
+    }
+}
+
+/// The timed outcome layer's classification as an EN-1 run states it.
+impl From<TimedVacuity> for UndecidedCause {
+    fn from(vacuity: TimedVacuity) -> Self {
+        match vacuity {
+            TimedVacuity::NoInitialState => Self::NoInitialState,
+            TimedVacuity::NoInstance => Self::NoInstance,
+            TimedVacuity::NoAdmittedBehaviour => Self::NoAdmittedBehaviour,
         }
     }
 }

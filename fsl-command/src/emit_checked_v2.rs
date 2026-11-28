@@ -31,11 +31,11 @@ use filament_semantic_value::catalog::Category;
 use fsl_foundation::source::MAX_SOURCE_BYTES;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_replay::{
+    ReplayRefusal,
     spine::{
         self, CheckedUnit, DependencyInput, DependencyInputRefusal, EmittedUnit, ParseRequest,
         SpineLimits, StateClauseExecutionPoints, SuppliedLibrary,
     },
-    ReplayRefusal,
 };
 use fsl_semantics::library::LibraryName;
 
@@ -99,7 +99,9 @@ pub enum Error {
     #[error("{}", without_limit_hint(.0))]
     Producer(Box<ReplayRefusal>),
     /// A temporal clock selection names no temporal or hyper clause of the unit.
-    #[error("clock selection {clause:?} names no temporal or hyper clause, or compensation template, of the unit")]
+    #[error(
+        "clock selection {clause:?} names no temporal or hyper clause, or compensation template, of the unit"
+    )]
     UnknownClause {
         /// The selected clause name.
         clause: String,
@@ -506,8 +508,12 @@ fn read_inputs(request: &Request) -> Result<Inputs, Error> {
 
 /// Read `request`'s inputs and run the spine over them: parse, select, check
 /// and emit, with each temporal clock selection joined to its clause.
-pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
-    compile_inputs(read_inputs(request)?)
+#[ix_trace_rs::implements("NFR-141-AC-10")]
+pub(crate) fn compile(
+    parser: &fsl_cst::ParserContext,
+    request: &Request,
+) -> Result<Compiled, Error> {
+    compile_inputs(parser, read_inputs(request)?)
 }
 
 /// Run the spine over `inputs`.
@@ -518,7 +524,11 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
 /// (`DependencyInput::check_unit_owner`) runs inside the check stage. A
 /// clock selection joins only to a clause of the unit itself: a library's
 /// clause that needs a clock is refused by emission.
-pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
+#[ix_trace_rs::implements("NFR-141-AC-10")]
+pub(crate) fn compile_inputs(
+    parser: &fsl_cst::ParserContext,
+    inputs: Inputs,
+) -> Result<Compiled, Error> {
     let Inputs {
         source_path,
         source_identity,
@@ -540,7 +550,7 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
             Error::Producer(Box::new(ReplayRefusal::DomainPackages(Box::new(refused))))
         })?;
     let cancel = Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse_with_context(
         &ParseRequest {
             source: &unit,
             path: &path,
@@ -548,6 +558,7 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
         },
         limits.source,
         &cancel,
+        parser,
     )
     .map_err(refusal)?
     .into_value();
@@ -755,7 +766,8 @@ fn per_trace_clocks(checked: &CheckedUnit, clause: &str, span: fsl_foundation::S
 /// Emit the `filament.checked-package/v2` bytes of `request`'s source through
 /// the spine's parse, select, check and package operations.
 pub fn emit(request: &Request) -> Result<Vec<u8>, Error> {
-    Ok(compile(request)?.emitted.package().bytes().to_vec())
+    let parser = fsl_cst::ParserContext::new();
+    Ok(compile(&parser, request)?.emitted.package().bytes().to_vec())
 }
 
 /// Parse `arguments`, emit, and write the bytes to `--out` or `stdout`.

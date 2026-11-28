@@ -16,8 +16,9 @@ use std::collections::BTreeSet;
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\ndomain \"example/identity\";\n";
 
 fn selected(declarations: &str) -> Result<SelectedModels, Box<UnitIntakeRefusal>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!("{HEADER}{declarations}");
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "identity-model"),
         "identity.fsl",
         source.as_bytes(),
@@ -27,7 +28,7 @@ fn selected(declarations: &str) -> Result<SelectedModels, Box<UnitIntakeRefusal>
     compile_model_unit_with_causes(&parsed, ModelNormalizationLimits::default())
         .expect("authored declarations compile");
     let packages = package_input([source.as_bytes()]).expect("model unit enters package input");
-    let selection = fsl_cst::parse(
+    let selection = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "identity-selection"),
         "selection.fsl",
         b"language \"ix:native\" edition \"1-draft\"; model M = \"example/identity\";",

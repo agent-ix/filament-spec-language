@@ -60,11 +60,12 @@ const UNIT: &str = "function seq using v(xs: Sequence<Boolean>[0, 64]): Boolean 
      function wide_upper using v(xs: Sequence<Decimal[0, 100000; 0, 2; exact]>[0, 8]): Boolean pure { false }\n";
 
 fn package() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{UNIT}"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

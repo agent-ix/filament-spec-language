@@ -2,9 +2,11 @@
 //! FR-710: compile an FSL model unit to its FR-154 domain-package document.
 
 use agent_ix_extraction_frontend::identity::PackageIdentity;
+use fsl_cst::ParserContext;
 use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, FormsSource};
 use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
+use ix_trace_rs::implements;
 use serde_json::{json, Value};
 
 use crate::model::accounting::ModelNormalizationLimits;
@@ -18,7 +20,8 @@ pub struct CompiledModelUnit {
 
 /// Whether bytes begin with an FSL model-unit header and `domain` selection.
 #[ix_trace_rs::string_edge]
-pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
+#[implements("NFR-141-AC-10")]
+pub(super) fn looks_like_model_unit(context: &ParserContext, bytes: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return false;
     };
@@ -26,6 +29,7 @@ pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
         return false;
     }
     let Ok(parsed) = cst::parse(
+        context,
         SourceIdentity::new("filament", "model-unit-probe"),
         "model-unit.fsl",
         bytes,
@@ -44,16 +48,20 @@ pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
 }
 
 /// Whether source bytes are an admitted FSL model unit with a `domain` identity.
+#[implements("NFR-141-AC-10")]
 pub fn is_model_unit_source(bytes: &[u8]) -> bool {
-    looks_like_model_unit(bytes)
+    looks_like_model_unit(&ParserContext::new(), bytes)
 }
 
 /// Compile one anonymous model-unit byte source using its domain as the
 /// source identity label.
+#[implements("NFR-141-AC-10")]
 pub(super) fn compile_model_unit_bytes(
+    context: &ParserContext,
     bytes: &[u8],
 ) -> Result<CompiledModelUnit, super::ModelRefusal> {
     let probe = cst::parse(
+        context,
         SourceIdentity::new("filament", "model-unit-probe"),
         "model-unit.fsl",
         bytes,
@@ -78,7 +86,7 @@ pub(super) fn compile_model_unit_bytes(
         cst::Limits::default().source_bytes(),
     )
     .map_err(|error| refusal(format!("{error}")))?;
-    let parsed = cst::parse_source(source, cst::Limits::default())
+    let parsed = cst::parse_source(context, source, cst::Limits::default())
         .map_err(|diagnostic| refusal(format!("{diagnostic}")))?;
     compile_model_unit_with_causes(&parsed, ModelNormalizationLimits::default()).map_err(
         |diagnostics| {
@@ -92,12 +100,14 @@ pub(super) fn compile_model_unit_bytes(
 
 /// Compile already-labelled sources to package input, preserving each source
 /// identity in node origins.
+#[implements("NFR-141-AC-10")]
 pub fn package_input_from_sources<'a>(
     sources: impl IntoIterator<Item = (&'a str, &'a Source)>,
 ) -> Result<super::PackageInput, super::ModelRefusal> {
     let mut documents = Vec::new();
+    let parser_context = ParserContext::new();
     for (selected_identity, source) in sources {
-        let parsed = cst::parse_source(source.clone(), cst::Limits::default())
+        let parsed = cst::parse_source(&parser_context, source.clone(), cst::Limits::default())
             .map_err(|diagnostic| refusal(format!("{diagnostic}")))?;
         let compiled = compile_model_unit_with_causes(&parsed, ModelNormalizationLimits::default())
             .map_err(|diagnostics| {

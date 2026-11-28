@@ -570,6 +570,7 @@ mod tests {
     #[trace("FR-569-AC-15", "TC-1940", "FR-088-AC-13", "TC-2360")]
     #[test]
     fn resolved_source_record_members_keep_the_record_fields_clock_places() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let source = "language \"ix:native\" edition \"1-draft\";\n\
             profile P = \"filament.temporal.complete/v1\";\n\
             model M = \"test/clocks\";\n\
@@ -578,6 +579,7 @@ mod tests {
             record Wrapper { w: W; }\n\
             object Order { w: W; nested: Wrapper; collection: Sequence<W>[0, 2]; model_w: M::Timer; }\n";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "source-clock-record"),
             "source.fsl",
             source.as_bytes(),

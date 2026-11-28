@@ -48,6 +48,7 @@ struct Fixture {
 }
 
 fn fixture(delivery: &str, capacity: u64, overflow: &str, run: &str) -> Fixture {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let mut domain: serde_json::Value =
         serde_json::from_slice(DOMAIN).expect("domain fixture JSON");
     domain["constructs"].as_array_mut().unwrap().push(json!({
@@ -81,7 +82,7 @@ fn fixture(delivery: &str, capacity: u64, overflow: &str, run: &str) -> Fixture 
            finish End as (outcome: Boolean) {{ true }};\n\
          }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("protocol-delivery", "unit.native"),
         "unit.native",
         source.as_bytes(),

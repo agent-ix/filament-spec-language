@@ -1467,10 +1467,12 @@ pub(super) fn assemble_units_with_models(
     units: &[(&str, &str)],
     documents: &[&[u8]],
 ) -> Result<PackageDeclarations, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let units: Vec<_> = units
         .iter()
         .map(|(identity, text)| {
             let parsed = fsl_cst::parse(
+                &qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("agent-ix", *identity),
                 "program.native",
                 text.as_bytes(),
@@ -1767,10 +1769,7 @@ fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() 
 #[test]
 fn equal_timed_nodes_merge_by_region_and_unequal_ones_are_refused() {
     let (_, _, package) = two_time_package("");
-    emit_checked(&package).expect("the package emits");
-    let (nodes, map) = crate::emit::TIMED_GRAPH
-        .with(|held| held.borrow().clone())
-        .expect("a timed graph");
+    let (_, (nodes, map)) = emit_checked_with_typed_graph(&package);
     let source = nodes
         .iter()
         .find(|node| node.semantic_form.as_ref() == "time_source")

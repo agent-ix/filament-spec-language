@@ -25,7 +25,7 @@ use fsl_replay::statistical::{
     replay_sampled_witness, Confidence, Decision, MeasureValue, SampledParity,
     SampledWitnessReplay, StatisticalLimit, StatisticalLimits, StatisticalMethod,
     StatisticalOutcome, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
-    StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
+    StatisticalVerdict, WitnessReplay, WitnessValue,
 };
 use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
 use fsl_replay::SymmetryRefusal;
@@ -1224,7 +1224,7 @@ fn completed(outcome: Result<StatisticalOutcome, StatisticalRefusal>) -> Statist
     }
 }
 
-fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
+pub(crate) fn decided(world: &World, claim: &str, method: StatisticalMethod) -> StatisticalVerdict {
     completed(run(
         world,
         claim,
@@ -1767,24 +1767,6 @@ fn lock_world(claim: &str) -> crate::timed_world::World {
     )
 }
 
-/// The timed state `go` reaches at 1/2 ms, after delaying to the invariant's
-/// bound `x = 1 ms`.
-fn locked_state(world: &crate::timed_world::World) -> fsl_eval::simulation::StateKey {
-    let system = world.system();
-    let timed = TimedSystem::new(&system, "M").expect("the subject is timed");
-    let initial = timed.initial().remove(0);
-    let delayed = timed
-        .delay(&initial, &ratio(1, 2))
-        .expect("the delay reads")
-        .expect("the delay is admissible");
-    let (_, after) = timed.steps(&delayed).expect("the steps read").remove(0);
-    let locked = timed
-        .delay(&after, &ratio(1, 2))
-        .expect("the delay reads")
-        .expect("the delay reaches the bound");
-    timed.state_key(&locked).expect("the state encodes")
-}
-
 /// FR-254-AC-4: each sample ends at the time-lock and is read over its
 /// positions. The position stamped 1/2 ms is in phase 1, `always` over those
 /// positions holds where they satisfy it, and a measure the run never
@@ -1827,24 +1809,21 @@ fn a_time_locked_sample_is_read_over_the_positions_it_has() {
     }
 }
 
-/// FR-254-AC-4: how a fraction reads a time-locked run is not decided, so the
-/// item is unsupported at the locked state and keeps no witness.
-#[trace("TC-709", "FR-254-AC-4", "FSpec-FR-420-AC-7")]
+/// FSpec FR-420-AC-19: a fraction over a run that ends in a time-lock counts
+/// 0, weighted by delay or not, so the sample is not unsupported. This runs
+/// the sampled route only; the exact route (FR-421-AC-14) is not asserted here.
+#[trace("TC-709", "FR-254-AC-4", "FSpec-FR-420-AC-7", "FSpec-FR-420-AC-19")]
 #[test]
-fn a_fraction_over_a_time_locked_sample_is_unsupported() {
+fn a_fraction_over_a_time_locked_sample_counts_zero() {
     for claim in [
         "mean of (fraction holds(c.phase = 1) over [0, 2 ms]) <= 0.5",
         "mean of (fraction holds(c.phase = 1) over [0, 2 ms] weighted by delay) <= 0.5",
     ] {
-        let world = lock_world(claim);
-        let expected = locked_state(&world);
-        match probe(&world) {
-            StatisticalOutcome::Unsupported {
-                cause: StatisticalUnsupported::TimeLockedSample { state },
-                ..
-            } => assert_eq!(state, expected, "{claim}"),
-            other => panic!("{claim}: {other:?}"),
-        }
+        assert_eq!(
+            measured(&lock_world(claim)),
+            (Some(ratio(0, 1)), Decision::Accepted),
+            "{claim}"
+        );
     }
 }
 
@@ -1874,15 +1853,12 @@ fn a_bounded_delay_with_no_mass_in_any_window_is_a_time_lock() {
         )),
         (Some(ratio(0, 1)), Decision::Accepted)
     );
-    assert!(matches!(
-        probe(&world(
+    assert_eq!(
+        measured(&world(
             "mean of (fraction holds(c.phase = 1) over [0, 8 ms]) <= 0.5"
         )),
-        StatisticalOutcome::Unsupported {
-            cause: StatisticalUnsupported::TimeLockedSample { .. },
-            ..
-        }
-    ));
+        (Some(ratio(0, 1)), Decision::Accepted)
+    );
 }
 
 /// An exponential delay over the bounded window of an invariant is conditioned
@@ -2282,12 +2258,13 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
 
 /// Checks FR-189-AC-5 (TC-624 step 5), the undecided-successor clause: over
 /// a cell whose `inc` postcondition divides by zero at a candidate
-/// post-state, the contract conjunction is undecided at the first state, so
-/// the test is Undecided, `UndecidedSuccessor`, with no interval and no
-/// counted sample, and the claim is Undecided.
-#[trace("TC-624", "FR-189-AC-5")]
+/// post-state, the contract conjunction has no value at the first state
+/// (ADR-018 UE-6), so the test is Rejected with the undefined contract, with
+/// no interval, and the claim is Rejected; only a refused conjunction stays
+/// Undecided, `UndecidedSuccessor`.
+#[trace("TC-624", "FR-189-AC-5", "FR-189-AC-21")]
 #[test]
-fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
+fn an_undefined_contract_conjunction_rejects_its_test() {
     let claim = "probabilistic Safe using ev on M over (c: M::Cell) under Even on origin \
          with alpha 0.01, beta 0.01, indifference 0.1 \
          { probability >= 0.5 [ always[0,3] holds(c.v >= 0) ] }";
@@ -2296,14 +2273,18 @@ fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let verdict = decided(&world, "Safe", StatisticalMethod::Okamoto);
-    let undecided = Decision::Undecided(UndecidedCause::UndecidedSuccessor);
-    assert_eq!(verdict.decision, undecided);
+    assert_eq!(verdict.decision, Decision::Rejected);
     let [test] = &verdict.tests[..] else {
         panic!("one test: {:?}", verdict.tests);
     };
-    assert_eq!(test.decision, undecided);
-    assert_eq!((test.samples, test.interval.clone()), (0, None));
-    assert!(verdict.witnesses.is_empty());
+    assert_eq!(test.decision, Decision::Rejected);
+    assert_eq!(test.interval, None);
+    let undefined = test.undefined.as_ref().expect("the undefined contract");
+    assert!(
+        matches!(undefined.evaluation.site.locus, UndefinedLocus::Contract(_)),
+        "{:?}",
+        undefined.evaluation.site.locus
+    );
 }
 
 /// Checks FR-189-AC-7 (TC-624 step 7): over `Wide`, whose `spin` draws from
@@ -3042,11 +3023,12 @@ fn a_return_with_a_tied_step_pending_cuts_no_cycle() {
     );
 }
 
-/// FSpec FR-420-AC-11: a time-locked state reached by a delay-weighted
-/// long-run behaviour settles `unsupported`, `time-locked-sample{state}`.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11", "FSpec-FR-420-AC-7")]
+/// FSpec FR-420-AC-19: a time-locked state reached by a delay-weighted
+/// long-run behaviour counts 0 in numerator and denominator: the estimate is
+/// 0 and `>= 1/10` is rejected, with no `time-locked-sample` result.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11", "FSpec-FR-420-AC-19")]
 #[test]
-fn a_time_locked_long_run_behaviour_is_unsupported() {
+fn a_time_locked_long_run_behaviour_counts_zero() {
     let claims = format!(
         "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
          post Went using v on M::Call::go {{ self.phase = 1 }}\n\
@@ -3066,15 +3048,75 @@ fn a_time_locked_long_run_behaviour_is_unsupported() {
         1,
     )
     .expect("the run ends with an outcome");
-    assert!(
-        matches!(
-            outcome,
-            StatisticalOutcome::Unsupported {
-                cause: StatisticalUnsupported::TimeLockedSample { .. },
-                ..
-            }
-        ),
-        "{outcome:?}"
+    let verdict = completed(Ok(outcome));
+    assert_eq!(
+        (verdict.estimate, verdict.decision),
+        (Some(ratio(0, 1)), Decision::Rejected)
+    );
+}
+
+/// FSpec FR-420-AC-19 (TC-374 ST-15): the unweighted long-run fraction of the
+/// same locked model is read the same way: each locked behaviour counts 0 in
+/// numerator and denominator, never the unweighted fall-back, so the estimate
+/// is 0 and `>= 1/10` is rejected.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-19")]
+#[test]
+fn an_unweighted_long_run_over_a_time_lock_counts_zero() {
+    let claims = format!(
+        "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Went using v on M::Call::go {{ self.phase = 1 }}\n\
+         delay M::Call::go ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant Deadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         workload Even on M {{ weight Call::go = 1; }}\n\
+         probabilistic Locked using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 1) >= rational(1, 10) }}\n"
+    );
+    let world = timed_world_with(&[("go", &["phase"])], &claims);
+    let outcome = run_timed_method(
+        &world,
+        "Locked",
+        StatisticalMethod::Regenerative { min_cycles: 5 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    )
+    .expect("the run ends with an outcome");
+    let verdict = completed(Ok(outcome));
+    assert_eq!(
+        (verdict.estimate, verdict.decision),
+        (Some(ratio(0, 1)), Decision::Rejected)
+    );
+}
+
+/// FSpec FR-420-AC-19: a reward-weighted long-run fraction counts a locked
+/// behaviour 0 as well: the estimate is 0 and `>= 1/10` is rejected.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-19")]
+#[test]
+fn a_reward_weighted_long_run_over_a_time_lock_counts_zero() {
+    let claims = format!(
+        "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Went using v on M::Call::go {{ self.phase = 1 }}\n\
+         delay M::Call::go ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant Deadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         reward cost on M::Call::go = 1;\n\
+         workload Even on M {{ weight Call::go = 1; }}\n\
+         probabilistic Locked using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 1) weighted by cost >= rational(1, 10) }}\n"
+    );
+    let world = timed_world_with(&[("go", &["phase"])], &claims);
+    let outcome = run_timed_method(
+        &world,
+        "Locked",
+        StatisticalMethod::Regenerative { min_cycles: 5 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    )
+    .expect("the run ends with an outcome");
+    let verdict = completed(Ok(outcome));
+    assert_eq!(
+        (verdict.estimate, verdict.decision),
+        (Some(ratio(0, 1)), Decision::Rejected)
     );
 }
 
@@ -3316,9 +3358,12 @@ fn a_timed_formula_reads_no_position_inside_a_delay_on_either_route() {
         expected.push((name, Some(ratio(i64::from(holds), 1)), holds));
     }
     assert_eq!(sampled, expected, "sampled route");
+    // Each window starts above 0 ms, so ADR-038 reads the claim over clock
+    // regions: until that process is built the exact route stops
+    // `incomplete` (QSL-3495). The hand values above stand.
     let exact_expected: Vec<_> = expected
         .iter()
-        .map(|(name, _, holds)| (*name, if *holds { "proved" } else { "refuted" }.to_owned()))
+        .map(|(name, _, _)| (*name, "incomplete".to_owned()))
         .collect();
     assert_eq!(exact, exact_expected, "exact route");
 }

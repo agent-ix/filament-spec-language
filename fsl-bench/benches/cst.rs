@@ -14,7 +14,7 @@
 //! node counts.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use fsl_bench::parse::{nested_source, parse, volume_source};
+use fsl_bench::parse::{nested_source, volume_source, ParseSession};
 use std::hint::black_box;
 
 fn inputs() -> Vec<(String, String)> {
@@ -26,15 +26,16 @@ fn inputs() -> Vec<(String, String)> {
 }
 
 fn cst_parse(c: &mut Criterion) {
+    let session = ParseSession::new();
     let mut group = c.benchmark_group("cst");
     for (label, text) in inputs() {
-        let parsed = parse(&text).expect("every CST bench input parses");
+        let parsed = session.parse(&text).expect("every CST bench input parses");
         assert!(parsed.is_admissible(), "{label} is admissible");
         group.throughput(Throughput::Bytes(
             u64::try_from(text.len()).expect("source bytes fit in u64"),
         ));
         group.bench_with_input(BenchmarkId::new("parse", &label), &text, |b, text| {
-            b.iter(|| parse(black_box(text)));
+            b.iter(|| session.parse(black_box(text)));
         });
     }
     group.finish();

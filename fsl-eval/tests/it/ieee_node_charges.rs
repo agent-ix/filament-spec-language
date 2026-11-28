@@ -126,12 +126,13 @@ fn evaluate(
     arguments: Vec<Value>,
     limits: ScalarLimits,
 ) -> Run {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function f using v({params}): {result} pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1236,6 +1237,7 @@ fn ordering_part_numeric_equality_uses_the_owned_comparison_and_adds_no_charge()
 #[trace("TC-1091", "FR-397-AC-26")]
 #[test]
 fn ordering_over_a_cross_width_argument_is_refused_at_the_call() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let big = limits(1 << 40, 1 << 40, 1 << 40, 1 << 40);
     let params = format!("a: {F64}, b: {F64}");
     let text = format!(
@@ -1243,7 +1245,7 @@ fn ordering_over_a_cross_width_argument_is_refused_at_the_call() {
          profile v = \"filament.value.complete/v1\";\n\
          function f using v({params}): Boolean pure {{ a <= b }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

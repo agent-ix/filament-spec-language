@@ -39,7 +39,8 @@ fn unbounded() -> Limits {
 }
 
 fn parse(id: &str, text: &str, limits: Limits) -> Result<ParsedSource, CompleteCode> {
-    fsl_cst::parse(identity(id), "limits.native", text.as_bytes(), limits)
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context, identity(id), "limits.native", text.as_bytes(), limits)
         .map_err(|refusal| refusal.code)
 }
 
@@ -69,6 +70,7 @@ fn plus_chain(terms: usize) -> String {
 #[trace("TC-012", "FR-001-AC-4", "NFR-001-M-2")]
 #[test]
 fn a_caller_raised_source_byte_ceiling_admits_past_the_default() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let mut text = comment_padded(0);
     text.push_str("// ");
     text.push_str(&"a".repeat(Limits::default().source_bytes));
@@ -90,7 +92,7 @@ fn a_caller_raised_source_byte_ceiling_admits_past_the_default() {
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     assert_eq!(parsed.effective_limits(), raised);
 
-    let refusal = fsl_cst::parse(
+    let refusal = fsl_cst::parse(&qsl3309_parser_context,
         identity("bytes-past"),
         "limits.native",
         text.as_bytes(),
@@ -115,6 +117,7 @@ fn a_caller_raised_source_byte_ceiling_admits_past_the_default() {
 #[trace("TC-012", "NFR-001-M-2")]
 #[test]
 fn a_caller_raised_token_ceiling_admits_past_the_default_and_refuses_one_less() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = comment_padded(Limits::default().tokens / 2 + 10);
     let leaves = parse("tokens-measure", &text, unbounded())
         .unwrap()
@@ -136,7 +139,7 @@ fn a_caller_raised_token_ceiling_admits_past_the_default_and_refuses_one_less() 
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     assert_eq!(parsed.effective_limits(), raised);
 
-    let refusal = fsl_cst::parse(
+    let refusal = fsl_cst::parse(&qsl3309_parser_context,
         identity("tokens-past"),
         "limits.native",
         text.as_bytes(),
@@ -161,6 +164,7 @@ fn a_caller_raised_token_ceiling_admits_past_the_default_and_refuses_one_less() 
 #[trace("TC-012", "FR-002-AC-4", "NFR-001-M-2")]
 #[test]
 fn a_caller_raised_node_ceiling_admits_past_the_default_and_refuses_one_less() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     // Each `+x` operand adds five syntax nodes and two leaves.
     let text = plus_chain(Limits::default().nodes / 5 + 100);
     let measured = parse("nodes-measure", &text, unbounded()).unwrap();
@@ -178,7 +182,7 @@ fn a_caller_raised_node_ceiling_admits_past_the_default_and_refuses_one_less() {
         .unwrap()
     };
     assert_eq!(
-        fsl_cst::parse_source(source(), Limits::default())
+        fsl_cst::parse_source(&qsl3309_parser_context, source(), Limits::default())
             .unwrap_err()
             .code,
         // The node ceiling is a `SyntaxLimit` kind the catalog
@@ -190,12 +194,12 @@ fn a_caller_raised_node_ceiling_admits_past_the_default_and_refuses_one_less() {
         nodes,
         ..Limits::default()
     };
-    let parsed = fsl_cst::parse_source(source(), raised)
+    let parsed = fsl_cst::parse_source(&qsl3309_parser_context, source(), raised)
         .expect("a caller-raised node ceiling must admit a unit at it");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     assert_eq!(parsed.effective_limits(), raised);
 
-    let refusal = fsl_cst::parse_source(
+    let refusal = fsl_cst::parse_source(&qsl3309_parser_context,
         source(),
         Limits {
             nodes: nodes - 1,
@@ -295,14 +299,15 @@ fn assert_admitted_under(outcome: Result<ParsedSource, Box<CompleteDiagnostic>>,
 #[trace("TC-722", "FR-256-AC-1")]
 #[test]
 fn deep_brackets_parse_under_raised_ceilings_with_the_limits_recorded() {
-    on_bounded_stack(|| {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    on_bounded_stack(move || {
         const DEPTH: usize = 6_000;
         let limits = Limits::default()
             .with_tokens(10_000_000)
             .with_nodes(10_000_000);
 
         let parens = nested_parens(DEPTH);
-        let outcome = fsl_cst::parse(
+        let outcome = fsl_cst::parse(&qsl3309_parser_context,
             identity("deep-parens"),
             "limits.native",
             parens.as_bytes(),
@@ -318,7 +323,7 @@ fn deep_brackets_parse_under_raised_ceilings_with_the_limits_recorded() {
             limits.source_bytes,
         )
         .unwrap();
-        let outcome = fsl_cst::parse_source(source, limits);
+        let outcome = fsl_cst::parse_source(&qsl3309_parser_context, source, limits);
         assert_admitted_under(outcome, limits);
     });
 }
@@ -330,8 +335,9 @@ fn deep_brackets_parse_under_raised_ceilings_with_the_limits_recorded() {
 #[trace("TC-1316", "FR-001-AC-4", "FR-521-AC-5")]
 #[test]
 fn a_zero_source_byte_allowance_refuses_a_non_empty_source() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = "// x\n";
-    let refusal = fsl_cst::parse(
+    let refusal = fsl_cst::parse(&qsl3309_parser_context,
         identity("bytes-zero"),
         "limits.native",
         text.as_bytes(),

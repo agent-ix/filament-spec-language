@@ -16,8 +16,8 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, NoClaimInstances,
-    PendingClauseForm, TimedState, TimedSystem,
+    claim_start, ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+    PendingClauseForm, TimedState, TimedSubjectRefusal, TimedSystem, TimedVacuity,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
@@ -51,8 +51,8 @@ use crate::model_check::{
     check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
 };
 use crate::zone_check::{
-    certificate_item, explore_timed_state_graph, TimedStateGraphDecision, ZoneCheckLimit,
-    ZoneCheckRefusal, ZoneStop,
+    certificate_item, explore_timed_state_graph, undecided_cause, TimedStateGraphDecision,
+    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, ZoneUndecided,
 };
 
 /// The property form of a checked claim.
@@ -82,26 +82,6 @@ fn item_instance(
         parameter.name.as_str(),
         instance.key.as_str(),
     ))
-}
-
-#[implements("FR-125-AC-13", "FR-125-AC-23")]
-fn claim_instances(
-    system: &ModelSystem<'_>,
-    claim: &CheckedStateGraphClaim,
-) -> Result<Vec<Option<ModelInstance>>, NoClaimInstances> {
-    let Some(parameter) = claim.over() else {
-        return Ok(vec![None]);
-    };
-    system
-        .claim_instances(&ValueType::Reference(parameter.object.clone()))
-        .map(|instances| instances.as_slice().iter().cloned().map(Some).collect())
-}
-
-fn timed_claim_instance_refusal(read: &Run<'_, '_>, refusal: NoClaimInstances) -> EngineReport {
-    match super::items::instance_stop(refusal) {
-        super::items::InstanceStop::Inconclusive(cause) => no_timed_graph_decision(read, cause),
-        super::items::InstanceStop::Refused(refusal) => EngineReport::Refused(refusal),
-    }
 }
 
 /// The EN-1 item that decides the state-graph claim at `key` over the
@@ -376,17 +356,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         }
         Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     }
-    let instances = match claim_instances(&system, read.claim) {
+    let instances = match timed_instances(read, &system, timed.initial().len()) {
         Ok(instances) => instances,
-        Err(refusal) => return timed_claim_instance_refusal(read, refusal),
+        Err(settled) => return *settled,
     };
-    // FR-125 Instancing: no initial state settles before no instance.
-    if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
-    }
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
     let graph = match fsl_replay::explore_digital_state_graph(
         &timed,
         u64::try_from(read.form.limits.limits.max_states).unwrap_or(u64::MAX),
@@ -394,41 +367,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         cancel,
     ) {
         Ok(graph) => graph,
-        Err(fsl_replay::DigitalGraphLimit::States(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxStates,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Transitions(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Clocks(value)) => {
-            return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached {
-                    limit: fsl_replay::ModelCheckLimit::MaxClocks,
-                    value,
-                    required: None,
-                },
-            ));
-        }
-        Err(fsl_replay::DigitalGraphLimit::Cancelled) => match cancel.cause() {
-            Some(source) => {
-                return EngineReport::Refused(Refusal::Incomplete(
-                    fsl_replay::IncompleteCause::Cancelled { source },
-                ));
-            }
-            None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
+        Err(limit) => return graph_limit_refusal(limit, cancel),
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
@@ -1249,6 +1188,35 @@ fn digital_closed_refusal(timed: &TimedSystem<'_, '_>) -> Option<Refusal> {
     ))
 }
 
+/// The instances a timed state-graph item runs over, `None` alone for a claim
+/// with no `over` parameter, or the report that settles the item before any
+/// run (FR-125 "Instancing", by the timed outcome layer).
+#[implements("FR-125-AC-7", "FR-125-AC-13")]
+fn timed_instances(
+    read: &Run<'_, '_>,
+    system: &ModelSystem<'_>,
+    initial_states: usize,
+) -> Result<Vec<Option<ModelInstance>>, Box<EngineReport>> {
+    let vacuous = |vacuity: TimedVacuity| {
+        no_timed_graph_decision(read, undecided_cause(&ZoneUndecided::from(vacuity)))
+    };
+    let Some(parameter) = read.claim.over() else {
+        return if initial_states == 0 {
+            Err(Box::new(vacuous(TimedVacuity::NoInitialState)))
+        } else {
+            Ok(vec![None])
+        };
+    };
+    let over = system.claim_instances(&ValueType::Reference(parameter.object.clone()));
+    match claim_start(initial_states, over) {
+        Ok(Ok(instances)) => Ok(instances.as_slice().iter().cloned().map(Some).collect()),
+        Ok(Err(vacuity)) => Err(Box::new(vacuous(vacuity))),
+        Err(refusal) => Err(Box::new(EngineReport::Refused(subject_refusal(
+            &TimedSubjectRefusal::NotSimulated(refusal),
+        )))),
+    }
+}
+
 fn no_timed_graph_decision(
     read: &Run<'_, '_>,
     cause: fsl_replay::InconclusiveCause,
@@ -1293,7 +1261,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let simulation = read.simulation();
     let system = match ModelSystem::new(simulation.clone()) {
         Ok(system) => system,
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(failure) => return EngineReport::Refused(super::items::admission(&failure)),
     };
     let max_clocks = read
         .form
@@ -1301,19 +1269,12 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         .unwrap_or(fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS);
     let timed = match TimedSystem::with_max_clocks(&system, &model, max_clocks) {
         Ok(timed) => timed,
-        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        Err(refusal) => return EngineReport::Refused(subject_refusal(&refusal)),
     };
-    let instances = match claim_instances(&system, read.claim) {
+    let instances = match timed_instances(read, &system, timed.initial().len()) {
         Ok(instances) => instances,
-        Err(refusal) => return timed_claim_instance_refusal(read, refusal),
+        Err(settled) => return *settled,
     };
-    // FR-125 Instancing: no initial state settles before no instance.
-    if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
-    }
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
     let bounds = super::timed_item::zone_bounds(read.form, read.limits.engines);
     let limits = super::timed_item::zone_limits(&bounds);
     let graph = match explore_timed_state_graph(&timed, limits, cancel) {
@@ -1988,6 +1949,38 @@ impl<'a> PackageStateGraphSubject<'a> {
     }
 }
 
+/// The refusal a digital state graph's stop settles: a named limit is
+/// `incomplete` with that limit; a graph that stops at a protocol expression
+/// or step guard with no value is `incomplete` with unresolved dynamics, as a
+/// graph the engine does not build (the route's refutation of it, ADR-018
+/// UE-6, is its own ticket's); cancellation is `incomplete` with its cause.
+fn graph_limit_refusal(limit: fsl_replay::DigitalGraphLimit, cancel: &Cancel) -> EngineReport {
+    use fsl_replay::{DigitalGraphLimit, IncompleteCause, ModelCheckLimit};
+    let limit_reached = |limit, value| {
+        EngineReport::Refused(Refusal::Incomplete(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        }))
+    };
+    match limit {
+        DigitalGraphLimit::States(value) => limit_reached(ModelCheckLimit::MaxStates, value),
+        DigitalGraphLimit::Transitions(value) => {
+            limit_reached(ModelCheckLimit::MaxTransitions, value)
+        }
+        DigitalGraphLimit::Clocks(value) => limit_reached(ModelCheckLimit::MaxClocks, value),
+        DigitalGraphLimit::UndefinedGuard => {
+            EngineReport::Refused(Refusal::Incomplete(IncompleteCause::UnresolvedDynamics))
+        }
+        DigitalGraphLimit::Cancelled => match cancel.cause() {
+            Some(source) => {
+                EngineReport::Refused(Refusal::Incomplete(IncompleteCause::Cancelled { source }))
+            }
+            None => EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        },
+    }
+}
+
 /// Whether the certificate checker confirms the engine's answer: for a claim
 /// the engine proved, an accepted certificate the checker decided holds; for
 /// one it refuted, the checker's own decision that the claim is violated.
@@ -2025,7 +2018,8 @@ mod tests {
     };
     use ix_trace_rs::trace;
 
-    use super::checker_confirms;
+    use super::{checker_confirms, graph_limit_refusal};
+    use super::{Cancel, EngineReport, Refusal};
 
     /// A rejection under a rule a violation also reports, with no decision
     /// of the checker's, confirms neither answer.
@@ -2053,5 +2047,25 @@ mod tests {
         assert!(checker_confirms(true, &accepted, holds));
         assert!(!checker_confirms(false, &accepted, holds));
         assert!(!checker_confirms(true, &accepted, None));
+    }
+
+    /// FR-239-AC-11 (TC-710): a graph that stops at an expression with no
+    /// value settles `incomplete`, unresolved dynamics, never `Failed`.
+    #[trace("TC-710", "FR-239-AC-11")]
+    #[test]
+    fn an_undefined_guard_stop_settles_incomplete_unresolved_dynamics() {
+        let report = graph_limit_refusal(
+            fsl_replay::DigitalGraphLimit::UndefinedGuard,
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                report,
+                EngineReport::Refused(Refusal::Incomplete(
+                    fsl_replay::IncompleteCause::UnresolvedDynamics
+                ))
+            ),
+            "the undefined-guard stop is not incomplete unresolved dynamics"
+        );
     }
 }

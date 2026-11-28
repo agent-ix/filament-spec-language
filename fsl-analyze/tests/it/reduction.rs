@@ -339,7 +339,6 @@ fn run(
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn reductions_respect_max_states_during_initial_admission() {
-    use fsl_eval::simulation::model::generated_initial_states;
 
     let world = cycle(
         true,
@@ -349,7 +348,6 @@ fn reductions_respect_max_states_during_initial_admission() {
     for reductions in [partial_order(), symmetry(&[&["b", "c"]])] {
         let mut limits = ModelCheckLimits::default();
         limits.limits.max_states = 1;
-        let before = generated_initial_states();
         let outcome = world
             .run(
                 Some(0),
@@ -373,7 +371,7 @@ fn reductions_respect_max_states_during_initial_admission() {
             ),
             "{outcome:?}"
         );
-        assert_eq!(generated_initial_states() - before, 1);
+        assert_eq!(outcome.stats().generated_model_initial_states, 1);
     }
 }
 

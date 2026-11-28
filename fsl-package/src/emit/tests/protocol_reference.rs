@@ -126,6 +126,7 @@ fn a_post_test_repeat_in_an_attempt_protocol_emits() {
 #[trace("FR-383-AC-18", "TC-1297")]
 #[test]
 fn a_later_attempt_protocol_lowers_after_an_earlier_refusal() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let broken = "protocol Broken using p over (input: Config::ConfigVersion) on origin {\n\
          role R on Config::ConfigVersion;\n\
          run sequence Main { parallel Par { branch a sequence A { } branch b sequence B { } } join all [a, ghost]; }\n\
@@ -145,6 +146,7 @@ fn a_later_attempt_protocol_lowers_after_an_earlier_refusal() {
          model Config = \"example/config-version\";\n{broken}{later}"
     );
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-1497"),
         "program.native",
         source.as_bytes(),

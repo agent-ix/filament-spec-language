@@ -344,6 +344,7 @@ fn provider_counterexamples_settle_contract_application_parity_and_refusal() {
     );
     let context = oracle(&source, CallerLimits::default());
     let site = call_site(
+        &fsl_cst::ParserContext::new(),
         identity(),
         CallSiteUnit::new("fixture".to_owned(), "unit.native", source.as_bytes()),
         [],

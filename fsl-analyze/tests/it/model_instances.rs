@@ -2322,7 +2322,6 @@ fn one_state() -> ModelCheckLimits {
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn check_model_refuses_at_max_states_before_keying_the_later_initial_states() {
-    use fsl_eval::simulation::model::generated_initial_states;
 
     let world = two_state_world();
     let both = || universes(&[("P1", &["l", "s"])]);
@@ -2331,7 +2330,6 @@ fn check_model_refuses_at_max_states_before_keying_the_later_initial_states() {
     assert!(matches!(held, ModelCheckOutcome::Holds { .. }), "{held:?}");
     assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 2);
     let before = fsl_analyze::model_check::keyed_initial_states();
-    let generated_before = generated_initial_states();
     let stopped = world
         .run_within("Thing", both(), true, no_states())
         .expect("checked");
@@ -2350,9 +2348,8 @@ fn check_model_refuses_at_max_states_before_keying_the_later_initial_states() {
         "{stopped:?}"
     );
     assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 0);
-    assert_eq!(generated_initial_states() - generated_before, 0);
+    assert_eq!(stopped.stats().generated_model_initial_states, 0);
 
-    let generated_before = generated_initial_states();
     let stopped = world
         .run_within("Thing", both(), true, one_state())
         .expect("checked");
@@ -2370,7 +2367,7 @@ fn check_model_refuses_at_max_states_before_keying_the_later_initial_states() {
         ),
         "{stopped:?}"
     );
-    assert_eq!(generated_initial_states() - generated_before, 1);
+    assert_eq!(stopped.stats().generated_model_initial_states, 1);
 }
 
 /// FR-126-AC-26 (TC-521): the state-graph explorer refuses at `max_states`
@@ -2379,11 +2376,9 @@ fn check_model_refuses_at_max_states_before_keying_the_later_initial_states() {
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
-    use fsl_eval::simulation::model::generated_initial_states;
 
     let world = two_state_world();
     let before = fsl_analyze::model_check::keyed_initial_states();
-    let generated_before = generated_initial_states();
     let run = world
         .reach_run("Thing", universes(&[("P1", &["l", "s"])]), no_states())
         .expect("checked");
@@ -2402,7 +2397,7 @@ fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
         run.graph.end
     );
     assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 0);
-    assert_eq!(generated_initial_states() - generated_before, 0);
+    assert_eq!(run.graph.stats.generated_model_initial_states, 0);
 }
 
 /// FR-125 "Instancing": the instances of `v: M::Thing` are the admitted keys

@@ -238,6 +238,7 @@ impl World {
         keys: &[&str],
         mode: CheckMode,
     ) -> Self {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let document = document(shape);
         let packages = package_input([document.as_slice()]).unwrap();
         let has_undefined_mod = clauses
@@ -280,7 +281,7 @@ impl World {
              model M = \"{PACKAGE}\";\n\
              function Noop using v(): Boolean pure {{ true }}\n{body}{function}{declared}"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("agent-ix", "reduction"),
             "reduction.native",
             text.as_bytes(),
@@ -296,7 +297,7 @@ impl World {
         )
         .expect("the model selection admits")
         .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
         })
         .expect("the operation clauses parse");
         let graph = PackageDeclarations::assemble(

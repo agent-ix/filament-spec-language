@@ -4,13 +4,15 @@ use fsl_bench::prop::{self, value};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{self, DependencyInput, FrontEndFailure, ParseRequest, SpineLimits};
 use proptest::prelude::TestCaseError;
+use ix_trace_rs::trace;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn check(source: &str) -> Result<(), FrontEndFailure> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "property-generators");
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "generated.native",
@@ -20,7 +22,7 @@ fn check(source: &str) -> Result<(), FrontEndFailure> {
         &cancel,
     )?
     .into_value();
-    let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
+    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
     spine::check(
         &parsed,
         "property-generators".into(),
@@ -49,14 +51,16 @@ fn value_generator_output_parses_and_checks() {
 
 /// Provenance: QSL-2054. Coverage is measured from the parsed CST, never labels.
 #[test]
+#[trace("NFR-141-AC-10")]
 fn grammar_unit_generator_covers_every_production() {
     let start = std::time::Instant::now();
     let cases = fsl_cst::grammar::generate::covering_derivations();
     let generated = cases.len();
     let mut covered = BTreeSet::new();
     let mut refused = Vec::new();
+    let parser = fsl_bench::parse::ParseSession::new();
     for case in cases {
-        let parsed = fsl_bench::parse::parse(&case.source).unwrap();
+        let parsed = fsl_bench::parse::parse(&parser, &case.source).unwrap();
         if !parsed.is_admissible() {
             refused.push(format!(
                 "{:?}: {:?}\n{}",
@@ -200,6 +204,7 @@ fn trace_generator_respects_profile() {
 /// Provenance: QSL-2054. Typed round-trip inputs reach real package emission.
 #[test]
 fn package_generator_emits_checked_units() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     prop::run(
         "package_generator_emits_checked_units",
         prop::config(256),
@@ -209,7 +214,7 @@ fn package_generator_emits_checked_units() {
             let cancel = Cancel::new();
             let identity = SourceIdentity::new("agent-ix", "property-generators");
             let limits = SpineLimits::default();
-            let parsed = spine::parse(
+            let parsed = spine::parse(&qsl3309_parser_context,
                 &ParseRequest {
                     source: &identity,
                     path: "generated.native",
@@ -220,7 +225,7 @@ fn package_generator_emits_checked_units() {
             )
             .map_err(|error| TestCaseError::fail(format!("{error:?}")))?
             .into_value();
-            let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)
+            let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)
                 .map_err(|error| TestCaseError::fail(format!("{error:?}")))?
                 .into_value();
             let checked = spine::check(

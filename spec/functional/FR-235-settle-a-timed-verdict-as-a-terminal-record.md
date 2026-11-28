@@ -114,7 +114,8 @@ refuted, with its trap evidence.
   obligation identity binds both (ADR-013 O-09).
 - The record of an item EN-6 decides on its liveness product (FR-240's
   divergence acceptance set), and of one the digital-clock route decides by
-  EN-1's SCC phase (FR-632), SHALL carry `ZoneCheckRecord::non_zeno`,
+  EN-1's SCC phase (FR-632), other than a TT-1 or TT-2 claim (FSpec FR-416
+  "Non-Zeno premise"), SHALL carry `ZoneCheckRecord::non_zeno`,
   written as the FSpec FR-416 result-entry member `non_zeno`:
   `NotRequired` (`not-required`) for a proof whose product has no accepting
   cycle even without the divergence set; `Assumed` (`assumed`) for a proof
@@ -150,6 +151,7 @@ refuted, with its trap evidence.
 | FR-235-AC-6 | An interval-demand task product stopped at `max_symbolic_states = 2` settles `incomplete`, `LimitReached{limit: max_symbolic_states, value: 2}` and carries a `task_search` record whose product identity and effective limit match the request; removing a reachable frontier node or changing an edge makes the record fail replay and the item settle `inconclusive`, `ReplayParity`. The incomplete record never settles `proved`. | Test (TC-704) |
 | FR-235-AC-7 | Settled through `settle_zone_check` with the core checker and FR-237's replay: FR-240-AC-1's response claim over `Rpc` with `T = 4 ms` proves with `non_zeno` `NotRequired`; its `reply` self-loop variant proves with `Assumed`; its `echo` variant refutes with `Checked`; FR-240-AC-4's `always eventually holds(true)` over `Stall` settles `Inconclusive(NoAdmittedBehaviour)` with `Refuted`; `NoLateReply` over `Rpc` and FR-239-AC-5's `UndefinedEvaluation` refutation carry `None`. | Test (TC-3021) |
 | FR-235-AC-8 | Through `fsl analyze`, FR-632-AC-2's `Within` proved on the zone route and on the digital-clock route carries the same `non_zeno` in both records, one of `not-required` and `assumed`; `Early`, refuted on both routes, carries `checked` in both. | Test (TC-3021) |
+| FR-235-AC-9 | FR-239-AC-11's outcomes settle `refuted`, `decisive-counterexample`, category violation, cause `UndefinedEvaluation{where, cause: division-by-zero}`, after FR-237's replay reproduces `where`, transition included. | Test (TC-710) |
 
 ## Dependencies
 

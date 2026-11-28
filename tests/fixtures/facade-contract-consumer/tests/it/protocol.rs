@@ -6,11 +6,12 @@ use filament_contract_model::{
 };
 
 fn protocol_emission(model: &[u8]) -> fsl_package::Emission {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use fsl_semantics::check::PackageDeclarations;
 
     let source = fsl_foundation::SourceIdentity::new("consumer", "protocol-contract");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         source,
         "protocol.native",
         UNIT.as_bytes(),

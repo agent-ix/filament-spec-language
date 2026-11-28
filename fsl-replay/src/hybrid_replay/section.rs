@@ -561,7 +561,7 @@ impl<'u, 'm> Section<'u, 'm> {
     /// Whether some real `x` makes the Boolean `body` true, and every
     /// polynomial in `(t, x)` the evaluation read, once every real root of
     /// those at `u` has been used to cut the line.
-    pub(crate) fn exists(
+    pub(crate) fn has_witness(
         &self,
         body: &Exp,
         env: &Env<'_, Bi>,

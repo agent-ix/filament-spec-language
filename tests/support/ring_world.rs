@@ -704,6 +704,7 @@ pub fn check_in(
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("agent-ix", "ring"),
         "ring.native",
         text.as_bytes(),
@@ -719,7 +720,11 @@ pub fn check_in(
     )
     .expect("the model selections admit")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(
+            &fsl_cst::ParserContext::new(),
+            text,
+            fsl_cst::Limits::default(),
+        )
     })
     .expect("the operation clauses parse");
     let declarations = PackageDeclarations::assemble(
@@ -826,10 +831,23 @@ impl RingWorld {
             }}});
         }
         if variant.tuple_reference {
-            queue_fields["pair"] = json!({"absent": {}});
+            queue_fields["pair"] = json!({"present": {"tuple": {
+                "type": node(QUEUE, "Pair"),
+                "components": [
+                    {"reference": {"population": node(QUEUE, "queues"), "key":
+                        if variant.composite_two_targets { "b" } else { "r" }}},
+                    {"boolean": true}
+                ]
+            }}});
         }
         if variant.union_reference {
-            queue_fields["holder"] = json!({"absent": {}});
+            queue_fields["holder"] = json!({"present": {"variant": {
+                "type": node(QUEUE, "Holder"),
+                "case": "Has",
+                "components": [{"reference": {"population": node(QUEUE, "queues"), "key":
+                    if variant.composite_two_targets { "b" } else { "r" }}}
+                ]
+            }}});
         }
         if variant.parcel_reference {
             let owners = if variant.composite_two_targets {
@@ -882,10 +900,23 @@ impl RingWorld {
             }}});
         }
         if variant.tuple_reference {
-            ring_fields["pair"] = json!({"absent": {}});
+            ring_fields["pair"] = json!({"present": {"tuple": {
+                "type": node(RING, "Pair"),
+                "components": [
+                    {"reference": {"population": node(RING, "rings"), "key":
+                        if variant.composite_two_targets { "b" } else { "r" }}},
+                    {"boolean": true}
+                ]
+            }}});
         }
         if variant.union_reference {
-            ring_fields["holder"] = json!({"absent": {}});
+            ring_fields["holder"] = json!({"present": {"variant": {
+                "type": node(RING, "Holder"),
+                "case": "Has",
+                "components": [{"reference": {"population": node(RING, "rings"), "key":
+                    if variant.composite_two_targets { "b" } else { "r" }}}
+                ]
+            }}});
         }
         if variant.parcel_reference {
             let owners = if variant.composite_two_targets {

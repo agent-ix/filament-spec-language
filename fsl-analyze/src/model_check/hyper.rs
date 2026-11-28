@@ -247,11 +247,6 @@ pub enum HyperRefusal {
         "an undefined evaluation on the universal side of an HP-3 clause names no existential path"
     )]
     NoPartnerPath,
-    /// An atom of an event-position clause's body has no value on a tuple of
-    /// closed executions (ADR-023 HV-8): the counterexample shape that names it
-    /// is not built.
-    #[error("an undefined evaluation on a tuple of closed finite executions is not decided")]
-    ClosedUndefined,
     /// The selected state constraint has no value at a component state; FR-174
     /// states no verdict for it.
     #[error("the state constraint has no value at a component state: {cause:?}")]
@@ -542,8 +537,13 @@ impl Totals {
         }
     }
 
+    #[implements("FR-126-AC-26")]
     fn stats(&self) -> RunStats {
         RunStats {
+            #[cfg(feature = "test-support")]
+            generated_model_initial_states: 0,
+            #[cfg(feature = "test-support")]
+            constructed_protocol_initial_states: 0,
             product_states: self.states,
             product_edges: self.edges,
             stutter_edges: 0,

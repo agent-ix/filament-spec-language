@@ -969,8 +969,10 @@ mod tests {
     }
 
     fn assemble(declarations: &str) -> (String, PackageDeclarations) {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let text = format!("{HEADER}{declarations}\n");
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
@@ -1289,6 +1291,7 @@ mod tests {
     #[trace("TC-1065", "FR-218-AC-22")]
     #[test]
     fn equal_case_or_branch_labels_refuse_and_a_single_one_fails_at_the_parser() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let choice = "choice Decide by Buyer visible () { \
             case shipped when { true } sequence A { } \
             case shipped when { false } sequence B { } }";
@@ -1319,6 +1322,7 @@ mod tests {
         ] {
             let text = format!("{HEADER}{}\n", pipeline("", run));
             let parsed = fsl_cst::parse(
+                &qsl3309_parser_context,
                 SourceIdentity::new("a", "u"),
                 "unit.native",
                 text.as_bytes(),
@@ -1343,6 +1347,7 @@ mod tests {
     #[trace("TC-1065", "FR-218-AC-23")]
     #[test]
     fn an_unsound_join_refuses_at_the_list_or_the_quorum_count() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         for (join, located_at, expected) in [
             (
                 "all [east]",
@@ -1379,6 +1384,7 @@ mod tests {
             pipeline("", &parallel("any [] outstanding cancel"))
         );
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

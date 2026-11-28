@@ -2,7 +2,8 @@
 //! S1 parser inputs: complete-V1 source text for `fsl_cst::parse`, and the
 //! classification of what one parse returned.
 
-use fsl_cst::{Limits, ParsedSource};
+use ix_trace_rs::implements;
+use fsl_cst::{Limits, ParsedSource, ParserContext};
 use fsl_foundation::SourceIdentity;
 
 /// The two-line prelude every generated source starts with: the language
@@ -15,6 +16,53 @@ pub const PRELUDE: &str = concat!(
 
 /// The source identity every generated source is parsed under.
 pub const IDENTITY: &str = "bench:qsl-196";
+
+/// One benchmark process's reused caller-owned parser context.
+#[implements("NFR-141-AC-10")]
+pub struct ParseSession {
+    context: ParserContext,
+}
+
+impl ParseSession {
+    /// Construct the parser context once for this benchmark process.
+    #[must_use]
+    #[implements("NFR-141-AC-10")]
+    pub fn new() -> Self {
+        Self {
+            context: ParserContext::new(),
+        }
+    }
+
+    /// Parse `text` under the default limits using this session's context.
+    #[implements("NFR-141-AC-10")]
+    pub fn parse(&self, text: &str) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
+        self.parse_with(text, Limits::default())
+    }
+
+    /// The context reused by this process-owned benchmark session.
+    #[implements("NFR-141-AC-10")]
+    pub fn context(&self) -> &ParserContext {
+        &self.context
+    }
+
+    /// Parse `text` under `limits` using this session's context.
+    #[implements("NFR-141-AC-10")]
+    pub fn parse_with(
+        &self,
+        text: &str,
+        limits: Limits,
+    ) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
+        self.context.parse(
+            SourceIdentity {
+                authority: "agent-ix".into(),
+                identity: IDENTITY.to_owned(),
+            },
+            "bench.native",
+            text.as_bytes(),
+            limits,
+        )
+    }
+}
 
 /// One function whose body nests `depth` parenthesis pairs:
 /// `depth = 3` is `((( x + x) + x) + x)`. `depth = 0` is the bare `x`.
@@ -38,33 +86,22 @@ pub fn volume_source(functions: usize) -> String {
     text
 }
 
-/// Parse `text` under [`IDENTITY`] at the default [`Limits`].
-///
-/// The outer `Err` is `fsl_cst::parse`'s own fatal source or resource
-/// refusal, returned as is.
-pub fn parse(text: &str) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
-    parse_with(text, Limits::default())
+/// Parse text at the default limits, reusing the caller-owned session.
+#[implements("NFR-141-AC-10")]
+pub fn parse(session: &ParseSession, text: &str) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
+    session.parse(text)
 }
 
-/// Parse `text` under [`IDENTITY`] at `limits`.
-///
-/// # Errors
-///
-/// `fsl_cst::parse`'s own fatal source or resource refusal, returned as is.
+/// Parse text at the requested limits, reusing the caller-owned session.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with(
+    session: &ParseSession,
     text: &str,
     limits: Limits,
 ) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
-    fsl_cst::parse(
-        SourceIdentity {
-            authority: "agent-ix".into(),
-            identity: IDENTITY.to_owned(),
-        },
-        "bench.native",
-        text.as_bytes(),
-        limits,
-    )
+    session.parse_with(text, limits)
 }
+
 
 /// What one parse returned, reduced to benchmark outcome metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,16 +178,30 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    #[trace("NFR-141-AC-10", "NFR-141-AC-11")]
     #[test]
     fn depth_zero_uses_the_ticket_150_byte_input() {
         assert_eq!(nested_source(0).len(), 150);
     }
-
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn smallest_inputs_parse() {
+        let session = ParseSession::new();
         for text in [nested_source(0), volume_source(1)] {
-            assert!(ParseOutcome::of(&parse(&text)).is_admitted(), "{text}");
+            assert!(ParseOutcome::of(&session.parse(&text)).is_admitted(), "{text}");
         }
     }
+
+    /// The parser benchmark entry reuses one process-owned session over parses.
+    #[trace("NFR-141-AC-10")]
+    #[test]
+    fn one_parse_session_handles_repeated_sources() {
+        let session = ParseSession::new();
+        for text in [nested_source(0), volume_source(1)] {
+            assert!(
+                ParseOutcome::of(&session.parse(&text)).is_admitted(),
+                "{text}"
+            );
+        }
+    }
+
 }

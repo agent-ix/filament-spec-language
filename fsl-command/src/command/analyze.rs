@@ -1383,14 +1383,17 @@ fn admit_package<'d>(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let supplied = super::package_input_from_selected_models(&request.models, &documents).map_err(
-        |cause| match cause {
-            RunCause::ClauseRequest { member, reason } if member == "models" => {
-                RunCause::AnalyzeRequest { member, reason }
-            }
-            cause => cause,
-        },
-    )?;
+    let supplied = super::package_input_from_selected_models(
+        intake.parser_context(),
+        &request.models,
+        &documents,
+    )
+    .map_err(|cause| match cause {
+        RunCause::ClauseRequest { member, reason } if member == "models" => {
+            RunCause::AnalyzeRequest { member, reason }
+        }
+        cause => cause,
+    })?;
     let loaded = super::handoff::admit(
         &mut intake,
         &handoff,

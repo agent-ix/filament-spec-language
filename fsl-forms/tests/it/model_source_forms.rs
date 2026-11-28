@@ -12,8 +12,9 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile m = \"filament.model.complete/v1\";\n";
 
 fn parse(declaration: &str) -> (String, ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!("{HEADER}{declaration}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "model-source"),
         "model-source.native",
         source.as_bytes(),

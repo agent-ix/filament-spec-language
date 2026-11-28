@@ -17,7 +17,8 @@ fn identity() -> SourceIdentity {
 }
 
 fn parse(source: &str) -> ParsedSource {
-    fsl_cst::parse(identity(), PATH, source.as_bytes(), Limits::default())
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context, identity(), PATH, source.as_bytes(), Limits::default())
         .expect("original UTF-8 input and valid source labels")
 }
 

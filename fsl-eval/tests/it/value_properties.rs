@@ -477,7 +477,8 @@ impl Failure {
 
 /// The source compiled to a checked, linked package, or why it did not.
 fn compile(source: &str, mode: CheckMode) -> Result<CheckedPackage, Failure> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "value-properties"),
         "value.native",
         source.as_bytes(),
@@ -1911,7 +1912,8 @@ fn production_tree(parsed: &fsl_cst::ParsedSource) -> String {
 }
 
 fn parse(source: &str) -> Result<fsl_cst::ParsedSource, String> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "value-properties"),
         "value.native",
         source.as_bytes(),

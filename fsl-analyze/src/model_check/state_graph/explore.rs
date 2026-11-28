@@ -589,8 +589,11 @@ impl Exploration<'_, '_, '_> {
     }
 
     /// The graph's statistics and the deadlock-freedom item's outcome.
+    #[implements("FR-126-AC-26")]
     fn finish(&self, mut walk: Walk) -> Result<Explored, ModelCheckRefusal> {
         walk.graph.stats = GraphStats {
+            #[cfg(feature = "test-support")]
+            generated_model_initial_states: self.system.generated_initial_count(),
             nodes: widen(walk.graph.nodes.len()),
             edges: widen(walk.graph.edges.len()),
             depth: walk
@@ -615,9 +618,14 @@ impl Exploration<'_, '_, '_> {
     }
 
     /// The deadlock-freedom item's outcome, as FR-126 decides it.
+    #[implements("FR-126-AC-26")]
     fn deadlock(&self, walk: &Walk) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
         let graph = &walk.graph;
         let stats = RunStats {
+            #[cfg(feature = "test-support")]
+            generated_model_initial_states: graph.stats.generated_model_initial_states,
+            #[cfg(feature = "test-support")]
+            constructed_protocol_initial_states: 0,
             product_states: graph.stats.nodes,
             product_edges: graph.stats.edges,
             stutter_edges: 0,

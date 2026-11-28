@@ -13,7 +13,8 @@ use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
 fn assemble(name: &str, bytes: &[u8]) -> Result<PackageDeclarations, AssemblyRefusal> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("fsl-conformance", name),
         name,
         bytes,

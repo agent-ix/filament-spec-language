@@ -41,6 +41,7 @@ fn declarations_of(
     alias: &str,
     declarations: &str,
 ) -> (PackageDeclarations, Vec<DomainPackage>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -51,7 +52,7 @@ fn declarations_of(
          {declarations}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "variant-fields"),
         "variant-fields.native",
         source.as_bytes(),
@@ -244,6 +245,7 @@ fn a_variant_case_with_a_resolving_payload_is_admitted() {
 
 /// The refusals I1 reports for `document`, selected as model `Config`.
 fn intake_refusals(document: &Value) -> Vec<fsl_semantics::model::normalize::ModelRefusal> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -253,7 +255,7 @@ fn intake_refusals(document: &Value) -> Vec<fsl_semantics::model::normalize::Mod
          function keep using v(): Boolean pure {{ true }}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "variant-fields"),
         "variant-fields.native",
         source.as_bytes(),
@@ -427,6 +429,7 @@ fn the_keys_of_a_variant_type_do_not_depend_on_the_alias() {
 #[trace("FR-480-AC-11")]
 #[test]
 fn a_second_alias_names_the_same_variant_record_and_object_types() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -442,7 +445,7 @@ fn a_second_alias_names_the_same_variant_record_and_object_types() {
          pre Promotes using v on Cfg::Account::promote {{ t = Cfg::Tier::Gold }}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "two-aliases"),
         "two-aliases.native",
         source.as_bytes(),
@@ -520,6 +523,7 @@ fn a_second_alias_names_the_same_variant_record_and_object_types() {
 fn assemble_fixture_units(
     declarations: &[(&str, String)],
 ) -> Result<PackageDeclarations, fsl_semantics::check::AssemblyRefusal> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let unit = |identity: &str, declarations: &str| {
@@ -527,7 +531,7 @@ fn assemble_fixture_units(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.model.complete/v1\";\n{declarations}\n"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("test", identity),
             "unit.native",
             source.as_bytes(),
@@ -1142,6 +1146,7 @@ fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant
 #[trace("TC-1007", "FR-360-AC-5")]
 #[test]
 fn an_unknown_variant_type_name_in_a_type_position_refuses_at_the_assembler() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (_, _) = declarations_of(&fixture::document(), "Config", "");
     let source_error = |declarations: &str| {
         let document = fixture::document();
@@ -1155,7 +1160,7 @@ fn an_unknown_variant_type_name_in_a_type_position_refuses_at_the_assembler() {
              {declarations}\n",
             package = fixture::PACKAGE,
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("test", "variant-fields"),
             "variant-fields.native",
             source.as_bytes(),
@@ -1888,6 +1893,7 @@ fn a_malformed_variant_form_as_a_parameter_or_result_refuses() {
 /// A unit selecting the FR-360 package as `Config` whose function `f` has the
 /// body `body`, parsed by S1.
 fn parsed_with_body(body: &str) -> (String, fsl_cst::ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
@@ -1895,7 +1901,7 @@ fn parsed_with_body(body: &str) -> (String, fsl_cst::ParsedSource) {
          function f using v(t: Config::Tier): Boolean pure {{ {body} }}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "variant-fields"),
         "variant-fields.native",
         source.as_bytes(),

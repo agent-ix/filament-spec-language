@@ -629,7 +629,9 @@ fn the_assembler_refuses_only_the_unadmitted_import() {
         import("test/geometry", "g"),
         import("test/other", "o"),
     ));
+    let parser_context = fsl_cst::ParserContext::new();
     let parsed = fsl_cst::parse(
+        &parser_context,
         SourceIdentity::new("a", "u"),
         "u.native",
         source.as_bytes(),

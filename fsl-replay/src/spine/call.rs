@@ -1006,6 +1006,7 @@ pub(crate) fn run_reading<T>(
     clippy::too_many_arguments,
     reason = "run's explicit source, package, evaluation, backend, catalog and law inputs"
 )]
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub(crate) fn run_reading_with_integer_division<T>(
     source: SourceIdentity,
     package_name: String,
@@ -1023,6 +1024,7 @@ pub(crate) fn run_reading_with_integer_division<T>(
     cancel: &Cancel,
     read: impl FnOnce(&CheckedUnit, &EmittedUnit, &AdmittedModels) -> Result<T, Box<RunRefusal>>,
 ) -> Result<(CallOutcome, T), Box<RunRefusal>> {
+    let parser_context = fsl_cst::ParserContext::new();
     // FR-296: a backend the caller did not supply refuses before any stage.
     backends
         .member(call.backend)
@@ -1041,10 +1043,16 @@ pub(crate) fn run_reading_with_integer_division<T>(
         bytes,
     };
     let parsed = match profile_catalog {
-        Some(catalog) => {
-            front_end::parse_selecting_extensions(&parse_request, catalog, limits.source, cancel)
+        Some(catalog) => front_end::parse_selecting_extensions_context(
+            &parse_request,
+            catalog,
+            limits.source,
+            cancel,
+            &parser_context,
+        ),
+        None => {
+            front_end::parse_with_context(&parse_request, limits.source, cancel, &parser_context)
         }
-        None => front_end::parse(&parse_request, limits.source, cancel),
     }
     .map_err(refusal)?
     .into_value();

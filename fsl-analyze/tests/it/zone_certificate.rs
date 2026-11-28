@@ -1184,6 +1184,77 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
     }
 }
 
+/// A `ping` step guarded by `y <= 0` resets `x` but never resets `y`.
+/// Although `x <= 1 ms` permits time before the reset, the guard on `y`
+/// forces every repeated `ping` step to take zero time. The cycle is not an
+/// admitted time-divergent witness.
+#[trace("FR-245-AC-2")]
+#[test]
+fn a_guard_on_a_never_reset_clock_is_not_an_advancing_cycle() {
+    let world = quiet(
+        &["x", "y"],
+        &[
+            ("ping", &["x"]),
+            ("go", &["phase"]),
+            ("tock", &["phase", "x"]),
+        ],
+        "",
+        DENSE,
+        "pre Ping using v on M::Call::ping { self.phase = 0 and self.y <= 0 ms }\n\
+         post Pinged using v on M::Call::ping { self.x = 0 ms }\n\
+         pre Go using v on M::Call::go { self.phase = 0 }\n\
+         post Gone using v on M::Call::go { self.phase = 1 }\n\
+         pre Tock using v on M::Call::tock { self.phase = 1 and self.x >= 1 ms }\n\
+         post Tocked using v on M::Call::tock { self.phase = 0 and self.x = 0 ms }\n\
+         time invariant Bounded when { true } { self.x <= 1 ms }\n",
+    );
+    let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+    let ping = certificate
+        .edges
+        .iter()
+        .position(|edge| {
+            edge.from == edge.to
+                && edge
+                    .transition
+                    .as_ref()
+                    .is_some_and(|step| step.operation().contains("Call/ping\""))
+        })
+        .expect("a ping self-loop");
+    let start = certificate.initials[0];
+    let goal = certificate.edges[ping].from;
+    let mut reach: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    reach.insert(start, Vec::new());
+    let mut queue = std::collections::VecDeque::from([start]);
+    while let Some(node) = queue.pop_front() {
+        for (index, edge) in certificate.edges.iter().enumerate() {
+            if edge.from == node && !reach.contains_key(&edge.to) {
+                let mut path = reach[&node].clone();
+                path.push(index);
+                reach.insert(edge.to, path);
+                queue.push_back(edge.to);
+            }
+        }
+    }
+    let path = reach.remove(&goal).expect("the loop is reachable");
+    let mut zeno = certificate;
+    zeno.admitted = Some(fsl_replay::DivergenceWitness {
+        start,
+        path,
+        target: DivergentTarget::Cycle(vec![ping]),
+    });
+    match verdict(&world, &zeno) {
+        ZoneCertificateVerdict::Rejected(CertificateRejection { rule, .. }) => {
+            assert_eq!(rule, CertificateRule::WitnessFails);
+        }
+        other => panic!("a Zeno loop is not an admitted witness: {other:?}"),
+    }
+}
+
 /// `alpha` (every held element's `x` at most 0) and `go` (at least 5 ms)
 /// enter phase 1, which `y <= 1 ms` bounds and `tick` leaves; `work` needs
 /// phase `from` and `x >= 5 ms`. `ts` declares no maximum, so every read of

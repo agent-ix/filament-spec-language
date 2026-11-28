@@ -67,6 +67,7 @@ fn assemble(declarations: &str) -> (String, PackageDeclarations) {
 
 /// [`assemble`] under `header` in place of [`HEADER`].
 fn assemble_under(header: &str, declarations: &str) -> (String, PackageDeclarations) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     // A leading `profile` line is a header selection, written before the
     // model.
     let (profile, declarations) = match declarations.split_once('\n') {
@@ -75,7 +76,7 @@ fn assemble_under(header: &str, declarations: &str) -> (String, PackageDeclarati
     };
     let header = header.replacen("model M", &format!("{profile}model M"), 1);
     let text = format!("{header}{declarations}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -489,6 +490,7 @@ fn a_model_type_in_a_clause_binder_resolves_to_the_models_own_type() {
 #[trace("TC-1056", "FR-218-AC-38")]
 #[test]
 fn three_units_bind_a_predicate_a_clause_and_a_protocol_across_units() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use crate::check::assemble::AssemblyLimits;
     use filament_exact::Cancel;
 
@@ -525,7 +527,7 @@ fn three_units_bind_a_predicate_a_clause_and_a_protocol_across_units() {
         header("profile p = \"filament.protocol.finite-global/v1\";\n")
     );
     let parsed = |identity: &str, text: &str| {
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("repo", identity),
             "unit.native",
             text.as_bytes(),

@@ -183,7 +183,10 @@ A typed `SemanticCheckRefusal` with a span, and no `CheckedRefinement`, on refus
   values recursively use this same lifting rule. A missing or extra record
   field, a tuple arity mismatch, or an active union tag absent from the paired
   union SHALL refuse `ill_typed`/`type-mismatch` at the first mismatched
-  component path; the checker SHALL produce no `CheckedRefinement`.
+  component path; the checker SHALL produce no `CheckedRefinement`. A record,
+  tuple or union pairs only with a composite of the same kind, and a composite
+  of another kind SHALL refuse `ill_typed`/`type-mismatch` at the row's
+  expression (FR-135-AC-20).
 - The checker SHALL refuse a refinement whose abstract model declares a
   relationship with `unsupported_construct`/`declaration-form` at the
   abstract alias of the declaration header, once per refinement, naming the
@@ -311,6 +314,7 @@ standing.
 | FR-135-AC-17 | When the abstract record field is `Box.target: Reference<Queue>` and the concrete paired record has `link: Reference<Ring>` instead of `target`, a row `box = self.box` refuses `ill_typed`/`type-mismatch` at the mismatched record-field path `box.target`, and produces no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-18 | When the abstract field type is `Pair(Reference<Queue>, Boolean)` and the concrete row value has type `Triple(Reference<Ring>, Boolean, Boolean)`, a row `pair = self.triplet` refuses `ill_typed`/`type-mismatch` at the first unmatched tuple position `[2]`, and produces no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-19 | When the abstract field has type `Holder` with case `Has(Reference<Queue>)` and the concrete field has type `State` with case `Points(Reference<Ring>)`, row `holder = self.state` refuses `ill_typed`/`type-mismatch` at the active union-tag path `holder.variant`, and produces no `CheckedRefinement`. With a concrete `State` whose active tag is `Has` and whose payload is `Reference<Ring>`, the same row is accepted and its payload is lifted. | Test (TC-540) |
+| FR-135-AC-20 | A composite row pairs same-kind composites only: a record, a tuple and a union each pair with a composite of the same kind and no other, and no row coerces one kind to another. With the abstract fields `box` (record `Box`), `pair` (tuple `Pair`) and `holder` (union `Holder`), the rows `box = self.pair`, `box = self.holder`, `pair = self.box`, `pair = self.holder`, `holder = self.box` and `holder = self.pair` each refuse `ill_typed`/`type-mismatch` at the row's expression, and produce no `CheckedRefinement`. | Test (TC-540) |
 
 ## Dependencies
 

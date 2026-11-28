@@ -73,7 +73,7 @@ pub use memory::MemoryModelName;
 pub use reduction::ReductionKind;
 pub use request_index::RequestIndex;
 pub use setting::{
-    AccountingSetting, Setting, SettingLimits, SettingName, UsageCause, UsageRefusal,
+    AccountingSetting, CountKind, Setting, SettingLimits, SettingName, UsageCause, UsageRefusal,
 };
 pub use source::{
     LocatedSpan, Position, Source, SourceCoordinates, SourceIdentity, SourceLabel, SourcePoint,

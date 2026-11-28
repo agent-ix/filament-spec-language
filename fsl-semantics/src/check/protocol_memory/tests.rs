@@ -57,8 +57,9 @@ fn protocol(run: &str) -> String {
 }
 
 fn assemble(declarations: &str) -> (String, PackageDeclarations) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -542,8 +543,9 @@ fn classes(source: &str) -> Vec<(String, Option<AccessClass>, Option<AccessOrder
 }
 
 fn assemble_model(declarations: &str, model: SelectedModel) -> (String, PackageDeclarations) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

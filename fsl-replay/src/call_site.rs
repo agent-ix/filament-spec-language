@@ -30,6 +30,7 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
+use ix_trace_rs::implements;
 
 use crate::execute::{
     callable_parameter_keys, declaration_occurrence, value_parity_obligation,
@@ -638,7 +639,9 @@ impl CallSiteRefusal {
 /// #     profile v = \"filament.value.complete/v1\";\n\
 /// #     function f using v(x: Int[0, 9]): Integer pure { x + 5 }\n";
 /// let f = QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap();
+/// let parser = fsl_cst::ParserContext::new();
 /// let site = call_site(
+///     &parser,
 ///     SourceIdentity::new("a", "u"),
 ///     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 ///     [],
@@ -659,7 +662,9 @@ impl CallSiteRefusal {
 /// #     profile v = \"filament.value.complete/v1\";\n\
 /// #     function f using v(x: Int[0, 9]): Integer pure { x + 5 }\n";
 /// let f = QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap();
+/// let parser = fsl_cst::ParserContext::new();
 /// let site = call_site(
+///     &parser,
 ///     SourceIdentity::new("a", "u"),
 ///     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 ///     [],
@@ -670,7 +675,9 @@ impl CallSiteRefusal {
 /// .unwrap();
 /// assert_eq!(site.site.parameters[0].0.as_str(), "x");
 /// ```
+#[implements("NFR-141-AC-10")]
 pub fn call_site<'a, S: CallSiteSelection>(
+    parser: &fsl_cst::ParserContext,
     source: SourceIdentity,
     unit: CallSiteUnit<'_>,
     packages: impl IntoIterator<Item = &'a [u8]>,
@@ -701,7 +708,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
             "package-documents-form-a-package-input",
         )))
     })?;
-    let parsed = spine::parse(
+    let parsed = spine::parse_with_context(
         &spine::ParseRequest {
             source: &source,
             path,
@@ -709,6 +716,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
         },
         limits.source,
         &cancel,
+        parser,
     )
     .map_err(refusal)?
     .into_value();
@@ -1179,6 +1187,7 @@ mod tests {
         function: &str,
     ) -> Result<CallSite<FunctionSite>, Box<CallSiteRefusal>> {
         call_site(
+            &fsl_cst::ParserContext::new(),
             SourceIdentity::new("a", "u"),
             crate::CallSiteUnit::new("fixture", "unit.native", bytes),
             [],
@@ -1298,6 +1307,7 @@ mod tests {
         .unwrap();
         for selection in [name("nope"), name("F"), qualified] {
             let refusal = call_site(
+                &fsl_cst::ParserContext::new(),
                 SourceIdentity::new("a", "u"),
                 crate::CallSiteUnit::new("fixture", "unit.native", UNIT.as_bytes()),
                 [],

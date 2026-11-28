@@ -78,11 +78,13 @@ struct Dependency {
 
 /// Compiles `clauses` over the fixture model as the library `identity`.
 fn dependency(identity: &str, clauses: &str) -> Dependency {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = format!("{MODEL_HEADER}{clauses}");
     let bytes = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
     let models =
         fsl_semantics::model::intake::package_input([bytes.as_slice()]).expect("the model package");
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", identity),
         "dependency.native",
         unit.as_bytes(),
@@ -147,7 +149,9 @@ fn unit(declaration: &str) -> String {
 }
 
 fn compile_with(source: &str, dependencies: &[&Dependency]) -> Result<CheckedPackage, Failure> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:composition"),
         "program.native",
         source.as_bytes(),

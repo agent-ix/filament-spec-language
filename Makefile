@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify parity cargo-deny-bans fuzz-deep-input test-deep-format test-deep-measurements ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
+.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint limit-literals checked-input canonical-types refinement-versioning refinement-layering qualify parity cargo-deny-bans fuzz-deep-input test-deep-format test-deep-measurements ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
 
 # Fail when a tracked file is executable/binary content or exceeds
 # the size ceiling. See the script's own header for the detection method and
@@ -68,6 +68,12 @@ pre-push:
 # never ambient state.
 route-lint:
 	cargo run --package xtask -- route-lint
+
+# FR-255 (QSL-3573): fails when production code puts a type's maximum, an
+# `UNLIMITED` constant or `unbounded()` where a limit goes, past what
+# xtask/limit-literals.allow names.
+limit-literals:
+	cargo run --package xtask -- limit-literals
 
 # FR-270 (ADR-032 CK-1 to CK-5): fails when an execution, routing or replay
 # stage entry takes a pre-check representation, or a stage crate calls a
@@ -369,7 +375,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint limit-literals checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-base build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # runs the focused conformance lanes.
@@ -526,7 +532,7 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-
 
 # The committed performance benchmarks (`fsl-bench/`), one
 # criterion bench per axis group, each runnable by name. `make bench` runs all
-# eleven; `make bench-probe` prints the counts, refusal boundaries and one-shot
+# twelve; `make bench-probe` prints the counts, refusal boundaries and one-shot
 # large-input timings (with peak RSS) the criterion benches do not record.
 # Compare a candidate with current main in one interleaved session; see
 # `fsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
@@ -534,15 +540,39 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-
 # Not part of `ci:`
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
-BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4
-BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
+BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4 package
+BENCH_GENERIC_AXES := $(filter-out evaluator_kernel package,$(BENCH_AXES))
+BENCH_PACKAGE_FILTER := $(filter package/emit package/read replay/request,$(BENCH_ARGS))
+BENCH_PACKAGE_A_BENCH_TARGET ?= target/package-a-bench
+BENCH_PACKAGE_B_BENCH_TARGET ?= target/package-b-bench
+BENCH_PACKAGE_A_PROBE_TARGET ?= target/package-a-probe
+BENCH_PACKAGE_B_PROBE_TARGET ?= target/package-b-probe
+BENCH_PACKAGE_A_RESULTS ?= target/package-a-results.json
+BENCH_PACKAGE_B_RESULTS ?= target/package-b-results.json
+ifeq ($(strip $(BENCH_PACKAGE_FILTER)),)
+BENCH_PACKAGE_REPORT := report
+else
+BENCH_PACKAGE_REPORT := report-axis $(BENCH_PACKAGE_FILTER)
+endif
 
-.PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
+.PHONY: bench bench-probe bench-package-ab $(addprefix bench-,$(BENCH_AXES))
 
 bench: $(addprefix bench-,$(BENCH_AXES))
 
 $(addprefix bench-,$(BENCH_GENERIC_AXES)): bench-%:
 	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
+
+bench-package:
+	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- start
+	cargo bench --locked -p fsl-bench --bench package -- $(BENCH_ARGS)
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 1
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 10
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 100
+	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- $(BENCH_PACKAGE_REPORT)
+
+bench-package-ab:
+	cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- start
+	cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab "$(BENCH_PACKAGE_A_BENCH_TARGET)" "$(BENCH_PACKAGE_B_BENCH_TARGET)" "$(BENCH_PACKAGE_A_PROBE_TARGET)" "$(BENCH_PACKAGE_B_PROBE_TARGET)" "$(BENCH_PACKAGE_A_RESULTS)" "$(BENCH_PACKAGE_B_RESULTS)"
 
 bench-evaluator_kernel:
 	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start

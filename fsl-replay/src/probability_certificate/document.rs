@@ -69,7 +69,7 @@ pub use long_run::{
 pub use refutation::SubsystemBoundKind;
 mod timed;
 pub(crate) use crate::timed::clock_constraints;
-pub use timed::digital_key_clocks;
+pub use timed::{digital_key_clocks, timed_certificate_route};
 pub(super) use timed::{is_timed_witness_claim, replay_timed_witness};
 mod unit;
 mod value_bounds;
@@ -480,10 +480,10 @@ impl From<ExactProbabilityGraphError> for ProbabilityDocumentError {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireIdentity {
-    node_id: Box<serde_json::value::RawValue>,
-    model: Option<String>,
-    ordinal: u32,
+struct WireIdentity<N = Box<serde_json::value::RawValue>, M = String, O = u32> {
+    node_id: N,
+    model: Option<M>,
+    ordinal: O,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -568,21 +568,138 @@ fn present_unit<'de, D: serde::Deserializer<'de>>(
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireRational {
-    numerator: String,
-    denominator: String,
+struct WireRational<N = String, D = String> {
+    numerator: N,
+    denominator: D,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireValue {
-    state: String,
-    value: WireRational,
+struct WireValue<S = String, V = WireRational> {
+    state: S,
+    value: V,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireRank {
-    state: String,
-    rank: u64,
+struct WireRank<S = String, R = u64> {
+    state: S,
+    rank: R,
+}
+
+/// Writes one wire member value to the canonical writer. A wire struct declared
+/// once is read by deserializing it and written by filling it with borrowed leaves
+/// and calling `emit`, so the writer cannot drift from the reader's member set.
+trait Emit {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error>;
+}
+fn member<S: quire_canonical::Sink + ?Sized, T: Emit + ?Sized>(
+    writer: &mut quire_canonical::Writer<'_, S>,
+    name: &str,
+    value: &T,
+) -> Result<(), quire_canonical::Error> {
+    writer.name(name)?;
+    value.emit(writer)
+}
+impl Emit for str {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.string(self)
+    }
+}
+impl Emit for u64 {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.integer(i128::from(*self))
+    }
+}
+impl Emit for u32 {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.integer(i128::from(*self))
+    }
+}
+impl<T: Emit + ?Sized> Emit for &T {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        (**self).emit(writer)
+    }
+}
+impl<T: Emit> Emit for Option<T> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        match self {
+            Some(value) => value.emit(writer),
+            None => writer.null(),
+        }
+    }
+}
+impl<A: Emit, B: Emit> Emit for (A, B) {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_array()?;
+        self.0.emit(writer)?;
+        self.1.emit(writer)?;
+        writer.end_array()
+    }
+}
+impl<N: Emit, M: Emit, O: Emit> Emit for WireIdentity<N, M, O> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "node_id", &self.node_id)?;
+        member(writer, "model", &self.model)?;
+        member(writer, "ordinal", &self.ordinal)?;
+        writer.end_object()
+    }
+}
+impl<N: Emit, D: Emit> Emit for WireRational<N, D> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "numerator", &self.numerator)?;
+        member(writer, "denominator", &self.denominator)?;
+        writer.end_object()
+    }
+}
+impl<St: Emit, V: Emit> Emit for WireValue<St, V> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "state", &self.state)?;
+        member(writer, "value", &self.value)?;
+        writer.end_object()
+    }
+}
+impl<St: Emit, R: Emit> Emit for WireRank<St, R> {
+    fn emit<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.begin_object()?;
+        member(writer, "state", &self.state)?;
+        member(writer, "rank", &self.rank)?;
+        writer.end_object()
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2531,7 +2648,8 @@ fn check_document_bytes(
         return Ok(malformed_ranking());
     }
     let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
-    let ranked = bound_side != Some(SubsystemBoundKind::Upper) || reward_upper;
+    let reward_lower = reward.is_some() && bound_side == Some(SubsystemBoundKind::Lower);
+    let ranked = !reward_lower && (bound_side != Some(SubsystemBoundKind::Upper) || reward_upper);
     for (key, state) in graph
         .states
         .iter()
@@ -2556,9 +2674,10 @@ fn check_document_bytes(
     }
     // The derived ranks are a whole graph's, and a subset `lower` carries
     // those of its named states. A cyclic reward ranks progress instead, and
-    // so does a partial `lower` over a chain; a partial expected reward
-    // `lower` needs no ranking to be sound (FR-1042 "Conditions"). No height
-    // is derivable past a state the document does not name.
+    // so does a partial `lower` over a chain. Expected-reward `lower`
+    // certificates need no ranking, whether they name the whole graph or a
+    // partial graph (FR-1042 "Conditions"). No height is derivable past a
+    // state the document does not name.
     let progress_ranked = reward.is_some() && document.cyclic_dtmc;
     let partial_unbounded = partial && (reward.is_some() || document.cyclic_dtmc);
     if let Some(expected) =
@@ -2582,7 +2701,9 @@ fn check_document_bytes(
     // remaining horizon instead, and an `upper` document has no ranking.
     let progress_checked = match bound_side {
         None => true,
-        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc || acyclic_eventual,
+        Some(SubsystemBoundKind::Lower) => {
+            (document.cyclic_dtmc && reward.is_none()) || acyclic_eventual
+        }
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
     for (key, state) in graph

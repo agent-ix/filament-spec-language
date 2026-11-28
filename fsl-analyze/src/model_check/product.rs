@@ -4,8 +4,8 @@
 use fsl_eval::simulation::{
     Expansion, ExpansionStop, Footprint, OfferedReductions, TransitionSystem,
 };
+use quire_canonical as canonical_api;
 use quire_canonical::{Encode, Sink, Writer};
-use quire_canonical_api as canonical_api;
 
 /// Both components of a product state, preserved independently.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,44 +65,11 @@ impl<S: Sink + ?Sized, M: Encode, P: Encode> ProductKeyWriter<M, P>
     }
 }
 
-impl<S: canonical_api::Sink + ?Sized, M: canonical_api::Encode, P: canonical_api::Encode>
-    ProductKeyWriter<M, P> for canonical_api::Writer<'_, S>
-{
-    type Error = canonical_api::Error;
-
-    fn begin_array(&mut self) -> Result<(), Self::Error> {
-        canonical_api::Writer::begin_array(self)
-    }
-
-    fn model(&mut self, model: &M) -> Result<(), Self::Error> {
-        model.encode_into(self)
-    }
-
-    fn property(&mut self, property: &P) -> Result<(), Self::Error> {
-        property.encode_into(self)
-    }
-
-    fn end_array(&mut self) -> Result<(), Self::Error> {
-        canonical_api::Writer::end_array(self)
-    }
-}
-
 impl<M: Encode, P: Encode> Encode for ProductKey<M, P> {
     fn encode_into<S: Sink + ?Sized>(
         &self,
         writer: &mut Writer<'_, S>,
     ) -> Result<(), quire_canonical::Error> {
-        encode_product_key(writer, &self.model, &self.property)
-    }
-}
-
-impl<M: canonical_api::Encode, P: canonical_api::Encode> canonical_api::Encode
-    for ProductKey<M, P>
-{
-    fn encode_into<S: canonical_api::Sink + ?Sized>(
-        &self,
-        writer: &mut canonical_api::Writer<'_, S>,
-    ) -> Result<(), canonical_api::Error> {
         encode_product_key(writer, &self.model, &self.property)
     }
 }

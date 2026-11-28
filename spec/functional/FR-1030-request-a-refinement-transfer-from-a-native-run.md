@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
 ---
 # FR-1030: Request a refinement transfer from a native run
 

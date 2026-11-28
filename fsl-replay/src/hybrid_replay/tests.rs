@@ -94,8 +94,10 @@ impl std::ops::Deref for Unit {
 }
 
 fn check(declarations: &str) -> Unit {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{FUNCTIONS}{declarations}");
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

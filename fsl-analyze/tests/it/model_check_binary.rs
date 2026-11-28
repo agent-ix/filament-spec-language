@@ -136,6 +136,7 @@ mod timed_refinement_certificate;
 mod timed_refinement_liveness;
 mod timed_state_graph;
 mod tso_fairness;
+mod undefined_guard_refutes;
 mod universe_obligation;
 mod zone_certificate;
 mod zone_clock_collections;

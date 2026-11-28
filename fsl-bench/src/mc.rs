@@ -20,8 +20,12 @@
 //! the probe time them.
 
 use std::cell::Cell;
+
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
+
+use fsl_cst::ParserContext;
+use ix_trace_rs::implements;
 
 use filament_exact::{Cancel, Meter};
 use fsl_analyze::model_check::{
@@ -225,14 +229,19 @@ impl ModelLetters for FieldLetters {
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
+#[implements("NFR-141-AC-10")]
 pub fn ring_state_graph(
     objects: usize,
     values: usize,
     symmetric: bool,
+    parser: &ParserContext,
 ) -> Result<World, AxisError> {
     let top = values.saturating_sub(1);
     let claim = format!("possible Wraps using v over (c: M::Cell) {{ c.v = {top} }}\n");
-    Ok(World::build(&ring(objects, values, symmetric, &claim))?)
+    Ok(World::build_with_context(
+        &ring(objects, values, symmetric, &claim),
+        parser,
+    )?)
 }
 
 /// `mc/state_graph`: FR-167 `check_state_graph` over the ring, with a
@@ -302,13 +311,21 @@ pub fn run_state_graph(world: &World, symmetric: bool) -> Result<Work, AxisError
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
-pub fn ring_safety(objects: usize, values: usize) -> Result<World, AxisError> {
+#[implements("NFR-141-AC-10")]
+pub fn ring_safety(
+    objects: usize,
+    values: usize,
+    parser: &ParserContext,
+) -> Result<World, AxisError> {
     let top = values.saturating_sub(1);
     let clause = format!(
         "temporal Bounded using t0 over (c: M::Cell) clock \"model-steps\" on origin \
          {{ always holds(c.v <= {top}) }}\n"
     );
-    Ok(World::build(&ring(objects, values, false, &clause))?)
+    Ok(World::build_with_context(
+        &ring(objects, values, false, &clause),
+        parser,
+    )?)
 }
 
 /// What a `check_model` run returns, as counts and the atoms evaluated.
@@ -383,10 +400,18 @@ pub fn run_safety(world: &World, deadlock: bool) -> Result<(Work, u64), AxisErro
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
-pub fn ring_liveness(objects: usize, values: usize) -> Result<World, AxisError> {
+#[implements("NFR-141-AC-10")]
+pub fn ring_liveness(
+    objects: usize,
+    values: usize,
+    parser: &ParserContext,
+) -> Result<World, AxisError> {
     let clause = "temporal Returns using t0 over (c: M::Cell) clock \"model-steps\" on origin \
          { fair weak each M::Cell::step; always eventually holds(c.v = 0) }\n";
-    Ok(World::build(&ring(objects, values, false, clause))?)
+    Ok(World::build_with_context(
+        &ring(objects, values, false, clause),
+        parser,
+    )?)
 }
 
 /// `mc/liveness`: `check_model` of `always eventually` under weak fairness
@@ -415,7 +440,8 @@ pub fn run_liveness(world: &World) -> Result<(Work, u64), AxisError> {
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
-pub fn wide(fields: usize, range: usize) -> Result<World, AxisError> {
+#[implements("NFR-141-AC-10")]
+pub fn wide(fields: usize, range: usize, parser: &ParserContext) -> Result<World, AxisError> {
     let names: Vec<String> = (0..fields).map(|index| format!("f{index}")).collect();
     let zeros: Vec<(String, i64)> = names.iter().map(|name| (name.clone(), 0)).collect();
     let model = Model {
@@ -438,7 +464,7 @@ pub fn wide(fields: usize, range: usize) -> Result<World, AxisError> {
         objects: keyed("c", 1, &zeros),
         unrelated: 0,
     };
-    Ok(World::build(&model)?)
+    Ok(World::build_with_context(&model, parser)?)
 }
 
 /// `mc/frame_candidates`: deadlock-freedom over [`wide`].
@@ -458,12 +484,13 @@ pub fn run_frame_candidates(world: &World) -> Result<Work, AxisError> {
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
-pub fn observation(unrelated: usize) -> Result<World, AxisError> {
+#[implements("NFR-141-AC-10")]
+pub fn observation(unrelated: usize, parser: &ParserContext) -> Result<World, AxisError> {
     let mut model = ring(1, 2, false, "");
     model.package = "bench/observation".to_owned();
     model.fields = vec![("v".to_owned(), "ix://bench/observation/Level".to_owned())];
     model.unrelated = unrelated;
-    Ok(World::build(&model)?)
+    Ok(World::build_with_context(&model, parser)?)
 }
 
 /// `mc/observation`: deadlock-freedom over [`observation`], which builds the
@@ -483,7 +510,8 @@ pub fn run_observation(world: &World) -> Result<Work, AxisError> {
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
-pub fn protocol(branches: usize) -> Result<World, AxisError> {
+#[implements("NFR-141-AC-10")]
+pub fn protocol(branches: usize, parser: &ParserContext) -> Result<World, AxisError> {
     let attempt = |index: usize| {
         format!(
             "branch b{index} attempt A{index} by w on M::Cell::inc contracts [IncPre, IncPost] \
@@ -514,7 +542,7 @@ pub fn protocol(branches: usize) -> Result<World, AxisError> {
         objects: keyed("c", 1, &[("v".to_owned(), 0)]),
         unrelated: 0,
     };
-    Ok(World::build(&model)?)
+    Ok(World::build_with_context(&model, parser)?)
 }
 
 /// `reach/workers`: every reachable state of protocol `P` under `Sc`, each
@@ -566,7 +594,8 @@ pub fn run_reach(world: &World, workers: NonZeroUsize) -> Result<Work, AxisError
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
-pub fn keys(objects: usize, fields: usize) -> Result<World, AxisError> {
+#[implements("NFR-141-AC-10")]
+pub fn keys(objects: usize, fields: usize, parser: &ParserContext) -> Result<World, AxisError> {
     let names: Vec<String> = (0..fields).map(|index| format!("f{index}")).collect();
     let values: Vec<(String, i64)> = names
         .iter()
@@ -589,7 +618,7 @@ pub fn keys(objects: usize, fields: usize) -> Result<World, AxisError> {
         objects: keyed("c", objects, &values),
         unrelated: 0,
     };
-    Ok(World::build(&model)?)
+    Ok(World::build_with_context(&model, parser)?)
 }
 
 /// `key/encode`: the canonical state key (`ModelSystem::state_key`) of the
@@ -622,7 +651,8 @@ pub fn run_encode(system: &ModelSystem<'_>) -> Result<Work, AxisError> {
 /// # Errors
 ///
 /// [`AxisError`] when a layer refuses the generated unit.
-pub fn service(epsilon_ten_thousandths: u32) -> Result<World, AxisError> {
+#[implements("NFR-141-AC-10")]
+pub fn service(epsilon_ten_thousandths: u32, parser: &ParserContext) -> Result<World, AxisError> {
     const PACKAGE: &str = "bench/service";
     let int = |name: &str| format!("ix://{PACKAGE}/{name}");
     let epsilon = format!(
@@ -687,7 +717,7 @@ pub fn service(epsilon_ten_thousandths: u32) -> Result<World, AxisError> {
         )],
         unrelated: 0,
     };
-    Ok(World::build(&model)?)
+    Ok(World::build_with_context(&model, parser)?)
 }
 
 /// `en4/sample`: `check_statistical` of `P95` by the Okamoto method. The
@@ -733,6 +763,7 @@ pub fn run_sample(world: &World) -> Result<Work, AxisError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
 
     pub(super) fn work(states: u64, edges: u64) -> Work {
         Work {
@@ -743,8 +774,10 @@ mod tests {
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn state_graph_smallest_size_explores_the_ring_product() {
-        let world = ring_state_graph(2, 2, false).expect("the ring builds");
+        let parser = ParserContext::new();
+        let world = ring_state_graph(2, 2, false, &parser).expect("the ring builds");
         assert_eq!(run_state_graph(&world, false).expect("runs"), work(4, 8));
     }
 
@@ -755,44 +788,56 @@ mod tests {
     /// not the 10 orbits of the full group; two objects fix one and reduce
     /// nothing. `ModelSystem::canonicalise` under the full group reaches 10.
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn state_graph_symmetry_quotients_the_ring_product() {
-        let world = ring_state_graph(3, 3, true).expect("the ring builds");
+        let parser = ParserContext::new();
+        let world = ring_state_graph(3, 3, true, &parser).expect("the ring builds");
         assert_eq!(run_state_graph(&world, false).expect("runs"), work(27, 81));
         assert_eq!(run_state_graph(&world, true).expect("runs"), work(18, 54));
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn safety_smallest_size_holds_over_the_ring_product() {
-        let world = ring_safety(2, 2).expect("the ring builds");
+        let parser = ParserContext::new();
+        let world = ring_safety(2, 2, &parser).expect("the ring builds");
         assert_eq!(run_safety(&world, false).expect("runs"), (work(4, 8), 18));
         assert_eq!(run_safety(&world, true).expect("runs"), (work(4, 8), 0));
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn liveness_smallest_size_holds_under_weak_fairness() {
-        let world = ring_liveness(2, 2).expect("the ring builds");
+        let parser = ParserContext::new();
+        let world = ring_liveness(2, 2, &parser).expect("the ring builds");
         assert_eq!(run_liveness(&world).expect("runs"), (work(12, 28), 8));
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn frame_candidates_smallest_size_generates_every_assignment() {
+        let parser = ParserContext::new();
         // Two fields over Int[0, 1]: four candidate states, each the
         // successor of every state.
-        let world = wide(2, 1).expect("the model builds");
+        let world = wide(2, 1, &parser).expect("the model builds");
         assert_eq!(run_frame_candidates(&world).expect("runs"), work(4, 16));
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn observation_smallest_size_keeps_the_state_count_fixed() {
+        let parser = ParserContext::new();
         for records in [1, 8] {
-            let world = observation(records).expect("the model builds");
+            let world = observation(records, &parser).expect("the model builds");
             assert_eq!(run_observation(&world).expect("runs"), work(2, 2));
         }
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn reach_smallest_size_is_the_same_graph_at_every_worker_count() {
-        let world = protocol(2).expect("the protocol builds");
+        let parser = ParserContext::new();
+        let world = protocol(2, &parser).expect("the protocol builds");
         for workers in [1, 2, 4] {
             let limit = NonZeroUsize::new(workers).expect("nonzero");
             assert_eq!(run_reach(&world, limit).expect("runs"), work(7, 7));
@@ -800,8 +845,10 @@ mod tests {
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn encode_smallest_size_keys_one_state() {
-        let world = keys(1, 1).expect("the state builds");
+        let parser = ParserContext::new();
+        let world = keys(1, 1, &parser).expect("the state builds");
         let system = ModelSystem::new(world.simulation()).expect("the subject admits");
         assert_eq!(
             run_encode(&system).expect("runs"),
@@ -811,14 +858,16 @@ mod tests {
                 ..Work::default()
             }
         );
-        let larger = keys(2, 1).expect("the state builds");
+        let larger = keys(2, 1, &parser).expect("the state builds");
         let system = ModelSystem::new(larger.simulation()).expect("the subject admits");
         assert!(run_encode(&system).expect("runs").key_bytes > 845);
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn sample_smallest_size_draws_the_okamoto_sample_count() {
-        let world = service(400).expect("the model builds");
+        let parser = ParserContext::new();
+        let world = service(400, &parser).expect("the model builds");
         let drawn = run_sample(&world).expect("runs").samples;
         assert_eq!(drawn, 1_440);
     }
@@ -829,6 +878,7 @@ mod counter_tests {
     use super::tests::work;
     use super::*;
     use crate::counters::{fingerprint, Counters};
+    use ix_trace_rs::trace;
 
     fn counters(states: u64, edges: u64, encodes: u64, atoms: u64, expansions: u64) -> Counters {
         Counters {
@@ -842,48 +892,50 @@ mod counter_tests {
     }
 
     #[test]
+    #[trace("NFR-141-AC-10")]
     fn smallest_size_counter_totals_are_fixed() {
-        let ring = ring_state_graph(2, 2, false).expect("builds");
+        let parser = ParserContext::new();
+        let ring = ring_state_graph(2, 2, false, &parser).expect("builds");
         assert_eq!(
             fingerprint(&ring, 0).expect("counts"),
             counters(4, 8, 9, 0, 4)
         );
-        let symmetric = ring_state_graph(3, 3, true).expect("builds");
+        let symmetric = ring_state_graph(3, 3, true, &parser).expect("builds");
         assert_eq!(
             Counters::of_work(run_state_graph(&symmetric, true).expect("runs")),
             Counters::of_work(work(18, 54))
         );
-        let safety = ring_safety(2, 2).expect("builds");
+        let safety = ring_safety(2, 2, &parser).expect("builds");
         let (_, atoms) = run_safety(&safety, false).expect("runs");
         assert_eq!(
             fingerprint(&safety, atoms).expect("counts"),
             counters(4, 8, 9, 18, 4)
         );
-        let liveness = ring_liveness(2, 2).expect("builds");
+        let liveness = ring_liveness(2, 2, &parser).expect("builds");
         let (_, atoms) = run_liveness(&liveness).expect("runs");
         assert_eq!(
             fingerprint(&liveness, atoms).expect("counts"),
             counters(4, 8, 9, 8, 4)
         );
-        let wide = wide(2, 1).expect("builds");
+        let wide = wide(2, 1, &parser).expect("builds");
         assert_eq!(
             fingerprint(&wide, 0).expect("counts"),
             counters(4, 16, 17, 0, 4)
         );
-        let observation = observation(1).expect("builds");
+        let observation = observation(1, &parser).expect("builds");
         assert_eq!(
             fingerprint(&observation, 0).expect("counts"),
             counters(2, 2, 3, 0, 2)
         );
-        let protocol = protocol(2).expect("builds");
+        let protocol = protocol(2, &parser).expect("builds");
         let reached = run_reach(&protocol, NonZeroUsize::MIN).expect("runs");
         assert_eq!(Counters::of_work(reached), Counters::of_work(work(7, 7)));
-        let keyed = keys(1, 1).expect("builds");
+        let keyed = keys(1, 1, &parser).expect("builds");
         assert_eq!(
             fingerprint(&keyed, 0).expect("counts"),
             counters(1, 0, 1, 0, 1)
         );
-        let service = service(400).expect("builds");
+        let service = service(400, &parser).expect("builds");
         assert_eq!(
             fingerprint(&service, 0).expect("counts"),
             counters(7, 17, 18, 0, 7)

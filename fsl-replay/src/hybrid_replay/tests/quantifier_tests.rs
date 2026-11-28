@@ -58,7 +58,7 @@ fn exists_metered(
     };
     let mut meter = HybridReplayMeter::new(bound);
     let answer = Section::new(at, &mut meter)
-        .exists(body, &env)
+        .has_witness(body, &env)
         .map(|(found, _)| found);
     (meter.consumed(), answer)
 }

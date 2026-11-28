@@ -11,14 +11,14 @@ use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_package::ObligationIdentity;
 use fsl_replay::spine::SourceComponent;
 use fsl_replay::{
-    check_probability_certificate_package, check_probability_certificate_source, ByteProvision,
-    DefinitionSourceRef, ExactProbabilityCertificateCheck, ProbabilityDocumentError,
+    ByteProvision, DefinitionSourceRef, ExactProbabilityCertificateCheck, ProbabilityDocumentError,
     ProbabilityDocumentLimits, ProbabilityPackageRequest, ProbabilitySourceError,
-    ProbabilitySourceLimits, ProbabilitySourceRequest,
+    ProbabilitySourceLimits, ProbabilitySourceRequest, check_probability_certificate_package,
+    check_probability_certificate_source,
 };
 use fsl_semantics::model::observation::DocumentRef;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +86,7 @@ struct Request {
 }
 
 fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
+    let parser_context = fsl_replay::spine::ParserContext::new();
     let named = request.source.as_ref().map(|source| {
         DefinitionSourceRef::from_wire((source.authority.clone(), source.identity.clone()))
     });
@@ -161,6 +162,7 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
                 content: source.content,
             };
             check_probability_certificate_source(
+                &parser_context,
                 ProbabilitySourceRequest {
                     source: reference,
                     expected_source: &expected,
@@ -177,6 +179,7 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
             )
         }
         (None, Some(package), None) => check_probability_certificate_package(
+            &parser_context,
             ProbabilityPackageRequest {
                 package: &package,
                 package_name: request.package_name.as_deref(),

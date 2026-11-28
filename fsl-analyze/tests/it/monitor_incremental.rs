@@ -112,6 +112,7 @@ fn world() -> World {
 }
 
 fn world_source(source: &str) -> World {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "monitor-incremental");
@@ -132,6 +133,7 @@ fn world_source(source: &str) -> World {
         .expect("selects")
         .into_value();
     let cst = fsl_cst::parse(
+        &qsl3309_parser_context,
         identity,
         PATH,
         source.as_bytes(),

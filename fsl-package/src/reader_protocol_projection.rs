@@ -2748,6 +2748,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// `#[string_edge]`: operation names are the admitted wire's fixed
     /// discriminator vocabulary, not source text selected at runtime.
     #[ix_trace_rs::string_edge]
+    #[implements("FR-390-AC-17")]
     fn project_application(
         &mut self,
         id: &CheckedNodeId,
@@ -5434,6 +5435,7 @@ mod order_tests {
     #[trace("FR-945-AC-1", "FR-650-AC-1", "FR-1039-AC-11")]
     #[test]
     fn admitted_population_parameter_types_preserve_absence_zero_and_maximum() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         let mut model: serde_json::Value = serde_json::from_slice(include_bytes!(
             "../../tests/fixtures/spine-model.semantic-ir.json"
@@ -5467,6 +5469,7 @@ mod order_tests {
                     function tally using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n\
                     temporal C using t over (c: Counter) clock \"sensor\" on origin { always[0,5] holds(size(allInstances<M::Widget>(M::widgets)) >= 0) }\n";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
             "population.native",
             text.as_bytes(),

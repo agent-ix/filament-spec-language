@@ -75,6 +75,7 @@
 use ix_trace_rs::implements;
 
 #[cfg(test)]
+
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[cfg(test)]
@@ -1637,8 +1638,17 @@ struct Plan {
 }
 
 /// The counts of `left` and `right` together.
+#[implements("FR-126-AC-26")]
 fn sum(left: RunStats, right: RunStats) -> RunStats {
     RunStats {
+        #[cfg(feature = "test-support")]
+        generated_model_initial_states: left
+            .generated_model_initial_states
+            .saturating_add(right.generated_model_initial_states),
+        #[cfg(feature = "test-support")]
+        constructed_protocol_initial_states: left
+            .constructed_protocol_initial_states
+            .saturating_add(right.constructed_protocol_initial_states),
         product_states: left.product_states.saturating_add(right.product_states),
         product_edges: left.product_edges.saturating_add(right.product_edges),
         stutter_edges: left.stutter_edges.saturating_add(right.stutter_edges),
@@ -2596,8 +2606,13 @@ where
             && self.instance_limited.is_empty()
     }
 
+    #[implements("FR-126-AC-26")]
     fn stats(&self) -> RunStats {
         RunStats {
+        #[cfg(feature = "test-support")]
+        generated_model_initial_states: self.system.generated_model_initial_states(),
+        #[cfg(feature = "test-support")]
+        constructed_protocol_initial_states: self.system.constructed_protocol_initial_states(),
             product_states: widen(self.nodes.len()),
             product_edges: widen(self.edges),
             stutter_edges: widen(self.stutter_edges),
@@ -4427,6 +4442,10 @@ mod worker_determinism_tests {
             assert_eq!(
                 stats,
                 RunStats {
+                    #[cfg(feature = "test-support")]
+                    generated_model_initial_states: 0,
+                    #[cfg(feature = "test-support")]
+                    constructed_protocol_initial_states: 0,
                     product_states: 245,
                     product_edges: 1_920,
                     stutter_edges: 0,
@@ -4469,6 +4488,10 @@ mod worker_determinism_tests {
         assert_eq!(
             sequential_stop.2,
             RunStats {
+                #[cfg(feature = "test-support")]
+                generated_model_initial_states: 0,
+                #[cfg(feature = "test-support")]
+                constructed_protocol_initial_states: 0,
                 product_states: 239,
                 product_edges: 1_024,
                 stutter_edges: 0,

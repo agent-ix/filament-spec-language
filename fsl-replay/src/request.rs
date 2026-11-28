@@ -1627,6 +1627,7 @@ mod tests {
     fn dependency_internal_strings_are_bounded_before_request_retention() {
         let source = b"language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(): Boolean pure { true }\n";
         let located = crate::call_site(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("registry", "pkg-a"),
             crate::CallSiteUnit::new("fixture", "unit.native", source),
             [],

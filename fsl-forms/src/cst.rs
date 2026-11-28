@@ -8,6 +8,8 @@
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::SourceReadCause;
 use fsl_foundation::{Code, Phase, Source, SourceIdentity, SourceLabel, Span};
+use fsl_cst::ParserContext;
+use ix_trace_rs::implements;
 use std::fmt;
 
 /// The stable complete-source diagnostic code.
@@ -262,23 +264,27 @@ pub enum TokenClass {
 }
 
 /// Parse a source identity and byte buffer, retaining its lossless parse.
+#[implements("NFR-141-AC-10")]
 pub fn parse(
+    context: &ParserContext,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
     limits: Limits,
 ) -> Result<FormsSource, Box<CompleteDiagnostic>> {
-    fsl_cst::parse(identity, path, bytes, limits.inner)
+    fsl_cst::parse(context, identity, path, bytes, limits.inner)
         .map(FormsSource)
         .map_err(|diagnostic| Box::new(CompleteDiagnostic::from_layer_one(*diagnostic)))
 }
 
 /// Parse an already-labelled source.
+#[implements("NFR-141-AC-10")]
 pub fn parse_source(
+    context: &ParserContext,
     source: Source,
     limits: Limits,
 ) -> Result<FormsSource, Box<CompleteDiagnostic>> {
-    fsl_cst::parse_source(source, limits.inner)
+    fsl_cst::parse_source(context, source, limits.inner)
         .map(FormsSource)
         .map_err(|diagnostic| Box::new(CompleteDiagnostic::from_layer_one(*diagnostic)))
 }

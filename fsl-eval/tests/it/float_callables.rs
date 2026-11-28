@@ -35,12 +35,13 @@ const IEEE: &str = "filament::value::ieee::";
 
 /// Compiles `function f using v(): <result> pure { <body> }` and evaluates it.
 fn run(result: &str, body: &str) -> (Outcome<Value>, Vec<ValueLoss>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function f using v(): {result} pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -151,12 +152,13 @@ fn checked_function(parameters: &str, result: &str, body: &str) -> CheckedPackag
 }
 
 fn checked_module(items: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          {items}"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "fr397-bit-literal"),
         "unit.native",
         text.as_bytes(),
@@ -354,6 +356,7 @@ fn bit_constructors_keep_expected_types_and_exact_payloads() {
 #[trace("TC-1091", "FR-397-AC-11", "FR-091-AC-49")]
 #[test]
 fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_cst::{CompleteCause, CompleteCode};
 
     for (result, constructor) in [
@@ -368,7 +371,7 @@ fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
              profile v = \"filament.value.complete/v1\";\n\
              function f using v(): {result} pure {{ {constructor} }}\n"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "fr397-bit-literal-refusal"),
             "unit.native",
             text.as_bytes(),
@@ -415,7 +418,7 @@ fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
              profile v = \"filament.value.complete/v1\";\n\
              function f using v(): {result} pure {{ {constructor} }}\n"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "fr397-bit-literal-type-refusal"),
             "unit.native",
             text.as_bytes(),
@@ -972,12 +975,13 @@ fn each_ordering_operand_is_evaluated_exactly_once() {
 /// pure { <body> }` and evaluates it at `p` and `q` under `limits`, returning
 /// the outcome and the work and value-occurrence units it spent.
 fn spend(result: &str, body: &str, p: u64, q: u64, limits: ScalarLimits) -> (Outcome<Value>, u64) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function f using v(p: Float64[nearest-even], q: Float64[nearest-even]): {result} pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

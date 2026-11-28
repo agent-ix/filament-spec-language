@@ -224,7 +224,7 @@ pub use certificate::zone_certificate::{
     RefinementIdentity, RefinementPart, SilentMove, StateGraphCertificateDecision,
     StateGraphCertificateForm, StateGraphPart, TaskProductQuotient, ZoneCertificate,
     ZoneCertificateReferenceError, ZoneCertificateRefusal, ZoneCertificateRequest,
-    ZoneCertificateVerdict, ZoneCertificateWireError,
+    ZoneCertificateVerdict, ZoneCertificateWireError, UNDEFINED_POSITION_STATE,
 };
 pub use certificate::{CertificateLocus, CertificateMember, CertificateRule, QueryPart};
 /// FR-322 "Operand index segments": a package's graph and its wire ids.
@@ -263,6 +263,8 @@ pub use execute::{
     ParityArgument, ParityBoundRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch,
     ValueParityArgument, ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
+#[cfg(feature = "bench-counters")]
+pub use execute::replay_with_parse_counter;
 pub use hybrid::{
     hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem,
     AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal, CertificateRecord,
@@ -368,8 +370,8 @@ pub use model_check::outcome::{
 };
 pub use model_check::refinement_replay::{
     replay_free_delay_refinement_trace, replay_protocol_assumption_witness,
-    replay_refinement_trace, replay_timed_refinement_trace, ProtocolAssumptionReplaySettlement,
-    RefinementTraceSettlement,
+    replay_refinement_trace, replay_refinement_trace_retained, replay_timed_refinement_trace,
+    ProtocolAssumptionReplaySettlement, RefinementTraceSettlement,
 };
 pub use model_check::refinement_settle::{
     settle_refinement, settle_refinement_refusal, settle_refinement_safety,
@@ -524,7 +526,8 @@ pub use probability_certificate::{
     replay_probabilistic_undefined_with_work_scope, replay_probabilistic_witness,
     replay_probabilistic_witness_from_package,
     replay_probabilistic_witness_from_package_with_work_scope,
-    replay_probabilistic_witness_with_work_scope, vacuous_measure_probability_certificate_document,
+    replay_probabilistic_witness_with_work_scope, timed_certificate_route,
+    vacuous_measure_probability_certificate_document,
     vacuous_measure_probability_certificate_document_with_work_scope,
     weighted_long_run_probability_certificate_document,
     weighted_long_run_probability_certificate_document_with_work_scope,
@@ -570,11 +573,12 @@ pub use proof_result::{
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
     read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
     BackendProviderSource, BoundsExploration, BoundsMethod, Certification, CertificationPolicy,
-    DeclineCode, EmptyEnvelopeSet, ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum,
-    FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound,
-    MemoryBoundMember, PluginReplayContext, PluginReplayRefusal, PluginResultRefusal,
-    PremiseOutcome, ProofBasis, ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal,
-    Proviso, ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
+    CrossCheck, CrossCheckRefusal, CrossCheckRefused, CrossCheckRun, CrossCheckVerdict, DeclineCode, EmptyEnvelopeSet,
+    ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
+    IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
+    PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
+    ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, RecordedWarning,
+    ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
     StatedMemoryBound, StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal,
     TerminalRecord, TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason,
     UnavailabilityCause, ValueCheckUnsupported, ValueFault, WeakAccessFailure,
@@ -625,10 +629,10 @@ pub use spine::{
 // writes the exact result bytes without naming `spine` (ADR-011 FB-05).
 pub use spine::{
     read_native_run_result_bounded, temporal_disposition_json, write_clause_run_result,
-    CallLocationRead, CallLocusRead, CallOriginRead, ClauseDisposition, ClauseRunRecord,
-    ClauseRunReport, ClauseRunUsage, CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits,
-    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead,
-    SourceRefRead, SpanRead, TemporalRecord,
+    CallLocation, CallLocusRecord, CallOrigin, ClauseDisposition, ClauseRunRecord, ClauseRunReport,
+    ClauseRunUsage, CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits, NativeRunOutcome,
+    NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocus, RunSpan, SourceRef,
+    TemporalRecord,
 };
 // The input refusal a `ReplayRefusal::Input` and a value-parity
 // `ValueParityResult::RefusedInput` carry.

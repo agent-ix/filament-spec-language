@@ -12,11 +12,12 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Compl
 #[trace("TC-422", "FR-255-AC-5")]
 #[test]
 fn limit_message_does_not_render_source_identity_as_a_path() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source_text = format!(
         "{HEADER}function f using Complete (x: Integer): Boolean pure {{ {}true }}\n",
         "not ".repeat(20)
     );
-    let error = fsl_cst::parse(
+    let error = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("issuer", "logical-document"),
         "/tmp/physical-source.native",
         source_text.as_bytes(),
@@ -39,7 +40,8 @@ fn limit_message_does_not_render_source_identity_as_a_path() {
 #[trace("TC-422", "FR-255-AC-4")]
 #[test]
 fn source_byte_limit_message_names_its_setting() {
-    let error = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let error = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("issuer", "logical-document"),
         "physical-source.native",
         b"more than one byte",

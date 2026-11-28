@@ -686,11 +686,6 @@ pub enum StatisticalUnsupported {
         /// The idle tail's first timed state.
         state: fsl_eval::simulation::StateKey,
     },
-    /// A fraction or long-run sample reached a time-lock before its horizon.
-    TimeLockedSample {
-        /// The time-locked state.
-        state: fsl_eval::simulation::StateKey,
-    },
 }
 
 /// The outcome of a statistical run (FR-189 `StatisticalOutcome`).

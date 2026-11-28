@@ -1459,25 +1459,64 @@ impl EmittedUnit {
 /// S1 and S2: read `request`'s bytes into syntax (FR-278). Refuses
 /// `invalid_syntax` for a source the parser recovered from, and with S2's
 /// own refusal for a unit no form represents.
+#[implements("NFR-141-AC-10")]
 pub fn parse(
     request: &ParseRequest<'_>,
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
-    parse_operation(request, &HeldExtensions::default(), limits, cancel, false)
+    parse_operation(
+        request,
+        &HeldExtensions::default(),
+        limits,
+        cancel,
+        None,
+        false,
+    )
+}
+
+/// S1 and S2 using a caller-owned parser context reused by the process entry.
+#[implements("NFR-141-AC-10")]
+pub fn parse_with_context(
+    request: &ParseRequest<'_>,
+    limits: SourceLimits,
+    cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
+) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
+    parse_operation(
+        request,
+        &HeldExtensions::default(),
+        limits,
+        cancel,
+        Some(context),
+        false,
+    )
 }
 
 /// S1 and S2 for a unit that selects the extensions `held` (FR-354): each
 /// held leading keyword begins a declaration form at the first token of a
 /// top-level declaration, and S2 builds the form as the `Extension` variant.
 /// The held definitions stay with the parsed unit, and S3 reads them.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_extensions(
     request: &ParseRequest<'_>,
     held: &HeldExtensions,
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
-    parse_operation(request, held, limits, cancel, false)
+    parse_operation(request, held, limits, cancel, None, false)
+}
+
+/// S1 and S2 with held extensions and a caller-owned parser context.
+#[implements("NFR-141-AC-10")]
+pub fn parse_with_extensions_context(
+    request: &ParseRequest<'_>,
+    held: &HeldExtensions,
+    limits: SourceLimits,
+    cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
+) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
+    parse_operation(request, held, limits, cancel, Some(context), false)
 }
 
 /// The names an extension's leading keywords and node kinds must not equal
@@ -1503,12 +1542,25 @@ pub fn parse_selecting_extensions(
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
+    let context = fsl_cst::ParserContext::new();
+    parse_selecting_extensions_context(request, catalog, limits, cancel, &context)
+}
+
+/// FR-354 compile path using the caller-owned parser context.
+#[implements("NFR-141-AC-10")]
+pub fn parse_selecting_extensions_context(
+    request: &ParseRequest<'_>,
+    catalog: ProfileCatalogInput<'_>,
+    limits: SourceLimits,
+    cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
+) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
     let source_len =
         |identity: &SourceIdentity| (identity == request.source).then_some(request.bytes.len());
     let held = stage(cancel, &source_len, |work| {
-        select_extensions(request, catalog, limits, cancel, &mut work.s1)
+        select_extensions(request, catalog, limits, cancel, context, &mut work.s1)
     })?;
-    parse_with_extensions(request, &held.into_value(), limits, cancel)
+    parse_with_extensions_context(request, &held.into_value(), limits, cancel, context)
 }
 
 /// FR-354 "Compile path" steps 1 and 2 for one source: read its header
@@ -1516,15 +1568,18 @@ pub fn parse_selecting_extensions(
 /// catalog holds as an `Extension` definition (the E3 classification), and
 /// hold the selected definitions against the core vocabulary. The header
 /// parse is charged to `s1`.
+#[implements("NFR-141-AC-10")]
 fn select_extensions(
     request: &ParseRequest<'_>,
     catalog: ProfileCatalogInput<'_>,
     limits: SourceLimits,
     cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
     s1: &mut u64,
 ) -> Result<HeldExtensions, Box<CompileRefusal>> {
     let header = charged(cancel, s1, || {
         fsl_cst::parse_with_cancel(
+            context,
             request.source.clone(),
             request.path,
             request.bytes,
@@ -1595,7 +1650,14 @@ pub(crate) fn parse_for_continuation(
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
-    parse_operation(request, &HeldExtensions::default(), limits, cancel, true)
+    parse_operation(
+        request,
+        &HeldExtensions::default(),
+        limits,
+        cancel,
+        None,
+        true,
+    )
 }
 
 fn parse_operation(
@@ -1603,6 +1665,7 @@ fn parse_operation(
     held: &HeldExtensions,
     limits: SourceLimits,
     cancel: &Cancel,
+    context: Option<&fsl_cst::ParserContext>,
     continue_protocol_refusals: bool,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
     let source_len =
@@ -1616,6 +1679,7 @@ fn parse_operation(
                 held,
                 limits,
                 cancel,
+                context,
             )
         });
         let parsed = match parsed {
@@ -2708,6 +2772,36 @@ pub fn package_with_temporal_selections(
     limits: PackageLimits,
     cancel: &Cancel,
 ) -> Result<Staged<EmittedUnit>, FrontEndFailure> {
+    package_with_temporal_selections_impl(
+        checked,
+        selections,
+        limits,
+        cancel,
+        #[cfg(feature = "test-support")]
+        None,
+    )
+}
+
+/// E4 test-support route using a caller-owned per-emission observer.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn package_with_temporal_selections_and_probe(
+    checked: &CheckedUnit,
+    selections: &[fsl_package::TemporalClockSelection],
+    limits: PackageLimits,
+    cancel: &Cancel,
+    probe: &mut dyn fsl_package::test_support::EmitProbe,
+) -> Result<Staged<EmittedUnit>, FrontEndFailure> {
+    package_with_temporal_selections_impl(checked, selections, limits, cancel, Some(probe))
+}
+
+fn package_with_temporal_selections_impl(
+    checked: &CheckedUnit,
+    selections: &[fsl_package::TemporalClockSelection],
+    limits: PackageLimits,
+    cancel: &Cancel,
+    #[cfg(feature = "test-support")] mut probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
+) -> Result<Staged<EmittedUnit>, FrontEndFailure> {
     stage(
         cancel,
         &|_| None,
@@ -2743,6 +2837,16 @@ pub fn package_with_temporal_selections(
                 .cloned()
                 .collect();
             let protocol_emission = charged(cancel, &mut work.e4, || {
+                #[cfg(feature = "test-support")]
+                if let Some(probe) = probe.as_deref_mut() {
+                    return fsl_package::emit_checked_with_protocol_results_and_temporal_selections_and_cancel_with_probe(
+                        &checked.package,
+                        &own,
+                        cancel,
+                        limits.emit(),
+                        probe,
+                    );
+                }
                 fsl_package::emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
                     &checked.package,
                     &own,
@@ -2906,6 +3010,7 @@ fn lifecycle_emission_results(
 
 /// S1 then S2 over one unit's bytes: the part of every unit's compile that
 /// does not depend on its imports.
+#[implements("NFR-141-AC-10")]
 fn parse_unit(
     source: SourceIdentity,
     path: &str,
@@ -2913,11 +3018,28 @@ fn parse_unit(
     held: &HeldExtensions,
     limits: SourceLimits,
     cancel: &Cancel,
+    context: Option<&fsl_cst::ParserContext>,
 ) -> Result<ParsedUnitSource, StageError> {
-    let parsed = if held.is_empty() {
-        fsl_cst::parse_with_cancel(source, path, bytes, limits, cancel)
-    } else {
-        fsl_cst::parse_with_extensions(source, path, bytes, limits, &extension_forms(held), cancel)
+    let local_context;
+    let context = match context {
+        Some(context) => context,
+        None => {
+            local_context = fsl_cst::ParserContext::new();
+            &local_context
+        }
+    };
+    let parsed = match context {
+        context if held.is_empty() => {
+            context.parse_with_cancel(source, path, bytes, limits, cancel)
+        }
+        context => context.parse_with_extensions(
+            source,
+            path,
+            bytes,
+            limits,
+            &extension_forms(held),
+            cancel,
+        ),
     }
     .map_err(|diagnostic| Box::new(CompileRefusal::Source(diagnostic)))?;
     let raw = parsed.source().reference().clone();
@@ -3075,7 +3197,9 @@ fn bounded_protocol_clause_declarations(
         let text = source_text.get(start_byte..end)?;
         let header = "language \"ix:native\" edition \"1-draft\";\n";
         let isolated_text = format!("{header}{text}");
+        let parser_context = fsl_cst::ParserContext::new();
         let isolated = fsl_cst::parse_with_cancel(
+            &parser_context,
             parsed.source().identity().clone(),
             parsed.source().path(),
             isolated_text.as_bytes(),
@@ -3549,8 +3673,9 @@ fn parse_type_invariants(
     models: SelectedModels,
     limits: SourceLimits,
 ) -> Result<SelectedModels, Box<CompileRefusal>> {
+    let parser_context = fsl_cst::ParserContext::new();
     models
-        .with_parsed_type_invariants(|text| parse_clause_text(text, limits))
+        .with_parsed_type_invariants(|text| parse_clause_text(&parser_context, text, limits))
         .map_err(|failure| {
             Box::new(CompileRefusal::TypeInvariant {
                 clause: failure.clause,
@@ -3569,8 +3694,9 @@ fn parse_operation_clauses(
     models: SelectedModels,
     limits: SourceLimits,
 ) -> Result<SelectedModels, Box<CompileRefusal>> {
+    let parser_context = fsl_cst::ParserContext::new();
     models
-        .with_parsed_operation_clauses(|text| parse_clause_text(text, limits))
+        .with_parsed_operation_clauses(|text| parse_clause_text(&parser_context, text, limits))
         .map_err(|failure| {
             Box::new(CompileRefusal::OperationClause {
                 operation: failure.operation,
@@ -4131,6 +4257,7 @@ impl<'a> Resolution<'a> {
                     &held,
                     limits.source,
                     cancel,
+                    None,
                 )
             })
             .map_err(|error| error.refusal)?;
@@ -4159,6 +4286,7 @@ impl<'a> Resolution<'a> {
         let Some(catalog) = self.extension_catalog else {
             return Ok(HeldExtensions::default());
         };
+        let parser_context = fsl_cst::ParserContext::new();
         select_extensions(
             &ParseRequest {
                 source: &supplied.source,
@@ -4168,6 +4296,7 @@ impl<'a> Resolution<'a> {
             catalog,
             self.limits.source,
             self.cancel,
+            &parser_context,
             &mut self.work.s1,
         )
     }
@@ -4197,6 +4326,7 @@ impl<'a> Resolution<'a> {
                     &held,
                     limits.source,
                     cancel,
+                    None,
                 )
             })
             .map_err(|error| error.refusal)?;

@@ -9,8 +9,9 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n";
 
 fn parse(declaration: &str) -> (String, ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declaration}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "typed-size"),
         "typed-size.native",
         text.as_bytes(),

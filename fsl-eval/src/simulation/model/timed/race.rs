@@ -98,6 +98,10 @@ pub enum TimedRaceStop {
     /// The choice total exceeds the sampler's 256-bit range.
     #[error("a race choice exceeds the sampler's draw range")]
     DrawRange,
+    /// An exponential delay's interval holds no multiple of the delay grid,
+    /// so the sample ends as an undecided successor (FSpec FR-420).
+    #[error("a delay interval holds no multiple of the delay grid")]
+    NoGridDelay,
     /// The timed state could not be assigned its canonical state key.
     #[error("the timed state has no canonical state key")]
     StateKey,
@@ -169,8 +173,8 @@ pub enum TimedSampleStop {
     /// A tick subject's untimed step (FSpec FR-420 "Tick subjects") stopped.
     #[error("the tick subject's step stopped: {0:?}")]
     Step(Box<SampleStop>),
-    /// An unbounded walk reached a time-lock, which no long-run fraction
-    /// reads.
+    /// An unbounded walk reached a time-lock, which a long-run fraction
+    /// counts as 0 (FSpec FR-420-AC-19).
     #[error("the timed walk reached a time-lock at {state:?}")]
     TimeLockedSample {
         /// The key of the time-locked state.
@@ -496,7 +500,7 @@ impl TimedSample {
 /// Every reward of the model for the step `transition` takes from `state`
 /// (FR-187): empty for a model that declares none.
 #[implements("FR-254-AC-5")]
-fn step_rewards(
+pub fn step_rewards(
     system: &TimedSystem<'_, '_>,
     state: &TimedState,
     transition: &ModelTransition,
@@ -632,6 +636,7 @@ pub fn sample_timed_race(
         let drawn = match draw_timed_delay(distribution, &window.intervals, point, q) {
             Ok(drawn) => drawn,
             Err(TimedDelayRefusal::NoMass) => continue,
+            Err(TimedDelayRefusal::NoGridPoint) => return Err(TimedRaceStop::NoGridDelay),
             Err(TimedDelayRefusal::Internal(fault)) => return Err(TimedRaceStop::Internal(fault)),
             Err(TimedDelayRefusal::UnboundedUniform | TimedDelayRefusal::GridExponent { .. }) => {
                 return Err(TimedRaceStop::NotStochastic {

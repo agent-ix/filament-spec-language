@@ -26,6 +26,7 @@ pub(crate) fn package_with_source_mode(
          profile v = \"filament.value.complete/v1\";\n{declarations}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

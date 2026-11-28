@@ -2,6 +2,7 @@
 //! FR-752 model-based run results and native state-invariant execution.
 
 use std::cell::Cell;
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Deref;
 
@@ -13,7 +14,6 @@ use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::Setting;
 use fsl_semantics::check::{CallableFunction, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use ix_trace_rs::implements;
 
 use crate::simulation::order::Expanded;
 use crate::simulation::{
@@ -1381,7 +1381,7 @@ fn model_size_bounded_roots(
     clippy::too_many_arguments,
     reason = "these are the model-based request inputs"
 )]
-#[implements("FR-752-AC-15")]
+#[implements("FR-752-AC-15", "FR-752-AC-9", "FR-752-AC-10")]
 fn run_model_based_value_function_entry(
     package: &fsl_package::CheckedPackage,
     identity: &NodeKey,
@@ -1486,6 +1486,7 @@ fn run_model_based_value_function_entry(
     clippy::too_many_arguments,
     reason = "the model-based value-function run threads the model, checked package, function and its run parameters"
 )]
+#[implements("FR-752-AC-9", "FR-752-AC-10")]
 fn run_model_based_value_function(
     package: &fsl_package::CheckedPackage,
     identity: &NodeKey,
@@ -1512,6 +1513,7 @@ fn run_model_based_value_function(
         }
     })?;
     let mut domains = Vec::with_capacity(function.parameters.len());
+    let mut text_cache = super::domain::TextCache::default();
     let types = package.graph().scope().types();
     let orders = BTreeMap::new();
     let mut partitions = Vec::new();
@@ -1531,7 +1533,7 @@ fn run_model_based_value_function(
                     parameter: parameter.clone(),
                 }
             })?;
-        if domain.len() == 0 {
+        if domain.len_with_cache(&mut text_cache) == 0 {
             return Err(ModelBasedTestError::ValueDomain {
                 parameter: parameter.clone(),
             });
@@ -1683,7 +1685,7 @@ fn run_model_based_value_function(
             .iter()
             .map(|domain| {
                 domain
-                    .nth(0)
+                    .nth_with_cache(0, &mut text_cache)
                     .ok_or_else(|| ModelBasedTestError::ValueDomain {
                         parameter: parameter.clone(),
                     })
@@ -1776,6 +1778,7 @@ fn run_model_based_value_function(
                                 meter_limits,
                                 &domains,
                                 &assignment,
+                                &mut text_cache,
                                 case_index,
                                 seed,
                             )?,
@@ -1795,7 +1798,7 @@ fn run_model_based_value_function(
             function.parameters.iter().zip(&domains).enumerate()
         {
             let count = domain
-                .exact_len()
+                .exact_len_with_cache(&mut text_cache)
                 .ok_or_else(|| ModelBasedTestError::ValueDomain {
                     parameter: parameter.clone(),
                 })?;
@@ -1811,11 +1814,13 @@ fn run_model_based_value_function(
             .ok_or_else(|| ModelBasedTestError::ValueDomain {
                 parameter: parameter.clone(),
             })?;
-            assignment.push(domain.nth_exact(&index).ok_or_else(|| {
-                ModelBasedTestError::ValueDomain {
-                    parameter: parameter.clone(),
-                }
-            })?);
+            assignment.push(
+                domain
+                    .nth_exact_with_cache(&index, &mut text_cache)
+                    .ok_or_else(|| ModelBasedTestError::ValueDomain {
+                        parameter: parameter.clone(),
+                    })?,
+            );
         }
         counts.generated = counts.generated.saturating_add(1);
         provenance.push(ModelBasedCaseProvenance {
@@ -1846,6 +1851,7 @@ fn run_model_based_value_function(
                         meter_limits,
                         &domains,
                         &assignment,
+                        &mut text_cache,
                         case_index,
                         seed,
                     )?,
@@ -1953,12 +1959,14 @@ fn value_function_result(
     })
 }
 
+#[implements("FR-752-AC-9", "FR-752-AC-10")]
 fn shrink_value_assignment(
     package: &fsl_package::CheckedPackage,
     function: &QualifiedName,
     meter_limits: filament_exact::ScalarLimits,
     domains: &[Domain],
     assignment: &[Value],
+    text_cache: &mut super::domain::TextCache,
     _case_index: u64,
     _seed: u64,
 ) -> Result<Vec<Value>, ModelBasedTestError> {
@@ -1973,13 +1981,15 @@ fn shrink_value_assignment(
     loop {
         let mut changed = false;
         for (parameter, domain) in domains.iter().enumerate() {
-            while let Some(current) = domain.index_of(&minimized[parameter]) {
+            while let Some(current) =
+                domain.index_of_with_cache(&minimized[parameter], text_cache)
+            {
                 if current == 0 {
                     break;
                 }
                 let candidate =
                     domain
-                        .nth(current - 1)
+                        .nth_with_cache(current - 1, text_cache)
                         .ok_or_else(|| ModelBasedTestError::ValueDomain {
                             parameter: parameter.to_string(),
                         })?;
