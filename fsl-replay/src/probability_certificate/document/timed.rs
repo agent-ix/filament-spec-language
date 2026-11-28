@@ -4080,11 +4080,10 @@ type DigitalWorkloadChoices = (Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::Product
 /// identity enabled now (`WorkloadResolve`).
 ///
 /// Several racing given delays race together: the least draw wins and the
-/// workload's weights order the identities tied at it. Two states
-/// refuse, where the `WorkloadResolve` reading and ADR-026 SD-1 and SD-3 (the
-/// scheduler picks each free identity's delay inside its window) give
-/// different verdicts, until the standard rules between them: several free
-/// identities enabled now, and a free identity that the unit delay disables.
+/// workload's weights order the identities tied at it. For claims other than
+/// MeanTime, the checker refuses states where the `WorkloadResolve` reading
+/// and ADR-026 SD-1 and SD-3 disagree. MeanTime uses the independently
+/// enumerated free-delay assignments to rederive infinite-time certificates.
 #[allow(clippy::too_many_arguments)]
 #[implements("FR-204-AC-5", "FR-204-AC-24", "FR-921-AC-7")]
 fn digital_workload_choices(
@@ -4133,6 +4132,29 @@ fn digital_workload_choices(
         .iter()
         .filter(|action| discrete_delay(run.system, &action.identity.operation).is_none())
         .collect();
+    if !matches!(
+        &run.claim.form,
+        fsl_semantics::check::ProbForm::MeanTime { .. }
+    ) {
+        if free_now.len() >= 2 {
+            return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                WorkloadFreeDelayRefusal::ManyFreeEnabled,
+            ));
+        }
+        if reach >= 1 {
+            for action in &free_now {
+                let closes = windows
+                    .iter()
+                    .find(|window| window.identity == action.identity)
+                    .is_some_and(|window| !window.contains(1, reach));
+                if closes {
+                    return Err(ProbabilityDocumentError::WorkloadFreeDelays(
+                        WorkloadFreeDelayRefusal::ClosesBeforeFiring,
+                    ));
+                }
+            }
+        }
+    }
     let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
     let mut scheduler_actions: Vec<Vec<crate::ProductAction>> = Vec::new();
     if racers.is_empty() {

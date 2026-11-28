@@ -814,35 +814,44 @@ fn a_region_route_workload_infinity_is_not_yet_certified() {
     ));
 }
 
-/// FR-204-AC-24, not yet certifiable: `send` and `toggle` both choose their
-/// delay and are enabled together.
+/// FR-204-AC-24: a reachable target under the free-delay workload still has a
+/// finite, scheduler-dependent mean and remains unsupported.
 #[trace("TC-639", "FR-204-AC-24")]
 #[test]
-fn a_workload_infinity_with_racing_free_delays_is_not_yet_certified() {
-    // The race is refused under its own code (`CatalogCode`
-    // `workload-free-delays-race`), not as not-yet-implemented.
-    is_unsupported_with(
-        &uncertified_race(" and self.x >= 1 ms", " and self.x >= 1 ms", ""),
-        "workload-free-delays-race",
-    );
+fn a_workload_infinity_with_a_reachable_free_delay_target_is_not_certified() {
+    let world = uncertified_race(" and self.x >= 1 ms", " and self.x >= 1 ms", "");
+    is_unsupported_with(&world, "not-yet-implemented");
 }
 
-/// FR-204-AC-24, not yet certifiable: `toggle` chooses its delay and a unit
-/// delay closes its window before it fires.
+/// FR-204-AC-24: the checker rederives target nonreachability across both
+/// scheduler-chosen free delays.
 #[trace("TC-639", "FR-204-AC-24")]
+#[trace("TC-2490", "FR-921-AC-7")]
 #[test]
-fn a_workload_infinity_with_a_closing_free_window_is_not_yet_certified() {
-    // Refused under the refusal's own code (`ClosesBeforeFiring`): a free
-    // delay under the workload is not decided (FR-203-AC-17), and the least
-    // expected time may be 1 ms, not infinity.
-    is_unsupported_with(
-        &uncertified_race(
-            "",
-            " and self.x <= 0 ms",
-            "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
-        ),
-        "workload-free-delay-window-closes",
+fn a_workload_infinity_with_racing_free_delays_and_no_target_is_certified() {
+    let world = free_delay_mean_world(
+        " and self.x >= 1 ms",
+        " and self.x >= 1 ms",
+        "",
+        "under One",
+        "holds(false)",
+        ">= 3 ms",
     );
+    is_certified_infinite(&world, "MeanTime");
+}
+
+/// FR-204-AC-24: the checker proves the target unreachable for every
+/// scheduler-chosen free delay before accepting infinity.
+#[trace("TC-639", "FR-204-AC-24")]
+#[trace("TC-2490", "FR-921-AC-7")]
+#[test]
+fn a_workload_infinity_with_a_closing_free_window_is_certified() {
+    let world = uncertified_race(
+        "",
+        " and self.x <= 0 ms",
+        "delay M::Call::send ~ discrete { 1 ms: 1 };\n",
+    );
+    is_certified_infinite(&world, "MeanTime");
 }
 
 const NEVER: &str = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";

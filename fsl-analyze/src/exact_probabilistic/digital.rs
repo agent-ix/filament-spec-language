@@ -10,11 +10,10 @@
 //!
 //! Over every scheduler the scheduler chooses each delay and each scheduled
 //! identity. Under a workload, a `discrete` delay distribution turns the race
-//! of ADR-026 SD-3 into one probabilistic edge per outcome; a delay no
-//! distribution gives stays the scheduler's choice: between a unit delay and
-//! the workload's resolution of the identity where every racing delay is
-//! free, and as the post-draw `FreeDelays` action where given and free delays
-//! race together (FR-204).
+//! of ADR-026 SD-3 into one probabilistic edge per outcome. An identity
+//! without a distribution has a scheduler-chosen delay in its enabled window;
+//! when given and free delays race together, the scheduler chooses the free
+//! delays after the given draws (FR-204).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
@@ -135,20 +134,6 @@ pub(super) fn build<'s, 'a>(
         time_locked: Vec::new(),
     };
     builder.run()
-}
-
-/// At a state whose racing identities all have free delays, the scheduler's
-/// choice to let the workload resolve the identity after `delay` units
-/// (ADR-028 TA-1, FR-204).
-fn resolve_choice(
-    representative: Option<&ScheduledIdentity>,
-    taken: &Enabled<'_>,
-    delay: u64,
-) -> ProductAction {
-    ProductAction::WorkloadResolve {
-        identity: representative.unwrap_or(&taken.identity).clone(),
-        delay,
-    }
 }
 
 fn fault(invariant: &'static str) -> ProductRefusal {
@@ -2625,6 +2610,7 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(windows)
     }
 
+    #[implements("FR-204-AC-24", "FR-921-AC-7")]
     fn workload_moves(
         &mut self,
         at: usize,
@@ -2667,12 +2653,13 @@ impl<'c> Builder<'_, '_, 'c> {
                 .collect::<Step<Vec<_>>>()?;
             racers.push((window, conditioned));
         }
-        if free {
+        if free && !matches!(self.form, Form::MeanTime { .. }) {
             self.refuse_undecided_free_delays(state, local, &windows, reached)?;
         }
         if racers.is_empty() && free {
-            // Every racing delay is free (FR-204).
-            return self.free_moves(at, state, local, workload);
+            // Every racing delay is free: each scheduler-selected assignment
+            // races through the workload resolver at its earliest delay.
+            return self.free_delays_moves(at, workload, &trajectory, Vec::new(), &windows);
         }
         if racers.is_empty() {
             let mut planned = Vec::new();
@@ -2748,6 +2735,41 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(planned)
     }
 
+    /// FR-203-AC-17: free-delay probability claims remain unsupported where
+    /// the old and scheduler-chosen delay readings can disagree.
+    #[implements("FR-203-AC-17")]
+    fn refuse_undecided_free_delays(
+        &mut self,
+        state: &DState,
+        local: &Rc<Local>,
+        windows: &[Window],
+        reached: u64,
+    ) -> Step<()> {
+        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
+        enabled.retain(|action| self.given(&action.identity.operation).is_none());
+        if enabled.len() >= 2 {
+            return Err(ProductRefusal::WorkloadFreeDelays(
+                fsl_replay::WorkloadFreeDelayRefusal::ManyFreeEnabled,
+            )
+            .into());
+        }
+        if reached >= 1 {
+            for action in &enabled {
+                let closes = windows
+                    .iter()
+                    .find(|window| window.identity == action.identity)
+                    .is_some_and(|window| !window.contains(1, reached));
+                if closes {
+                    return Err(ProductRefusal::WorkloadFreeDelays(
+                        fsl_replay::WorkloadFreeDelayRefusal::ClosesBeforeFiring,
+                    )
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// FR-204: given and free delays race together. The scheduler chooses
     /// every free racing identity's delay after the given delays are drawn
     /// (ADR-026 SD-3), as the `FreeDelays` action. The product builds its row
@@ -2755,6 +2777,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// order, and per assignment of a delay in its window to every free
     /// identity, in ascending numeric order, the race of `g` with that
     /// assignment, its edges carrying `P(g)` times the outcome's mass.
+    #[implements("FR-204-AC-24", "FR-921-AC-7")]
     fn free_delays_moves(
         &mut self,
         at: usize,
@@ -3039,100 +3062,6 @@ impl<'c> Builder<'_, '_, 'c> {
             });
         }
         Ok(())
-    }
-
-    /// FR-203-AC-17: a free, non-stochastic delay under a workload is not
-    /// decided. FR-204 reads the state as `UnitDelay` and one weighted
-    /// `WorkloadResolve`; ADR-026 SD-1 and SD-3 have the scheduler pick each
-    /// free identity's delay inside its window. The readings differ where
-    /// several free identities are enabled now and where the unit delay
-    /// disables one, so neither is decided here, with or without given delays
-    /// racing alongside.
-    fn refuse_undecided_free_delays(
-        &mut self,
-        state: &DState,
-        local: &Rc<Local>,
-        windows: &[Window],
-        reached: u64,
-    ) -> Step<()> {
-        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
-        enabled.retain(|action| self.given(&action.identity.operation).is_none());
-        if enabled.len() >= 2 {
-            return Err(ProductRefusal::WorkloadFreeDelays(
-                fsl_replay::WorkloadFreeDelayRefusal::ManyFreeEnabled,
-            )
-            .into());
-        }
-        if reached >= 1 {
-            for action in &enabled {
-                let closes = windows
-                    .iter()
-                    .find(|window| window.identity == action.identity)
-                    .is_some_and(|window| !window.contains(1, reached));
-                if closes {
-                    return Err(ProductRefusal::WorkloadFreeDelays(
-                        fsl_replay::WorkloadFreeDelayRefusal::ClosesBeforeFiring,
-                    )
-                    .into());
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Under a workload whose racing identities all have free delays: the
-    /// scheduler chooses between a unit delay and letting the workload resolve
-    /// the identity now (ADR-028 TA-1, RU-6). An identity with a given delay
-    /// does not race here, so the workload resolves among the free ones only.
-    fn free_moves(
-        &mut self,
-        at: usize,
-        state: &DState,
-        local: &Rc<Local>,
-        workload: &Workload,
-    ) -> Step<Vec<Planned>> {
-        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
-        enabled.retain(|action| self.given(&action.identity.operation).is_none());
-        let mut planned = Vec::new();
-        self.running_delays(at, state, local, &mut planned)?;
-        let mut operations: BTreeMap<String, (Rational, u64)> = BTreeMap::new();
-        for action in &enabled {
-            let operation = action.identity.operation.clone();
-            if !operations.contains_key(&operation) {
-                let weight = self.weight_of(workload, &operation)?;
-                operations.insert(operation.clone(), (weight, 0));
-            }
-            if let Some(entry) = operations.get_mut(&operation) {
-                entry.1 += 1;
-            }
-        }
-        let total = operations
-            .values()
-            .fold(zero(), |sum, (weight, _)| sum.add(weight));
-        let representative = enabled.first().map(|action| action.identity.clone());
-        for action in &enabled {
-            let (weight, identities) = operations
-                .get(action.identity.operation.as_str())
-                .ok_or_else(|| fault("operation-is-counted"))?;
-            let share = weight
-                .div(&total)
-                .and_then(|share| {
-                    share.div(&Rational::from_integer(Integer::from_big(BigInt::from(
-                        *identities,
-                    ))))
-                })
-                .ok_or_else(|| fault("workload-share"))?;
-            let first = planned.len();
-            self.identity_edges(at, state, action, share, &mut planned)?;
-            for edge in &mut planned[first..] {
-                edge.choice = resolve_choice(representative.as_ref(), action, 0);
-            }
-        }
-        if planned.is_empty() {
-            self.time_locked.push(at);
-        }
-        self.decisions = true;
-        Ok(planned)
     }
 
     // -- the finished product --------------------------------------------------
