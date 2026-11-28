@@ -744,17 +744,24 @@ fn first_refuted_instance(
                 let kept_work = earlier.stats();
                 restat(outcome, |stats| sum(stats, kept_work))
             }
-            // Any other end leaves the earlier instances undecided.
+            // Only a cancellation overrides a refutation the run found
+            // (FR-126 "Bindings and ranking", ADR-023 HV-8): an earlier
+            // instance that ends undecided, at a bound or on a limit does
+            // not discard it.
+            ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::Cancelled { .. },
+                ..
+            } => {
+                let kept_work = earlier.stats();
+                restat(outcome, |stats| sum(stats, kept_work))
+            }
             ModelCheckOutcome::Reduction { .. }
             | ModelCheckOutcome::Memory { .. }
             | ModelCheckOutcome::RecoveryView { .. }
             | ModelCheckOutcome::RefutedIgnoringConstraints { .. }
             | ModelCheckOutcome::BoundReached { .. }
             | ModelCheckOutcome::Undecided { .. }
-            | ModelCheckOutcome::Stopped { .. } => {
-                let kept_work = earlier.stats();
-                restat(outcome, |stats| sum(stats, kept_work))
-            }
+            | ModelCheckOutcome::Stopped { .. } => restat(earlier, |stats| sum(stats, work)),
         });
     }
 }
@@ -1839,6 +1846,46 @@ fn check_reduced(
                     stats: total,
                 });
             }
+            // A refutation this plan found within its budget wins over a
+            // limit that ended the search after it; only a cancellation
+            // overrides it (ADR-023 HV-8).
+            Err(Halt::Finish(Finish::Stopped(cause, _)))
+                if !matches!(cause, IncompleteCause::Cancelled { .. })
+                    && run.first_bad.is_some()
+                    && !run.has_unresolved_local_access() =>
+            {
+                let Some((_, violation)) = run.first_bad.take() else {
+                    return Err(fault("a-found-refutation-is-held"));
+                };
+                let Violation { kind, at, binding } = *violation;
+                return match run.model_counterexample(kind, at, binding) {
+                    Ok(counterexample) => Ok(ModelCheckOutcome::Violated {
+                        counterexample: Box::new(counterexample),
+                        stats: total,
+                    }),
+                    Err(Halt::Finish(Finish::Stopped(cause, limit))) => {
+                        Ok(ModelCheckOutcome::Stopped {
+                            cause,
+                            limit,
+                            stats: total,
+                        })
+                    }
+                    Err(Halt::Finish(Finish::Undecided(cause))) => {
+                        Ok(ModelCheckOutcome::Undecided {
+                            cause,
+                            stats: total,
+                        })
+                    }
+                    Err(Halt::Finish(Finish::Memory(cause))) => Ok(ModelCheckOutcome::Memory {
+                        cause,
+                        stats: total,
+                    }),
+                    Err(Halt::Finish(Finish::Violated(_))) => {
+                        Err(fault("a-concretised-path-ends-once"))
+                    }
+                    Err(Halt::Refusal(refusal)) => Err(refusal),
+                };
+            }
             Err(Halt::Finish(Finish::Stopped(cause, limit))) => {
                 return Ok(ModelCheckOutcome::Stopped {
                     cause,
@@ -2876,6 +2923,19 @@ where
                 cause,
                 stats: self.stats(),
             }),
+            // A refutation the search found within its budget wins over a
+            // limit that ended the search after it; only a cancellation
+            // overrides it (ADR-023 HV-8).
+            Err(Halt::Finish(Finish::Stopped(cause, _)))
+                if !matches!(cause, IncompleteCause::Cancelled { .. })
+                    && self.first_bad.is_some()
+                    && !self.has_unresolved_local_access() =>
+            {
+                let Some((_, violation)) = self.first_bad.take() else {
+                    return Err(fault("a-found-refutation-is-held"));
+                };
+                self.refutation(*violation)
+            }
             Err(Halt::Finish(Finish::Stopped(cause, limit))) => Ok(ModelCheckOutcome::Stopped {
                 cause,
                 limit,
@@ -2905,6 +2965,31 @@ where
                 })
             }
         }
+    }
+
+    /// The outcome of a refutation the run found: its counterexample, or the
+    /// stop its concretisation ends in.
+    fn refutation(
+        &self,
+        violation: Violation,
+    ) -> Result<ModelCheckOutcome<S::TransitionId>, ModelCheckRefusal> {
+        let Violation { kind, at, binding } = violation;
+        let counterexample = match self.counterexample(kind, at, binding) {
+            Ok(counterexample) => counterexample,
+            Err(Halt::Refusal(refusal)) => return Err(refusal),
+            Err(Halt::Finish(Finish::Stopped(cause, limit))) => {
+                return Ok(ModelCheckOutcome::Stopped {
+                    cause,
+                    limit,
+                    stats: self.stats(),
+                });
+            }
+            Err(Halt::Finish(_)) => return Err(fault("a-concretisation-stops-or-refuses")),
+        };
+        Ok(ModelCheckOutcome::Violated {
+            counterexample: Box::new(counterexample),
+            stats: self.stats(),
+        })
     }
 
     /// The breadth-first first phase.
