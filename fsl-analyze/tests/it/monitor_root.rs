@@ -836,7 +836,6 @@ fn the_root_key_covers_the_bodies_of_called_helpers() {
 #[trace("TC-1081", "FR-251-AC-42")]
 #[test]
 fn the_plan_root_retains_the_acquisitions_witness_rows() {
-    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = authored(ROOT_SHAPES[0]);
     let root = root_of(&unit, "C", &target()).expect("the plan root");
     let emission = root.emission();
