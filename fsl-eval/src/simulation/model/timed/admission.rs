@@ -204,18 +204,14 @@ pub enum Admission {
     /// subject's dense runs; the caller establishes that and otherwise reads
     /// [`RegionCause::TimeLock`].
     DigitalIfNoTimeLock,
-    /// Strictness is the claim's only cause, but the table would read it
-    /// [`Admission::DigitalIfNoTimeLock`]: the refined grid walk decides it
-    /// where no time-lock is reachable, and otherwise
-    /// [`RegionCause::TimeLock`] is read.
-    StrictIfNoTimeLock,
     /// Clock regions decide it.
     Region(RegionCause),
 }
 
 /// The row of [`EN5_DIGITAL`] that admits `conditions`, or why none does.
-/// Strictness is read last: it takes the grid walk only when every other
-/// condition of the table admits the claim, and any other cause takes its own
+/// Strictness is read last: a strict claim reads `Region(Strict)` only when
+/// every other condition of the table admits the claim (the time-lock fact is no
+/// longer read for it), and any other cause takes its own
 /// outcome first.
 #[implements("FSpec-FR-421-AC-8", "FR-921-AC-5")]
 pub fn en5_admission(conditions: RouteConditions) -> Admission {
@@ -224,9 +220,10 @@ pub fn en5_admission(conditions: RouteConditions) -> Admission {
         return open;
     }
     match open {
-        Admission::Digital => Admission::Region(RegionCause::Strict),
-        Admission::DigitalIfNoTimeLock => Admission::StrictIfNoTimeLock,
-        Admission::StrictIfNoTimeLock | Admission::Region(_) => open,
+        Admission::Digital | Admission::DigitalIfNoTimeLock => {
+            Admission::Region(RegionCause::Strict)
+        }
+        Admission::Region(_) => open,
     }
 }
 
@@ -307,7 +304,7 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    use Admission::{Digital, DigitalIfNoTimeLock, Region, StrictIfNoTimeLock};
+    use Admission::{Digital, DigitalIfNoTimeLock, Region};
     use ClaimForm as F;
     use ReadFrom::{Later, Origin};
 
@@ -441,7 +438,7 @@ mod tests {
         );
         assert_eq!(
             en5_admission(strict(closed(DelayClass::Free, F::Reachability, Origin))),
-            StrictIfNoTimeLock
+            Region(RegionCause::Strict)
         );
         assert_eq!(
             en5_admission(strict(closed(DelayClass::Mixed, F::Reachability, Origin))),
