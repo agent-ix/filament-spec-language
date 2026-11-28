@@ -4158,7 +4158,12 @@ fn digital_workload_choices(
     let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
     let mut scheduler_actions: Vec<Vec<crate::ProductAction>> = Vec::new();
     if racers.is_empty() {
-        if !free_now.is_empty() {
+        if !free_now.is_empty()
+            && matches!(
+                &run.claim.form,
+                fsl_semantics::check::ProbForm::MeanTime { .. }
+            )
+        {
             // With no given draw, the scheduler chooses one delay for every
             // enabled free identity. Each assignment is one MDP action; a
             // unit-delay transition cannot move an identity past its window.

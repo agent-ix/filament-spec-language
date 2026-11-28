@@ -136,6 +136,18 @@ pub(super) fn build<'s, 'a>(
     builder.run()
 }
 
+/// A free identity resolved immediately under the existing workload rule.
+fn resolve_choice(
+    representative: Option<&ScheduledIdentity>,
+    taken: &Enabled<'_>,
+    delay: u64,
+) -> ProductAction {
+    ProductAction::WorkloadResolve {
+        identity: representative.unwrap_or(&taken.identity).clone(),
+        delay,
+    }
+}
+
 fn fault(invariant: &'static str) -> ProductRefusal {
     ProductRefusal::Internal(InternalFault::new("exact-probabilistic-digital", invariant))
 }
@@ -2657,6 +2669,9 @@ impl<'c> Builder<'_, '_, 'c> {
             self.refuse_undecided_free_delays(state, local, &windows, reached)?;
         }
         if racers.is_empty() && free {
+            if !matches!(self.form, Form::MeanTime { .. }) {
+                return self.free_moves(at, state, local, workload);
+            }
             // Every racing delay is free: each scheduler-selected assignment
             // races through the workload resolver at its earliest delay.
             return self.free_delays_moves(at, workload, &trajectory, Vec::new(), &windows);
@@ -2768,6 +2783,59 @@ impl<'c> Builder<'_, '_, 'c> {
             }
         }
         Ok(())
+    }
+
+    /// A single unambiguous free identity retains FR-204's existing workload
+    /// resolution when the claim is not a MeanTime infinity proof.
+    fn free_moves(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Rc<Local>,
+        workload: &Workload,
+    ) -> Step<Vec<Planned>> {
+        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
+        enabled.retain(|action| self.given(&action.identity.operation).is_none());
+        let mut planned = Vec::new();
+        self.running_delays(at, state, local, &mut planned)?;
+        let mut operations: BTreeMap<String, (Rational, u64)> = BTreeMap::new();
+        for action in &enabled {
+            let operation = action.identity.operation.clone();
+            if !operations.contains_key(&operation) {
+                let weight = self.weight_of(workload, &operation)?;
+                operations.insert(operation.clone(), (weight, 0));
+            }
+            if let Some(entry) = operations.get_mut(&operation) {
+                entry.1 += 1;
+            }
+        }
+        let total = operations
+            .values()
+            .fold(zero(), |sum, (weight, _)| sum.add(weight));
+        let representative = enabled.first().map(|action| action.identity.clone());
+        for action in &enabled {
+            let (weight, identities) = operations
+                .get(action.identity.operation.as_str())
+                .ok_or_else(|| fault("operation-is-counted"))?;
+            let share = weight
+                .div(&total)
+                .and_then(|share| {
+                    share.div(&Rational::from_integer(Integer::from_big(BigInt::from(
+                        *identities,
+                    ))))
+                })
+                .ok_or_else(|| fault("workload-share"))?;
+            let first = planned.len();
+            self.identity_edges(at, state, action, share, &mut planned)?;
+            for edge in &mut planned[first..] {
+                edge.choice = resolve_choice(representative.as_ref(), action, 0);
+            }
+        }
+        if planned.is_empty() {
+            self.time_locked.push(at);
+        }
+        self.decisions = true;
+        Ok(planned)
     }
 
     /// FR-204: given and free delays race together. The scheduler chooses
