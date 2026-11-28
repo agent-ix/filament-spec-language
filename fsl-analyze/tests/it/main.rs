@@ -32,6 +32,7 @@ mod dense_route_support;
 mod derived_request_support;
 mod false_claim_corpus;
 mod false_claim_hyper;
+mod false_claim_routes;
 mod false_claim_timed;
 mod fill;
 mod fixture_ids;
