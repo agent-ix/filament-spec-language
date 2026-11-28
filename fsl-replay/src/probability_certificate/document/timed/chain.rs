@@ -198,10 +198,7 @@ mod tests {
     #[trace("FR-922-AC-7")]
     #[test]
     fn a_closed_class_that_never_reaches_the_goal_is_improper() {
-        let chain = vec![
-            state(integer(1), vec![(0, integer(1))]),
-            goal(),
-        ];
+        let chain = vec![state(integer(1), vec![(0, integer(1))]), goal()];
         assert_eq!(
             expected_elapsed(&chain, 0, 1_000),
             Err(ChainRefusal::Improper)

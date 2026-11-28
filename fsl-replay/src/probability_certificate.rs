@@ -40,8 +40,8 @@ pub use document::*;
 pub use source::*;
 mod witness;
 pub use witness::*;
-mod timed_axes;
 mod region_key;
+mod timed_axes;
 pub use region_key::{ClaimClock, ClockPlace, Corner, RegionClock, RegionKey};
 
 /// A complete canonical product-state key, encoded by the checker.
