@@ -85,6 +85,22 @@ fn timed_eventually_with_closed_horizon_settles_at_ninety_nine_percent() {
     ));
 }
 
+/// A refutation decided by the drawn delay alone: `step` is drawn at
+/// 3 ms, past the window.
+#[trace("FR-204-AC-21")]
+#[test]
+fn repro_a_drawn_delay_decides_a_refuted_event() {
+    let claim = claim_under(
+        "Crossed",
+        "under every scheduler",
+        ">= 0.99",
+        "eventually[0 ms, 2 ms] holds(c.retried)",
+    );
+    let world = one_step("", "delay M::Call::step ~ discrete { 3 ms: 1 };\n", &claim);
+    let record = settle(&world, "Crossed");
+    assert!(is_refuted(&record), "{record:#?}");
+}
+
 #[trace("FR-204-AC-21")]
 #[test]
 #[ignore = "QSL-3495: a window form that is not a deadline event reads clock regions; incomplete until the region process is built"]

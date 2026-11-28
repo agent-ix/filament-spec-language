@@ -849,6 +849,25 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
 /// on EN-6, then on EN-1 `digital-clocks`; each result is backend, value and
 /// cause kind.
 fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
+    stalling_items(name, resets)
+        .iter()
+        .map(|item| {
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn stalling_items(name: &str, resets: bool) -> Vec<Value> {
     use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
     let (post, writes): (&str, &[&str]) = if resets {
         (
@@ -890,22 +909,7 @@ fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
             {"claim": "Live", "options": digital.clone()},
             {"claim": "Wrong", "options": digital}]}),
     ));
-    (0..6)
-        .map(|n| {
-            let item = run.item(n);
-            (
-                item["record"]["backend"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-                label(&item).to_owned(),
-                item["record"]["cause"]["kind"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
-        })
-        .collect()
+    (0..6).map(|n| run.item(n)).collect()
 }
 
 fn expected_on_both_routes<const N: usize>(
@@ -1969,6 +1973,85 @@ fn a_clock_owner_with_no_universe_requires_a_bound() {
         over_no_universe("timed-no-universe-clocked", &locking_document(), LOCKING),
         requires_bound_on_all_four()
     );
+}
+
+#[test]
+fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
+    let items = stalling_items("timed-zone-resetting-deadline", true);
+    assert_eq!(label(&items[0]), "proved", "{}", items[0]);
+    assert_eq!(label(&items[1]), "proved", "{}", items[1]);
+}
+
+#[trace("FR-240-AC-4")]
+#[test]
+fn digital_invariant_stall_does_not_create_a_divergent_tail() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}\
+             time invariant Boundary when {{ true }} {{ self.x <= 0 ms }}\n\
+             temporal Safe using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ always holds(true) }}\n"
+        ),
+    );
+    let ws = Workspace::new("digital-idle-tail-invariant-boundary");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe", "options": {"method": "digital-clocks"}}]}),
+    ));
+    assert_eq!(run.exit, 22, "{}", run.document());
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(
+        item["record"]["cause"]["kind"], "no-admitted-behaviour",
+        "{item}"
+    );
+}
+
+/// TC-2290: EN-1's digital-clock route agrees with the zone route on a true
+/// bounded eventual-always claim after the two-step subject reaches phase 2.
+#[trace("FR-243-AC-5")]
+#[test]
+fn digital_clocks_prove_a_true_always_inside_eventually() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let body = format!(
+        "{DENSE}\
+         pre First using v on M::Call::first {{ self.phase = 0 and self.x >= 1 ms }}\n\
+         post Firsted using v on M::Call::first {{ self.phase = 1 and self.x = 0 ms }}\n\
+         pre Second using v on M::Call::second {{ self.phase = 1 and self.x >= 2 ms }}\n\
+         post Seconded using v on M::Call::second {{ self.phase = 2 }}\n\
+         time invariant FirstDeadline when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n\
+         time invariant SecondDeadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         temporal TwoStep using tt over (c: M::Call) clock \"model-time\" on origin {{\
+             eventually[0 ms, 4 ms] always[0 ms, 1 ms] holds(c.phase = 2) }}\n"
+    );
+    let unit = unit_text(PACKAGE, crate::zone_search::TIMED, &body);
+    let domain = document(
+        &["x"],
+        &[("first", &["phase", "x"]), ("second", &["phase"])],
+    );
+    let ws = Workspace::new("digital-clocks-eventually-always");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &domain,
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "TwoStep"},
+            {"claim": "TwoStep", "options": {"method": "digital-clocks"}}]}),
+    ));
+    let item = run.item(1);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.item(0));
+    assert_eq!(run.exit, 0, "{}", run.document());
 }
 
 /// FR-239-AC-10 and FR-243-AC-8: a false initial position refutes the claim
