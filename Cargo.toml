@@ -9,7 +9,7 @@ filament-specification = { package = "filament-specification-qualification", git
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
-quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "v0.3.2", default-features = false }
+quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "quire-canonical-v0.3.3", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
 # each its own repository so IR, RT and CG depend on them without the FSL repo.
