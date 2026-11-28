@@ -607,7 +607,7 @@ fn a_transition_limit_stops_the_check() {
 
 /// FR-149-AC-12 (TC-556): a certificate naming another refinement than the
 /// claim's is refused `stale_dependency`/`content-mismatch`.
-#[trace("TC-556", "FR-149-AC-12")]
+#[trace("TC-556", "FR-149-AC-4", "FR-149-AC-12")]
 #[test]
 fn another_refinement_is_refused_and_a_check_repeats() {
     let world = safety_only();
