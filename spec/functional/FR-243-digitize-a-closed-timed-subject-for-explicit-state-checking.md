@@ -107,6 +107,18 @@ decided on the digital-clock route with an exact value.
   below. No other decline carries the member. A strict interval is declined
   by the strict-constraint rule above before (a) is read, and that decline
   carries no `not_digitisable`.
+- EN-1's digital-clock route SHALL decide the claim's instances as FR-126
+  "TP-4 items" states: each instance on its own product, in the canonical
+  instance order, the item refuted exactly when some instance is refuted and
+  the first refuted instance reported. A position at which the claim reads
+  undefined is not expanded and the breadth-first search goes on past it; its
+  state refutes the instance with an `UndefinedEvaluation` only when it has a
+  time-divergent continuation (FR-241), and otherwise lies on no admitted
+  behaviour and is dropped. The run-level ends are `max_states`,
+  `max_transitions`, the evaluation meter, `analysis.retained_bytes`,
+  `model_check.max_clocks` and cancellation; any other stop ends only its
+  instance. The whole-item `NoAdmittedBehaviour` check (FR-240 "Vacuity") runs
+  only when every instance is proved.
 - Of the state-graph forms (FR-852), EN-1's digital-clock route SHALL decide
   `possible` and SHALL decline `always possible` and `unique path`
   `invalid-input` naming the form: each quantifies over every reachable
@@ -184,6 +196,7 @@ preserve.
 | FR-243-AC-6 | An `always possible` and a `unique path` item with `options.method` `digital-clocks` are declined `invalid-input` with `not_digitisable` naming the form, with `backend` `en-1`, and no search runs; a `possible` item is decided. | Test (TC-2412) |
 | FR-243-AC-7 | Over the two-step closed subject, a temporal claim that declares a fairness constraint is declined `invalid-input` by EN-1 with `not_digitisable` rule `fairness-over-clock-constraint` and the span of the claim's first `fair` constraint in source order, and no search runs. | Test (TC-2290) |
 | FR-243-AC-8 | On the subject and claim of FR-239-AC-10, explicit `options.method: digital-clocks` routes the item only to EN-1 and returns `refuted` at `trace_position: 0`. EN-1 emits the same finite bad-prefix shape as EN-6: empty `prefix`, empty `loop`, and a reproduced replay, without a terminal-stutter marker. | Test |
+| FR-243-AC-9 | Over the world of `fsl-analyze/tests/it/analyze_timed_cli.rs::digital_undefined_position_without_divergence_does_not_hide_a_refutation` (objects `a`, armed, and `z`; Send takes `a` from phase 0 to phase 1 and resets `x` under the invariant `x <= 1 ms` at phase 1, Timeout takes `a` from phase 0 to phase 2; the claim `always holds(c.phase != 2 and q(c.phase - 1) >= 0)` with `q(x) = 6 mod x`, over `c` on origin), the claim reads undefined at the phase 1 position, which has no time-divergent continuation and is dropped, and false at phase 2, a quiescent state. With the universe `[a, z]` and with `[z, a]` the item is `Violated`, bound to `a`, kind `Formula`, with a lasso and a prefix of the one Timeout step at delay 0. | Test (TC-1592) |
 
 ## Dependencies
 

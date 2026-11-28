@@ -57,7 +57,10 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::source::Span;
-use fsl_replay::NotDigitisable;
+use fsl_replay::{Combined, InstanceFold, InstanceVerdict, NotDigitisable, Step};
+use std::num::NonZeroUsize;
+
+use super::instance_end::{instance_end, End};
 use fsl_replay::{
     CounterexampleKind, IncompleteCause, Lasso, ModelCheckLimit, ModelCheckOutcome, ModelStep,
     NonZeno, ReachedLimit, RunStats, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
@@ -687,15 +690,17 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         path
     }
 
-    /// Build one instance's product breadth first: the first undefined
-    /// position it reaches, if any.
+    /// Build one instance's product breadth first: the undefined positions
+    /// it reaches, in breadth-first order. An undefined position is not
+    /// expanded and the search goes on past it (FR-126 "TP-4 items").
     fn build(
         &mut self,
         product: &mut Product,
         automaton: &mut PositionAutomaton,
         universal: bool,
         instance: &ModelInstance,
-    ) -> Result<Option<UndefinedAt>, Halt> {
+    ) -> Result<Vec<UndefinedAt>, Halt> {
+        let mut undefined = Vec::new();
         let start = self.automaton_stop(automaton.initial())?;
         let zeros = ClockValuation::new(vec![zero(); automaton.clock_count()]);
         let mut queue = VecDeque::new();
@@ -704,14 +709,14 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             let state = self.capped_state(initial);
             match self.reading(instance, automaton, universal, state.discrete(), true)? {
                 Reading::Undefined(locus, cause) => {
-                    return Ok(Some(UndefinedAt {
+                    undefined.push(UndefinedAt {
                         path: Vec::new(),
                         initial: index,
                         state,
                         locus,
                         cause,
                         instance: instance.clone(),
-                    }));
+                    });
                 }
                 Reading::Defined(letter) => {
                     for (q, clocks) in self.reads(automaton, universal, start, letter, &zeros)? {
@@ -731,34 +736,31 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         }
         while let Some(at) = queue.pop_front() {
             self.poll()?;
-            match self.expand(product, automaton, universal, instance, at)? {
-                Ok(created) => queue.extend(created),
-                Err(undefined) => return Ok(Some(undefined)),
-            }
+            let created =
+                self.expand(product, automaton, universal, instance, at, &mut undefined)?;
+            queue.extend(created);
         }
         // The idle tails after every stepping vertex.
         for at in 0..product.vertices.len() {
             self.poll()?;
             let vertex = product.vertices[at].clone();
             if !vertex.tail && self.quiescent(&vertex.state)? {
-                match self.stutter(product, automaton, universal, instance, at)? {
-                    Ok(created) => queue.extend(created),
-                    Err(undefined) => return Ok(Some(undefined)),
-                }
+                let created =
+                    self.stutter(product, automaton, universal, instance, at, &mut undefined)?;
+                queue.extend(created);
             }
         }
         while let Some(at) = queue.pop_front() {
             self.poll()?;
-            match self.expand(product, automaton, universal, instance, at)? {
-                Ok(created) => queue.extend(created),
-                Err(undefined) => return Ok(Some(undefined)),
-            }
+            let created =
+                self.expand(product, automaton, universal, instance, at, &mut undefined)?;
+            queue.extend(created);
         }
-        Ok(None)
+        Ok(undefined)
     }
 
-    /// The vertices `at`'s edges create, or the undefined position a step
-    /// from it reaches.
+    /// The vertices `at`'s edges create; an undefined position a step from
+    /// it reaches is added to `undefined`, not expanded.
     fn expand(
         &mut self,
         product: &mut Product,
@@ -766,14 +768,12 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         universal: bool,
         instance: &ModelInstance,
         at: usize,
-    ) -> Result<Result<Vec<usize>, UndefinedAt>, Halt> {
+        undefined: &mut Vec<UndefinedAt>,
+    ) -> Result<Vec<usize>, Halt> {
         let vertex = product.vertices[at].clone();
         let mut created = Vec::new();
         if vertex.tail {
-            match self.stutter(product, automaton, universal, instance, at)? {
-                Ok(next) => created.extend(next),
-                Err(undefined) => return Ok(Err(undefined)),
-            }
+            created.extend(self.stutter(product, automaton, universal, instance, at, undefined)?);
         } else {
             for (index, (_, post)) in self.steps_of(&vertex.state)?.into_iter().enumerate() {
                 self.poll()?;
@@ -789,14 +789,14 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                             via: Via::Step(index),
                         });
                         path.push(product.edges.len() - 1);
-                        return Ok(Err(UndefinedAt {
+                        undefined.push(UndefinedAt {
                             path,
                             initial,
                             state: post,
                             locus,
                             cause,
                             instance: instance.clone(),
-                        }));
+                        });
                     }
                     Reading::Defined(letter) => {
                         for (q, clocks) in
@@ -833,10 +833,11 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             };
             created.extend(self.add_vertex(product, next, Some((at, Via::Delay)))?);
         }
-        Ok(Ok(created))
+        Ok(created)
     }
 
-    /// The idle-tail stutters from `at`: the state's letter read again.
+    /// The idle-tail stutters from `at`: the state's letter read again. An
+    /// undefined reading is added to `undefined`.
     fn stutter(
         &mut self,
         product: &mut Product,
@@ -844,7 +845,8 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         universal: bool,
         instance: &ModelInstance,
         at: usize,
-    ) -> Result<Result<Vec<usize>, UndefinedAt>, Halt> {
+        undefined: &mut Vec<UndefinedAt>,
+    ) -> Result<Vec<usize>, Halt> {
         let vertex = product.vertices[at].clone();
         let letter = match self.reading(
             instance,
@@ -857,17 +859,23 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             Reading::Undefined(locus, cause) => {
                 let mut path = Self::path_to(product, at);
                 let initial = root(product, &path, at)?;
-                let edge = product.edges.len();
-                self.add_edge(product, at, at, Via::Stutter)?;
-                path.push(edge);
-                return Ok(Err(UndefinedAt {
+                // The stutter to the undefined position closes the path; it is
+                // no edge of the product the fairness kernels read.
+                product.edges.push(DEdge {
+                    from: at,
+                    to: at,
+                    via: Via::Stutter,
+                });
+                path.push(product.edges.len() - 1);
+                undefined.push(UndefinedAt {
                     path,
                     initial,
                     state: vertex.state,
                     locus,
                     cause,
                     instance: instance.clone(),
-                }));
+                });
+                return Ok(Vec::new());
             }
         };
         let mut created = Vec::new();
@@ -883,7 +891,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             };
             created.extend(self.add_vertex(product, next, Some((at, Via::Stutter)))?);
         }
-        Ok(Ok(created))
+        Ok(created)
     }
 
     /// The product as the fairness kernels read it.
@@ -1102,37 +1110,27 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
                 })
             }
         };
+        let count = NonZeroUsize::new(instances.len())
+            .ok_or(DigitalRefusal::Fault("a-digital-run-has-an-instance"))?;
+        let mut fold = InstanceFold::new(count);
         for instance in &instances {
-            if let Some(counterexample) = self.initial_bad_prefix(instance)? {
-                return Ok(self.violated(counterexample));
+            let verdict = match self.decide_instance(instance) {
+                Ok(verdict) => verdict,
+                Err(Halt::Refusal(refusal)) => return Err(refusal.into()),
+                Err(Halt::Outcome(outcome)) => Self::halt_verdict(*outcome),
+            };
+            if fold.push(verdict) == Step::Stop {
+                break;
             }
-            let mut product = Product::default();
-            let built = self.build(&mut product, automaton, false, instance)?;
-            let automaton_states: BTreeSet<usize> = product
-                .vertices
-                .iter()
-                .map(|vertex| vertex.q.index())
-                .collect();
-            self.stats.automaton_states = self
-                .stats
-                .automaton_states
-                .max(u64::try_from(automaton_states.len()).unwrap_or(u64::MAX));
-            if let Some(undefined) = built {
-                if let Some(found) = self.undefined(&product, undefined)? {
-                    return Ok(self.violated(found));
-                }
-                continue;
-            }
-            let model = self.fair_model(&product, automaton, false, true)?;
-            if let Some((entry, cycle)) = self.fair_cycle(&product, &model)? {
-                let found = self.lasso(&product, instance, entry, &cycle)?;
-                self.non_zeno = Some(NonZeno::Checked);
-                return Ok(self.violated(found));
-            }
-            let without_divergence = self.fair_model(&product, automaton, false, false)?;
-            if self.fair_cycle(&product, &without_divergence)?.is_some() {
-                self.non_zeno = Some(NonZeno::Assumed);
-            }
+        }
+        let combined = fold
+            .finish()
+            .map_err(|_| DigitalRefusal::Fault("every-instance-was-decided"))?;
+        if let Combined::Refuted { outcome, .. }
+        | Combined::Stopped { outcome, .. }
+        | Combined::NotProved { outcome, .. } = combined
+        {
+            return Ok(outcome.with_stats(self.stats));
         }
         // FR-240 and FR-232 "Vacuity": a proof needs a fair time-divergent
         // behaviour or a quiescent state, with or without a declared fairness.
@@ -1156,6 +1154,73 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
             reductions: Vec::new(),
             stats: self.stats,
         })
+    }
+
+    /// One instance's verdict (FR-126 "TP-4 items"): a refutation, a proof,
+    /// a stop that ends only this instance, or a run-level end.
+    fn decide_instance(
+        &mut self,
+        instance: &ModelInstance,
+    ) -> Result<InstanceVerdict<ModelCheckOutcome>, Halt> {
+        // The claim automaton is this instance's own, so a state limit is
+        // counted over what this instance's walk touches (arch ruling Q6).
+        let mut automaton =
+            position_automaton(self.request.clause, self.request.limits.max_automaton_states)
+                .map_err(|error| match error {
+                    AutomatonError::StateLimit { .. } => {
+                        DigitalRefusal::Fault("automaton-initial")
+                    }
+                    _ => DigitalRefusal::UnsupportedForm,
+                })?;
+        if let Some(counterexample) = self.initial_bad_prefix(instance)? {
+            return Ok(InstanceVerdict::Refuted(self.violated(counterexample)));
+        }
+        let mut product = Product::default();
+        let undefined = self.build(&mut product, &mut automaton, false, instance)?;
+        let automaton_states: BTreeSet<usize> = product
+            .vertices
+            .iter()
+            .map(|vertex| vertex.q.index())
+            .collect();
+        self.stats.automaton_states = self
+            .stats
+            .automaton_states
+            .max(u64::try_from(automaton_states.len()).unwrap_or(u64::MAX));
+        // An undefined position refutes only through a time-divergent
+        // continuation (FR-241); the first in breadth-first order is
+        // reported. The others lie on no admitted behaviour.
+        for position in undefined {
+            if let Some(found) = self.undefined(&product, position)? {
+                return Ok(InstanceVerdict::Refuted(self.violated(found)));
+            }
+        }
+        let model = self.fair_model(&product, &automaton, false, true)?;
+        if let Some((entry, cycle)) = self.fair_cycle(&product, &model)? {
+            let found = self.lasso(&product, instance, entry, &cycle)?;
+            self.non_zeno = Some(NonZeno::Checked);
+            return Ok(InstanceVerdict::Refuted(self.violated(found)));
+        }
+        let without_divergence = self.fair_model(&product, &automaton, false, false)?;
+        if self.fair_cycle(&product, &without_divergence)?.is_some() {
+            self.non_zeno = Some(NonZeno::Assumed);
+        }
+        Ok(InstanceVerdict::Proved(ModelCheckOutcome::HoldsReduced {
+            reductions: Vec::new(),
+            stats: self.stats,
+        }))
+    }
+
+    /// The verdict of an instance that ended in a stop: a run-level end
+    /// ends the run, any other stop only the instance (arch rulings Q1-Q3).
+    fn halt_verdict(outcome: ModelCheckOutcome) -> InstanceVerdict<ModelCheckOutcome> {
+        let end = match &outcome {
+            ModelCheckOutcome::Stopped { cause, limit, .. } => instance_end(cause, limit.as_ref()),
+            _ => End::Instance,
+        };
+        match end {
+            End::Run { cancel } => InstanceVerdict::RunStop { outcome, cancel },
+            End::Instance => InstanceVerdict::NotProved(outcome),
+        }
     }
 
     fn violated(&self, counterexample: TemporalCounterexample) -> ModelCheckOutcome {
