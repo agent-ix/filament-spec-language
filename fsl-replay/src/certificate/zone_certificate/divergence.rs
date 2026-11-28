@@ -149,7 +149,7 @@ impl<O> Checker<'_, '_, O> {
             if edge.from != at || self.covers[index].is_none() {
                 return Ok(Err(at));
             }
-            zone = self.post(index, &zone)?;
+            zone = self.post(index, &zone, true)?;
             at = edge.to;
             if zone.is_empty() {
                 return Ok(Err(at));

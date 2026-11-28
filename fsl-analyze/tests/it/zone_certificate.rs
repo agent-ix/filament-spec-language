@@ -1108,27 +1108,25 @@ fn the_certificate_members_are_the_reconciled_schema_set() {
     }
 }
 
-/// FR-418 (the ordinary checker's `advancing_cycle`): a guard `y > 0` after
-/// `y := 0` bounds no round away from zero, so a cycle of such guards is not
-/// a time-divergent witness. In phase 0 `x <= 1 ms` is never reset there, so
-/// the `ping` loop (`y > 0 ms`, reset `y`) can run for at most 1 ms in all:
-/// a Zeno loop. The `go`/`tock` cycle, whose `tock` needs `x >= 1 ms`, is
-/// the real divergence. Naming the `ping` loop as the witness is rejected
-/// `witness-fails`; the engine's own certificate is accepted.
+/// A `ping` step with `y <= 0` resets only `x`, and phase 0 has the
+/// invariant `x <= 1 ms`. Although that invariant permits a delay before a
+/// reset, the never-reset `y` guard makes every repeat of `ping` zero-time.
+/// The `go`/`tock` cycle is genuinely divergent; naming `ping` as the
+/// admission witness is rejected `witness-fails`.
 #[trace("TC-371")]
 #[test]
 fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
     let world = quiet(
         &["x", "y"],
         &[
-            ("ping", &["y"]),
+            ("ping", &["x"]),
             ("go", &["phase"]),
             ("tock", &["phase", "x"]),
         ],
         "",
         DENSE,
-        "pre Ping using v on M::Call::ping { self.phase = 0 and self.y > 0 ms }\n\
-         post Pinged using v on M::Call::ping { self.y = 0 ms }\n\
+        "pre Ping using v on M::Call::ping { self.phase = 0 and self.y <= 0 ms }\n\
+         post Pinged using v on M::Call::ping { self.x = 0 ms }\n\
          pre Go using v on M::Call::go { self.phase = 0 }\n\
          post Gone using v on M::Call::go { self.phase = 1 }\n\
          pre Tock using v on M::Call::tock { self.phase = 1 and self.x >= 1 ms }\n\

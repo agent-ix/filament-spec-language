@@ -2212,8 +2212,10 @@ impl<O> Checker<'_, '_, O> {
         };
         let abstract_start = self.timed.places().len() + 1;
         let base = self.dim().saturating_sub(auxiliary.places().len());
+        let observer = usize::from(zone.dim() == self.dim() + 1);
         let blocks = zone
             .dim()
+            .saturating_sub(observer)
             .saturating_sub(base)
             .checked_div(auxiliary.places().len())
             .unwrap_or(0);
@@ -4228,7 +4230,7 @@ impl<O> Checker<'_, '_, O> {
             if edge.from != at || self.covers[index].is_none() {
                 return fails(at);
             }
-            zone = self.post(index, &zone)?;
+            zone = self.post(index, &zone, true)?;
             at = edge.to;
             if zone.is_empty() {
                 return fails(at);
@@ -4282,9 +4284,9 @@ impl<O> Checker<'_, '_, O> {
         Ok(None)
     }
 
-    /// The exact successor of `zone`, at a valid edge's source, along the
-    /// edge.
-    fn post(&self, index: usize, zone: &Zone) -> Step<Zone, O> {
+    /// Apply a valid edge to `zone`, optionally including delay at its
+    /// target.
+    fn post(&self, index: usize, zone: &Zone, settle_after: bool) -> Step<Zone, O> {
         let edge = &self.certificate.edges[index];
         let source = self.state(edge.from)?;
         let successor = self.covered(index)?;
@@ -4319,7 +4321,9 @@ impl<O> Checker<'_, '_, O> {
             if let Some(read) = &successor.read {
                 self.read_at(&mut next, read)?;
             }
-            self.settle_within(post, &mut next, Some(cell))?;
+            if settle_after {
+                self.settle_within(post, &mut next, Some(cell))?;
+            }
             return Ok(next);
         }
         if let (None, Some(SilentMove::Dies { .. }), Some(cut)) =
@@ -4351,7 +4355,9 @@ impl<O> Checker<'_, '_, O> {
         if successor.frees {
             next.free(self.horizon_clock())?;
         }
-        self.settle(post, &mut next)?;
+        if settle_after {
+            self.settle(post, &mut next)?;
+        }
         Ok(next)
     }
 
@@ -4461,10 +4467,44 @@ impl<O> Checker<'_, '_, O> {
             if next.includes(&held)? {
                 let mut met = next;
                 intersect(&mut met, zone)?;
-                return Ok(!met.is_empty());
+                if met.is_empty() {
+                    return Ok(false);
+                }
+                return if self.timed.tick_period().is_some() {
+                    Ok(true)
+                } else {
+                    self.positive_total_delay(cycle, &met)
+                };
             }
             held = next;
         }
+    }
+
+    /// Whether one feasible, repeatable cycle iteration has positive total
+    /// elapsed time. A fresh observer clock starts at zero, advances with
+    /// every delay in the cycle, and is constrained positive at the end;
+    /// the model clocks must also return to the repeating set.
+    fn positive_total_delay(&self, cycle: &[usize], repeating: &Zone) -> Step<bool, O> {
+        let mut reached = extend_with_zero_observer(repeating)?;
+        let observer = repeating.dim();
+        for &index in cycle {
+            let source = self.state(self.certificate.edges[index].from)?;
+            if self.elapses(source)? && !reached.is_empty() {
+                self.up_zone(&mut reached)?;
+                self.constrain(&mut reached, &self.invariants(source)?)?;
+            }
+            reached = self.post(index, &reached, false)?;
+            if reached.is_empty() {
+                return Ok(false);
+            }
+        }
+        reached.constrain(0, observer, &Integer::zero(), true)?;
+        // repeats has already established that the cycle returns to its
+        // greatest repeatable zone. The forward pass checks the same guards,
+        // resets and invariants while adding the positive-delay witness.
+        // Requiring the final clock valuation to equal the source would
+        // wrongly reject cycles whose unreset clocks drift each turn.
+        Ok(!reached.is_empty())
     }
 
     /// Whether `cycle` is a cycle of valid edges from and back to `at`
@@ -4561,14 +4601,32 @@ impl<O> Checker<'_, '_, O> {
 
 /// `zone` intersected with `other`, cell by cell.
 fn intersect(zone: &mut Zone, other: &Zone) -> Result<(), ZoneError> {
-    for i in 0..zone.dim() {
-        for j in 0..zone.dim() {
+    for i in 0..zone.dim().min(other.dim()) {
+        for j in 0..zone.dim().min(other.dim()) {
             if let Some((value, strict)) = other.bound(i, j)? {
                 zone.constrain(i, j, &value, strict)?;
             }
         }
     }
     Ok(())
+}
+
+/// `zone` with one new clock fixed at zero, used to measure elapsed time
+/// without changing any of the certificate's clock updates.
+fn extend_with_zero_observer(zone: &Zone) -> Result<Zone, ZoneError> {
+    let observer = zone.dim();
+    let mut extended = Zone::universe(observer + 1);
+    for i in 0..observer {
+        for j in 0..observer {
+            if let Some((bound, strict)) = zone.bound(i, j)? {
+                extended.constrain(i, j, &bound, strict)?;
+            }
+        }
+    }
+    let zero = Integer::zero();
+    extended.constrain(observer, 0, &zero, false)?;
+    extended.constrain(0, observer, &zero, false)?;
+    Ok(extended)
 }
 
 /// `value` in units of `1 / scale`; `None` when the scale does not make it
