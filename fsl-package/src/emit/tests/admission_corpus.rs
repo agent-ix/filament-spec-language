@@ -16,6 +16,8 @@
 //!
 //! Any refusal, and any omission, fails the test: it is a bug, not a row.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use filament_contract_model::{
     BoundedDomainForm, CheckedNodeKind, ClaimForm, CompositeTypeForm, CorrespondenceForm,
     ExpressionForm, FunctionForm, HybridForm, ModelForm, ProbabilisticForm, ProtocolForm,
@@ -363,22 +365,46 @@ impl Emitted {
             documents: documents.into_iter().map(<[u8]>::to_vec).collect(),
         }
     }
+
+    /// Only the requested application operations indexed by checked node id.
+    fn operations(&self, identities: &BTreeSet<&str>) -> BTreeMap<CheckedNodeId, String> {
+        self.package
+            .graph()
+            .semantic_graph()
+            .nodes()
+            .filter_map(|candidate| match candidate.body() {
+                fsl_semantics::check::BodyTerm::Application(
+                    fsl_semantics::check::ApplicationTerm { operation, .. },
+                ) if identities.contains(operation.identity()) => {
+                    Some((node_id(candidate.key()), operation.identity().to_owned()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl Fixture {
     /// The fixture's packages, each checked, linked and emitted.
-    fn emit(self) -> Vec<Emitted> {
-        let whole = |package| Emitted::whole(package, Vec::new());
+    fn emit(self) -> Box<dyn Iterator<Item = Emitted>> {
+        let whole = |package| {
+            let emitted = Emitted::whole(package, Vec::new());
+            emitted
+        };
         let text = |declarations| Emitted::placed(package_from_text(declarations).1, Vec::new());
         let one = match self {
             Self::GoldenCases => {
-                return golden::cases()
-                    .into_iter()
-                    .map(|case| whole(case.package))
-                    .collect();
+                return Box::new(
+                    golden::cases()
+                        .into_iter()
+                        .map(move |case| whole(case.package)),
+                );
             }
             Self::Tc416Functions => whole(package(vec![both(), nb(), h(), f(), t()])),
-            Self::RecursiveF => whole(recursive_f()),
+            Self::RecursiveF => {
+                let package = recursive_f();
+                whole(package)
+            }
             Self::Tree => whole(tree()),
             Self::MapRecord => whole(super::source_tuple_rows::map_record_package()),
             Self::DeclaredTypes => whole(declared_types(Vec::new(), Vec::new())),
@@ -527,7 +553,32 @@ impl Fixture {
                 vec![SPINE_MODEL_DOCUMENT],
             ),
         };
-        vec![one]
+        Box::new(std::iter::once(one))
+    }
+
+    /// Select one fixture for an isolated test run, or all fixtures by
+    /// default. The selector uses the enum's debug name (for example,
+    /// `GoldenCases`) so the default acceptance test remains exhaustive.
+    fn selected() -> Vec<Self> {
+        const SELECTOR: &str = "FSL_ADMISSION_FIXTURE";
+        let Some(selected) = std::env::var_os(SELECTOR) else {
+            return Self::ALL.to_vec();
+        };
+        let selected = selected
+            .to_str()
+            .unwrap_or_else(|| panic!("{SELECTOR} must be valid UTF-8"));
+        let fixture = Self::ALL
+            .into_iter()
+            .find(|fixture| format!("{fixture:?}") == selected)
+            .unwrap_or_else(|| {
+                let choices = Self::ALL
+                    .iter()
+                    .map(|fixture| format!("{fixture:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                panic!("unknown {SELECTOR} value {selected:?}; choose one of: {choices}");
+            });
+        vec![fixture]
     }
 }
 
@@ -963,8 +1014,9 @@ fn read_bytes(emitted: &Emitted, bytes: &[u8]) -> Result<V2Read, StageFailure<V2
             .insert_domain_package_document(package_identity(document), document.to_vec())
             .expect("a fresh evidence key");
     }
-    read_checked_package_v2(bytes, library(), V2ReadLimits::fixture(), &evidence)
-        .map(Staged::into_value)
+    let read = read_checked_package_v2(bytes, library(), V2ReadLimits::fixture(), &evidence)
+        .map(Staged::into_value);
+    read
 }
 
 /// A selected population's artifact id admits hyphens under FSpec FR-154;
@@ -1017,7 +1069,7 @@ fn config_version_with_a_hyphenated_population_emits_and_is_admitted() {
 fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
     let mut emitted = Fixture::Terminal
         .emit()
-        .pop()
+        .next()
         .expect("one terminal fixture");
     assert!(
         read(&emitted).is_ok(),
@@ -1106,7 +1158,7 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
     assert_eq!(source.loci, bare.loci);
 }
 
-/// One emitted package of a fixture and what FSL's I2 read made of it.
+/// One emitted package and what FSL's I2 read made of it.
 struct Outcome {
     emitted: Emitted,
     families: BTreeMap<CheckedNodeKind, Vec<CheckedNodeId>>,
@@ -1136,28 +1188,89 @@ impl Outcome {
     }
 }
 
+/// Compact admission evidence retained for one emission in the corpus.
+struct FixtureOutcome {
+    families: BTreeSet<CheckedNodeKind>,
+    admitted: Result<BTreeSet<(CheckedNodeKind, Option<String>)>, String>,
+    omissions: Vec<String>,
+}
+
+/// Decode the emitted families without retaining every structural node id.
+fn family_kinds(package: &CheckedPackage) -> BTreeSet<CheckedNodeKind> {
+    package
+        .graph()
+        .semantic_graph()
+        .nodes()
+        .map(|node| {
+            CheckedNodeKind::decode(ir_tag(node.node_tag()), node.semantic_form()).unwrap_or_else(
+                || {
+                    panic!(
+                        "{:?}/{} is no IR v2 family",
+                        node.node_tag(),
+                        node.semantic_form()
+                    )
+                },
+            )
+        })
+        .collect()
+}
+
+/// Retain only the compact evidence needed by the corpus assertions; the
+/// emitted and admitted package graphs are dropped before the next fixture.
+fn summarize(emitted: Emitted, operation_identities: &BTreeSet<&str>) -> FixtureOutcome {
+    let families = family_kinds(&emitted.package);
+    let omissions = emitted
+        .emission
+        .omitted
+        .iter()
+        .map(|omission| format!("{omission:?}"))
+        .collect();
+    let operations = emitted.operations(operation_identities);
+    let admitted = read(&emitted)
+        .map(|read| {
+            let mut admitted = BTreeSet::new();
+            for (node, kind) in read
+                .admitted
+                .resolved_graph()
+                .nodes
+                .iter()
+                .zip(read.admitted.node_kinds())
+            {
+                let operation = if operation_identities.is_empty() {
+                    None
+                } else {
+                    read.admitted
+                        .structural_key(&node.node_id)
+                        .and_then(|key| operations.get(key).cloned())
+                };
+                admitted.insert((*kind, operation));
+            }
+            admitted
+        })
+        .map_err(|failure| format!("{failure:?}"));
+    FixtureOutcome {
+        families,
+        admitted,
+        omissions,
+    }
+}
+
 /// The checks of one row against its fixture's outcomes; each failure is a
 /// message naming the row.
-fn check_row(row: &Row, outcomes: &[Outcome], failures: &mut Vec<String>) {
+fn check_row(row: &Row, outcomes: &[FixtureOutcome], failures: &mut Vec<String>) {
     let Row {
         family,
         fixture,
         operation,
     } = *row;
     let admitted = outcomes.iter().any(|outcome| {
-        outcome.read.as_ref().is_ok_and(|read| {
-            read.admitted
-                .resolved_graph()
-                .nodes
+        outcome.admitted.as_ref().is_ok_and(|admitted| {
+            admitted
                 .iter()
-                .zip(read.admitted.node_kinds())
-                .any(|(node, kind)| {
-                    *kind == family
-                        && operation.is_none_or(|identity| {
-                            read.admitted
-                                .structural_key(&node.node_id)
-                                .is_some_and(|key| outcome.applies(key, identity))
-                        })
+                .any(|(admitted_family, admitted_operation)| {
+                    *admitted_family == family
+                        && operation
+                            .is_none_or(|identity| admitted_operation.as_deref() == Some(identity))
                 })
         })
     });
@@ -1171,16 +1284,21 @@ fn check_row(row: &Row, outcomes: &[Outcome], failures: &mut Vec<String>) {
 
 /// The checks of one fixture's packages: each is admitted, and none omits
 /// a node.
-fn check_fixture(fixture: Fixture, rows: &[Row], outcomes: &[Outcome], failures: &mut Vec<String>) {
+fn check_fixture(
+    fixture: Fixture,
+    rows: &[Row],
+    outcomes: &[FixtureOutcome],
+    failures: &mut Vec<String>,
+) {
     if !rows.iter().any(|row| row.fixture == fixture) {
         failures.push(format!("{fixture:?}: backs no row"));
     }
     for outcome in outcomes {
-        match &outcome.read {
+        match &outcome.admitted {
             Ok(_) => {}
-            Err(failure) => failures.push(format!("{fixture:?}: not admitted: {failure:?}")),
+            Err(failure) => failures.push(format!("{fixture:?}: not admitted: {failure}")),
         }
-        for omission in &outcome.emitted.emission.omitted {
+        for omission in &outcome.omissions {
             failures.push(format!("{fixture:?}: unexpected omission {omission:?}"));
         }
     }
@@ -1192,6 +1310,20 @@ fn check_fixture(fixture: Fixture, rows: &[Row], outcomes: &[Outcome], failures:
 /// FSL's I2 read, with a node of the row's
 /// family (the cyclic compared type's structural equality included), and
 /// no fixture emits a family without a row.
+#[trace("FR-093-AC-7", "TC-416")]
+#[test]
+fn recursive_f_emission_and_admission_terminate() {
+    let emitted = Fixture::RecursiveF
+        .emit()
+        .next()
+        .expect("RecursiveF emits one package");
+    let admitted = read(&emitted);
+    assert!(
+        admitted.is_ok(),
+        "RecursiveF's package admits: {admitted:?}"
+    );
+}
+
 #[trace("FR-093-AC-19", "TC-416")]
 #[test]
 fn every_emitted_node_family_is_admitted() {
@@ -1275,47 +1407,43 @@ fn every_emitted_node_family_is_admitted() {
          {ambiguous:?}; not IR kinds: {unknown:?}"
     );
 
-    let outcomes: BTreeMap<Fixture, Vec<Outcome>> = Fixture::ALL
-        .iter()
-        .map(|&fixture| {
-            let outcomes = fixture
-                .emit()
-                .into_iter()
-                .map(|emitted| Outcome {
-                    families: families(&emitted.package),
-                    read: read(&emitted),
-                    emitted,
-                })
-                .collect();
-            (fixture, outcomes)
-        })
-        .collect();
-
-    // No fixture emits a family without a row.
     let named: BTreeSet<CheckedNodeKind> = rows.iter().map(|row| row.family).collect();
-    let mut without_row: BTreeMap<CheckedNodeKind, BTreeSet<Fixture>> = BTreeMap::new();
-    for (fixture, fixture_outcomes) in &outcomes {
-        for family in fixture_outcomes
-            .iter()
-            .flat_map(|outcome| outcome.families.keys())
-            .filter(|family| !named.contains(family))
-        {
-            without_row.entry(*family).or_default().insert(*fixture);
+    let mut failures = Vec::new();
+    for row in &rows {
+        if !Fixture::ALL.contains(&row.fixture) {
+            failures.push(format!("{row:?}: its fixture is not in Fixture::ALL"));
         }
     }
-    assert!(
-        without_row.is_empty(),
-        "emitted families with no row: {without_row:?}"
-    );
+    let fixtures = Fixture::selected();
+    for fixture in fixtures {
+        let operation_identities: BTreeSet<_> = rows
+            .iter()
+            .filter(|row| row.fixture == fixture)
+            .filter_map(|row| row.operation)
+            .collect();
+        let outcomes: Vec<_> = fixture
+            .emit()
+            .map(|emitted| summarize(emitted, &operation_identities))
+            .collect();
+        // No selected fixture emits a family without a row.
+        let mut without_row: BTreeMap<CheckedNodeKind, BTreeSet<Fixture>> = BTreeMap::new();
+        for outcome in &outcomes {
+            for family in outcome
+                .families
+                .iter()
+                .filter(|family| !named.contains(family))
+            {
+                without_row.entry(*family).or_default().insert(fixture);
+            }
+        }
+        assert!(
+            without_row.is_empty(),
+            "emitted families with no row: {without_row:?}"
+        );
 
-    let mut failures = Vec::new();
-    for (fixture, outcomes) in &outcomes {
-        check_fixture(*fixture, &rows, outcomes, &mut failures);
-    }
-    for row in &rows {
-        match outcomes.get(&row.fixture) {
-            Some(outcomes) => check_row(row, outcomes, &mut failures),
-            None => failures.push(format!("{row:?}: its fixture is not in Fixture::ALL")),
+        check_fixture(fixture, &rows, &outcomes, &mut failures);
+        for row in rows.iter().filter(|row| row.fixture == fixture) {
+            check_row(row, &outcomes, &mut failures);
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");

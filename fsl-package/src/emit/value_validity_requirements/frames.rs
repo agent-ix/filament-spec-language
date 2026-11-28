@@ -10,7 +10,7 @@
 //! checker's per-record guard chain is compared with the chain a frame walk
 //! yields; no record keeps an expanded guard vector.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
     CheckedBindingNameKind, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2,
@@ -81,6 +81,7 @@ impl Table {
 enum Task<'a> {
     Node(&'a CheckedNodeId, Option<usize>),
     Term(&'a CheckedTerm, Option<usize>),
+    ExitNode(usize),
 }
 
 fn reference(term: &CheckedTerm) -> Option<&CheckedNodeId> {
@@ -160,6 +161,7 @@ impl<'a> Walk<'a> {
     ) -> HashMap<(usize, u64), Option<usize>> {
         let mut derived = HashMap::new();
         let mut visits = HashMap::<usize, usize>::new();
+        let mut active = HashSet::new();
         let mut pending = vec![Task::Node(root, None)];
         while let Some(task) = pending.pop() {
             match task {
@@ -167,6 +169,12 @@ impl<'a> Walk<'a> {
                     let Some(&position) = self.index.get(id) else {
                         continue;
                     };
+                    // A recursive graph can lead back to a node already on
+                    // this traversal path. Skip that back edge; sibling and
+                    // shared DAG paths are still visited independently.
+                    if !active.insert(position) {
+                        continue;
+                    }
                     let visit = visits.entry(position).or_default();
                     let occurrence = self.expression_ordinal(position, *visit);
                     *visit += 1;
@@ -176,6 +184,7 @@ impl<'a> Walk<'a> {
                     {
                         derived.insert((position, ordinal), terminal);
                     }
+                    pending.push(Task::ExitNode(position));
                     pending.push(Task::Term(&node.body, terminal));
                 }
                 Task::Term(term, terminal) => match term {
@@ -260,6 +269,9 @@ impl<'a> Walk<'a> {
                     }
                     _ => {}
                 },
+                Task::ExitNode(position) => {
+                    active.remove(&position);
+                }
             }
         }
         derived
