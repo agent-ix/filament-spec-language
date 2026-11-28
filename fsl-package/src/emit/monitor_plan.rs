@@ -1357,11 +1357,7 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-#[implements(
-    "FR-251-AC-9",
-    "FSpec-FR-322-AC-308",
-    "FSpec-FR-322-AC-309"
-)]
+#[implements("FSpec-FR-322-AC-309")]
 pub(super) fn finish(
     base: &CheckedPackageV2,
     retained: &Emission,
@@ -1560,11 +1556,7 @@ mod tests {
     /// The production final writer rekeys body origins with all four entries,
     /// keeping helper rows and checker coordinates intact. Scalar bodies let
     /// the strict reader check this independently of record-value traversal.
-    #[ix_trace_rs::trace(
-        "FR-251-AC-9",
-        "FSpec-FR-322-AC-308",
-        "FSpec-FR-322-AC-309"
-    )]
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-309")]
     #[test]
     fn final_writer_rekeys_four_entry_body_origins_and_refuses_a_stale_origin() {
         let (_, checked) = super::super::tests::package_from_text(
