@@ -14,6 +14,7 @@ use num_traits::Zero;
 use serde_json::{json, Value as JsonValue};
 
 mod admission;
+mod chain;
 mod elapsed;
 mod region;
 pub use admission::timed_certificate_route;
