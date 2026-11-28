@@ -10,11 +10,10 @@
 //!
 //! Over every scheduler the scheduler chooses each delay and each scheduled
 //! identity. Under a workload, a `discrete` delay distribution turns the race
-//! of ADR-026 SD-3 into one probabilistic edge per outcome; a delay no
-//! distribution gives stays the scheduler's choice: between a unit delay and
-//! the workload's resolution of the identity where every racing delay is
-//! free, and as the post-draw `FreeDelays` action where given and free delays
-//! race together (FR-204).
+//! of ADR-026 SD-3 into one probabilistic edge per outcome. An identity
+//! without a distribution has a scheduler-chosen delay in its enabled window;
+//! when given and free delays race together, the scheduler chooses the free
+//! delays after the given draws (FR-204).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
@@ -25,52 +24,32 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::probabilistic::TimedOperatorState;
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
-    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+    same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
+    PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
 };
-use fsl_eval::temporal::{
-    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TimedTrace,
-};
+use fsl_eval::simulation::StateKey;
 use fsl_replay::{
-    DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
+    digital_probability_product_key, region_probability_product_key, DigitalClockKey,
+    DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
     ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
-    digital_probability_product_key, region_probability_product_key,
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim,
-    ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, FormulaNodeId, ProbForm,
-    ProbScheduler, UnaryTemporal, Workload,
+    ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler,
+    UnaryTemporal, Workload,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
-fn push_timed_observation(history: &mut Vec<super::TimedObservation>, time: u64, values: &[bool]) {
-    // TimedTrace is admitted only for one atomic Eventually read. At a given
-    // timestamp its semantic summary is whether any observation was true.
-    if let Some(observation) = history.iter_mut().rev().find(|entry| entry.time == time) {
-        if observation.values.len() == values.len() {
-            for (summary, value) in observation.values.iter_mut().zip(values) {
-                *summary |= *value;
-            }
-            return;
-        }
-    }
-    history.push(super::TimedObservation {
-        time,
-        values: values.to_vec(),
-    });
-}
-
-use super::unbounded::{Choice, Graph, maximal_end_components_from, same_action};
+use super::unbounded::{maximal_end_components_from, same_action, Choice, Graph};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
     MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId,
-    ProductAction, ProductKind, ProductRefusal, ProductStop, TimedObservation, UndefinedPath,
-    UndefinedRead,
+    ProductAction, ProductKind, ProductRefusal, ProductStop, UndefinedPath, UndefinedRead,
 };
 
 pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
@@ -82,6 +61,8 @@ pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
 /// [`ProductRefusal`]: the admission causes of FR-204, a model that is not a
 /// Markov decision process or chain at some digital state, a budget or the
 /// cancellation.
+#[implements("FR-204-AC-1")]
+#[implements("FR-125-AC-9")]
 pub(super) fn build<'s, 'a>(
     system: &'s ModelSystem<'a>,
     timed: TimedSystem<'s, 'a>,
@@ -121,7 +102,7 @@ pub(super) fn build<'s, 'a>(
                 .into_iter()
                 .map(|instance| {
                     let reference = system
-                        .bound_reference(object.clone(), &instance)
+                        .written_reference(object.clone(), &instance)
                         .map_err(ProductRefusal::Internal)?;
                     Ok((Some(instance), Some(reference)))
                 })
@@ -155,9 +136,7 @@ pub(super) fn build<'s, 'a>(
     builder.run()
 }
 
-/// At a state whose racing identities all have free delays, the scheduler's
-/// choice to let the workload resolve the identity after `delay` units
-/// (ADR-028 TA-1, FR-204).
+/// A free identity resolved immediately under the existing workload rule.
 fn resolve_choice(
     representative: Option<&ScheduledIdentity>,
     taken: &Enabled<'_>,
@@ -181,15 +160,21 @@ fn zero() -> Rational {
     Rational::from_integer(Integer::zero())
 }
 
+/// The operators, occurrences, bounds and reads of [`Form::NestedDeadline`].
+struct NestedDeadline<'c> {
+    outer_kind: DeadlineKind,
+    outer_occurrence: u64,
+    outer_lower: Rational,
+    outer_upper: Rational,
+    inner_kind: DeadlineKind,
+    inner_occurrence: u64,
+    inner_lower: Rational,
+    inner_upper: Rational,
+    reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
+}
+
 /// The claim forms the digital route admits (ADR-028 TA-4).
 enum Form<'c> {
-    /// Any checked timed bounded-window formula, retained as its complete
-    /// AST and evaluated over exact timestamped product observations.
-    TimedTrace {
-        formula: &'c fsl_semantics::check::CheckedTemporalFormula,
-        horizon: Rational,
-        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
-    },
     /// `eventually[0, D] holds(P)` or `holds(A) until[0, D] holds(B)`.
     Deadline {
         kind: DeadlineKind,
@@ -199,16 +184,9 @@ enum Form<'c> {
         bound: Rational,
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
-    /// One punctual nested Always occurrence under a bounded Eventually.
-    NestedDeadline {
-        outer_occurrence: u64,
-        outer_lower: Rational,
-        outer_upper: Rational,
-        inner_occurrence: u64,
-        inner_lower: Rational,
-        inner_upper: Rational,
-        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
-    },
+    /// One punctual nested occurrence under its dual bounded operator:
+    /// `always` under `eventually`, or `eventually` under `always`.
+    NestedDeadline(Box<NestedDeadline<'c>>),
     /// Expected elapsed time until a checked state predicate holds.
     MeanTime {
         /// The expected-time comparison threshold in the model's time unit.
@@ -232,6 +210,7 @@ enum Form<'c> {
 }
 
 impl<'c> Form<'c> {
+    #[implements("FR-204-AC-21")]
     fn of(claim: &'c CheckedProbabilisticClaim) -> Result<Self, ProductRefusal> {
         let shape = || ProductRefusal::TimedFormShape {
             span: claim.span,
@@ -243,47 +222,6 @@ impl<'c> Form<'c> {
             claim: claim.occurrence().cloned(),
             member: claim.formula_member_path(chain),
         };
-        if let ProbForm::Probability {
-            event:
-                Event::Formula {
-                    formula,
-                    timed_horizon: Some(horizon),
-                    ..
-                },
-            ..
-        } = &claim.form
-        {
-            let checked = formula.formula();
-            let root = checked
-                .nodes()
-                .get(checked.root().index())
-                .ok_or_else(shape)?;
-            if let FormulaNode::Unary {
-                operator: UnaryTemporal::Eventually,
-                interval: Some(CheckedInterval::Timed(interval)),
-                operand,
-            } = root
-            {
-                if interval.lower().is_zero()
-                    && interval.lower_closed()
-                    && interval.upper_closed()
-                    && matches!(
-                        checked.nodes().get(operand.index()),
-                        Some(FormulaNode::Holds { .. })
-                    )
-                {
-                    let predicate = formula.condition(operand.index()).ok_or_else(shape)?;
-                    return Ok(Self::TimedTrace {
-                        formula,
-                        horizon: horizon.clone(),
-                        reads: vec![(
-                            UndefinedRead::Atom(FormulaNodeId::from_arena_index(operand.index())),
-                            predicate,
-                        )],
-                    });
-                }
-            }
-        }
         match &claim.form {
             ProbForm::MeanTime { bound, until } => Ok(Self::MeanTime {
                 bound: match bound {
@@ -307,63 +245,74 @@ impl<'c> Form<'c> {
                 };
                 let (kind, interval, atoms) = match root {
                     FormulaNode::Unary {
-                        operator: UnaryTemporal::Eventually,
+                        operator: operator @ (UnaryTemporal::Eventually | UnaryTemporal::Always),
                         interval: Some(CheckedInterval::Timed(interval)),
                         operand,
-                    } => match nodes.get(operand.index()) {
-                        Some(FormulaNode::Holds { .. }) => (
-                            DeadlineKind::Eventually,
-                            interval,
-                            vec![
-                                holds(*operand)
-                                    .ok_or_else(|| shape_at(&[root_at, operand.index()]))?,
-                            ],
-                        ),
-                        Some(FormulaNode::Unary {
-                            operator: UnaryTemporal::Always,
-                            interval: Some(CheckedInterval::Timed(inner)),
-                            operand: atom,
-                        }) => {
-                            let Some((id, predicate)) = holds(*atom) else {
-                                return Err(shape_at(&[root_at, operand.index(), atom.index()]));
-                            };
-                            let Some(inner_upper) = inner.upper() else {
-                                return Err(shape_at(&[root_at, operand.index()]));
-                            };
-                            if inner.lower() != inner_upper
-                                || !interval.lower_closed()
-                                || !interval.upper_closed()
-                                || !inner.lower_closed()
-                                || !inner.upper_closed()
-                            {
-                                return Err(shape_at(&[root_at]));
+                    } => {
+                        // Only the root operator's dual may nest under it.
+                        let (kind, dual, dual_kind) = if *operator == UnaryTemporal::Eventually {
+                            (
+                                DeadlineKind::Eventually,
+                                UnaryTemporal::Always,
+                                DeadlineKind::Always,
+                            )
+                        } else {
+                            (
+                                DeadlineKind::Always,
+                                UnaryTemporal::Eventually,
+                                DeadlineKind::Eventually,
+                            )
+                        };
+                        match nodes.get(operand.index()) {
+                            Some(FormulaNode::Holds { .. }) => (
+                                kind,
+                                interval,
+                                vec![holds(*operand)
+                                    .ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
+                            ),
+                            Some(FormulaNode::Unary {
+                                operator: inner_operator,
+                                interval: Some(CheckedInterval::Timed(inner)),
+                                operand: atom,
+                            }) if *inner_operator == dual => {
+                                let Some((id, predicate)) = holds(*atom) else {
+                                    return Err(shape_at(&[
+                                        root_at,
+                                        operand.index(),
+                                        atom.index(),
+                                    ]));
+                                };
+                                let Some(inner_upper) = inner.upper() else {
+                                    return Err(shape_at(&[root_at, operand.index()]));
+                                };
+                                if inner.lower() != inner_upper
+                                    || !interval.lower_closed()
+                                    || !interval.upper_closed()
+                                    || !inner.lower_closed()
+                                    || !inner.upper_closed()
+                                {
+                                    return Err(shape_at(&[root_at]));
+                                }
+                                return Ok(Self::NestedDeadline(Box::new(NestedDeadline {
+                                    outer_kind: kind,
+                                    outer_occurrence: u64::try_from(root_at)
+                                        .map_err(|_| shape_at(&[root_at]))?,
+                                    outer_lower: interval.lower().clone(),
+                                    outer_upper: interval
+                                        .upper()
+                                        .ok_or_else(|| shape_at(&[root_at]))?
+                                        .clone(),
+                                    inner_kind: dual_kind,
+                                    inner_occurrence: u64::try_from(operand.index())
+                                        .map_err(|_| shape_at(&[root_at, operand.index()]))?,
+                                    inner_lower: inner.lower().clone(),
+                                    inner_upper: inner_upper.clone(),
+                                    reads: vec![(UndefinedRead::Atom(id), predicate)],
+                                })));
                             }
-                            return Ok(Self::NestedDeadline {
-                                outer_occurrence: u64::try_from(root_at)
-                                    .map_err(|_| shape_at(&[root_at]))?,
-                                outer_lower: interval.lower().clone(),
-                                outer_upper: interval
-                                    .upper()
-                                    .ok_or_else(|| shape_at(&[root_at]))?
-                                    .clone(),
-                                inner_occurrence: u64::try_from(operand.index())
-                                    .map_err(|_| shape_at(&[root_at, operand.index()]))?,
-                                inner_lower: inner.lower().clone(),
-                                inner_upper: inner_upper.clone(),
-                                reads: vec![(UndefinedRead::Atom(id), predicate)],
-                            });
+                            _ => return Err(shape_at(&[root_at, operand.index()])),
                         }
-                        _ => return Err(shape_at(&[root_at, operand.index()])),
-                    },
-                    FormulaNode::Unary {
-                        operator: UnaryTemporal::Always,
-                        interval: Some(CheckedInterval::Timed(interval)),
-                        operand,
-                    } => (
-                        DeadlineKind::Always,
-                        interval,
-                        vec![holds(*operand).ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
-                    ),
+                    }
                     FormulaNode::Binary {
                         operator: BinaryTemporal::Until,
                         interval: Some(CheckedInterval::Timed(interval)),
@@ -427,14 +376,14 @@ impl<'c> Form<'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
-            Self::TimedTrace { reads, .. }
-            | Self::Deadline { reads, .. }
-            | Self::NestedDeadline { reads, .. }
+            Self::Deadline { reads, .. }
             | Self::MeanTime { reads, .. }
             | Self::Elapsed { reads, .. }
             | Self::Labels(reads) => reads,
+            Self::NestedDeadline(deadline) => &deadline.reads,
         }
     }
 }
@@ -534,6 +483,7 @@ fn add_rewards(
 
 /// The least common denominator of every time constant of the model and the
 /// claim (ADR-028 TA-3), as one positive integer.
+#[implements("FR-204-AC-1")]
 fn scale_of(
     system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
@@ -555,40 +505,11 @@ fn scale_of(
             note(lower);
             note(bound);
         }
-        Form::TimedTrace {
-            formula, horizon, ..
-        } => {
-            note(horizon);
-            for node in formula.formula().nodes() {
-                match node {
-                    FormulaNode::Unary {
-                        interval: Some(CheckedInterval::Timed(interval)),
-                        ..
-                    }
-                    | FormulaNode::Binary {
-                        interval: Some(CheckedInterval::Timed(interval)),
-                        ..
-                    } => {
-                        note(interval.lower());
-                        if let Some(upper) = interval.upper() {
-                            note(upper);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Form::NestedDeadline {
-            outer_lower,
-            outer_upper,
-            inner_lower,
-            inner_upper,
-            ..
-        } => {
-            note(outer_lower);
-            note(outer_upper);
-            note(inner_lower);
-            note(inner_upper);
+        Form::NestedDeadline(deadline) => {
+            note(&deadline.outer_lower);
+            note(&deadline.outer_upper);
+            note(&deadline.inner_lower);
+            note(&deadline.inner_upper);
         }
         Form::MeanTime { bound, .. } => note(bound),
         Form::Elapsed {
@@ -623,10 +544,7 @@ fn scale_of(
             .len()
             .checked_add(usize::from(matches!(
                 form,
-                Form::Deadline { .. }
-                    | Form::NestedDeadline { .. }
-                    | Form::TimedTrace { .. }
-                    | Form::Elapsed { .. }
+                Form::Deadline { .. } | Form::NestedDeadline(_) | Form::Elapsed { .. }
             )))
             .and_then(|count| count.checked_add(1))
             .and_then(|count| u64::try_from(count).ok())
@@ -688,21 +606,25 @@ fn units(value: &Rational, scale: u64) -> Option<u64> {
     remainder.is_zero().then(|| quotient.to_u64()).flatten()
 }
 
-/// Each clock place's cap: one plus its clock's largest scaled compared
-/// constant (FR-196 "Canonical probability product key").
+/// Each clock place's cap: one plus the largest scaled constant its value is
+/// compared with, in its clock field or in one a collection write carries it
+/// into (FR-196 "Canonical probability product key").
 fn caps_of(timed: &TimedSystem<'_, '_>, scale: &u64) -> Result<Vec<u64>, ProductRefusal> {
-    let mut largest: BTreeMap<fsl_semantics::check::ClockId, u64> = BTreeMap::new();
+    let mut largest = vec![0_u64; timed.model().clocks().len()];
     for constraint in model_constraints(timed) {
         let constant = units(constraint.bound(), *scale).ok_or_else(|| fault("constant-scales"))?;
-        let entry = largest.entry(constraint.clock()).or_insert(0);
+        let entry = largest
+            .get_mut(constraint.clock().index())
+            .ok_or_else(|| fault("clock-field-exists"))?;
         *entry = (*entry).max(constant);
     }
+    timed.raise_by_carries(&mut largest);
     timed
         .places()
         .iter()
         .map(|place| {
             largest
-                .get(&place.clock())
+                .get(place.clock().index())
                 .copied()
                 .unwrap_or(0)
                 .checked_add(1)
@@ -726,50 +648,6 @@ struct DState {
     clocks: Vec<u64>,
     deadline: Option<u64>,
     tail: Tail,
-    timed_history: Option<Vec<TimedObservation>>,
-}
-
-struct FormulaTraceLetters<'a> {
-    formula: &'a fsl_semantics::check::CheckedTemporalFormula,
-    history: &'a [TimedObservation],
-}
-
-impl TemporalLetters for FormulaTraceLetters<'_> {
-    fn activation(
-        &mut self,
-        _position: TemporalPosition,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<AtomReading, LetterStop> {
-        Ok(AtomReading::True)
-    }
-
-    fn atom(
-        &mut self,
-        atom: FormulaNodeId,
-        position: TemporalPosition,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<AtomReading, LetterStop> {
-        let values_before = self
-            .formula
-            .formula()
-            .nodes()
-            .iter()
-            .take(atom.index())
-            .filter(|node| matches!(node, FormulaNode::Holds { .. }))
-            .count();
-        let position = usize::try_from(position.index()).map_err(|_| LetterStop::Refused)?;
-        let value = self
-            .history
-            .get(position)
-            .and_then(|observation| observation.values.get(values_before))
-            .copied()
-            .ok_or(LetterStop::Refused)?;
-        Ok(if value {
-            AtomReading::True
-        } else {
-            AtomReading::False
-        })
-    }
 }
 
 /// What a discrete model state offers, computed once per state.
@@ -1084,24 +962,22 @@ impl<'c> Builder<'_, '_, 'c> {
         units(bound, self.scale).ok_or_else(|| fault("constant-scales").into())
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
-            Form::TimedTrace { horizon, .. } => self.bound_units(horizon).map(Some),
-            Form::NestedDeadline {
-                outer_upper,
-                inner_upper,
-                ..
-            } => self.bound_units(&outer_upper.add(inner_upper)).map(Some),
+            Form::NestedDeadline(deadline) => self
+                .bound_units(&deadline.outer_upper.add(&deadline.inner_upper))
+                .map(Some),
             Form::Elapsed { window, .. } => self.bound_units(window).map(Some),
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_lower(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { lower, .. } => self.bound_units(lower).map(Some),
-            Form::TimedTrace { .. } => Ok(Some(0)),
             _ => Ok(None),
         }
     }
@@ -1109,7 +985,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn local(&mut self, model: &ModelSimState) -> Step<Rc<Local>> {
         let (key, _) = self
             .system
-            .state_key(model)
+            .state_key(model, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("state-key-encodes"))?;
         if let Some(known) = self.locals.get(&key) {
             return Ok(Rc::clone(known));
@@ -1209,7 +1085,7 @@ impl<'c> Builder<'_, '_, 'c> {
             if let Some(blocked) = draws.iter().find(|draw| draw.posts.is_empty()) {
                 let (_, state) = self
                     .system
-                    .state_key(model)
+                    .state_key(model, fsl_foundation::IdentityLimits::default())
                     .map_err(|_| fault("state-key-encodes"))?;
                 return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                     state,
@@ -1237,7 +1113,7 @@ impl<'c> Builder<'_, '_, 'c> {
             self.poll()?;
             let (_, key) = self
                 .system
-                .state_key(model)
+                .state_key(model, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-key-encodes"))?;
             if keys.last().is_some_and(|previous| previous >= &key) {
                 return Err(fault("filtered-post-model-keys-are-distinct-and-ordered").into());
@@ -1249,6 +1125,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- keys and truths ---------------------------------------------------
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn key_of(
         &self,
         state: &DState,
@@ -1261,13 +1138,13 @@ impl<'c> Builder<'_, '_, 'c> {
             binding: self.bindings[binding].0.clone(),
             model: certificate_state.as_bytes().to_vec(),
             monitor,
-            timed_history: state.timed_history.clone(),
             accumulator: None,
             pending,
             certificate_state: Some(certificate_state),
         })
     }
 
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn certificate_key(
         &self,
         state: &DState,
@@ -1280,7 +1157,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
         let (discrete, _) = self
             .system
-            .state_key(&state.model)
+            .state_key(&state.model, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("certificate-discrete-state-key-encodes"))?;
         let discrete: JsonValue = serde_json::from_slice(&discrete)
             .map_err(|_| fault("certificate-discrete-state-key-is-json"))?;
@@ -1359,86 +1236,54 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             None => None,
         };
-        let monitor = if matches!(self.form, Form::TimedTrace { .. }) {
-            let horizon = self
-                .deadline_bound()?
-                .ok_or_else(|| fault("timed-trace-horizon-exists"))?;
-            let observations = state
-                .timed_history
-                .as_ref()
-                .ok_or_else(|| fault("timed-trace-history-exists"))?
-                .iter()
-                .map(|observation| {
-                    json!([
-                        observation.time.to_string(),
-                        observation.values.iter().copied().collect::<Vec<_>>()
-                    ])
-                })
-                .collect::<Vec<_>>();
-            let phase = match monitor {
-                Some(MonitorState::Deadline { phase, .. }) => match phase {
+        let monitor = monitor.map(|monitor| match monitor {
+            MonitorState::Deadline { kind, phase } => json!([
+                "deadline",
+                match kind {
+                    DeadlineKind::Eventually => "eventually",
+                    DeadlineKind::Always => "always",
+                    DeadlineKind::Until => "until",
+                },
+                match phase {
                     DeadlinePhase::Pending => "pending",
                     DeadlinePhase::Accept => "accept",
                     DeadlinePhase::Reject => "reject",
-                },
-                _ => return Err(fault("timed-trace-monitor-has-verdict-phase").into()),
-            };
-            Some(json!([
-                "timed-formula-trace",
-                horizon.to_string(),
-                observations,
-                phase
-            ]))
-        } else {
-            monitor.map(|monitor| match monitor {
-                MonitorState::Deadline { kind, phase } => json!([
-                    "deadline",
-                    match kind {
-                        DeadlineKind::Eventually => "eventually",
-                        DeadlineKind::Always => "always",
-                        DeadlineKind::Until => "until",
-                    },
-                    match phase {
-                        DeadlinePhase::Pending => "pending",
-                        DeadlinePhase::Accept => "accept",
-                        DeadlinePhase::Reject => "reject",
-                    }
-                ]),
-                MonitorState::TimedFormula { root, nested } => {
-                    let encode = |operator: TimedOperatorState| {
-                        json!([
-                            operator.occurrence.to_string(),
-                            match operator.kind {
-                                DeadlineKind::Eventually => "eventually",
-                                DeadlineKind::Always => "always",
-                                DeadlineKind::Until => "until",
-                            },
-                            operator.lower.to_string(),
-                            operator.upper.to_string(),
-                            operator.elapsed.to_string(),
-                            match operator.phase {
-                                DeadlinePhase::Pending => "pending",
-                                DeadlinePhase::Accept => "accept",
-                                DeadlinePhase::Reject => "reject",
-                            }
-                        ])
-                    };
-                    json!(["timed-formula", encode(root), nested.map(encode)])
                 }
-                MonitorState::Measure { phase, .. } => json!([
-                    "measure",
-                    null,
-                    match phase {
-                        MeasurePhase::Inactive => "inactive",
-                        MeasurePhase::Active => "active",
-                        MeasurePhase::Complete => "complete",
-                        MeasurePhase::Censored => "censored",
-                        MeasurePhase::Unactivated => "unactivated",
-                    }
-                ]),
-                _ => JsonValue::Null,
-            })
-        };
+            ]),
+            MonitorState::TimedFormula { root, nested } => {
+                let encode = |operator: TimedOperatorState| {
+                    json!([
+                        operator.occurrence.to_string(),
+                        match operator.kind {
+                            DeadlineKind::Eventually => "eventually",
+                            DeadlineKind::Always => "always",
+                            DeadlineKind::Until => "until",
+                        },
+                        operator.lower.to_string(),
+                        operator.upper.to_string(),
+                        operator.elapsed.to_string(),
+                        match operator.phase {
+                            DeadlinePhase::Pending => "pending",
+                            DeadlinePhase::Accept => "accept",
+                            DeadlinePhase::Reject => "reject",
+                        }
+                    ])
+                };
+                json!(["timed-formula", encode(root), nested.map(encode)])
+            }
+            MonitorState::Measure { phase, .. } => json!([
+                "measure",
+                null,
+                match phase {
+                    MeasurePhase::Inactive => "inactive",
+                    MeasurePhase::Active => "active",
+                    MeasurePhase::Complete => "complete",
+                    MeasurePhase::Censored => "censored",
+                    MeasurePhase::Unactivated => "unactivated",
+                }
+            ]),
+            _ => JsonValue::Null,
+        });
         let tail = match state.tail {
             Tail::Running => DigitalTail::Running,
             Tail::IdleReady => DigitalTail::IdleReady,
@@ -1538,7 +1383,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn truths(&mut self, state: &ModelSimState, binding: usize) -> Step<Result<Vec<bool>, Hit>> {
         let (model, state_key) = self
             .system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("state-key-encodes"))?;
         if let Some(known) = self.readings.get(&(binding, model.clone())) {
             return Ok(Ok(known.clone()));
@@ -1615,21 +1460,9 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
+    #[implements("FR-204-AC-21")]
     fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Step<Option<MonitorState>> {
         match &self.form {
-            Form::TimedTrace { .. } => {
-                let mut history = Vec::new();
-                push_timed_observation(&mut history, state.deadline.unwrap_or(0), truths);
-                state.timed_history = Some(history);
-                Ok(Some(MonitorState::Deadline {
-                    kind: DeadlineKind::Eventually,
-                    phase: if truths.first().copied().unwrap_or(false) {
-                        DeadlinePhase::Accept
-                    } else {
-                        DeadlinePhase::Pending
-                    },
-                }))
-            }
             Form::Elapsed { .. } => {
                 let mut phase = MeasurePhase::Inactive;
                 if truths.first().copied().unwrap_or(false) {
@@ -1658,28 +1491,20 @@ impl<'c> Builder<'_, '_, 'c> {
                     ),
                 }))
             }
-            Form::NestedDeadline {
-                outer_occurrence,
-                outer_lower,
-                outer_upper,
-                inner_occurrence,
-                inner_lower,
-                inner_upper,
-                ..
-            } => {
+            Form::NestedDeadline(deadline) => {
                 let mut root = TimedOperatorState {
-                    occurrence: *outer_occurrence,
-                    kind: DeadlineKind::Eventually,
-                    lower: self.bound_units(outer_lower)?,
-                    upper: self.bound_units(outer_upper)?,
+                    occurrence: deadline.outer_occurrence,
+                    kind: deadline.outer_kind,
+                    lower: self.bound_units(&deadline.outer_lower)?,
+                    upper: self.bound_units(&deadline.outer_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
                 };
                 let mut child = TimedOperatorState {
-                    occurrence: *inner_occurrence,
-                    kind: DeadlineKind::Always,
-                    lower: self.bound_units(inner_lower)?,
-                    upper: self.bound_units(inner_upper)?,
+                    occurrence: deadline.inner_occurrence,
+                    kind: deadline.inner_kind,
+                    lower: self.bound_units(&deadline.inner_lower)?,
+                    upper: self.bound_units(&deadline.inner_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
                 };
@@ -1699,105 +1524,30 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
-    /// The control after the source's delay and the letters of `posts` (the
-    /// discrete steps that follow the delay, none for a pure delay).
+    /// The letters a pure delay adds to a move that took no discrete step.
+    /// A delay is not a predicate position (ADR-026 TS-3), so a single
+    /// operator's event reads none and only its deadline clock moves. The
+    /// nested monitor reads `truths` once at each instant a delay reaches.
+    #[implements("FR-204-AC-21")]
+    fn delay_letters(&self, truths: &[bool]) -> Vec<Vec<bool>> {
+        match self.form {
+            Form::NestedDeadline(_) => vec![truths.to_vec()],
+            Form::Deadline { .. }
+            | Form::Elapsed { .. }
+            | Form::MeanTime { .. }
+            | Form::Labels(_) => Vec::new(),
+        }
+    }
+
+    /// The control after the source's delay and then `letters`: the
+    /// predicate positions that follow the delay.
+    #[implements("FR-204-AC-21")]
     fn control_after(
         &mut self,
         source: Option<MonitorState>,
         reached: &mut DState,
         letters: &[Vec<bool>],
     ) -> Step<Option<MonitorState>> {
-        if let Form::TimedTrace {
-            formula, horizon, ..
-        } = &self.form
-        {
-            let Some(mut history) = reached.timed_history.take() else {
-                return Err(fault("timed-formula-history-started-at-origin").into());
-            };
-            let time = reached.deadline.unwrap_or(0);
-            if let Some(previous) = history.last().cloned() {
-                let mut at = previous.time.saturating_add(1);
-                while at < time {
-                    push_timed_observation(&mut history, at, &previous.values);
-                    at = at.saturating_add(1);
-                }
-                if letters
-                    .first()
-                    .map_or(true, |next| *next != previous.values)
-                {
-                    push_timed_observation(&mut history, time, &previous.values);
-                }
-            }
-            for truths in letters {
-                push_timed_observation(&mut history, time, truths);
-            }
-            reached.timed_history = Some(history);
-            let mut phase = match source {
-                Some(MonitorState::Deadline { phase, .. }) => phase,
-                _ => DeadlinePhase::Pending,
-            };
-            let horizon_units = self.bound_units(horizon)?;
-            if phase == DeadlinePhase::Pending
-                && time <= horizon_units
-                && reached.timed_history.as_ref().is_some_and(|history| {
-                    history.iter().any(|observation| {
-                        observation.time <= horizon_units
-                            && observation.values.first().copied().unwrap_or(false)
-                    })
-                })
-            {
-                phase = DeadlinePhase::Accept;
-            }
-            if phase == DeadlinePhase::Pending && time > horizon_units {
-                let limit = Rational::from_integer(Integer::from(horizon_units));
-                let scale = Rational::from_integer(Integer::from(self.scale));
-                let through = limit
-                    .div(&scale)
-                    .ok_or_else(|| fault("timed-trace-horizon-scales"))?;
-                let observations: Vec<_> = reached
-                    .timed_history
-                    .as_ref()
-                    .expect("history was set above")
-                    .iter()
-                    .filter(|observation| observation.time <= horizon_units)
-                    .collect();
-                let stamps = observations
-                    .iter()
-                    .map(|observation| {
-                        Rational::new(Integer::from(observation.time), Integer::from(self.scale))
-                            .map_err(|_| fault("timed-trace-stamp-scales"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let trace = TimedTrace::through(stamps, through)
-                    .map_err(|_| fault("timed-trace-closes-at-formula-horizon"))?;
-                let values = observations
-                    .iter()
-                    .map(|observation| (*observation).clone())
-                    .collect::<Vec<_>>();
-                let mut letters = FormulaTraceLetters {
-                    formula,
-                    history: &values,
-                };
-                let mut meter = filament_exact::Meter::new(self.system.meter_limits());
-                phase = match fsl_eval::temporal::evaluate_timed_formula_at(
-                    formula.formula(),
-                    &trace,
-                    TemporalPosition::new(0),
-                    &mut letters,
-                    &mut meter,
-                )
-                .map_err(|_| fault("timed-formula-evaluator-accepts-checked-input"))?
-                {
-                    TemporalOutcome::Holds => DeadlinePhase::Accept,
-                    TemporalOutcome::Violated { .. } => DeadlinePhase::Reject,
-                    _ => return Err(fault("timed-formula-decides-at-closed-horizon").into()),
-                };
-            }
-            return Ok(Some(MonitorState::Deadline {
-                kind: DeadlineKind::Eventually,
-                phase,
-            }));
-        }
         if matches!(self.form, Form::Elapsed { .. }) {
             let Some(MonitorState::Measure { mut phase, .. }) = source else {
                 return Ok(None);
@@ -1876,6 +1626,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     // -- exploration ---------------------------------------------------------
 
+    #[implements("FR-204-AC-1")]
     fn explore(&mut self) -> Step<Vec<(u32, Option<ModelInstance>, ProbStateId)>> {
         self.poll()?;
         let deadline = if matches!(self.form, Form::Elapsed { .. }) {
@@ -1891,7 +1642,6 @@ impl<'c> Builder<'_, '_, 'c> {
                 clocks: self.digital(initial.clocks())?,
                 deadline,
                 tail: Tail::Running,
-                timed_history: None,
             };
             for binding in 0..self.bindings.len() {
                 let truths = match self.truths(&state.model, binding)? {
@@ -1902,11 +1652,7 @@ impl<'c> Builder<'_, '_, 'c> {
                                 kind: *kind,
                                 phase: DeadlinePhase::Pending,
                             }),
-                            Form::NestedDeadline { .. } => {
-                                let mut state = state.clone();
-                                self.deadline_start(&[], &mut state)?
-                            }
-                            Form::TimedTrace { .. } => {
+                            Form::NestedDeadline(_) => {
                                 let mut state = state.clone();
                                 self.deadline_start(&[], &mut state)?
                             }
@@ -2070,6 +1816,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The target reached from node `at` by `reached` after the letters of
     /// the discrete steps listed in `landed` (model states, in order).
+    #[implements("FR-204-AC-21")]
     fn arrive(
         &mut self,
         at: usize,
@@ -2107,7 +1854,7 @@ impl<'c> Builder<'_, '_, 'c> {
             },
         };
         if letters.is_empty() {
-            letters.push(truths.clone());
+            letters = self.delay_letters(&truths);
         }
         let source = self.nodes[at].key.monitor;
         let monitor = self.control_after(source, &mut reached, &letters)?;
@@ -2208,6 +1955,7 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     /// A pure delay move to `clocks`/`deadline` with the tail `tail`.
+    #[implements("FR-204-AC-5")]
     fn delay_move(&mut self, movement: DelayMove<'_>) -> Step<Planned> {
         let DelayMove {
             at,
@@ -2224,7 +1972,6 @@ impl<'c> Builder<'_, '_, 'c> {
             clocks: delayed.0,
             deadline: delayed.1,
             tail,
-            timed_history: state.timed_history.clone(),
         };
         let taken = TraceStep {
             action: None,
@@ -2251,6 +1998,60 @@ impl<'c> Builder<'_, '_, 'c> {
         })
     }
 
+    /// The representative of `state`'s region that the delay walk starts from:
+    /// the same integer parts and the same order of fractions, each nonzero
+    /// fraction moved down to its rank among them (FR-922). A representative
+    /// can leave a fraction one unit below the next integer while another
+    /// clock sits on one, and a single unit step then leaves both at once,
+    /// passing the region between. Packed at their ranks, the fractions leave
+    /// that unit free, since there are fewer of them than subdivisions.
+    ///
+    /// A mean-time claim keys concrete corner values and a nested formula
+    /// keys concrete monitor times, so neither representative is moved.
+    #[implements("FR-922-AC-4")]
+    fn packed_representative(&self, state: &DState) -> Step<DState> {
+        let parts = self.subdivisions;
+        if parts == 1 || matches!(self.form, Form::MeanTime { .. } | Form::NestedDeadline(_)) {
+            return Ok(state.clone());
+        }
+        // The deadline or measure clock has a fraction while it is inside the
+        // range its key ranks.
+        let deadline_end = self.deadline_bound()?.map(|bound| bound + parts);
+        let deadline = state
+            .deadline
+            .filter(|elapsed| deadline_end.is_some_and(|end| *elapsed < end));
+        let fractions: BTreeSet<u64> = state
+            .clocks
+            .iter()
+            .zip(&self.caps)
+            .filter(|(value, cap)| value < cap)
+            .map(|(value, _)| *value)
+            .chain(deadline)
+            .map(|value| value % parts)
+            .filter(|fraction| *fraction > 0)
+            .collect();
+        let pack = |value: u64| match value % parts {
+            0 => value,
+            fraction => value - fraction + fractions.range(..=fraction).count() as u64,
+        };
+        Ok(DState {
+            clocks: state
+                .clocks
+                .iter()
+                .zip(&self.caps)
+                .map(|(value, cap)| if value < cap { pack(*value) } else { *value })
+                .collect(),
+            deadline: state.deadline.map(|elapsed| {
+                if deadline.is_some() {
+                    pack(elapsed)
+                } else {
+                    elapsed
+                }
+            }),
+            ..state.clone()
+        })
+    }
+
     /// The delay and observation moves every running state offers.
     fn running_delays(
         &mut self,
@@ -2259,6 +2060,7 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Local,
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
+        let state = &self.packed_representative(state)?;
         if let Some(first_delay) = self.unit_delay(local, state)? {
             if self.subdivisions == 1 {
                 let unit = self.delay_move(DelayMove {
@@ -2275,33 +2077,14 @@ impl<'c> Builder<'_, '_, 'c> {
                     planned.push(unit);
                 }
             } else {
-                let current_key = self.nodes[at].key.clone();
-                let mut cursor = state.clone();
-                for elapsed_ticks in 1..=self.subdivisions {
-                    self.poll()?;
-                    let Some(delayed) = self.unit_delay(local, &cursor)? else {
-                        break;
-                    };
-                    let unit = self.delay_move(DelayMove {
-                        at,
-                        state: &cursor,
-                        choice: ProductAction::UnitDelay,
-                        delayed: delayed.clone(),
-                        tail: Tail::Running,
-                        elapsed_ticks,
-                        planned,
-                        omit_unchanged: true,
-                    })?;
-                    if unit.target.key != current_key {
-                        planned.push(unit);
-                        break;
-                    }
-                    if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
-                        break;
-                    }
-                    cursor.clocks = delayed.0;
-                    cursor.deadline = delayed.1;
-                }
+                self.successor_delay(
+                    at,
+                    state,
+                    local,
+                    ProductAction::UnitDelay,
+                    Tail::Running,
+                    planned,
+                )?;
             }
             if local.quiescent {
                 planned.push(self.delay_move(DelayMove {
@@ -2319,10 +2102,81 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(())
     }
 
+    /// The region route's delay, taken to the time successor (FR-922): the
+    /// first region the walk reaches that differs from the one `state` is in,
+    /// both read under the tail `tail`.
+    ///
+    /// Interim: a walk over a finer grid, not the symbolic region MDP of
+    /// ADR-038 RL-3 (QSL-3495), and no claim of exactness.
+    #[implements("FR-922-AC-4")]
+    fn successor_delay(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Local,
+        choice: ProductAction,
+        tail: Tail,
+        planned: &mut Vec<Planned>,
+    ) -> Step<()> {
+        // From a state already under `tail` the region it is in is its own key.
+        let stay = if state.tail == tail {
+            self.nodes[at].key.clone()
+        } else {
+            let binding = self.binding_of(at)?;
+            let monitor = self.nodes[at].key.monitor;
+            let here = DState {
+                tail,
+                ..state.clone()
+            };
+            self.key_of(&here, binding, monitor, None)?
+        };
+        let mut cursor = self.packed_representative(state)?;
+        for elapsed_ticks in 1..=self.subdivisions {
+            self.poll()?;
+            let Some(delayed) = self.unit_delay(local, &cursor)? else {
+                break;
+            };
+            let moved = self.delay_move(DelayMove {
+                at,
+                state: &cursor,
+                choice: choice.clone(),
+                delayed: delayed.clone(),
+                tail,
+                elapsed_ticks,
+                planned,
+                omit_unchanged: true,
+            })?;
+            if moved.target.key != stay {
+                planned.push(moved);
+                break;
+            }
+            if delayed.0 == cursor.clocks && delayed.1 == cursor.deadline {
+                // No later region: waiting stays here, which is still a
+                // move for a state not yet under `tail`.
+                if state.tail != tail {
+                    planned.push(moved);
+                }
+                break;
+            }
+            cursor.clocks = delayed.0;
+            cursor.deadline = delayed.1;
+        }
+        Ok(())
+    }
+
     fn idle_moves(&mut self, at: usize, state: &DState) -> Step<Vec<Planned>> {
         let local = self.local(&state.model)?;
         let mut planned = Vec::new();
-        if let Some(delayed) = self.unit_delay(&local, state)? {
+        if self.subdivisions != 1 {
+            self.successor_delay(
+                at,
+                state,
+                &local,
+                ProductAction::IdleDelay,
+                Tail::IdleDelayed,
+                &mut planned,
+            )?;
+        } else if let Some(delayed) = self.unit_delay(&local, state)? {
             let delay = self.delay_move(DelayMove {
                 at,
                 state,
@@ -2331,11 +2185,9 @@ impl<'c> Builder<'_, '_, 'c> {
                 tail: Tail::IdleDelayed,
                 elapsed_ticks: 1,
                 planned: &planned,
-                omit_unchanged: self.subdivisions != 1,
+                omit_unchanged: false,
             })?;
-            if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
-                planned.push(delay);
-            }
+            planned.push(delay);
         }
         if state.tail == Tail::IdleDelayed {
             let reached = DState {
@@ -2387,6 +2239,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// scheduler chooses among identities tied at the least sampled delay.
     /// Free-delay identities remain ordinary scheduler choices and are
     /// handled by the running clock moves until a discrete race is admitted.
+    #[implements("FR-204-AC-21")]
     fn every_discrete_moves(
         &mut self,
         at: usize,
@@ -2486,12 +2339,8 @@ impl<'c> Builder<'_, '_, 'c> {
             // Inspect the monitor before allocating a terminal target. A
             // nonterminal delay is only the start of the tied chain.
             let mut probe = start.clone();
-            let source_truths = self.nodes[at].truths.clone();
-            let monitor = self.control_after(
-                self.nodes[at].key.monitor,
-                &mut probe,
-                std::slice::from_ref(&source_truths),
-            )?;
+            let letters = self.delay_letters(&self.nodes[at].truths);
+            let monitor = self.control_after(self.nodes[at].key.monitor, &mut probe, &letters)?;
             if matches!(
                 monitor,
                 Some(
@@ -2551,6 +2400,7 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     /// The edges of one enabled identity at `state`, scaled by `share`.
+    #[implements("FR-204-AC-3", "FR-204-AC-18", "FR-204-AC-19")]
     fn identity_edges(
         &mut self,
         at: usize,
@@ -2572,7 +2422,6 @@ impl<'c> Builder<'_, '_, 'c> {
                 clocks: clocks.to_vec(),
                 deadline: state.deadline,
                 tail: Tail::Running,
-                timed_history: state.timed_history.clone(),
             };
             if let [(model, clocks)] = draw.posts.as_slice() {
                 let reached = post(model, clocks);
@@ -2773,6 +2622,7 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(windows)
     }
 
+    #[implements("FR-204-AC-24", "FR-921-AC-7")]
     fn workload_moves(
         &mut self,
         at: usize,
@@ -2815,9 +2665,16 @@ impl<'c> Builder<'_, '_, 'c> {
                 .collect::<Step<Vec<_>>>()?;
             racers.push((window, conditioned));
         }
+        if free && !matches!(self.form, Form::MeanTime { .. }) {
+            self.refuse_undecided_free_delays(state, local, &windows, reached)?;
+        }
         if racers.is_empty() && free {
-            // Every racing delay is free (FR-204).
-            return self.free_moves(at, state, local, workload, (&windows, reached));
+            if !matches!(self.form, Form::MeanTime { .. }) {
+                return self.free_moves(at, state, local, workload);
+            }
+            // Every racing delay is free: each scheduler-selected assignment
+            // races through the workload resolver at its earliest delay.
+            return self.free_delays_moves(at, workload, &trajectory, Vec::new(), &windows);
         }
         if racers.is_empty() {
             let mut planned = Vec::new();
@@ -2893,6 +2750,94 @@ impl<'c> Builder<'_, '_, 'c> {
         Ok(planned)
     }
 
+    /// FR-203-AC-17: free-delay probability claims remain unsupported where
+    /// the old and scheduler-chosen delay readings can disagree.
+    #[implements("FR-203-AC-17")]
+    fn refuse_undecided_free_delays(
+        &mut self,
+        state: &DState,
+        local: &Rc<Local>,
+        windows: &[Window],
+        reached: u64,
+    ) -> Step<()> {
+        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
+        enabled.retain(|action| self.given(&action.identity.operation).is_none());
+        if enabled.len() >= 2 {
+            return Err(ProductRefusal::WorkloadFreeDelays(
+                fsl_replay::WorkloadFreeDelayRefusal::ManyFreeEnabled,
+            )
+            .into());
+        }
+        if reached >= 1 {
+            for action in &enabled {
+                let closes = windows
+                    .iter()
+                    .find(|window| window.identity == action.identity)
+                    .is_some_and(|window| !window.contains(1, reached));
+                if closes {
+                    return Err(ProductRefusal::WorkloadFreeDelays(
+                        fsl_replay::WorkloadFreeDelayRefusal::ClosesBeforeFiring,
+                    )
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A single unambiguous free identity retains FR-204's existing workload
+    /// resolution when the claim is not a MeanTime infinity proof.
+    fn free_moves(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Rc<Local>,
+        workload: &Workload,
+    ) -> Step<Vec<Planned>> {
+        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
+        enabled.retain(|action| self.given(&action.identity.operation).is_none());
+        let mut planned = Vec::new();
+        self.running_delays(at, state, local, &mut planned)?;
+        let mut operations: BTreeMap<String, (Rational, u64)> = BTreeMap::new();
+        for action in &enabled {
+            let operation = action.identity.operation.clone();
+            if !operations.contains_key(&operation) {
+                let weight = self.weight_of(workload, &operation)?;
+                operations.insert(operation.clone(), (weight, 0));
+            }
+            if let Some(entry) = operations.get_mut(&operation) {
+                entry.1 += 1;
+            }
+        }
+        let total = operations
+            .values()
+            .fold(zero(), |sum, (weight, _)| sum.add(weight));
+        let representative = enabled.first().map(|action| action.identity.clone());
+        for action in &enabled {
+            let (weight, identities) = operations
+                .get(action.identity.operation.as_str())
+                .ok_or_else(|| fault("operation-is-counted"))?;
+            let share = weight
+                .div(&total)
+                .and_then(|share| {
+                    share.div(&Rational::from_integer(Integer::from_big(BigInt::from(
+                        *identities,
+                    ))))
+                })
+                .ok_or_else(|| fault("workload-share"))?;
+            let first = planned.len();
+            self.identity_edges(at, state, action, share, &mut planned)?;
+            for edge in &mut planned[first..] {
+                edge.choice = resolve_choice(representative.as_ref(), action, 0);
+            }
+        }
+        if planned.is_empty() {
+            self.time_locked.push(at);
+        }
+        self.decisions = true;
+        Ok(planned)
+    }
+
     /// FR-204: given and free delays race together. The scheduler chooses
     /// every free racing identity's delay after the given delays are drawn
     /// (ADR-026 SD-3), as the `FreeDelays` action. The product builds its row
@@ -2900,6 +2845,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// order, and per assignment of a delay in its window to every free
     /// identity, in ascending numeric order, the race of `g` with that
     /// assignment, its edges carrying `P(g)` times the outcome's mass.
+    #[implements("FR-204-AC-24", "FR-921-AC-7")]
     fn free_delays_moves(
         &mut self,
         at: usize,
@@ -3055,6 +3001,7 @@ impl<'c> Builder<'_, '_, 'c> {
 
     /// The edges of one race outcome: the state after the winning delay, then
     /// each tied identity in order while it is still enabled.
+    #[implements("FR-204-AC-20")]
     fn chain_edges(
         &mut self,
         at: usize,
@@ -3099,7 +3046,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     let [(model, clocks)] = draw.posts.as_slice() else {
                         let (_, state) = self
                             .system
-                            .state_key(&current.model)
+                            .state_key(&current.model, fsl_foundation::IdentityLimits::default())
                             .map_err(|_| fault("state-key-encodes"))?;
                         return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                             state,
@@ -3118,7 +3065,6 @@ impl<'c> Builder<'_, '_, 'c> {
                         clocks: clocks.clone(),
                         deadline: current.deadline,
                         tail: Tail::Running,
-                        timed_history: current.timed_history.clone(),
                     });
                     next.push((
                         chain_probability.mul(&draw.probability),
@@ -3184,88 +3130,6 @@ impl<'c> Builder<'_, '_, 'c> {
             });
         }
         Ok(())
-    }
-
-    /// Under a workload whose racing identities all have free delays: the
-    /// scheduler chooses between a unit delay and letting the workload resolve
-    /// the identity now (ADR-028 TA-1, RU-6). An identity with a given delay
-    /// does not race here, so the workload resolves among the free ones only.
-    fn free_moves(
-        &mut self,
-        at: usize,
-        state: &DState,
-        local: &Rc<Local>,
-        workload: &Workload,
-        reading: (&[Window], u64),
-    ) -> Step<Vec<Planned>> {
-        let mut enabled = self.enabled(local, &state.model, &state.clocks)?;
-        enabled.retain(|action| self.given(&action.identity.operation).is_none());
-        // FR-204 reads this state as `UnitDelay` and one weighted
-        // `WorkloadResolve`; ADR-026 SD-1 and SD-3 have the scheduler pick each
-        // free identity's delay inside its window. The readings differ where
-        // several free identities are enabled now and where the unit delay
-        // disables one, so neither is decided here.
-        let (windows, reached) = reading;
-        if enabled.len() >= 2 {
-            return Err(ProductRefusal::WorkloadFreeDelays(
-                fsl_replay::WorkloadFreeDelayRefusal::ManyFreeEnabled,
-            )
-            .into());
-        }
-        if reached >= 1 {
-            for action in &enabled {
-                let closes = windows
-                    .iter()
-                    .find(|window| window.identity == action.identity)
-                    .is_some_and(|window| !window.contains(1, reached));
-                if closes {
-                    return Err(ProductRefusal::WorkloadFreeDelays(
-                        fsl_replay::WorkloadFreeDelayRefusal::ClosesBeforeFiring,
-                    )
-                    .into());
-                }
-            }
-        }
-        let mut planned = Vec::new();
-        self.running_delays(at, state, local, &mut planned)?;
-        let mut operations: BTreeMap<String, (Rational, u64)> = BTreeMap::new();
-        for action in &enabled {
-            let operation = action.identity.operation.clone();
-            if !operations.contains_key(&operation) {
-                let weight = self.weight_of(workload, &operation)?;
-                operations.insert(operation.clone(), (weight, 0));
-            }
-            if let Some(entry) = operations.get_mut(&operation) {
-                entry.1 += 1;
-            }
-        }
-        let total = operations
-            .values()
-            .fold(zero(), |sum, (weight, _)| sum.add(weight));
-        let representative = enabled.first().map(|action| action.identity.clone());
-        for action in &enabled {
-            let (weight, identities) = operations
-                .get(action.identity.operation.as_str())
-                .ok_or_else(|| fault("operation-is-counted"))?;
-            let share = weight
-                .div(&total)
-                .and_then(|share| {
-                    share.div(&Rational::from_integer(Integer::from_big(BigInt::from(
-                        *identities,
-                    ))))
-                })
-                .ok_or_else(|| fault("workload-share"))?;
-            let first = planned.len();
-            self.identity_edges(at, state, action, share, &mut planned)?;
-            for edge in &mut planned[first..] {
-                edge.choice = resolve_choice(representative.as_ref(), action, 0);
-            }
-        }
-        if planned.is_empty() {
-            self.time_locked.push(at);
-        }
-        self.decisions = true;
-        Ok(planned)
     }
 
     // -- the finished product --------------------------------------------------

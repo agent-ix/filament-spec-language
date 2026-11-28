@@ -5,10 +5,16 @@ use std::collections::{HashMap, VecDeque};
 
 use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{ClockValuation, TimedState, TimedStop, TimedSystem};
+use fsl_eval::simulation::model::{
+    ClockValuation, TimedState, TimedStop, TimedSystem, UndecidedReading,
+};
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::TransitionSystem;
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
+
+use crate::timed::model_constants;
 
 /// A limit that stopped integer-clock graph expansion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,11 +50,36 @@ pub struct DigitalStateGraph {
     pub edges: Vec<DigitalGraphEdge>,
     /// Initial node indices.
     pub initials: Vec<usize>,
+    /// Undefined timed evaluations at reachable nodes, in discovery order.
+    pub undefined: Vec<DigitalGraphUndefined>,
     /// One exact clock unit in the common denominator scale.
     pub unit: Rational,
 }
 
+/// An undefined timed evaluation encountered while exploring a digital node.
+#[derive(Clone, Debug)]
+pub struct DigitalGraphUndefined {
+    /// The graph node where evaluation was undefined.
+    pub node: usize,
+    /// The timed member, optional transition identity, and cause.
+    pub reading: UndecidedReading,
+}
+
 /// Explore a closed timed subject on integer clock values.
+#[implements(
+    "FR-852-AC-12",
+    "FR-852-AC-13",
+    "FR-852-AC-14",
+    "FR-852-AC-15",
+    "FR-852-AC-20",
+    "FR-852-AC-21",
+    "FR-852-AC-22",
+    "FR-852-AC-23",
+    "FR-852-AC-28",
+    "FR-852-AC-29",
+    "FR-852-AC-30",
+    "FR-852-AC-31"
+)]
 pub fn explore_digital_state_graph(
     timed: &TimedSystem<'_, '_>,
     max_states: u64,
@@ -60,6 +91,7 @@ pub fn explore_digital_state_graph(
         nodes: Vec::new(),
         edges: Vec::new(),
         initials: Vec::new(),
+        undefined: Vec::new(),
         unit: unit.clone(),
     };
     let mut indices = HashMap::<StateKey, usize>::new();
@@ -104,10 +136,43 @@ pub fn explore_digital_state_graph(
                 insert_edge(from, to, None, max_transitions, &mut graph.edges)?;
             }
         }
-        for (step, next) in timed
-            .steps(&state)
-            .map_err(|stop| limit_from_stop(stop, max_states))?
+        let steps = match timed.steps(&state) {
+            Ok(steps) => steps,
+            Err(TimedStop::Undecided(reading)) if reading.cause.is_some() => {
+                graph.undefined.push(DigitalGraphUndefined {
+                    node: from,
+                    reading: *reading,
+                });
+                Vec::new()
+            }
+            Err(stop) => return Err(limit_from_stop(stop, max_states)),
+        };
+        if !graph
+            .undefined
+            .iter()
+            .any(|undefined| undefined.node == from)
         {
+            let system = timed.system();
+            if let Ok(expansion) = system.successors(state.discrete()) {
+                if let Ok(fsl_eval::simulation::model::TerminalClass::Undefined { model, cause }) =
+                    system.terminal_class(state.discrete(), !expansion.successors.is_empty())
+                {
+                    graph.undefined.push(DigitalGraphUndefined {
+                        node: from,
+                        reading: UndecidedReading {
+                            site: fsl_eval::simulation::model::TimedSite::Terminal {
+                                model: model.identity().to_owned(),
+                            },
+                            object: None,
+                            cause: Some(cause),
+                            transition: None,
+                            location: system.terminal_locus(&model),
+                        },
+                    });
+                }
+            }
+        }
+        for (step, next) in steps {
             let to = insert_state(
                 timed,
                 capped(next, &cap),
@@ -183,50 +248,16 @@ fn capped(state: TimedState, cap: &Rational) -> TimedState {
 }
 
 fn grid(timed: &TimedSystem<'_, '_>) -> (Rational, Rational) {
-    let model = timed.model();
-    let mut constants: Vec<Rational> = model
-        .guards()
-        .iter()
-        .flat_map(|guard| guard.parts())
-        .flat_map(|part| {
-            part.clocks()
-                .iter()
-                .map(|constraint| constraint.bound().clone())
-        })
-        .chain(
-            model
-                .guards()
-                .iter()
-                .flat_map(|guard| guard.parts())
-                .flat_map(|part| part.families())
-                .flat_map(|family| family.parts())
-                .flat_map(|part| {
-                    part.clocks()
-                        .iter()
-                        .map(|constraint| constraint.bound().clone())
-                }),
-        )
-        .chain(model.invariants().iter().flat_map(|invariant| {
-            invariant
-                .bounds()
-                .iter()
-                .map(|constraint| constraint.bound().clone())
-        }))
-        .chain(
-            model
-                .resets()
-                .iter()
-                .flat_map(|resets| resets.resets().iter().map(|reset| reset.value().clone())),
-        )
-        .collect();
+    let constants = model_constants(timed);
     let scale = constants.iter().fold(BigInt::from(1), |scale, value| {
         scale.lcm(value.denominator().as_big())
     });
     let unit = Rational::new(Integer::one(), Integer::from_big(scale))
         .unwrap_or_else(|_| Rational::from_integer(Integer::one()));
     let largest = constants
-        .drain(..)
+        .into_iter()
         .max()
+        .cloned()
         .unwrap_or_else(|| Rational::from_integer(Integer::zero()));
     let cap = largest.add(&unit);
     (unit, cap)

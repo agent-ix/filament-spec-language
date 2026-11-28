@@ -11,7 +11,7 @@ use crate::analyze_cli_support::{
 };
 use crate::hyper_world::{request_files_over_starts, Vault, STARTS};
 use crate::package_model_relation::assert_tuple_evaluator_parity;
-use crate::relation_claims::DETERMINISTIC;
+use crate::relation_claims_support::DETERMINISTIC;
 
 /// The request explicitly selects the relation's TemporalSatisfaction capability.
 /// Both routes retain the same model documents, snapshots, limits and options.
@@ -53,7 +53,7 @@ fn step_relation_package_preserves_whole_result_exit_and_tuple_charges() {
             serde_json::from_slice(&std::fs::read(&path).expect("source request"))
                 .expect("request JSON");
         let (members, bytes) = package_selection_named(&ws, &request["request"], package_name);
-        let (packages, _, _) = crate::relation_claims::initial_world(&model);
+        let (packages, _, _) = crate::relation_claims_support::initial_world(&model);
         let admitted = fsl_package::admit_checked_package(
             &bytes,
             &packages,

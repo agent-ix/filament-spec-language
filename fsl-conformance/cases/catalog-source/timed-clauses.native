@@ -1,0 +1,11 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.complete/v1";
+model Config = "catalog/timed";
+dimension Time;
+unit ms : Time = rational(1, 1);
+time Config dense unit ms;
+pre Late using v on Config::ConfigVersion::attemptUpdate { self.x >= 1 ms and self.versionNumber > 0 or self.x < 5 ms }
+post Reset using v on Config::ConfigVersion::attemptUpdate { self.x = 0 ms }
+time invariant Bounded when { self.versionNumber >= 0 } { self.x <= 9 ms }
+urgent Always when { true };

@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model M = "acme/orders";
+function refers using v(): Boolean pure { protocol Fill }
+protocol Fill using p over (input: M::Gadget) on origin {
+role R on M::Gadget;
+run sequence Main { }
+finish End as (outcome: Boolean) { true };
+}

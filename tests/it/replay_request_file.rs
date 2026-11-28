@@ -477,7 +477,7 @@ fn an_entry_point_refuses_the_limits_of_another_operation() {
 /// bounds the reader, and `accounting.work_units` reaches the replay's
 /// accounting.
 #[test]
-#[trace("TC-721", "FR-121-AC-12")]
+#[trace("TC-721", "FR-121-AC-12", "FR-255-AC-24")]
 fn replay_with_limits_applies_the_callers_settings() {
     use fsl_command::command::{CommandLimits, RunLimits};
     use fsl_foundation::{AccountingSetting, SettingName};
@@ -538,4 +538,111 @@ fn replay_with_limits_applies_the_callers_settings() {
             .contains("s1.tokens"),
         "{document}"
     );
+
+    // The recompile emits the package under the caller's E4 bound.
+    let mut emit = CommandLimits::replay();
+    emit.set(
+        SettingName::Stage(fsl_foundation::Setting::EmitOutputBytes),
+        1,
+    )
+    .expect("replay exposes the emit limit");
+    let error = fsl_command::command::replay_with_limits(&path, RunLimits::default(), &emit)
+        .expect_err("one byte cannot hold the recompiled package");
+    let outcome = error.outcome_document(fsl_replay::Operation::Replay);
+    let document: Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "stage_limit_exceeded", "{document}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("emit.output_bytes"),
+        "{document}"
+    );
+}
+
+/// FR-255-AC-33: a `native-replay/1` file run through `run` refuses a clocks
+/// override and an output override, naming each, and applies the caller's
+/// accounting counter.
+#[test]
+#[trace("FR-255-AC-33")]
+fn a_replay_run_applies_or_refuses_each_override() {
+    use fsl_command::command::{run_with_overrides, RequestOverrides};
+    use fsl_foundation::AccountingSetting;
+    let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
+    let path = fixture.request_file(&fixture.package);
+    let supplied = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
+    let output = fixture.directory.path().join("replayed.json");
+    for (overrides, member) in [
+        (
+            RequestOverrides {
+                clocks: Some(&supplied),
+                ..Default::default()
+            },
+            "clocks override",
+        ),
+        (
+            RequestOverrides {
+                output: Some(&output),
+                ..Default::default()
+            },
+            "output override",
+        ),
+    ] {
+        let error = run_with_overrides(&path, &overrides, &crate::negotiation::Fr290)
+            .expect_err("the override cannot be applied");
+        let envelope = error.value().unwrap();
+        assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+        assert!(
+            envelope["message"].as_str().unwrap().contains(member),
+            "{envelope}"
+        );
+    }
+    assert!(!output.exists());
+
+    let accounting = BTreeMap::from([(AccountingSetting::WorkUnits, 0)]);
+    let limited = run_with_overrides(
+        &path,
+        &RequestOverrides {
+            accounting: Some(&accounting),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .expect("an exhausted budget settles, it does not refuse");
+    assert_eq!(limited.exit_code, 22);
+    let row = &limited.value.as_value()["results"][0];
+    assert_eq!(row["limit"]["setting"], "accounting.work_units", "{row}");
+}
+
+/// FR-255 Behavior 15: the caller's stage setting replaces the replay
+/// request's `stage_limits` value, also when the caller names the published
+/// default: one token cannot recompile the program, 100000 can.
+#[test]
+#[ix_trace_rs::trace("FR-255-AC-34")]
+fn a_replay_run_applies_a_caller_setting_equal_to_the_default() {
+    use fsl_command::command::{run_with_overrides, RequestOverrides};
+    use fsl_foundation::Setting;
+    let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
+    let path = fixture.request_file(&fixture.package);
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]["stage_limits"] = json!({"s1.tokens": "1"});
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let error = run_with_overrides(&path, &Default::default(), &crate::negotiation::Fr290)
+        .expect_err("the request's one token cannot recompile the program");
+    let envelope = error.value().unwrap();
+    assert_eq!(envelope["code"], "stage_limit_exceeded", "{envelope}");
+
+    let limits = BTreeMap::from([(Setting::S1Tokens, 100_000)]);
+    let replayed = run_with_overrides(
+        &path,
+        &RequestOverrides {
+            limits: Some(&limits),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .expect("the caller's value replaces the request's");
+    assert_eq!(replayed.exit_code, 0, "{}", replayed.value);
 }

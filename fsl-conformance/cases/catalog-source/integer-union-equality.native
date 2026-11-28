@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+union U { A(Integer),B }
+function equal using v(a: U,b: U): Boolean pure { a=b }

@@ -65,10 +65,12 @@ fn a_100000_term_sum_checks_at_its_node_count_on_the_default_stack() {
             .into_value();
 
         let check_at = |s3_nodes| {
-            let mut limits = SpineLimits::default();
-            limits.checking = CheckingLimits::new(s3_nodes)
-                .with_input_bytes(1 << 40)
-                .with_work_budget(1 << 40);
+            let limits = SpineLimits {
+                checking: CheckingLimits::new(s3_nodes)
+                    .with_input_bytes(1 << 40)
+                    .with_work_budget(1 << 40),
+                ..SpineLimits::default()
+            };
             spine::check(
                 &parsed,
                 "fixture".to_owned(),

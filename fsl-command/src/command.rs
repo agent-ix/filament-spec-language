@@ -13,6 +13,7 @@ mod model_based_test;
 pub mod monitor;
 mod output;
 mod output_file;
+mod overrides;
 mod package_run;
 pub mod plan;
 mod relationships;
@@ -39,7 +40,8 @@ pub use limits::{
     PreparationRefusal, SettingUnavailable,
 };
 pub use monitor::{
-    monitor, monitor_with_target_preparer, MonitorEvent, MonitorProviders, MonitorSummary,
+    monitor, monitor_with_target_preparer, MonitorEvent, MonitorPreparation, MonitorProviders,
+    MonitorSummary, TargetPreparer,
 };
 pub use output::NativeResult;
 pub use replay::replay_with_limits;
@@ -51,9 +53,15 @@ use filament_contract_model as ir;
 use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
+use fsl_foundation::wire_format::WireFormat;
 use fsl_foundation::{Code, Diagnostic, Source};
+
+/// The label of a model unit accepted by `fsl run`.
+const MODEL_UNIT_FORMAT: &str = WireFormat::ModelUnit.as_str();
 use fsl_replay::spine::SpineLimits;
+use fsl_replay::CertificationPolicy;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
+use ix_trace_rs::implements;
 use settle::Settle;
 use std::{
     fs::File,
@@ -76,6 +84,7 @@ fn request_integer_division(
 /// `"imported-function"`, `library` (a library identity) and `function` (a
 /// function identifier). Anything else, and a program that is an FR-480 array
 /// of units, refuses `invalid-request` naming `call_site`.
+#[ix_trace_rs::string_edge]
 fn request_call_site(
     value: Option<&serde_json::Value>,
     program_sources: usize,
@@ -636,6 +645,10 @@ struct FunctionRunData {
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
+    /// FR-1052: which of those items' proofs settle `proved`.
+    certification: CertificationPolicy,
+    /// The limits its requirement items settle under.
+    item_limits: fsl_analyze::analyze::AnalyzeLimits,
 }
 
 /// Owned inputs passed to the driver's existing execution pipeline.
@@ -658,6 +671,10 @@ pub struct FunctionRunInput {
 impl PreparedFunctionRun {
     pub(in crate::command) fn requirements(&self) -> Option<&requirements::Requirements> {
         self.data.requirements.as_ref()
+    }
+
+    pub(in crate::command) fn certification(&self) -> CertificationPolicy {
+        self.data.certification
     }
 
     /// Transfer the prepared typed values without executing a stage.
@@ -785,6 +802,16 @@ pub enum RunCause {
         "invalid request: output is given both in the request and as an output override (--output); give it once"
     )]
     OutputGivenTwice,
+    /// FR-255 Behavior 15: the run route cannot apply a caller override.
+    #[error(
+        "invalid request: the {member} override cannot be applied to a {route} run; remove it"
+    )]
+    OverrideUnapplied {
+        /// The run route.
+        route: overrides::RunRoute,
+        /// The override member or setting name.
+        member: &'static str,
+    },
     /// FR-810: a file or directory already exists at the output path.
     #[error("invalid request: output {path} already exists; FSL never overwrites an existing path", path = path.display())]
     OutputExists {
@@ -1247,6 +1274,7 @@ pub struct SpineFailure {
 }
 
 impl From<ir::Diagnostic> for RunCause {
+    #[ix_trace_rs::string_edge]
     fn from(value: ir::Diagnostic) -> Self {
         let message = if value.path.ends_with(".formal_revision") {
             value.message.clone()
@@ -1289,6 +1317,7 @@ impl RunCause {
             | Self::RequiresDirectory { .. }
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
+            | Self::OverrideUnapplied { .. }
             | Self::OutputExists { .. }
             | Self::ExportProtocolRequest { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
@@ -1390,12 +1419,6 @@ impl RunCause {
                 _ => self.code().category(),
             },
             Self::SpineRun(refusal) => refusal.category(),
-            // FR-663/TC-1746: an unbounded plan parameter is a check-time
-            // admission refusal. Other unsupported projections retain their
-            // existing catalog category.
-            Self::Spine(failure) if failure.refusal.unbounded_parameter_origin().is_some() => {
-                filament_semantic_value::catalog::Category::Refusal
-            }
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
             Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
@@ -1456,6 +1479,7 @@ impl RunError {
             .with_empty_analyze_members()
     }
 
+    #[ix_trace_rs::string_edge]
     fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
         use fsl_replay::{OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
@@ -1669,6 +1693,7 @@ impl RunError {
             | RunCause::TlFault(_)
             | RunCause::ClocksGivenTwice
             | RunCause::OutputGivenTwice
+            | RunCause::OverrideUnapplied { .. }
             | RunCause::OutputExists { .. }
             | RunCause::Output(_)
             | RunCause::ClauseOutput(_)
@@ -1960,6 +1985,7 @@ impl Intake<'_> {
 /// FR-664: refuse a current-snapshot `parameters` member before reading the
 /// program or model sources. The selected snapshot is cached for the normal
 /// clause reader so it is still consumed once.
+#[ix_trace_rs::string_edge]
 fn reject_current_parameters_before_sources(
     intake: &mut Intake<'_>,
     clause: Option<&wire::ClauseRun>,
@@ -2180,15 +2206,21 @@ fn run_configured(
     let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         request_shape::admit(request_shape::Family::Run, bytes)?;
         if monitor::is_monitor_request(bytes) {
-            monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
+            monitor::run_bytes(directory, bytes, limits.dependent_bytes, overrides, &settle)
+                .map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
+            let caller = overrides::command_limits(
+                overrides::RunRoute::Replay,
+                CommandLimits::replay(),
+                overrides,
+            )?;
             replay::run_bytes(
                 directory,
                 path.to_str(),
                 bytes,
                 limits.dependent_bytes,
-                &CommandLimits::replay(),
+                &caller,
             )
             .map(Some)
         } else {
@@ -2211,9 +2243,9 @@ fn run_configured(
             if let Some(result) = plan::run_bytes(directory, bytes, limits, overrides, &settle)? {
                 return Ok(Some(result));
             }
-            if let Some(result) = version_argv(bytes)? {
+            if let Some(result) = version_argv(bytes, overrides)? {
                 Ok(Some(result))
-            } else if let Some(result) = check_argv(directory, bytes)? {
+            } else if let Some(result) = check_argv(directory, bytes, overrides)? {
                 Ok(Some(result))
             } else if let Some(result) = synthesis::run_bytes(directory, bytes, limits, overrides)?
             {
@@ -2276,7 +2308,8 @@ fn run_extracted_clause_bytes(
 /// command harness. The binary driver owns argv parsing at its process
 /// boundary; this entry accepts the exact JSON adapter shape used by FSL's
 /// tests and returns the same inventory document.
-fn version_argv(bytes: &[u8]) -> Result<Option<RunResult>> {
+#[ix_trace_rs::string_edge]
+fn version_argv(bytes: &[u8], overrides: &RequestOverrides<'_>) -> Result<Option<RunResult>> {
     let value: serde_json::Value = match serde_json::from_slice(bytes) {
         Ok(value) => value,
         Err(_) => return Ok(None),
@@ -2301,6 +2334,7 @@ fn version_argv(bytes: &[u8]) -> Result<Option<RunResult>> {
     if arguments.first().copied() != Some("version") {
         return Ok(None);
     }
+    overrides::admit(overrides::RunRoute::Version, overrides)?;
 
     let lists = ["editions", "profiles", "families", "features", "consumers"];
     let mut format = None;
@@ -2371,7 +2405,12 @@ struct ExtensionSetFile {
 
 /// FR-562: route the in-process `check --extensions` command surface to the
 /// source-only check API used by FSL's integration harness.
-fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
+#[ix_trace_rs::string_edge]
+fn check_argv(
+    directory: &Path,
+    bytes: &[u8],
+    overrides: &RequestOverrides<'_>,
+) -> Result<Option<RunResult>> {
     let value: serde_json::Value = match serde_json::from_slice(bytes) {
         Ok(value) => value,
         Err(_) => return Ok(None),
@@ -2396,6 +2435,7 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     if arguments.first().copied() != Some("check") {
         return Ok(None);
     }
+    overrides::admit(overrides::RunRoute::Check, overrides)?;
     let mut markdown = false;
     let mut format = None;
     let mut extensions_file = None;
@@ -2710,6 +2750,7 @@ fn inspect_handoff_category(
     }
 }
 
+#[implements("FR-665-AC-5")]
 fn inspect_handoff_position(
     directory: &Path,
     error: &crate::checked_handoff::Error,
@@ -2804,9 +2845,22 @@ fn read_clause_run_request_bytes(
     dependent_bytes: Option<usize>,
     overrides: &RequestOverrides<'_>,
 ) -> Result<fsl_replay::spine::ClauseRunRequest> {
-    let observation_override = overrides.observation.copied();
+    let observation_override = overrides.observation_limits();
+    overrides::admit(overrides::RunRoute::Clause, overrides)?;
     let mut request: wire::Request = request_with_overrides(bytes, overrides)?;
     apply_accounting_override(&mut request, overrides);
+    // FR-1047: of the checks below, only a package's member refusals and the
+    // extraction clause count come before the no-run-member refusal.
+    if selects_no_run_member(&request) {
+        if request.package.is_some() {
+            package_run::validate_request(&request)?;
+        }
+        #[cfg(feature = "quire-extraction")]
+        if let Some(program) = &request.program {
+            check_extraction_clause_count(program)?;
+        }
+        return Err(request_shape::no_run_member());
+    }
     let program = required_program(&request)?;
     #[cfg(feature = "quire-extraction")]
     if program.extraction.is_some() && request.package.is_some() {
@@ -2817,11 +2871,7 @@ fn read_clause_run_request_bytes(
         return Err(RunCause::ExtractionRequiresRun);
     }
     #[cfg(feature = "quire-extraction")]
-    if program.extraction.is_some() && program.clauses.len() != 1 {
-        return Err(RunCause::ExtractionClauseCount {
-            actual: program.clauses.len(),
-        });
-    }
+    check_extraction_clause_count(program)?;
     let clause = request
         .clause
         .as_ref()
@@ -2879,7 +2929,7 @@ fn read_clause_run_request_bytes(
             clause,
             source,
             extracted,
-            overrides.limits.copied().unwrap_or_default(),
+            overrides.spine_limits(),
             observation_override,
         );
     } else {
@@ -2892,7 +2942,7 @@ fn read_clause_run_request_bytes(
         &request,
         clause,
         source,
-        overrides.limits.copied().unwrap_or_default(),
+        overrides.spine_limits(),
         observation_override,
     )
 }
@@ -2973,10 +3023,14 @@ fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
 }
 
 #[cfg(feature = "quire-extraction")]
+#[implements("FR-267-AC-17")]
 fn extraction_record(
     request: &fsl_replay::spine::ClauseRunRequest,
     envelope: &serde_json::Value,
-) -> Result<(serde_json::Value, fsl_foundation::source_map::SourceMap)> {
+) -> Result<(
+    fsl_replay::spine::ExtractionRecord,
+    fsl_foundation::source_map::SourceMap,
+)> {
     let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = &request.source else {
         return Err(RunCause::ClauseRequest {
             member: "program.extraction".to_owned(),
@@ -3015,58 +3069,48 @@ fn extraction_record(
     let original = map.original();
     let body = map.body();
     let outcome = extracted.extraction();
-    let mut outcome_value = serde_json::Map::from_iter([
-        (
-            "availability".to_owned(),
-            serde_json::to_value(&outcome.availability).map_err(RunCause::Output)?,
-        ),
-        (
-            "clause_text".to_owned(),
-            serde_json::to_value(&outcome.clause_text).map_err(RunCause::Output)?,
-        ),
-        (
-            "diagnostics".to_owned(),
-            serde_json::to_value(&outcome.diagnostics).map_err(RunCause::Output)?,
-        ),
-    ]);
-    if let Some(clauses) = &outcome.clauses {
-        outcome_value.insert(
-            "clauses".to_owned(),
-            serde_json::to_value(clauses).map_err(RunCause::Output)?,
-        );
-    }
     let segments: Vec<_> = map
         .segments()
         .iter()
-        .map(|segment| {
-            serde_json::json!({
-                "body_start": segment.body.start,
-                "body_end": segment.body.end,
-                "original_start": segment.original.start,
-                "original_end": segment.original.end,
-            })
+        .map(|segment| fsl_replay::spine::ExtractionSegment {
+            body_start: segment.body.start as u64,
+            body_end: segment.body.end as u64,
+            original_start: segment.original.start as u64,
+            original_end: segment.original.end as u64,
         })
         .collect();
-    let record = serde_json::json!({
-        "original": {
-            "authority": original.identity().authority,
-            "identity": original.identity().identity,
-            "path": original.path(),
-            "bytes": original.text().as_bytes(),
+    let record = fsl_replay::spine::ExtractionRecord {
+        original: fsl_replay::spine::ExtractionOriginal {
+            authority: original.identity().authority.clone(),
+            identity: original.identity().identity.clone(),
+            path: original.path().to_owned(),
+            bytes: original.text().as_bytes().to_vec(),
         },
-        "body": {
-            "authority": body.identity().authority,
-            "identity": body.identity().identity,
-            "document": body_document,
-            "bytes": body.text().as_bytes(),
+        body: fsl_replay::spine::ExtractionBody {
+            authority: body.identity().authority.clone(),
+            identity: body.identity().identity.clone(),
+            document: body_document.to_owned(),
+            bytes: body.text().as_bytes().to_vec(),
         },
-        "binding": {"clause": clause, "package": package},
-        "outcome": outcome_value,
-        "map": {
-            "region": {"start": map.region().start, "end": map.region().end},
-            "segments": segments,
-        }
-    });
+        binding: fsl_replay::spine::ExtractionBinding {
+            clause: clause.to_owned(),
+            package: package.to_owned(),
+        },
+        outcome: fsl_replay::spine::ExtractionOutcome {
+            availability: outcome.availability.clone(),
+            clause_text: outcome.clause_text.clone(),
+            diagnostics: outcome.diagnostics.clone(),
+            clauses: outcome.clauses.clone(),
+        },
+        map: fsl_replay::spine::ExtractionMap {
+            region: fsl_replay::spine::ExtractionSpan {
+                start: map.region().start as u64,
+                end: map.region().end as u64,
+            },
+            segments,
+        },
+        original_regions: None,
+    };
     Ok((record, map.clone()))
 }
 
@@ -3121,6 +3165,7 @@ fn compile_outcome_inner(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
         request_shape::admit(request_shape::Family::Compile, bytes)?;
+        overrides::admit(overrides::RunRoute::Compile, overrides)?;
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         // FR-767: a malformed or unknown law refuses before any file is read.
         let integer_division = request_integer_division(request.integer_division.clone())?;
@@ -3207,6 +3252,7 @@ fn compile_outcome_inner(
                 sources[0].source().text().as_bytes(),
             )
         {
+            overrides::admit(overrides::RunRoute::ModelUnitCompile, overrides)?;
             for (member, present) in [
                 ("models", request.models.is_some()),
                 ("libraries", request.libraries.is_some()),
@@ -3262,7 +3308,7 @@ fn compile_outcome_inner(
             &request,
             &mut intake,
             &sources,
-            overrides.limits,
+            overrides.limits.map(|_| overrides.spine_limits()).as_ref(),
             integer_division,
         )?;
         outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
@@ -3483,7 +3529,7 @@ fn write_compile_handoff(
 fn is_model_input_format(model: &wire::Model) -> bool {
     matches!(
         model.format.as_str(),
-        DOMAIN_PACKAGE_PROFILE | "native-model-unit/1"
+        DOMAIN_PACKAGE_PROFILE | MODEL_UNIT_FORMAT
     )
 }
 
@@ -3549,9 +3595,7 @@ fn model_unit_outcome_diagnostic(
     diagnostic: &fsl_forms::cst::CompleteDiagnostic,
 ) -> fsl_replay::OutcomeDiagnostic {
     let locus = diagnostic.source_region().map(|region| {
-        fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(
-            region.clone(),
-        ))
+        fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(region.clone()))
     });
     fsl_replay::OutcomeDiagnostic::new(
         Some(diagnostic.cause().as_str()),
@@ -3644,6 +3688,7 @@ fn package_input_from_formal_sources(
     Ok(packages)
 }
 
+#[ix_trace_rs::string_edge]
 fn package_input_from_selected_models(
     models: &[wire::Model],
     sources: &[FormalSource],
@@ -3654,7 +3699,7 @@ fn package_input_from_selected_models(
         .map(|(model, source)| {
             let bytes = source.source().text().as_bytes();
             match model.format.as_str() {
-                "native-model-unit/1" => {
+                MODEL_UNIT_FORMAT => {
                     if !fsl_semantics::model::intake::is_model_unit_source(bytes) {
                         return Err(model_unit_format_refusal(
                             source.source(),
@@ -4353,10 +4398,10 @@ fn with_checked_request<T>(
 /// FR-961).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RequestOverrides<'a> {
-    /// The caller's fully resolved scalar evaluation budget. When supplied,
-    /// this effective budget replaces request accounting for calls and clause
-    /// selections, and configures each verification-plan step.
-    pub accounting: Option<&'a filament_exact::ScalarLimits>,
+    /// The accounting counters the caller names. Each replaces the request's
+    /// value of that counter only; every other counter keeps the request's
+    /// value (FR-255 Behavior 15).
+    pub accounting: Option<&'a std::collections::BTreeMap<fsl_foundation::AccountingSetting, u64>>,
     /// The `clocks` object, as the driver's `--clocks` file carries it. A request
     /// that also carries `clocks` is refused `invalid-request` at stage `request`.
     pub clocks: Option<&'a serde_json::value::RawValue>,
@@ -4364,28 +4409,65 @@ pub struct RequestOverrides<'a> {
     /// names it (FR-810). Only a compile reads it; a request that also carries
     /// `output` is refused `invalid-request` at stage `request`.
     pub output: Option<&'a Path>,
-    /// Run or compile stage limits supplied by the caller (FR-869, FR-961).
-    /// `None` uses the published defaults.
-    pub limits: Option<&'a fsl_replay::spine::SpineLimits>,
-    /// Clause observation limits supplied by the caller (FR-312). A request
-    /// that also carries `clause.observation_limits` is refused at request
-    /// stage before any observation file is read.
-    pub observation: Option<&'a fsl_semantics::model::observation::ObservationLimits>,
+    /// The stage and observation settings the caller names (FR-312, FR-869,
+    /// FR-961), each with its value. A named setting replaces the published
+    /// default and the request's value, also when it equals the default; a
+    /// setting not named keeps the request's. A run that compiles refuses an
+    /// observation setting given beside `clause.observation_limits`.
+    pub limits: Option<&'a std::collections::BTreeMap<fsl_foundation::Setting, u64>>,
 }
 
-/// The caller's effective budget replaces request accounting on a call or a
-/// clause selection, never a fresh allowance.
-fn apply_accounting_override(request: &mut wire::Request, overrides: &RequestOverrides<'_>) {
-    if let Some(accounting) = overrides.accounting {
-        if let Some(call) = &mut request.call {
-            call.accounting = wire::Accounting::from_limits(*accounting);
+impl RequestOverrides<'_> {
+    /// The published stage limits with each stage setting the caller names.
+    fn spine_limits(&self) -> fsl_replay::spine::SpineLimits {
+        let mut limits = fsl_replay::spine::SpineLimits::default();
+        for (setting, bound) in self.limits.into_iter().flatten() {
+            fsl_foundation::SettingLimits::set_bound(&mut limits, *setting, *bound);
         }
-        if let Some(clause) = &mut request.clause {
-            clause.accounting = wire::Accounting::from_limits(*accounting);
+        limits
+    }
+
+    /// The published observation limits with each setting the caller names, or
+    /// `None` when the caller names no observation setting.
+    fn observation_limits(&self) -> Option<fsl_semantics::model::observation::ObservationLimits> {
+        let mut limits = fsl_semantics::model::observation::ObservationLimits::default();
+        let mut named = false;
+        for (setting, bound) in self.limits.into_iter().flatten() {
+            named |= fsl_foundation::SettingLimits::set_bound(&mut limits, *setting, *bound);
         }
+        named.then_some(limits)
+    }
+
+    /// `request`'s accounting limits with each counter the caller names
+    /// replaced.
+    fn accounting_over(
+        &self,
+        request: filament_exact::ScalarLimits,
+    ) -> filament_exact::ScalarLimits {
+        let mut limits = fsl_replay::AccountingLimits(request);
+        for (setting, bound) in self.accounting.into_iter().flatten() {
+            limits.set_bound(*setting, *bound);
+        }
+        limits.0
     }
 }
 
+/// The caller's counters replace the request's on a call or a clause
+/// selection, never a fresh allowance.
+fn apply_accounting_override(request: &mut wire::Request, overrides: &RequestOverrides<'_>) {
+    let apply = |accounting: &mut wire::Accounting| {
+        *accounting =
+            wire::Accounting::from_limits(overrides.accounting_over(call_accounting(accounting)));
+    };
+    if let Some(call) = &mut request.call {
+        apply(&mut call.accounting);
+    }
+    if let Some(clause) = &mut request.clause {
+        apply(&mut clause.accounting);
+    }
+}
+
+#[implements("FR-640-AC-14")]
 fn request_with_overrides<T: wire::ClocksRequest>(
     bytes: &[u8],
     overrides: &RequestOverrides<'_>,
@@ -4509,6 +4591,11 @@ fn prepare_run_bytes_with_sources(
     }
     let mut request: wire::Request = request_with_overrides(bytes, overrides)?;
     apply_accounting_override(&mut request, overrides);
+    // FR-255 Behavior 16: the run member and the source or package form decide
+    // which overrides apply; a request with no run member refuses below.
+    if let Some(route) = selected_route(&request) {
+        overrides::admit(route, overrides)?;
+    }
     if request.package.is_none() && request.refinement_internals.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "refinement_internals".to_owned(),
@@ -4517,45 +4604,25 @@ fn prepare_run_bytes_with_sources(
     }
     // FR-1031: the first refusal in table order is the selection conflict.
     refuse_transfer_selection_conflict(&request)?;
+    // FR-1052: a `require_certified` that is not a boolean refuses before any
+    // selected file is opened.
+    analyze::read_certification(request.require_certified.clone())?;
     // FR-1045: reject malformed correlation selection before any selected
     // program, package, model or snapshot file is opened.
     relationships::validate_request(request.call.as_ref())?;
-    // FR-100-AC-25: a bare package selection with neither a call nor another
-    // run selector refuses before opening the selected package or its models.
-    if request.package.is_some()
-        && request.call.is_none()
-        && request.clause.is_none()
-        && request.items.is_none()
-        && request.tl_lowering.is_none()
-        && request.synthesis.is_none()
-        && request.verification_plan.is_none()
-        && request.model_based_test.is_none()
-        && request.refinement_transfer.is_none()
-        && request.export_evidence.is_none()
-    {
+    // FR-100-AC-25: a package selected with no run member refuses before the
+    // package or its models are opened.
+    if request.package.is_some() && selects_no_run_member(&request) {
         // Package-owned selections still take precedence when restated by the
         // request (FR-1039), including libraries and integer_division.
         package_run::validate_request(&request)?;
-        return Err(RunCause::CompleteRunSelection(CompleteRunSelection::NoCall));
+        return Err(request_shape::no_run_member());
     }
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
-        let progress_capacity = overrides.limits.map_or_else(
-            || {
-                fsl_replay::spine::SpineLimits::default()
-                    .progress
-                    .covered_positions
-            },
-            |limits| limits.progress.covered_positions,
-        );
-        let prepared = package_run::prepare(
-            directory,
-            &request,
-            package,
-            dependent_bytes,
-            progress_capacity,
-        );
+        let prepared =
+            package_run::prepare(directory, &request, package, dependent_bytes, overrides);
         if let Ok(prepared) = &prepared {
             *admitted_sources = prepared.sources();
         }
@@ -4587,6 +4654,7 @@ fn prepare_run_bytes_with_sources(
     }
     if let Some(member) = &request.model_based_test {
         model_based_test::decode(member)?;
+        overrides::refuse_request_clocks(overrides::RunRoute::ModelBasedTest, &request.clocks)?;
     }
     if request.tl_lowering.is_some() && request.model_based_test.is_some() {
         return Err(RunCause::ClauseRequest {
@@ -4596,6 +4664,23 @@ fn prepare_run_bytes_with_sources(
     }
     if let Some(transfer) = &request.refinement_transfer {
         validate_transfer_member(&request, transfer)?;
+        let observation = transfer
+            .observation_limits
+            .as_ref()
+            .map(|stated| fsl_replay::spine::ObservationLimitsWire::resolve(Some(stated)))
+            .transpose()
+            .map_err(|error| RunCause::ClauseRequest {
+                member: error.member,
+                reason: error.reason,
+            })?;
+        let effective = overrides::effective_limits(
+            overrides::RunRoute::RefinementTransfer,
+            overrides::RequestLimits {
+                observation,
+                ..Default::default()
+            },
+            overrides,
+        )?;
         let mut intake = intake_with_bytes(
             directory,
             FileCounts {
@@ -4619,6 +4704,7 @@ fn prepare_run_bytes_with_sources(
                 request,
                 source,
                 integer_division,
+                limits: Box::new(effective),
             },
         )));
     }
@@ -4665,6 +4751,12 @@ fn prepare_run_bytes_with_sources(
         },
         dependent_bytes,
     )?;
+    // FR-100-AC-25: a program selected with no run member refuses before any
+    // file is read. The `program.source` identity check comes first (FR-1047).
+    if selects_no_run_member(&request) {
+        program.source.identity.bind("program.source")?;
+        return Err(request_shape::no_run_member());
+    }
     let prepared = (|| {
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         // The program source is read exactly once; its declared edition decides
@@ -4677,8 +4769,7 @@ fn prepare_run_bytes_with_sources(
             source,
             integer_division,
             library_integer_division,
-            overrides.limits.copied().unwrap_or_default(),
-            overrides.observation.copied(),
+            overrides,
         )
     })();
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
@@ -4819,6 +4910,27 @@ fn validate_transfer_member(
     Ok(())
 }
 
+/// The route of a `native-run/1` request's run member over its source or
+/// package form, or `None` when it names no run member.
+fn selected_route(request: &wire::Request) -> Option<overrides::RunRoute> {
+    use overrides::RunRoute;
+    let package = request.package.is_some();
+    let form = |source, packaged| if package { packaged } else { source };
+    if request.model_based_test.is_some() {
+        Some(RunRoute::ModelBasedTest)
+    } else if request.refinement_transfer.is_some() {
+        Some(RunRoute::RefinementTransfer)
+    } else if request.tl_lowering.is_some() {
+        Some(form(RunRoute::TlLowering, RunRoute::PackageTlLowering))
+    } else if request.clause.is_some() {
+        Some(form(RunRoute::Clause, RunRoute::PackageClause))
+    } else if request.call.is_some() {
+        Some(form(RunRoute::Call, RunRoute::PackageCall))
+    } else {
+        None
+    }
+}
+
 /// FR-931: prepare a `tl_lowering` request. Its clause is read through
 /// FR-312's clause-run reader as a `temporal` selection over the trace to
 /// cross-evaluate (or an empty one), so the compile, the trace's admission
@@ -4830,6 +4942,7 @@ fn prepare_lowering(
     source: FormalSource,
     stage_limits: SpineLimits,
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+    overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
     if request.call.is_some() || request.clause.is_some() {
         return Err(RunCause::ClauseRequest {
@@ -4838,7 +4951,10 @@ fn prepare_lowering(
         });
     }
     let lowering = tl::decode(member)?;
-    let clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
+    let mut clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
+    clause.accounting = wire::Accounting::from_limits(
+        overrides.accounting_over(call_accounting(&clause.accounting)),
+    );
     let text = source.source().text().to_owned();
     let run = clause::read(
         intake,
@@ -4900,6 +5016,7 @@ fn initial_subject(
 
 /// Prepare FR-100's function or clause selection without executing a stage.
 /// `source` is the program source, already read by bounded intake.
+#[ix_trace_rs::string_edge]
 fn read_integer_division(
     value: Option<&serde_json::Value>,
     member: &str,
@@ -4936,9 +5053,10 @@ fn prepare_complete_run(
     source: FormalSource,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
-    stage_limits: SpineLimits,
-    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+    overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
+    let stage_limits = overrides.spine_limits();
+    let observation_override = overrides.observation_limits();
     if let Some(member) = &request.tl_lowering {
         return prepare_lowering(
             intake,
@@ -4947,6 +5065,7 @@ fn prepare_complete_run(
             source,
             stage_limits,
             observation_override,
+            overrides,
         );
     }
     if let Some(member) = &request.model_based_test {
@@ -4958,8 +5077,7 @@ fn prepare_complete_run(
                 source,
                 integer_division,
                 library_integer_division,
-                limits: stage_limits,
-                observation_override,
+                overrides,
             },
         );
     }
@@ -5092,12 +5210,7 @@ fn prepare_complete_run(
     };
     let mut spine_call = read_call(call, request)?;
     if let Some(file) = &call.snapshot {
-        let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
-            RunCause::ClauseRequest {
-                member: error.member,
-                reason: error.reason,
-            }
-        })?;
+        let limits = observation_override.unwrap_or_default();
         let bytes = intake.file(file, intake.remaining)?;
         let (snapshot_bytes, relationship_extents) =
             relationships::snapshot_document(&bytes, call.relationships.as_ref())?;
@@ -5128,6 +5241,8 @@ fn prepare_complete_run(
             call: spine_call,
             integer_division,
             requirements,
+            certification: analyze::read_certification(request.require_certified.clone())?,
+            item_limits: overrides::item_limits(overrides),
         }),
     }))
 }
@@ -5354,7 +5469,15 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             }),
             prepared.integer_division,
             |checked, members| {
-                settle::settle_call(checked, members, selection, &prepared.packages, settle)
+                settle::settle_call(
+                    checked,
+                    members,
+                    selection,
+                    &prepared.packages,
+                    prepared.item_limits,
+                    settle,
+                    prepared.certification,
+                )
             },
         )
         .map_err(compile_failure)?;
@@ -5407,6 +5530,32 @@ fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::s
     spine_call.canonical_values = true;
     spine_call.live_occurrences = call.evaluation.live_occurrences();
     Ok(spine_call)
+}
+
+/// FR-1047 "A selected source with no run member": the request selects
+/// exactly one of `program` and `package`, and carries no member that selects
+/// a run. `export_evidence` is not one at a run-reader entry.
+fn selects_no_run_member(request: &wire::Request) -> bool {
+    request.program.is_some() != request.package.is_some()
+        && request.call.is_none()
+        && request.clause.is_none()
+        && request.items.is_none()
+        && request.tl_lowering.is_none()
+        && request.synthesis.is_none()
+        && request.verification_plan.is_none()
+        && request.model_based_test.is_none()
+        && request.refinement_transfer.is_none()
+}
+
+/// FR-031-AC-6: an extracted program carries exactly one clause binding.
+#[cfg(feature = "quire-extraction")]
+fn check_extraction_clause_count(program: &wire::Program) -> Result<()> {
+    if program.extraction.is_some() && program.clauses.len() != 1 {
+        return Err(RunCause::ExtractionClauseCount {
+            actual: program.clauses.len(),
+        });
+    }
+    Ok(())
 }
 
 /// FR-100: the request's `program`; a request selecting neither `program`

@@ -116,12 +116,10 @@ fn verdict(evaluation: &ClauseEvaluation) -> Verdict {
 }
 
 /// Evaluate `group` in order, each clause with a fresh meter; `false` when
-/// the group stopped before its last clause: on an `Incomplete` clause, or,
-/// with `short_circuit`, on the first `Completed(false)` clause or an
-/// incomplete clause. An undecided precondition does not hide later
-/// precondition results, but it prevents the postcondition group from
-/// running. The clauses after an early stop are neither evaluated nor
-/// charged.
+/// the group stopped: on an `Incomplete` clause, or, with `short_circuit`,
+/// on the first clause that is not `Completed(true)` (FR-006's
+/// short-circuit, FSpec FR-151-AC-19). The clauses after the stop are
+/// neither evaluated nor charged.
 fn run_group<H: ClauseHost + ?Sized>(
     package: &H,
     group: &[(&QualifiedName, &AdmittedObservations)],
@@ -130,7 +128,6 @@ fn run_group<H: ClauseHost + ?Sized>(
     results: &mut Vec<ClauseSetEntry>,
     seen: &mut Vec<Verdict>,
 ) -> Result<bool, CallFailure> {
-    let mut all_true = true;
     for (name, observations) in group {
         let mut meter = fresh_meter();
         let evaluation = package.clause(name, observations, &mut meter)?;
@@ -140,14 +137,11 @@ fn run_group<H: ClauseHost + ?Sized>(
             evaluation,
         });
         seen.push(verdict);
-        if verdict != Verdict::True {
-            all_true = false;
-        }
-        if verdict == Verdict::Incomplete || (short_circuit && verdict == Verdict::False) {
+        if verdict == Verdict::Incomplete || (short_circuit && verdict != Verdict::True) {
             return Ok(false);
         }
     }
-    Ok(!short_circuit || all_true)
+    Ok(true)
 }
 
 /// FR-107 "Clause sets": the set's outcome from its entries' verdicts.

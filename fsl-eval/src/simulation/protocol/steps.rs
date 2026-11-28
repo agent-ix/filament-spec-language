@@ -1125,7 +1125,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         });
                         expanded.push((
                             observed.clone(),
-                            next_model,
+                            *next_model,
                             next_component,
                             choices.clone(),
                             records,
@@ -1152,7 +1152,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         let Written::Applied(committed, next_component) = chosen.written else {
                             continue;
                         };
-                        let mut observed = committed.clone();
+                        let mut observed = (*committed).clone();
                         observed.set_cell(cell, value.clone());
                         let mut choices = choices.clone();
                         choices.push((location.clone(), read.choice));
@@ -1166,7 +1166,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         });
                         expanded.push((
                             observed,
-                            committed,
+                            *committed,
                             next_component,
                             choices,
                             records,
@@ -2065,7 +2065,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     }
                 }
                 let (model, memory) = match chosen.written {
-                    Written::Applied(model, memory) => (model, memory),
+                    Written::Applied(model, memory) => (*model, memory),
                     Written::Disabled => continue,
                     Written::Cut => {
                         gathered.cut.steps.push(identity.clone());
@@ -2198,7 +2198,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             );
             for chosen in written {
                 let (model, memory) = match chosen.written {
-                    Written::Applied(model, memory) => (model, memory),
+                    Written::Applied(model, memory) => (*model, memory),
                     Written::Disabled => continue,
                     Written::Cut => {
                         gathered.cut.steps.push(ProtocolTransition::control(
@@ -2422,7 +2422,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     });
                 }
                 let (model, memory) = match chosen.written {
-                    Written::Applied(model, memory) => (model, memory),
+                    Written::Applied(model, memory) => (*model, memory),
                     Written::Disabled => continue,
                     Written::Cut => {
                         gathered.cut.steps.push(identity.clone());
@@ -2581,7 +2581,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 {
                     match chosen.written {
                         Written::Applied(model, memory) => next.push((
-                            model,
+                            *model,
                             memory,
                             chosen.choice.or(previous_choice),
                             chosen.race.or(previous_race.clone()),
@@ -2599,7 +2599,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .into_iter()
             .map(|(model, memory, choice, race)| Chosen {
                 choice,
-                written: Written::Applied(model, memory),
+                written: Written::Applied(Box::new(model), memory),
                 race,
             })
             .collect()

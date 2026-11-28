@@ -459,6 +459,7 @@ fn main() {
 
 // Independent complete argv, not extracted from Make or generated from the
 // synthetic summary vocabulary used by the invocation-only recorder.
+const AGGREGATE_CALLS: &str = "run\t--locked\t--package\txtask\t--\tparity\nrun\t--locked\t--package\txtask\t--\tpin-check\nrun\t--locked\t--package\txtask\t--\tci\n";
 
 #[trace("TC-920", "NFR-002-AC-2")]
 #[test]
@@ -531,9 +532,8 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
         );
         let recorded = std::fs::read_to_string(&calls).unwrap();
         assert_eq!(
-            recorded,
-            "run\t--locked\t--package\txtask\t--\tpin-check\nrun\t--locked\t--package\txtask\t--\tci\n",
-            "public aggregate runs pin-check (FR-760-AC-3) then enters the canonical wrapper"
+            recorded, AGGREGATE_CALLS,
+            "public aggregate runs the parity prerequisite (FR-563), then the recipe's pin-check and canonical wrapper"
         );
         assert!(
             !prechecks.exists(),
@@ -545,28 +545,57 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
         }
     }
 
-    // Mutation sensitivity: alter only the deny target's validation edge in an
-    // owned copy. Filament still refuses, but deny alone now invokes Cargo;
-    // the unchanged zero-call oracle above must reject this graph.
+    // Mutation sensitivity: remove validation edges in owned copies. The
+    // zero-call oracle above must reject each graph.
     let source = std::fs::read_to_string(&makefile).unwrap();
-    let edge = "ci: check-spec-validation";
-    assert_eq!(
-        source.matches(edge).count(),
-        1,
-        "one public aggregate validation prerequisite"
-    );
-    let mutant = root.join("deny-edge-only.Makefile");
-    std::fs::write(&mutant, source.replace(edge, "ci:")).unwrap();
+    let remove_edge = |source: &str, edge: &str, removed: &str| {
+        assert_eq!(
+            source.matches(edge).count(),
+            1,
+            "one validation prerequisite: {edge:?}"
+        );
+        source.replace(edge, removed)
+    };
+    // A copy looks for the validator helper beside itself unless told where
+    // the workspace is.
+    let mut workspace_root = std::ffi::OsString::from("WORKSPACE_ROOT=");
+    workspace_root.push(workspace());
     std::fs::write(&document, VALID.replace("id: NFR-999\n", "")).unwrap();
+
+    // Parity's edge alone: validation still refuses, but parity invokes Cargo.
+    let without_parity_edge =
+        remove_edge(&source, "\nparity: check-spec-validation\n", "\nparity:\n");
+    let mutant = root.join("parity-edge-removed.Makefile");
+    std::fs::write(&mutant, &without_parity_edge).unwrap();
+    let negative = run(aggregate(&mutant, &["-j4", "-k"]).arg(&workspace_root));
+    refused(&negative, "1 document(s) failed structural validation");
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap(),
+        "run\t--locked\t--package\txtask\t--\tparity\n",
+        "removing the parity validation prerequisite must invoke parity alone"
+    );
+    assert!(
+        !prechecks.exists(),
+        "other prerequisite barriers remain intact"
+    );
+    std::fs::remove_file(&calls).unwrap();
+
+    // The aggregate's edge too: nothing validates and the wrapper runs.
+    let mutant = root.join("validation-edges-removed.Makefile");
+    std::fs::write(
+        &mutant,
+        remove_edge(&without_parity_edge, "ci: check-spec-validation", "ci:"),
+    )
+    .unwrap();
     let negative = run(&mut aggregate(&mutant, &["-j4", "-k"]));
     assert!(
         negative.status.success(),
-        "removing the public validation prerequisite lets the wrapper run"
+        "removing both validation prerequisites lets the wrapper run"
     );
     assert_eq!(
         std::fs::read_to_string(&calls).unwrap(),
-        "run\t--locked\t--package\txtask\t--\tpin-check\nrun\t--locked\t--package\txtask\t--\tci\n",
-        "removing the public validation prerequisite must invoke the wrapper"
+        AGGREGATE_CALLS,
+        "removing both validation prerequisites must invoke the wrapper"
     );
     assert!(
         !prechecks.exists(),

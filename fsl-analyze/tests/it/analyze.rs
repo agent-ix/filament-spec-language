@@ -40,8 +40,8 @@ use ix_trace_rs::trace;
 
 use crate::closure_certificate::world;
 use crate::counter::{clause_text, CONTRACT, UNLIMITED};
-use crate::derived_request::{counter_body, derived_deadlock};
-use crate::model_settle::{case, kernel_case, replay};
+use crate::derived_request_support::{counter_body, derived_deadlock};
+use crate::model_settle_support::{case, kernel_case, replay};
 use crate::provider_test_support::CountingUnknownProvider;
 
 fn index(at: usize) -> RequestIndex {
@@ -83,6 +83,7 @@ fn a_broken_item_settles_refuted_and_its_counterexample_replays() {
         &en1(),
         vec![derived_deadlock(case.model_item())],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     let terminal = record.terminal().expect("a terminal record");
@@ -136,6 +137,7 @@ fn three_items_give_three_records_the_first_unsupported_naming_its_kind() {
             .expect("a clause run"),
         ],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(
         records.iter().map(|r| r.request_index).collect::<Vec<_>>(),
@@ -265,13 +267,14 @@ fn analyze_refuses_an_undeclared_population_before_running_items() {
             source.as_bytes(),
         ),
         items,
+        certification: Default::default(),
     };
 
     let result = analyze_request(
         &package,
         &request,
         &engines,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     );
     let record = match result {
@@ -299,6 +302,7 @@ fn a_rejected_certificate_is_inconclusive_and_an_accepted_one_certified() {
             &en1(),
             vec![model_item(index(0), item).expect("a clause run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         ))
     };
     let accepted = run(
@@ -354,6 +358,7 @@ fn a_proof_with_no_core_checker_settles_proved_uncertified_naming_its_engine() {
             &en1(),
             vec![model_item(index(0), item).expect("a clause run")],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         ))
     };
     let reduced = run(true);
@@ -396,6 +401,7 @@ fn a_counterexample_settles_refuted_only_when_replay_reproduces_it() {
             &en1(),
             vec![derived_deadlock(item)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )))
     };
 
@@ -432,6 +438,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
         )
         .expect("a clause run")],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(
         value(&record),
@@ -454,6 +461,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
         )
         .expect("a clause run")],
         &cancel,
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert_eq!(
         value(&records[0]),
@@ -477,7 +485,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
 #[test]
 fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
     let case = case(&counter_body(""), &[0]);
-    let mut counterexample = crate::model_settle::counterexample(&case);
+    let mut counterexample = crate::model_settle_support::counterexample(&case);
     let last = counterexample.prefix.len() as u64;
     let evaluation = UndefinedEvaluation {
         site: UndefinedSite {
@@ -488,7 +496,10 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
                     fsl_eval::simulation::model::ModelSystem::new(request.subject.simulation)
                         .expect("the model admits");
                 let (bytes, _) = system
-                    .state_key(&system.initial_states()[0])
+                    .state_key(
+                        &system.initial_states()[0],
+                        fsl_foundation::IdentityLimits::default(),
+                    )
                     .expect("encodes");
                 fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
             },
@@ -508,7 +519,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
         &case.request(),
         &Cancel::new(),
         |payload| {
-            let mut result = replay(&case, crate::model_settle::counterexample(&case))?;
+            let mut result = replay(&case, crate::model_settle_support::counterexample(&case))?;
             result.settlement = ModelTraceSettlement::Reproduced {
                 value: ModelTraceValue::Undefined(evaluation.clone()),
                 trace_position: payload.trace_position(),
@@ -521,7 +532,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
     // EN-1 item whose run violated it and whose replay reproduced it.
     let mut item = case.model_item();
     item.replay = Box::new(|payload| {
-        let mut result = replay(&case, crate::model_settle::counterexample(&case))?;
+        let mut result = replay(&case, crate::model_settle_support::counterexample(&case))?;
         result.settlement = ModelTraceSettlement::Reproduced {
             value: ModelTraceValue::Undefined(evaluation.clone()),
             trace_position: payload.trace_position(),
@@ -532,6 +543,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
         &en1(),
         vec![derived_deadlock(item)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     record
@@ -583,7 +595,7 @@ fn an_undefined_step_evaluation_settles_refuted_with_its_successor_and_transitio
         clause_text("Bounded", "", "always holds(c.value <= 3)")
     );
     let case = kernel_case(&body, DIVIDE, &[0]);
-    let expected = crate::model_settle::counterexample(&case);
+    let expected = crate::model_settle_support::counterexample(&case);
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &expected.kind else {
         panic!("the precondition is undefined at its successor: {expected:?}");
     };
@@ -594,6 +606,7 @@ fn an_undefined_step_evaluation_settles_refuted_with_its_successor_and_transitio
         &en1(),
         vec![derived_deadlock(case.model_item())],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     ));
     assert_eq!(value(&record), TerminalValue::Refuted);
     let counterexample = record
@@ -747,6 +760,7 @@ fn run_provider(
         &Engines::fsl().expect("they register"),
         limits,
         cancel,
+        Default::default(),
     )
     .records
 }
@@ -819,7 +833,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
     let engines = Engines::fsl().expect("they register");
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let analyzed = analyze_request(
         &world.package,
@@ -827,6 +841,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
             binding: world.binding(),
             provision: world.provision.clone(),
             items: vec![routed_service_item(&world)],
+            certification: Default::default(),
         },
         &engines,
         &limits,
@@ -844,6 +859,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
         &engines,
         &limits,
         &Cancel::new(),
+        Default::default(),
     )
     .records
     .remove(0);
@@ -857,7 +873,7 @@ fn analyze_and_the_provider_entry_settle_one_record_for_one_en4_item() {
     assert_eq!(verdict.witnesses.len(), 3);
     for witness in &verdict.witnesses {
         assert_eq!(
-            crate::statistical_witness_replay::replay(&world, "Two", &verdict.provenance, witness,)
+            crate::statistical_witness_support::replay(&world, "Two", &verdict.provenance, witness,)
                 .expect("provider witness replays"),
             fsl_replay::statistical::SampledWitnessReplay::Reproduced
         );
@@ -884,7 +900,7 @@ fn provider_entry_settles_an_incomplete_binding_per_item() {
     binding.initial[0].identity.push_str("-missing");
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let records = fsl_analyze::provider::run(
         &world.package,
@@ -894,6 +910,7 @@ fn provider_entry_settles_an_incomplete_binding_per_item() {
         &Engines::fsl().expect("they register"),
         &limits,
         &Cancel::new(),
+        Default::default(),
     )
     .records;
 
@@ -956,9 +973,10 @@ fn provider_entry_refuses_undeclared_population_before_running_items_in_input_or
         &Engines::fsl().expect("they register"),
         &AnalyzeLimits {
             accounting: prob_world::UNLIMITED,
-            ..AnalyzeLimits::unbounded()
+            ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
         },
         &cancel,
+        Default::default(),
     )
     .records;
 
@@ -1010,9 +1028,10 @@ fn provider_entry_settles_a_zero_millisecond_deadline_as_incomplete() {
         &AnalyzeLimits {
             accounting: prob_world::UNLIMITED,
             deadline: DeadlineSupply::Milliseconds(0),
-            ..AnalyzeLimits::unbounded()
+            ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
         },
         &cancel,
+        Default::default(),
     )
     .records;
 
@@ -1043,7 +1062,7 @@ fn finite_deadline_preserves_settled_records_and_cancels_each_open_item() {
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let (completed, charges_before_next_item) = run_one_observed_service_item(
         &world,
@@ -1088,7 +1107,7 @@ fn caller_cancellation_preserves_settled_records_and_cause_for_open_items() {
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let (completed, charges_before_next_item) = run_one_observed_service_item(
         &world,
@@ -1138,7 +1157,7 @@ fn engine_limit_before_deadline_keeps_its_typed_result() {
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let (limited, charges_before_next_item) = run_one_observed_service_item(
         &world,
@@ -1193,7 +1212,7 @@ fn accounting_limit_before_deadline_keeps_its_typed_result() {
             ..prob_world::UNLIMITED
         },
         deadline: DeadlineSupply::Milliseconds(60_000),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
 
     let records = run_provider(&world, &items, &limits, &cancel);
@@ -1229,7 +1248,7 @@ fn analyze_joins_required_items_to_the_aggregate() {
     let world = World::new(&prob_world::service(claim));
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let run = |engines: &Engines, required: &[bool], indices: &[usize]| {
         let items = indices
@@ -1248,6 +1267,7 @@ fn analyze_joins_required_items_to_the_aggregate() {
                 binding: world.binding(),
                 provision: world.provision.clone(),
                 items,
+                certification: Default::default(),
             },
             engines,
             &limits,
@@ -1279,4 +1299,34 @@ fn analyze_joins_required_items_to_the_aggregate() {
         run(&present, &[true, false], &[1, 1]).aggregate,
         Err(AggregateGap::Duplicate(index(1)))
     );
+}
+
+/// FR-281-AC-26: the published limits, and a caller's candidate bound
+/// replacing that one field.
+#[trace("FR-281-AC-26")]
+#[test]
+fn published_limits_hold_the_tabulated_defaults() {
+    use fsl_analyze::analyze::SimulationLimits;
+    use fsl_eval::simulation::model::ExpansionLimits;
+
+    let published = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+    assert_eq!(published.expansion.max_candidates, 200_000);
+    assert_eq!(
+        published.simulation,
+        SimulationLimits {
+            max_states: 10_000_000,
+            max_transitions: 100_000_000,
+            max_steps: 16_777_216,
+        }
+    );
+    assert_eq!(published.position_limit, 10_000);
+    let replaced = AnalyzeLimits {
+        expansion: ExpansionLimits { max_candidates: 7 },
+        ..published
+    };
+    assert_eq!(replaced.simulation, published.simulation);
+    assert_eq!(replaced.position_limit, published.position_limit);
+    assert_eq!(replaced.accounting, published.accounting);
+    assert_eq!(replaced.engines, published.engines);
+    assert_eq!(replaced.deadline, DeadlineSupply::Unbounded);
 }

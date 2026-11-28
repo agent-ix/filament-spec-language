@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.event-position.false-extension/v1";
+record Sample { v: Int[0, 9]; w: Int[0, 9]; }
+temporal Window using t over (e: Sample) clock "events" on origin { always[0,3] (count where holds(e.v > 1) over past[0,9] <= 2) }

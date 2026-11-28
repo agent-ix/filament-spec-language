@@ -12,7 +12,7 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 
 use crate::litmus::{attempt, contracts, protocol, NO_BOTH_ZERO, NO_BOTH_ZERO_BOUNDED};
-use crate::weak_memory::{select, Case};
+use crate::weak_memory_support::{select, Case};
 
 /// The unit whose branch `t` is `t_body` and whose branch `s` stores `y`
 /// then `x`.

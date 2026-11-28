@@ -14,7 +14,8 @@ description = "ADR-011 §6.1 layer 6: the CG-facing replay facade -- the TK-01 r
 default = []
 # ADR-011 §6.1 layer-6 row: "I3 under feature `quire-extraction`". FR-109's
 # `run_clause` accepts an I3 extracted source (`fsl_source::ExtractedSource`)
-# as its unit only with this feature.
+# as its unit only with this feature. It gates the adapter alone: the result
+# reader and writer handle `extraction` in every build.
 quire-extraction = ["dep:fsl-source", "fsl-source/quire-extraction"]
 # FR-237's `replay_timed_counterexample`: the timed replay core without
 # FR-128's recompile and identity checks, for tests only until S4 writes
@@ -33,6 +34,9 @@ fsl-package = { path = "../fsl-package" }
 fsl-semantics = { path = "../fsl-semantics" }
 fsl-route = { path = "../fsl-route" }
 fsl-source = { path = "../fsl-source", optional = true }
+# Quire's `semantic` result types, which the extraction record's `outcome`
+# holds (FR-267-AC-17).
+quire-rs = { workspace = true }
 filament-exact = { workspace = true }
 filament-observation = { workspace = true }
 # `DeclineCode::Std001`: the STD-001 registry code type a `declined` result
@@ -46,6 +50,7 @@ filament-checked = { workspace = true }
 filament-semantic-value = { workspace = true }
 # ADR-011 §6.1 layer E: the evaluation interface and result vocabulary (FR-401).
 filament-eval = { workspace = true }
+filament-walk = { workspace = true }
 thiserror = "2.0.20"
 sha2 = "0.10.9"
 # The closed-form checker rounds exact rationals to integers.
@@ -54,7 +59,7 @@ num-integer = "0.1.47"
 num-traits = "0.2.19"
 # FR-269: the deciding element is written through the shared canonical writer
 # and read through the shared reader, so a value of any depth round-trips.
-quire-canonical = { workspace = true }
+quire-canonical = { workspace = true, features = ["serde_json"] }
 # FR-338: a product-state locus carries its automaton key's octets as
 # FR-331's base64url transport.
 base64 = "0.22"

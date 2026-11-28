@@ -28,7 +28,9 @@ fn reset_loop(world: &World, variable: &str, initial: usize) -> fsl_replay::Hype
         .into_iter()
         .nth(initial)
         .expect("initial index");
-    let (key, _) = system.state_key(&state).expect("state key");
+    let (key, _) = system
+        .state_key(&state, fsl_foundation::IdentityLimits::default())
+        .expect("state key");
     let key = fsl_eval::simulation::StateKey::from_canonical_bytes(key);
     let expansion = system
         .successors(&state)
@@ -39,7 +41,7 @@ fn reset_loop(world: &World, variable: &str, initial: usize) -> fsl_replay::Hype
         .find(|(transition, post)| {
             transition.operation().contains("Vault/reset")
                 && system
-                    .state_key(post)
+                    .state_key(post, fsl_foundation::IdentityLimits::default())
                     .is_ok_and(|(bytes, _)| bytes == key.as_bytes())
         })
         .expect("reset has a self-loop");
@@ -178,6 +180,24 @@ fn an_empty_initial_list_settles_no_initial_state() {
         record.value,
         TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
     );
+}
+
+/// With an empty `initial` list every universe key is a binding, and the item
+/// settles `NoInitialState`.
+#[trace("TC-3219", "FR-315-AC-59")]
+#[test]
+fn an_empty_initial_list_settles_no_initial_state_at_every_universe_key() {
+    let mut world = World::new(&["v"], false, &non_interference("", ""));
+    world.universe.push("w".to_owned());
+    let world = world.without_initial_states();
+    for key in ["v", "w"] {
+        let record = settle(&world, key, key, HyperSmtResult::Inductive { depth: 1 })
+            .expect("the outcome answers the item");
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
+        );
+    }
 }
 
 /// `InductionNotClosed{depth}` settles `inconclusive`, never `proved`.
@@ -540,6 +560,22 @@ fn settle_with_witness_limits(
         &[],
     )
     .expect("the outcome answers the item")
+}
+
+/// FR-172 "Object parameters": settlement binds `v` in the population it
+/// resolves to, so the witness is checked there where the model declares
+/// another population before it.
+#[test]
+fn a_match_witness_binds_its_instance_behind_another_population() {
+    let world = World::behind_another_population(&["v"], &non_interference(EQUAL_INPUTS, ""));
+    let witness = fsl_replay::MatchWitness {
+        instance: instance("v"),
+        traces: vec![reset_loop(&world, "a", 0), reset_loop(&world, "b", 0)],
+        loop_entry: 0,
+    };
+    let accepted = settle_with_witness(&world, &witness);
+    assert!(matches!(accepted.value, TerminalValue::Proved { .. }));
+    assert_eq!(accepted.basis, SettlementBasis::DecisiveWitness);
 }
 
 /// A refused, mismatched or over-limit witness is not proof evidence.

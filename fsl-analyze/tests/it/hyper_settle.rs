@@ -39,8 +39,8 @@ use fsl_semantics::check::{Capability, HyperForm, HyperUnsupported, RequirementR
 use fsl_semantics::family::{ClaimExtent, Requirements, UnsupportedItem};
 use ix_trace_rs::trace;
 
-use crate::hyper::refuted;
-use crate::hyper_projected::{aligned, IDLE, MID_OPERATION};
+use crate::hyper_projected_support::{aligned, IDLE, MID_OPERATION};
+use crate::hyper_support::refuted;
 use crate::hyper_witness::{ExhaustedExistential, KERNEL_MOD_FUNCTION};
 use crate::hyper_world::{non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
 
@@ -294,7 +294,7 @@ fn an_undefined_tuple_refutes_and_an_undetermined_match_is_inconclusive() {
     let projected_outcome = projected
         .run_through(
             &projected.seams(),
-            &crate::hyper::Exhausted,
+            &crate::hyper_support::Exhausted,
             ModelCheckLimits::default(),
             &Cancel::new(),
         )
@@ -760,7 +760,12 @@ fn routed_hp4_hyper_item_settles_unsupported_requested_capability() {
 
     let analyze_item =
         hyper_form_item(&world.package, item, &form).expect("HP-4 settles at negotiation");
-    let results = analyze_items(&Engines::default(), vec![analyze_item], &Cancel::new());
+    let results = analyze_items(
+        &Engines::default(),
+        vec![analyze_item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    );
     let [result] = results.as_slice() else {
         panic!("one analysis result");
     };

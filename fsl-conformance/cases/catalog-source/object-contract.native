@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+object Order identity (total) {
+  total: Int[0, 9];
+  population orders;
+  operation bump(): Boolean modifies self.total;
+}
+pre Q using v on Order::bump { self.total < 9 }
+post R using v on Order::bump { self.total > pre(self.total) }
+body B using v on Order::bump() { true }

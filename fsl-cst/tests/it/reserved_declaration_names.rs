@@ -127,6 +127,60 @@ fn lowercase_tuple_still_refuses_as_a_record_name() {
     assert_eq!(refusal.cause, CompleteCause::UnexpectedToken);
 }
 
+/// `only` and `seq` each parse at `@` in every one of `positions`.
+fn assert_population_form_words_are_identifiers(
+    positions: impl IntoIterator<Item = (&'static str, &'static str)>,
+) {
+    for (position, template) in positions {
+        for name in ["only", "seq"] {
+            let text = unit(template, name);
+            let parsed = parse(&text);
+            assert!(
+                parsed.is_admissible(),
+                "{position}: {text}: {:?}",
+                parsed.diagnostics()
+            );
+        }
+    }
+}
+
+/// FSpec FR-376-AC-8 (QSL-3301): in a function body `only` and `seq` are
+/// ordinary identifiers.
+#[trace("FSpec-TC-311", "FSpec-FR-376-AC-8")]
+#[test]
+fn population_form_words_are_identifiers_in_a_function_body() {
+    assert_population_form_words_are_identifiers([
+        (
+            "`let` binder",
+            "{P}function f using v(x: Integer): Integer pure { let @ = x in @ }",
+        ),
+        (
+            "call and name reference",
+            "{P}function f using v(x: Integer): Integer pure { @(x) + @ }",
+        ),
+    ]);
+}
+
+/// FSpec FR-339, which incorporates the shared grammar (QSL-3301): `only` and
+/// `seq` are keyword spellings in their forms alone and identifiers elsewhere,
+/// so each names every native position, a protocol step's binder included.
+#[trace("FSpec-FR-339")]
+#[test]
+fn population_form_words_name_every_native_position() {
+    const SEND: (&str, &str) = (
+        "protocol send binder",
+        "{P}protocol Flow using v over (k: M::Cell) on origin { role Planning on M::Cell; \
+         run sequence Main { send Step via Release as (@: M::Attempt) { @.n = 0 }; } \
+         finish Over as (closing: Boolean) { closing }; }",
+    );
+    assert_population_form_words_are_identifiers(
+        FUNCTION_POSITIONS
+            .into_iter()
+            .chain(OTHER_POSITIONS)
+            .chain([SEND]),
+    );
+}
+
 #[trace("TC-113", "FR-035-AC-7")]
 #[test]
 fn collection_constructor_words_are_admitted_as_parameter_and_binder_names() {

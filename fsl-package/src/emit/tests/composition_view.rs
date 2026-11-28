@@ -361,6 +361,57 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
     ));
 }
 
+/// NFR-141-AC-25 (QSL-2854): one graph build per call at increasing numbers
+/// of admitted composite nodes, with each fixture declaration's exact shape
+/// and structural key retained in the output.
+#[trace("NFR-141-AC-25")]
+#[test]
+fn declared_composites_builds_one_wire_graph_and_preserves_declared_records() {
+    use crate::checked_v2::{reset_wire_graph_build_count, wire_graph_build_count};
+
+    for count in [250, 500, 1_000] {
+        let declarations = (0..count)
+            .map(|index| format!("record R{index} {{ amount: Integer; }}\n"))
+            .collect::<String>();
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n{declarations}"
+        );
+        let package = compile_with(&source, &[])
+            .unwrap_or_else(|failure| panic!("{count} records compile: {failure:?}"));
+        let emission = emit_checked_with_limits(&package, crate::EmitLimits::fixture())
+            .unwrap_or_else(|failure| panic!("{count} records emit: {failure:?}"));
+        let Read::Verified { admitted, .. } = read_back(&emission) else {
+            panic!("{count} records are admitted from the emitted bytes");
+        };
+        let bare = BarePackage::new(&admitted);
+        reset_wire_graph_build_count();
+        let actual = bare.declared_composites();
+        assert_eq!(wire_graph_build_count(), 1, "N = {count}");
+        assert_eq!(actual.len(), count, "every declared record is returned");
+        let mut expected_names: Vec<_> = (0..count).map(|index| format!("R{index}")).collect();
+        expected_names.sort_unstable();
+        for (index, (composite, name)) in actual.iter().zip(expected_names).enumerate() {
+            assert_eq!(
+                composite.shape,
+                crate::bare_term::DeclaredShape::Record(vec!["amount".to_owned()]),
+                "declared shape at N = {count}, index = {index}"
+            );
+            assert_eq!(
+                composite.key.package(),
+                "pkg",
+                "key package at index {index}"
+            );
+            let expected_key = format!("pkg:[{name:?},]:0");
+            assert_eq!(
+                composite.key.to_string(),
+                expected_key,
+                "structural key at N = {count}, index = {index}"
+            );
+        }
+    }
+}
+
 /// Attribution and owner-reference projection continue one finite native
 /// ledger, with actual source-map visits and first-unpaid limit refusals.
 #[trace("FR-940-AC-1", "FR-531-AC-39", "FSpec-FR-491-AC-7")]

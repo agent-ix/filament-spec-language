@@ -236,7 +236,7 @@ fn d05(meter: &mut Meter) -> Outcome<DecimalResult> {
     )
 }
 
-#[trace("FSpec-TC-185", "FSpec-FR-140-AC-6")]
+#[trace("FSpec-TC-185", "FSpec-FR-140-AC-6", "NFR-009-M-1")]
 #[test]
 fn d09_exact_bound_succeeds_and_each_named_denial_is_incomplete() {
     let mut meter = Meter::new(D09);

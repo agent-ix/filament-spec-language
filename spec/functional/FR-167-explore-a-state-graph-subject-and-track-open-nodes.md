@@ -144,8 +144,18 @@ pub enum RunEnd {
 
 - A node at `max_depth` that the engine does not expand SHALL be open,
   `MaxDepth`.
+- When the request selects a state constraint, the engine SHALL resolve its
+  name before any expansion, refuse a name that is no `constraint` clause of
+  the subject (FR-158 "Resolution"), and evaluate the constraint at every
+  explored node before expanding the node.
 - A boundary state of a selected state constraint (ADR-021 SC-2) SHALL be
-  open, `ConstraintBoundary`.
+  open, `ConstraintBoundary`, and SHALL NOT be expanded.
+- If the selected constraint evaluates `Undefined` at a node, then the node
+  SHALL be open, `UndecidedSuccessor`, and SHALL NOT be expanded; it is also
+  refuting evidence (FR-168 "Undefined evaluation").
+- If the `terminal when` predicate of a node with no enabled transition is
+  refused and no declaration intends the node (FR-124), then the node SHALL
+  be open, `UndecidedSuccessor`.
 - If a node's expansion evaluates a contract conjunction undecided (FR-120
   `ContractUndetermined`), then the node SHALL be open,
   `UndecidedSuccessor`, and exploration SHALL continue with the other nodes.
@@ -181,6 +191,7 @@ pub enum RunEnd {
 | FR-167-AC-4 | With partial-order reduction selected, an `always possible` item and a `unique path` item settle V-6 `ReductionNotPreserving` before any expansion while a `possible` item over the same subject is explored under it; with symmetry selected, a `unique path` item settles `ReductionNotPreserving`. The EN-1 manifest's `state_graph_forms` lists the three exact FR-390 forms, the trace monitor's manifest has no such member, and candidate computation filters a state-graph item by its exact form. | Test (TC-592, TC-193) |
 | FR-167-AC-5 | Running AC-1's §7.2 request twice gives byte-equal explored graphs, labels and open sets. | Test (TC-592) |
 | FR-167-AC-6 | Over ADR-021 §7.1 with the admitted `config_history` symmetry declaration and `ReachesTwo` instance `c = a`, whose binding stabilizer is `[[a], [b, c]]` (SYM-6), EN-1 stores the 18 states of that quotient rather than 27; every retained edge targets a canonical state and carries the permutation mapping its concrete successor to that target, and predicate labels remain keyed to `c = a`. The same request without symmetry stores 27 states. | Test (TC-592) |
+| FR-167-AC-7 | Over §7.1's subject with universe `{a}`, the selected constraint `Low` (`self.versionNumber <= 0`) and `ReachesTwo` for `c = a` with `witness_samples` 0: from the initial state `va = 0` the run stores 2 nodes and 1 edge, and from `va = 1` 1 node and no edge; the node `va = 1` is open `ConstraintBoundary` and never expanded, `end` is `Completed`, and the outcome is `NoDecision` with open cause `ConstraintBoundary`. A request naming `Absent`, the invariant `Bounded` or the postcondition `Advance` as its constraint is refused before any expansion, naming it. | Test (TC-592) |
 
 ## Dependencies
 

@@ -34,7 +34,7 @@ use fsl_semantics::model::observation::{
 use quire_canonical::{Node, NodeRef};
 
 /// The format member of a trace document.
-pub const TRACE_FORMAT: &str = "filament.monitor-trace/1";
+pub const TRACE_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorTrace.as_str();
 
 /// One selected temporal clause: its declared name and the object its `over`
 /// parameter binds, resolved in the observation at position 0.
@@ -435,7 +435,7 @@ impl MonitorRefusal {
     fn unstaged_document(&self) -> OutcomeDocument {
         let refused = |catalog: CatalogCode, message: String| {
             let category =
-                fsl_foundation::diagnostic::category_of(&catalog).unwrap_or(Category::Refusal);
+                fsl_foundation::diagnostic::exit_category_of(&catalog).unwrap_or(Category::Refusal);
             OutcomeDocument::new(Operation::Monitor, None, category).with_diagnostics(vec![
                 OutcomeDiagnostic::new(Some(catalog.cause()), catalog.code(), None, message),
             ])
@@ -1308,6 +1308,8 @@ fn read_ref(item: NodeRef<'_>, pointer: &str) -> Result<DocumentRef, Defect> {
 
 #[cfg(test)]
 mod tests {
+    use ix_trace_rs::trace;
+
     use super::*;
 
     fn fault() -> InternalFault {
@@ -1321,6 +1323,47 @@ mod tests {
             path: Vec::new(),
             kernel: None,
         }))
+    }
+
+    /// FR-285-AC-1: a checkpoint or clause refusal that carries
+    /// `unknown_required_feature` is category `unsupported`, exit 21, not the
+    /// record map's `Refusal` (20): one category per code.
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn an_unsupported_admission_code_refuses_the_monitor_request_at_exit_21() {
+        let failure = AdmissionFailure::Refused(Box::new(AdmissionRecord {
+            catalog: CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+            fields: BTreeMap::new(),
+            path: Vec::new(),
+            kernel: None,
+        }));
+        let state = MonitorRefusal::State {
+            failure: Box::new(failure),
+        };
+        let document = state.document();
+        assert_eq!(document.category(), Category::Unsupported, "{document:?}");
+        assert_eq!(document.category().exit_code(), 21);
+    }
+
+    /// FR-285-AC-1: a trace-document defect that carries an unsupported code
+    /// is category `unsupported`, exit 21, not the record map's `Refusal`
+    /// (20): the `refused` closure reads the exit category.
+    #[trace("TC-769", "FR-285-AC-1")]
+    #[test]
+    fn an_unsupported_trace_document_defect_is_exit_21() {
+        let record = AdmissionRecord {
+            catalog: CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+            fields: BTreeMap::new(),
+            path: Vec::new(),
+            kernel: None,
+        };
+        let refusal = MonitorRefusal::TraceDocument {
+            record: Box::new(record),
+            pointer: "/trace".to_owned(),
+        };
+        let document = refusal.document();
+        assert_eq!(document.category(), Category::Unsupported, "{document:?}");
+        assert_eq!(document.category().exit_code(), 21);
     }
 
     /// FR-283 Outputs: a `TemporalRefusal::Fault` disposition maps to

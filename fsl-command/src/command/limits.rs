@@ -21,6 +21,7 @@ use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::{AccountingSetting, Setting, SettingLimits, SettingName};
 use fsl_replay::spine::SpineLimits;
 use fsl_replay::{AccountingLimits, CallerLimits};
+use ix_trace_rs::implements;
 
 /// The command entry point a [`CommandLimits`] configures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -251,11 +252,12 @@ const MONITOR_ONLY: &[Setting] = &[
     Setting::MonitorPreparationStorage,
 ];
 
-/// What `replay` executes beyond [`COMMON`]: population admission, library
-/// resolution, the reader bound and the three model-check bounds graph
+/// What `replay` executes beyond [`COMMON`]: the reader bound, the package
+/// emission bound of its recompile and the three model-check bounds graph
 /// replay consumes.
 const REPLAY_ONLY: &[Setting] = &[
     Setting::ReplayInputBytes,
+    Setting::EmitOutputBytes,
     Setting::ModelCheckMaxStates,
     Setting::ModelCheckMaxTransitions,
     Setting::ModelCheckMaxAutomatonStates,
@@ -334,6 +336,7 @@ impl CommandLimits {
 
     /// Whether the operation exposes the stage `setting`.
     #[must_use]
+    #[implements("FR-255-AC-24")]
     pub fn exposes(&self, setting: Setting) -> bool {
         COMMON.contains(&setting)
             || match self.operation {
@@ -437,6 +440,7 @@ impl CommandLimits {
     }
 
     /// `limits` with each set setting it carries replaced.
+    #[implements("FR-281-AC-26")]
     pub(super) fn apply_to_analyze(&self, limits: &mut AnalyzeLimits) {
         let mut caller = CallerLimits {
             accounting: AccountingLimits(limits.accounting),
@@ -455,6 +459,11 @@ impl CommandLimits {
         }
         for (setting, bound) in &self.stage {
             limits.engines.set(*setting, *bound);
+            match setting {
+                Setting::ExpansionMaxCandidates => limits.expansion.max_candidates = *bound,
+                Setting::SimulationMaxSteps => limits.simulation.max_steps = *bound,
+                _ => {}
+            }
         }
     }
 
@@ -621,7 +630,7 @@ mod tests {
     }
 
     /// The engine settings `analyze` accepts, and `monitor` beside routed items.
-    /// `expansion.max_candidates` is required of the caller, so no bound is
+    /// `expansion.max_candidates` has a default per operation, so no bound is
     /// reported until it is set.
     fn engine_names() -> Vec<&'static str> {
         ENGINE_SETTINGS
@@ -651,30 +660,68 @@ mod tests {
         let mut analyze = vec!["replay.input_bytes", "emit.output_bytes"];
         analyze.extend(engine_names());
         assert_eq!(names(&CommandLimits::analyze()), expected(&analyze));
-        assert_eq!(
-            names(&monitor()),
-            {
-                let mut monitor = vec![
-                    "monitor.max_window_values",
-                    "monitor.retained_positions",
-                    "monitor.retained_identities",
-                    "monitor.preparation_work_units",
-                    "monitor.preparation_storage",
-                    "emit.output_bytes",
-                ];
-                monitor.extend(engine_names());
-                expected(&monitor)
-            }
-        );
+        assert_eq!(names(&monitor()), {
+            let mut monitor = vec![
+                "monitor.max_window_values",
+                "monitor.retained_positions",
+                "monitor.retained_identities",
+                "monitor.preparation_work_units",
+                "monitor.preparation_storage",
+                "emit.output_bytes",
+            ];
+            monitor.extend(engine_names());
+            expected(&monitor)
+        });
         assert_eq!(
             names(&CommandLimits::replay()),
             expected(&[
                 "replay.input_bytes",
+                "emit.output_bytes",
                 "model_check.max_states",
                 "model_check.max_transitions",
                 "model_check.max_automaton_states",
             ])
         );
+    }
+
+    /// FR-255-AC-24: the `replay` command takes exactly the stage settings a
+    /// replay request's `stage_limits` takes, and `replay.input_bytes`, which
+    /// reaches the reader and is no request member.
+    #[trace("TC-721", "FR-255-AC-24")]
+    #[test]
+    fn the_replay_command_and_request_take_the_same_stage_settings() {
+        let replay = CommandLimits::replay();
+        for &setting in Setting::ALL {
+            let on_request = fsl_replay::StageLimits::default()
+                .with_named(setting.name(), 1)
+                .is_ok();
+            assert_eq!(
+                replay.exposes(setting),
+                on_request || setting == Setting::ReplayInputBytes,
+                "{setting}"
+            );
+        }
+    }
+
+    /// FR-281-AC-26: a caller's candidate bound replaces that one limit of
+    /// the analysis, and reaches the items that read an engine bound.
+    #[trace("FR-281-AC-26")]
+    #[test]
+    fn a_caller_candidate_bound_replaces_that_one_analysis_limit() {
+        use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply};
+
+        let published = AnalyzeLimits::published(DeadlineSupply::Unbounded);
+        let mut limits = published;
+        let mut caller = CommandLimits::analyze();
+        caller
+            .set(SettingName::Stage(Setting::ExpansionMaxCandidates), 7)
+            .expect("analyze takes the setting");
+        caller.apply_to_analyze(&mut limits);
+        assert_eq!(limits.expansion.max_candidates, 7);
+        assert_eq!(limits.engines.get(Setting::ExpansionMaxCandidates), Some(7));
+        assert_eq!(limits.simulation, published.simulation);
+        assert_eq!(limits.position_limit, published.position_limit);
+        assert_eq!(limits.accounting, published.accounting);
     }
 
     /// TC-721 step 11, for the settings exposed today: each accepted setting changes only its own bound.

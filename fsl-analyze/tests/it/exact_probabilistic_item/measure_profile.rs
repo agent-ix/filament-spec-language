@@ -117,7 +117,9 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
             .iter()
             .find(|row| {
                 let key = key(row);
-                key[5][1] == remaining && key[5][2] == "active" && key[6][2] == amount
+                key[5][1] == json!(remaining.to_string())
+                    && key[5][2] == "active"
+                    && key[6][2] == amount
             })
             .expect("an active amount row");
         assert_eq!(
@@ -185,6 +187,14 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
         .expect("the quantile refutation carries replayed path evidence");
     assert_eq!(counterexample.mass(), &ratio(1, 4));
     assert!(!counterexample.evidence().paths.is_empty());
+    // FSpec FR-413 "Claim bound": a quantile keeps the claim's comparison,
+    // its measure bound as `threshold` and its level apart.
+    assert_eq!(
+        counterexample.wire.as_ref().expect("a wire")["bound"],
+        json!({"type": "quantile", "comparison": "less-or-equal",
+            "threshold": {"numerator": "2", "denominator": "1"},
+            "level": {"numerator": "4", "denominator": "5"}})
+    );
 }
 
 #[trace("TC-3152", "FR-1043-AC-2", "FR-1043-AC-3")]
@@ -222,7 +232,9 @@ fn every_scheduler_checks_shifted_extrema_and_the_strict_zero_edge() {
             .iter()
             .find(|row| {
                 let state = key(row);
-                state[5][1] == remaining && state[5][2] == "active" && state[6][2] == amount
+                state[5][1] == json!(remaining.to_string())
+                    && state[5][2] == "active"
+                    && state[6][2] == amount
             })
             .unwrap();
         assert_eq!(
@@ -791,6 +803,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
         resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
     use fsl_analyze::analyze::AnalyzeLimits;
+    use fsl_analyze::analyze::DeadlineSupply;
     let engines = Engines::fsl().unwrap();
     let mut registry = fsl_route::Registry::new();
     for descriptor in engines.registrations() {
@@ -800,7 +813,7 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
         serde_json::from_value(json!([{"claim": name, "probabilistic": {"evidence": "exact"}}]))
             .unwrap();
     let binding = world.binding();
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let units = [world.package.graph().source().clone()];
     let items = resolve_items(
         &world.package,
@@ -813,12 +826,14 @@ fn assert_vacuity_result_carrier(world: &World, name: &str, certificate: &Value)
     );
     let run = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding,
             provision: world.provision.clone(),
             items,
             engines: &engines,
             limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),
@@ -933,9 +948,27 @@ fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_sche
                 "Ge",
                 scheduler,
                 "quantile 0.9 of (steps from holds(false) until holds(m.delivered) within 4) >= 2",
+            ) + &claim(
+                "Numeric",
+                scheduler,
+                "probability <= 0.5 [steps from holds(false) until holds(m.delivered) within 4 <= 2]",
             )),
         ));
         let system = ModelSystem::new(world.subject().simulation).unwrap();
+        let numeric = settle(&world, "Numeric", ModelCheckLimits::default());
+        let numeric_document = fsl_replay::read_measure_probability_certificate(
+            numeric
+                .terminal()
+                .unwrap()
+                .exact_certificate_document()
+                .expect("a complete numeric profile"),
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap();
+        let seed = ExactProbabilityCertificate {
+            values: numeric_document.values,
+        };
         for name in ["Le", "Ge"] {
             let record = settle(&world, name, ModelCheckLimits::default());
             let terminal = record
@@ -977,7 +1010,7 @@ fn unreachable_activation_has_a_certified_value_free_vacuity_basis_for_each_sche
                     &system,
                     claims,
                     &item,
-                    &ExactProbabilityCertificate { values: Vec::new() },
+                    &seed,
                     payoff,
                     document_limits(),
                     &Cancel::new(),
@@ -1456,7 +1489,13 @@ fn settle_mean_document(
             ));
         },
     );
-    analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0)
+    analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 #[trace("FR-1043-AC-8", "FR-1043-AC-9", "FR-202-AC-28", "FR-202-AC-29")]
@@ -2132,7 +2171,10 @@ fn residual_measure_paths_replay_one_positive_physical_draw_and_reject_wrong_pos
             "{rejected:?}"
         );
         let first = &witness.paths[0].steps[0];
-        let original = system.state_key(&first.post).unwrap().0;
+        let original = system
+            .state_key(&first.post, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0;
         let alternate = system
             .actions_with_cancel(&witness.initial, &Cancel::new())
             .unwrap()
@@ -2145,7 +2187,13 @@ fn residual_measure_paths_replay_one_positive_physical_draw_and_reject_wrong_pos
             })
             .flat_map(|draw| draw.successors)
             .map(|(_, post)| post)
-            .find(|post| system.state_key(post).unwrap().0 != original)
+            .find(|post| {
+                system
+                    .state_key(post, fsl_foundation::IdentityLimits::default())
+                    .unwrap()
+                    .0
+                    != original
+            })
             .expect("an actual alternative post-state");
         let mut forged = witness.clone();
         forged.paths[0].steps[0].post = alternate;
@@ -2315,7 +2363,13 @@ fn a_slack_mean_bound_emits_the_checked_policy_and_refuses_the_old_optimizer_pol
             ));
         },
     );
-    let result = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+    let result = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert_eq!(
         result.terminal().unwrap().value(),
         &TerminalValue::Refuted,
@@ -2900,6 +2954,7 @@ fn measure_and_vacuity_limits_settle_incomplete_without_certification() {
             &engines,
             vec![exact_probabilistic_item(RequestIndex::new(0), request)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         let terminal = record
@@ -2939,6 +2994,7 @@ fn vacuity_cancellation_at_the_checker_boundary_retains_its_typed_cause() {
                 world.request("Q", ModelCheckLimits::default()),
             )],
             cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0)
     };
@@ -3073,7 +3129,7 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
                 .find(|row| {
                     let state = key(row);
                     state[4] == initial[4]
-                        && state[5][1] == remaining
+                        && state[5][1] == json!(remaining.to_string())
                         && state[6]
                             == json!([
                                 "count-fraction",

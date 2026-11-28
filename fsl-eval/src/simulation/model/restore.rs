@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Typed inverse of the model owner's canonical state identity.
 
-use super::{ModelKeyBudget, ModelKeyError, ModelSimState, ModelStateProvenance, ModelSystem};
+use super::{ModelKeyBudget, ModelKeyError, ModelSimState, ModelSystem};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
     ClockPlaceReference, CollectionType, FieldValue, Integer, MapType, Meter, NodeKey, Outcome,
@@ -259,6 +259,7 @@ impl Restore<'_, '_, '_> {
             Err(bad())
         }
     }
+    #[ix_trace_rs::string_edge]
     fn value(
         &mut self,
         node: NodeRef<'_>,
@@ -647,6 +648,7 @@ impl Restore<'_, '_, '_> {
             _ => Err(bad()),
         }
     }
+    #[ix_trace_rs::string_edge]
     fn state(&mut self, root: NodeRef<'_>) -> Result<ModelState, ModelRestoreError> {
         let system = self.system;
         let mut field_index = BTreeMap::new();
@@ -981,11 +983,7 @@ impl ModelSystem<'_> {
             value_nodes: 0,
         };
         let state = restore.state(document.root())?;
-        let state = ModelSimState {
-            state,
-            provenance: ModelStateProvenance::RestoredFromKey { effect: None },
-            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
-        };
+        let state = ModelSimState::restored(state);
         let actual = self.state_key_bytes_with_budget(&state, identity, restore.budget, cancel)?;
         restore.tick(bytes.len())?;
         if actual != bytes {

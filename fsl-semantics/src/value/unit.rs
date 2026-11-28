@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use ix_trace_rs::implements;
 use serde::Deserialize;
 
 use super::semantic_node::{
@@ -214,6 +215,7 @@ impl DimensionEquivalencePreimage {
     /// ascending key order, the ratio inverted when that swaps them.
     /// `None` for two equal nodes or a ratio that is not positive, which
     /// the assembler refuses first.
+    #[implements("FR-091-AC-68")]
     pub fn new(
         owner: NodeOwner,
         first: NodeKey,

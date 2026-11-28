@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-381's recorded outputs over a protocol that checks as a whole, and the
 //! commit-dominance rule over the compiled causal edge relation (TC-1057,
 //! TC-1058).
@@ -8,8 +9,8 @@ use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use super::{
-    BASE, ambiguous_population_model, assemble, assemble_against, changed, checked, edit,
-    obligation_causes, only, other, refusals,
+    ambiguous_population_model, assemble, assemble_against, changed, checked, edit,
+    obligation_causes, only, other, refusals, BASE,
 };
 use crate::check::protocol_clause::ProtocolNodeId;
 use crate::check::{

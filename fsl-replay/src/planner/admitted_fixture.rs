@@ -10,7 +10,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{
     admit_checked_package_with_dependencies, emit_checked, read_evaluation_emission,
     read_import_view, AdmittedPackages, BarePackage, BareSupply, CheckedPackage,
-    DependencyArtifact, Emission, EmitLimits, Import, NativeJoinFailure, ReadEqualityRows,
+    DependencyArtifact, DependencyJoinRefusal, Emission, EmitLimits, Import, ReadEqualityRows,
     ReadIdentityRows, SourceWitnessSupplier, V2ReadLimits,
 };
 use fsl_semantics::check::PackageDeclarations;
@@ -381,7 +381,7 @@ compose Sys rule {rule} {{
     pub fn bare(
         &self,
         budget: &mut NativeJoinBudget,
-    ) -> Result<BarePackage<'_>, NativeJoinFailure> {
+    ) -> Result<BarePackage<'_>, DependencyJoinRefusal> {
         BarePackage::new(&self.admitted)
             .with_canonical_bytes(&self.bytes)
             .with_dependency_artifacts(&self.dependencies, budget)?
@@ -392,6 +392,7 @@ compose Sys rule {rule} {{
                 },
                 budget,
             )
+            .map_err(DependencyJoinRefusal::from)
     }
 }
 

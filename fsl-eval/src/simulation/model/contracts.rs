@@ -195,7 +195,7 @@ pub(super) fn stopped_invariants(
     state: &ModelSimState,
     cause: CatalogCode,
 ) -> Result<Vec<ModelFinding>, ExpansionStop> {
-    let rows = rows_of(system, &state.state)?;
+    let rows = rows_of(system, state.state())?;
     let order = reference_order(&rows);
     let mut findings = Vec::new();
     for clause in &system.clauses.invariants {
@@ -231,7 +231,7 @@ fn bound_findings(
         for row in order {
             let row = &rows[*row];
             let violated = state
-                .state
+                .state()
                 .populations
                 .get(&row.population)
                 .and_then(|objects| objects.get(&row.key))

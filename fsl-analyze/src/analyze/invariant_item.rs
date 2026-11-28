@@ -13,20 +13,20 @@
 
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest};
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
     CertificateRequest, ModelCheckItem, QualifiedName, ReplayTargetMembers, RequestTargetWire,
     TemporalCounterexample,
 };
 use fsl_semantics::check::DeclarationFamily;
 
-use super::clause_item::{CLAUSE_TRANSCRIPT, ReplayInputs, ReplayShape, replay_over};
+use super::clause_item::{replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
 use super::derived_item::NoLetters;
-use super::items::{CounterexampleReplayFn, ModelItem, run_model_item};
+use super::items::{run_model_item, CounterexampleReplayFn, ModelItem};
 use super::{AnalyzeItem, AnalyzeLimits, SourceProvision, SubjectBinding, TemporalItem};
-use crate::model_check::ModelCheckRequest;
 use crate::model_check::manifest as en1;
+use crate::model_check::ModelCheckRequest;
 
 /// The EN-1 item that decides the `invariant` state clause at `claim` (its
 /// `state_clause` node and `claim` occurrence) over the binding, with the
@@ -122,6 +122,7 @@ pub(super) fn invariant_item<'a>(
                 request,
                 stutter_closure: false,
                 certificate,
+                engines: limits.engines,
                 replay,
             },
         )
@@ -164,14 +165,19 @@ pub struct PackageItemInputs<'a> {
 }
 
 impl<'a> PackageInvariantSubject<'a> {
-    /// The invariant subject of the state clause at `claim`, with the item's
-    /// settings `form`; `None` when no state clause row names `claim`.
+    /// The invariant subject of the `invariant` state clause at `claim`, with
+    /// the item's settings `form`; `None` when no `invariant` row names
+    /// `claim`, as on the source route, so a `pre` or `post` clause that names
+    /// EN-1 is never checked as an invariant.
     pub fn new(
         inputs: PackageItemInputs<'a>,
         claim: &OccurrenceKey,
         form: &TemporalItem,
     ) -> Option<Self> {
-        let clause = inputs.input.state_clause(claim.node(), claim.origin())?;
+        let clause = inputs
+            .input
+            .state_clause(claim.node(), claim.origin())
+            .filter(|clause| clause.invariant)?;
         Some(Self {
             input: inputs.input.input(),
             clause,
@@ -238,6 +244,7 @@ impl<'a> PackageInvariantSubject<'a> {
                 request,
                 stutter_closure: false,
                 certificate,
+                engines: self.limits.engines,
                 replay: Box::new(move |payload: &TemporalCounterexample| self.replay(payload)),
             },
         )

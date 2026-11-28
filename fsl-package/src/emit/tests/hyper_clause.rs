@@ -7,7 +7,9 @@
 //! operation is `attemptUpdate`.
 
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckingLimitKind, MatchPart, TemporalCause};
+use fsl_semantics::check::{
+    CheckCause, CheckingLimitKind, MatchPart, SemanticCheckRefusal, TemporalCause,
+};
 
 use super::admission_corpus::config_version_unit;
 use super::*;
@@ -283,7 +285,7 @@ fn a_finite_hyperproperty_names_its_own_profile_not_the_first_lock_selection() {
 }
 
 /// The refusals of `unit`'s check.
-fn refusals(unit: &str) -> Vec<fsl_semantics::check::CheckRefusal> {
+fn refusals(unit: &str) -> Vec<fsl_semantics::check::SemanticCheckRefusal> {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
     assemble_with_models(unit.as_bytes(), &packages)
         .expect("the unit assembles")
@@ -1038,9 +1040,21 @@ fn a_universal_package_hyper_form_rebuilds_equal_from_emitted_facts() {
         panic!("one emitted Equal");
     };
     supplied_hyper(&built, &admitted, |bare| {
-        let form = bare
+        let mut form = bare
             .hyper_clause_form(root.occurrence())
             .expect("Equal package facts");
+        // The populations that overlap each parameter's type come from the
+        // supplied domain packages, as the analysis entry reads them.
+        let selections = crate::AnalysisView::model_selections(&bare);
+        let packages = packages_of(&built.documents);
+        let model = fsl_semantics::model::state::StateModel::new(
+            fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+            &built.types,
+            &packages,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("the selected packages re-admit");
+        form.bind_populations(&model);
         assert_eq!(form.name, "Equal");
         assert_eq!(
             form.profile,
@@ -1529,7 +1543,11 @@ fn hyper_clock_rows_are_trace_keyed_and_reader_rejects_an_unknown_trace() {
 }
 
 /// The refusals of the world, with the unit text.
-fn refused(profile: &str, aliases: &[&str], declarations: &str) -> (String, Vec<CheckRefusal>) {
+fn refused(
+    profile: &str,
+    aliases: &[&str],
+    declarations: &str,
+) -> (String, Vec<SemanticCheckRefusal>) {
     let (text, documents) = world_unit(profile, aliases, declarations);
     let refusals = assemble_with_models(text.as_bytes(), &packages_of(&documents))
         .expect("the unit assembles")
@@ -1565,8 +1583,8 @@ fn admitted(built: &Built) -> std::sync::Arc<filament_contract_model::CheckedPac
 }
 
 /// The text a not-emitted refusal's span covers in `text`.
-fn not_emitted_text<'t>(text: &'t str, refusals: &[CheckRefusal]) -> &'t str {
-    let [CheckRefusal { cause, .. }] = refusals else {
+fn not_emitted_text<'t>(text: &'t str, refusals: &[SemanticCheckRefusal]) -> &'t str {
+    let [SemanticCheckRefusal { cause, .. }] = refusals else {
         panic!("one temporal refusal: {refusals:?}");
     };
     let CheckCause::Temporal(cause) = cause.as_ref() else {
@@ -2362,18 +2380,16 @@ fn only_a_hyper_name_row_carries_the_clauses_source_unit() {
 #[trace("TC-1327", "FR-488-AC-31")]
 #[test]
 fn a_finite_hyper_clause_resolves_its_timestamp_unit_in_its_source_unit() {
-    let source = format!(
-        "language \"ix:native\" edition \"1-draft\";\n\
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          dimension Time;\n\
          unit ms : Time = rational(1, 1);\n\
-         record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n\
+         record Obs { inp: Int[0, 3]; res: Int[0, 3]; }\n\
          hyper Fast using t over t in Obs bounded 3 forall trace a forall trace b \
-         {{ (a.inp = b.inp) implies (a.res = b.res) }}"
-    );
+         { (a.inp = b.inp) implies (a.res = b.res) }";
     let emission = emit_finite_with_clock(
-        &source,
+        source,
         std::iter::empty::<&[u8]>(),
         filament_contract_model::ClockConfiguration::TimestampedEvent {
             timestamp_unit: "ms".into(),

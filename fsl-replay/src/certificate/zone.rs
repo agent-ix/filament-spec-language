@@ -411,8 +411,8 @@ impl<W: Exact> Zone<W> {
                 continue;
             }
             self.cells[i * self.dim] = None;
-            for j in 0..self.dim {
-                if !selected[j] {
+            for (j, is_selected) in selected.iter().enumerate() {
+                if !is_selected {
                     self.cells[i * self.dim + j] = None;
                 }
             }

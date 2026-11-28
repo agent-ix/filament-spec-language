@@ -9,8 +9,8 @@
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{
     analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, ClaimItem, ClaimRefusal, ClauseLimits,
-    Counterexample, Engines, ItemForm, ItemOptions, NegotiatedItem, ProbabilisticItem,
-    ProbabilisticLimits, SourceProvision, TemporalItem,
+    Counterexample, DeadlineSupply, Engines, ItemForm, ItemOptions, NegotiatedItem,
+    ProbabilisticItem, ProbabilisticLimits, SourceProvision, TemporalItem,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use fsl_analyze::provider;
@@ -118,9 +118,10 @@ fn missing_source_refuses_analyze_and_declines_provider_items_before_any_engine(
         binding: world.binding(&["c"]),
         provision: SourceProvision::default(),
         items: vec![temporal(&world)],
+        certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let failure = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect_err("the source is absent");
     let StageFailure::Refused(AnalyzeRefusal::Provision(refusal)) = failure else {
@@ -157,6 +158,7 @@ fn missing_source_refuses_analyze_and_declines_provider_items_before_any_engine(
         &engines,
         &limits,
         &Cancel::new(),
+        Default::default(),
     );
     assert_eq!(served.records.len(), 1);
     assert!(matches!(
@@ -180,8 +182,9 @@ fn a_refuted_clause_returns_the_reproduced_counterexample_through_both_entries()
         binding: world.binding(&["c"]),
         provision,
         items: vec![temporal(&world)],
+        certification: Default::default(),
     };
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let engines = Engines::fsl().expect("the manifests register");
     let outcome = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect("the request admits")
@@ -194,6 +197,7 @@ fn a_refuted_clause_returns_the_reproduced_counterexample_through_both_entries()
         &engines,
         &limits,
         &Cancel::new(),
+        Default::default(),
     );
     assert_eq!(outcome.records, served.records);
     assert_eq!(outcome.records[0].value(), &TerminalValue::Refuted);
@@ -248,9 +252,10 @@ fn the_unbounded_exact_member_retains_the_checker_owned_certificate() {
         binding: world.binding(),
         provision: world.provision.clone(),
         items: vec![exact(&world, ExactProbLimits::default())],
+        certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let outcome = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect("the request admits")
         .into_value();
@@ -262,6 +267,7 @@ fn the_unbounded_exact_member_retains_the_checker_owned_certificate() {
         &engines,
         &limits,
         &Cancel::new(),
+        Default::default(),
     );
     assert_eq!(outcome.records, served.records);
     assert!(matches!(
@@ -308,12 +314,13 @@ fn the_one_state_exact_budget_returns_no_counterexample_or_certificate() {
         binding: world.binding(),
         provision: world.provision.clone(),
         items: vec![exact(&world, exact_limits)],
+        certification: Default::default(),
     };
     let outcome = analyze(
         &world.package,
         &request,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the request admits")
@@ -348,12 +355,13 @@ fn changed_source_bytes_never_promote_an_unreproduced_candidate_to_refuted() {
         binding: world.binding(&["c"]),
         provision: SourceProvision::single(world.package.graph().source(), changed.as_bytes()),
         items: vec![temporal(&world)],
+        certification: Default::default(),
     };
     let outcome = analyze(
         &world.package,
         &request,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the labels, binding and source provision admit")
@@ -377,12 +385,13 @@ fn source_completeness_is_checked_even_when_the_package_cannot_emit() {
         binding: world.binding(),
         provision: SourceProvision::default(),
         items: Vec::new(),
+        certification: Default::default(),
     };
     let failure = analyze(
         &world.package,
         &request,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect_err("missing source refuses even this package");
@@ -416,7 +425,7 @@ fn plain(claim: OccurrenceKey, kind: Capability, backend: &str) -> NegotiatedIte
 #[test]
 fn a_value_claim_returns_its_native_replayed_assignment() {
     let declaration = "function Goal using v(x: Int[0,3]): Boolean pure { x < 3 }";
-    let (package, source) = crate::value_validity::package_with_source(declaration);
+    let (package, source) = crate::value_validity_support::package_with_source(declaration);
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("empty package input");
     let snapshots = fsl_semantics::model::observation::DocumentProvision::default();
@@ -475,6 +484,7 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
             Ok(native_request),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     assert!(
         matches!(
@@ -499,9 +509,10 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
             Capability::ValueValidity,
             fsl_analyze::value_check::manifest::BACKEND_ID,
         )],
+        certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let mut limited = AnalyzeLimits::unbounded();
+    let mut limited = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     limited.accounting.work_units = 0;
     let stopped = analyze(&package, &request, &engines, &limited, &Cancel::new())
         .expect("the bounded value request admits")
@@ -514,6 +525,7 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
         &engines,
         &limited,
         &Cancel::new(),
+        Default::default(),
     );
     assert_eq!(stopped.records, served.records);
     assert_eq!(
@@ -532,7 +544,7 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
         &package,
         &request,
         &engines,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the adequately funded request admits")
@@ -548,8 +560,9 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
             fsl_analyze::value_check::manifest::BACKEND_ID,
         )],
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
+        Default::default(),
     );
     assert_eq!(
         result.records[0].value(),
@@ -592,8 +605,9 @@ fn a_contract_claim_reaches_the_existing_contract_arm() {
             fsl_analyze::contract_check::manifest::BACKEND_ID,
         )],
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
+        Default::default(),
     );
     assert!(
         matches!(result.records[0].value(), TerminalValue::Proved { .. }),
@@ -628,7 +642,7 @@ fn omitted_optional_statistical_settings_equal_the_explicit_defaults() {
     form.timed_sampling = None;
     let limits = AnalyzeLimits {
         accounting: prob_world::UNLIMITED,
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let engines = Engines::fsl().expect("the manifests register");
     let serve = |item| {
@@ -640,6 +654,7 @@ fn omitted_optional_statistical_settings_equal_the_explicit_defaults() {
             &engines,
             &limits,
             &Cancel::new(),
+            Default::default(),
         )
     };
     let expected = serve(explicit);
@@ -686,9 +701,10 @@ fn exact_refutation_retains_the_reproduced_path_set_through_both_entries() {
         binding: world.binding(),
         provision: world.provision.clone(),
         items: vec![exact(&world, ExactProbLimits::default())],
+        certification: Default::default(),
     };
     let engines = Engines::fsl().expect("the manifests register");
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let outcome = analyze(&world.package, &request, &engines, &limits, &Cancel::new())
         .expect("the request admits")
         .into_value();
@@ -700,6 +716,7 @@ fn exact_refutation_retains_the_reproduced_path_set_through_both_entries() {
         &engines,
         &limits,
         &Cancel::new(),
+        Default::default(),
     );
     assert_eq!(outcome.records, served.records);
     assert_eq!(outcome.records[0].value(), &TerminalValue::Refuted);
@@ -769,7 +786,7 @@ fn claim_construction_resolves_the_complete_checked_occurrence() {
         filament_exact::Origin::new(filament_exact::Role::new("claim"), 99),
     );
     assert!(matches!(build(wrong), Err(ClaimRefusal::UnknownClaim)));
-    let (other, _) = crate::value_validity::package_with_source(
+    let (other, _) = crate::value_validity_support::package_with_source(
         "function Other using v(x: Int[0,3]): Boolean pure { x < 2 }",
     );
     let (node, origin, _) = other
@@ -801,8 +818,9 @@ fn a_provider_admission_failure_is_settled_by_disposition() {
         &SourceProvision::default(),
         &items,
         &Engines::fsl().expect("the manifests register"),
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
+        Default::default(),
     );
     let [record] = served.records.as_slice() else {
         panic!("one record: {:?}", served.records)
@@ -845,12 +863,14 @@ fn a_call_item_fault_is_settled_by_disposition() {
     );
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &world.package,
             binding: world.binding(&["c"]),
             provision: SourceProvision::single(world.package.graph().source(), &world.unit),
             items: resolved,
             engines: &engines,
-            limits: AnalyzeLimits::unbounded(),
+            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),

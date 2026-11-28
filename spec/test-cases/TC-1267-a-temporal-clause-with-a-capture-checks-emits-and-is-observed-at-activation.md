@@ -48,8 +48,9 @@ infinite-trace unless a step names another profile.
    3)` `on each (q: M::Counter) when (c.value = 1)` and `when (c.value >= 2)`
    each with an unread `capture n: Int[0, 3] = c.value;`; under
    infinite-trace `always holds(true)` `on each (q: M::Counter) when (true)`
-   and `when (false)` (S3 refuses `c.value = 7` over `Int[0, 3]`) with `capture z: Boolean = (6 mod (2 - c.value) =
-   0);`.
+   and `when (false)` (S3 refuses `c.value = 7` over `Int[0, 3]`) with `capture z: Boolean = (q(2 - c.value) =
+   0);` and `function q using v(x: Integer): Integer pure { 6 mod x }`, its
+   body checked under `Kernel` (FR-495-AC-3).
 6. Run `eventually[0,1] holds(n < 3 and c.value = n + 1)` `on each (q: M::Counter) when
    (c.value = 1)` with `capture n: Int[0, 3] = c.value;` through the engine,
    the capture-free clause `eventually[0,1] holds(1 < 3 and c.value = 1 + 1)`,

@@ -1,0 +1,12 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.infinite-trace/v1";
+model Spec = "catalog/guarantee";
+temporal Eventually2 using t over (c: Spec::Counter) clock "model-steps" on origin { fair weak each Spec::Counter::inc; always eventually holds(c.value = 2) }
+abstraction A using v {
+  type Spec::Counter to "counter::Counter" { value to "value"; };
+  population Spec::counters to "state::counters";
+  operation Spec::Counter::inc to "counter::Counter::inc_cas" receiver "self" ();
+  operation Spec::Counter::dec to "counter::Counter::dec_cas" receiver "self" ();
+}
+guarantee G of Eventually2 using A { initial to "counter::Counter::new"; progress Spec::Counter::inc decreases "counter::retries_left"; progress Spec::Counter::dec bound 5; environment Sched by "scheduler" fair weak each Spec::Counter::inc; environment Net by "network" fair Spec::Counter::dec; }

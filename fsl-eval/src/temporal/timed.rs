@@ -49,26 +49,26 @@ use super::position::{PositionRefusal, TemporalPosition};
 
 /// The named point every unit of work charges, as the step evaluator does:
 /// `temporal.visit`.
-const VISIT: ChargePoint = ChargePoint::TemporalVisit;
+pub(super) const VISIT: ChargePoint = ChargePoint::TemporalVisit;
 
 /// A finite timed trace (FR-231 "Inputs"): the time stamp of each position,
 /// in the clause binding's unit, non-negative and non-decreasing. It is a
 /// prefix of a time-divergent behaviour whose continuation is unknown.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimedTrace {
-    stamps: Vec<Rational>,
+    pub(super) stamps: Vec<Rational>,
     /// The latest time through which a finite recording is complete.
-    through: Option<Rational>,
+    pub(super) through: Option<Rational>,
     /// The loop a timed lasso repeats forever; none for a finite prefix.
-    looping: Option<TimedLoop>,
+    pub(super) looping: Option<TimedLoop>,
 }
 
 /// The loop of a timed lasso (ADR-026 CT-2): the position its end re-enters
 /// and its total delay.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct TimedLoop {
-    start: usize,
-    delay: Rational,
+pub(super) struct TimedLoop {
+    pub(super) start: usize,
+    pub(super) delay: Rational,
 }
 
 impl TimedTrace {
@@ -164,7 +164,11 @@ enum Tri {
 
 impl Tri {
     fn of(value: bool) -> Self {
-        if value { Self::True } else { Self::False }
+        if value {
+            Self::True
+        } else {
+            Self::False
+        }
     }
 
     fn negate(self) -> Self {
@@ -176,7 +180,11 @@ impl Tri {
     }
 
     fn flip(self, dual: bool) -> Self {
-        if dual { self.negate() } else { self }
+        if dual {
+            self.negate()
+        } else {
+            self
+        }
     }
 }
 
@@ -586,12 +594,13 @@ pub fn evaluate_timed_at<L: TemporalLetters>(
     evaluate_timed_formula_at(clause.formula(), trace, position, letters, meter)
 }
 
-/// Evaluate a checked timed probabilistic event formula at one position.
+/// [`evaluate_timed_at`] over a formula checked under the timed profile
+/// that no clause carries, such as a probabilistic claim's event.
 ///
-/// Unlike [`evaluate_timed_at`], this entry point accepts the formula owned by
-/// a checked probability claim, whose claim profile and atom binding are
-/// supplied by the caller. The same timed formula evaluator and closed-trace
-/// semantics are used.
+/// # Errors
+///
+/// A position the trace does not represent, and a formula the timed profile
+/// does not admit.
 pub fn evaluate_timed_formula_at<L: TemporalLetters>(
     formula: &CheckedFormula,
     trace: &TimedTrace,

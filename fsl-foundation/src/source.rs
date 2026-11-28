@@ -114,7 +114,8 @@ pub struct Position {
 }
 
 /// Half-open original UTF-8 bytes. Coordinates are derived only when requested.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Span {
     /// Inclusive starting byte offset.
     pub start: usize,
@@ -558,10 +559,10 @@ mod tests {
         }
     }
 
-    /// FR-001-AC-5: admission mints a `RawSourceRef` of the authority and
-    /// identity labels (the type has no other member); other bytes under the
-    /// same labels name the same reference.
-    #[trace("TC-424", "FR-001-AC-5")]
+    /// FR-001-AC-1 and AC-5: admission's source reference contains only the
+    /// authority and identity labels; other bytes under the same labels name
+    /// the same reference.
+    #[trace("TC-424", "FR-001-AC-1", "FR-001-AC-5")]
     #[test]
     fn admission_mints_the_caller_named_source_reference() {
         let admit = |bytes: &[u8]| {

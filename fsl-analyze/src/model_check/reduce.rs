@@ -25,6 +25,7 @@ use fsl_eval::simulation::{
 use fsl_foundation::ReductionKind;
 use fsl_replay::{ModelCheckItem, ReductionCause, SymmetryBrokenCause, SymmetryRefusal};
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
+use ix_trace_rs::implements;
 
 /// A row of the preservation table (ADR-021 PT-2): an item's form, with
 /// whether its formula has an interval operator.
@@ -300,7 +301,9 @@ fn closure_of<S: Borrow<ModelSimState>>(
     for initial in initial {
         let (index, state) = initial?;
         let state = state.borrow();
-        let (key, _) = system.state_key(state).map_err(ClosureRefusal::Encoding)?;
+        let (key, _) = system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .map_err(ClosureRefusal::Encoding)?;
         missing.remove(&key);
         if !keys.insert(key) {
             continue;
@@ -309,7 +312,9 @@ fn closure_of<S: Borrow<ModelSimState>>(
             let image = system
                 .permute(state, generator)
                 .map_err(|_| ClosureRefusal::Unordered)?;
-            let (key, _) = system.state_key(&image).map_err(ClosureRefusal::Encoding)?;
+            let (key, _) = system
+                .state_key(&image, fsl_foundation::IdentityLimits::default())
+                .map_err(ClosureRefusal::Encoding)?;
             if !keys.contains(&key) {
                 missing.entry(key).or_insert((index, order));
             }
@@ -364,6 +369,7 @@ pub struct InstanceGroup {
 /// class is one orbit; each other key its own), one instance per orbit,
 /// bound to the orbit's least key and run under its stabiliser. With no
 /// binding (the deadlock-freedom item) the one instance runs under `group`.
+#[implements("FR-151-AC-5")]
 pub fn instance_groups(
     bindings: Option<&[ModelInstance]>,
     group: &SymmetryGroup,
@@ -381,9 +387,16 @@ pub fn instance_groups(
         if covered.contains(&(&binding.population, binding.key.as_str())) {
             continue;
         }
-        let orbit = group
+        let mut orbit = group
             .class_of(&binding.population, &binding.key)
             .map_or_else(|| vec![binding.key.clone()], |class| class.keys.clone());
+        // A key that is no instance here is in no orbit (FR-151
+        // "Instances").
+        orbit.retain(|key| {
+            bindings
+                .iter()
+                .any(|other| other.population == binding.population && other.key == *key)
+        });
         let Some(least) = orbit.first().cloned() else {
             continue;
         };

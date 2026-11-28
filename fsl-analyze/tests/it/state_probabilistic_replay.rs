@@ -50,6 +50,7 @@ fn evidence(world: &World) -> ProbabilisticCounterexample {
             world.request("Claim", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = records.remove(0);
     assert_eq!(
@@ -203,7 +204,10 @@ fn empty(world: &World) -> ProbabilisticCounterexample {
     let binding = fsl_replay::claim_binding(&system, world.claim("Claim")).unwrap();
     let reference = binding.as_ref().map(|binding| binding.reference.clone());
     let initial = system.initial().remove(0);
-    let bytes = system.state_key(&initial).unwrap().0;
+    let bytes = system
+        .state_key(&initial, fsl_foundation::IdentityLimits::default())
+        .unwrap()
+        .0;
     ProbabilisticCounterexample {
         item: fsl_replay::probabilistic_claim_identity(world.claim("Claim")).unwrap(),
         binding: reference.clone(),
@@ -470,6 +474,7 @@ fn adapter_budget_exhaustion_keeps_incomplete_without_evidence() {
                 &Engines::fsl().unwrap(),
                 vec![exact_probabilistic_item(RequestIndex::new(0), request)],
                 &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
             )
             .remove(0);
             assert!(
@@ -503,6 +508,7 @@ fn actual_s3_over_parameter_and_single_admitted_instance_drive_replay() {
             &Engines::fsl().unwrap(),
             vec![exact_probabilistic_item(RequestIndex::new(0), request)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -528,7 +534,15 @@ fn actual_s3_over_parameter_and_single_admitted_instance_drive_replay() {
             ),
             Ok(ProbabilityWitnessReplay::Reproduced(_))
         ));
-        let unrestricted = ModelSystem::new(world.subject().simulation).unwrap();
+        // FR-125: only a universe key an initial record admits is an instance,
+        // so the unrestricted subject holds both objects initially.
+        let model = model(event, "every scheduler", ">=", "0.5");
+        let both = World::with_object_initials(
+            &model,
+            &["m", "other"],
+            std::slice::from_ref(&model.initial),
+        );
+        let unrestricted = ModelSystem::new(both.subject().simulation).unwrap();
         assert!(matches!(
             replay_probabilistic_witness(
                 unrestricted

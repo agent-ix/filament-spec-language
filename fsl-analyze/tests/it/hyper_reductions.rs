@@ -15,7 +15,8 @@ use fsl_route::reductions::{Reductions, SymmetryDeclaration};
 use fsl_semantics::check::{HyperForm, TemporalProfile};
 use ix_trace_rs::trace;
 
-use crate::hyper::refuted;
+use crate::counter::UNLIMITED;
+use crate::hyper_support::refuted;
 use crate::hyper_world::{key, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
 
 /// The two vaults `v` and `w` of one initial state.
@@ -63,8 +64,8 @@ fn with_constraint(reductions: Reductions, constraint: &str) -> Reductions {
 /// `at current` clauses of its model.
 const SECURE_CONSTRAINED: Vault = Vault::Custom(
     "post Step using v on V::Vault::step { self.l = i }\n\
-     invariant Low using v on V::Vault at current { self.l <= 1 }\n\
-     invariant Zero using v on V::Vault at current { self.l = 0 }\n",
+     constraint Low using v on V::Vault at current { self.l <= 1 }\n\
+     constraint Zero using v on V::Vault at current { self.l = 0 }\n",
 );
 
 /// `NonInterference` over the vaults `v` and `w` of `vault`.
@@ -90,6 +91,55 @@ fn product_states(outcome: &HyperOutcome) -> u64 {
         }
         other => panic!("expected a holding outcome, got {other:?}"),
     }
+}
+
+#[trace("FR-255-AC-43")]
+#[test]
+fn a_one_byte_retention_allowance_stops_a_hyper_search_before_its_first_state() {
+    use fsl_foundation::{budget::Budget, Setting};
+    let secure = interference(Vault::Secure);
+    let run = |bound: u64| {
+        let mut limits = fsl_analyze::analyze::EngineBounds::default();
+        assert!(limits.set(Setting::AnalysisRetainedBytes, bound));
+        let retained = limits.item_budget(UNLIMITED, &Cancel::new());
+        let outcome = secure.run_retaining(&retained).expect("not refused");
+        (outcome, retained)
+    };
+    let (stopped, retained): (HyperOutcome, Budget) = run(1);
+    assert_eq!(retained.consumed(Setting::AnalysisRetainedBytes), 0);
+    let HyperOutcome::Stopped {
+        cause,
+        limit,
+        stats,
+        ..
+    } = &stopped
+    else {
+        panic!("expected a stop, got {stopped:?}");
+    };
+    assert_eq!(*cause, fsl_replay::IncompleteCause::ResourceExhausted);
+    assert_eq!(
+        *limit,
+        Some(fsl_replay::ReachedLimit {
+            limit: fsl_replay::ModelCheckLimit::AnalysisRetainedBytes,
+            value: 1,
+        })
+    );
+    assert_eq!(stats.product_states, 0);
+    assert_eq!(
+        fsl_replay::ModelCheckLimit::AnalysisRetainedBytes.setting(),
+        "analysis.retained_bytes"
+    );
+    assert_eq!(format!("{stopped:?}"), format!("{:?}", run(1).0));
+    // At the published default the same item settles as it does with no bound.
+    let (published, _) = run(Setting::AnalysisRetainedBytes.default_bound().unwrap());
+    let unbounded = secure
+        .run(ModelCheckLimits::default(), &Cancel::new())
+        .expect("not refused");
+    assert!(
+        matches!(published, HyperOutcome::HoldsReduced { .. }),
+        "{published:?}"
+    );
+    assert_eq!(format!("{published:?}"), format!("{unbounded:?}"));
 }
 
 #[trace("TC-3011", "FR-174-AC-7")]
@@ -518,7 +568,7 @@ fn a_finite_constraint_preserves_false_extension_and_terminal_replay() {
         Vault::Custom(
             "pre Fresh using v on V::Vault::step { self.l = 0 }\n\
             post Step using v on V::Vault::step { self.l = i }\n\
-            invariant Low using v on V::Vault at current { self.l <= 1 }\n",
+            constraint Low using v on V::Vault at current { self.l <= 1 }\n",
         ),
         uniform_snapshots(&["v"]),
         &["v"],
@@ -569,6 +619,7 @@ fn a_finite_orbit_walk_stops_at_the_actual_transition_allowance() {
             limits,
             meter: crate::counter::UNLIMITED,
             reductions: with_constraint(Reductions::default(), "Low"),
+            retained: None,
             max_depth: None,
         },
         &Cancel::new(),
@@ -612,6 +663,7 @@ fn finite_with_limits(
             matcher: &seams,
             limits,
             meter,
+            retained: None,
             reductions,
             max_depth: None,
         },
@@ -648,8 +700,8 @@ fn a_finite_first_closed_refutation_precedes_later_sibling_budget_work() {
     assert_eq!(ample.kind, fsl_replay::HyperCounterexampleKind::Closed);
     assert_eq!(ample.traces.len(), 2);
     assert!(ample.traces.iter().all(|trace| trace.steps.len() == 1));
-    assert_eq!(crate::hyper::inputs(&ample, 0), vec![0]);
-    assert_eq!(crate::hyper::inputs(&ample, 1), vec![1]);
+    assert_eq!(crate::hyper_support::inputs(&ample, 0), vec![0]);
+    assert_eq!(crate::hyper_support::inputs(&ample, 1), vec![1]);
     assert!(matches!(
         world.replay(&ample),
         Ok(ModelTraceSettlement::Reproduced { .. })
@@ -709,8 +761,8 @@ fn a_finite_selected_closed_refutation_precedes_later_orbit_budget_work() {
     let ample = refuted(run(100));
     let bounded = refuted(run(2));
     assert_eq!(bounded, ample);
-    assert_eq!(crate::hyper::inputs(&bounded, 0), vec![0]);
-    assert_eq!(crate::hyper::inputs(&bounded, 1), vec![1]);
+    assert_eq!(crate::hyper_support::inputs(&bounded, 0), vec![0]);
+    assert_eq!(crate::hyper_support::inputs(&bounded, 1), vec![1]);
     assert!(matches!(
         world.replay(&bounded),
         Ok(ModelTraceSettlement::Reproduced { .. })
@@ -751,8 +803,8 @@ fn a_finite_stream_keeps_component_cartesian_order_across_joint_depths() {
         crate::counter::UNLIMITED,
         &Cancel::new(),
     ));
-    assert_eq!(crate::hyper::inputs(&counterexample, 0), vec![0, 0]);
-    assert_eq!(crate::hyper::inputs(&counterexample, 1), vec![1, 0]);
+    assert_eq!(crate::hyper_support::inputs(&counterexample, 0), vec![0, 0]);
+    assert_eq!(crate::hyper_support::inputs(&counterexample, 1), vec![1, 0]);
     assert!(matches!(
         world.replay(&counterexample),
         Ok(ModelTraceSettlement::Reproduced { .. })
@@ -800,7 +852,7 @@ fn a_finite_matched_cut_prevents_a_real_descendant_expansion_failure() {
         Vault::Custom(
             "pre Guard using v on V::Vault::step { self.l = 0 implies i = 0 }\n\
             post Step using v on V::Vault::step { self.l = 1 }\n\
-            invariant Zero using v on V::Vault at current { self.l = 0 }\n",
+            constraint Zero using v on V::Vault at current { self.l = 0 }\n",
         ),
         false,
         &[(0, 0)],
@@ -1075,6 +1127,7 @@ fn a_finite_joint_walk_retains_inflight_cancellation_as_a_typed_stop() {
             limits: ModelCheckLimits::default(),
             meter: crate::counter::UNLIMITED,
             reductions: with_constraint(Reductions::default(), "Low"),
+            retained: None,
             max_depth: None,
         },
         &cancel,

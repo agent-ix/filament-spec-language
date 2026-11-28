@@ -84,8 +84,11 @@ always present and is exactly one of:
 
 A snapshot or invocation admission refusal (FR-106 checks 1 to 11) SHALL
 carry the document locus of the first failing member: the snapshot's
-labels, the pointer to the member (to the object for a missing member),
-the object's population and key, and the member name.
+labels, the pointer to the member, the object's population and key, and
+the member name. For a missing declared object field or a missing
+required operation parameter the pointer names the absent member
+(FR-106-AC-82, FR-106-AC-71); for a missing context field, or a member
+missing inside a value, it stops at the containing object.
 
 Every non-null locus is one of the six tagged forms of FR-267's
 **Refusal locus wire** (`region`, `located`, `occurrence`, `artifact`,
@@ -97,7 +100,9 @@ This imported-source projection applies to both compilation and compilation
 reached through native `run`. For the S3 unbounded-extent planning refusal at
 an operation parameter ([FR-806](ix://agent-ix/filament-specification/FR-806)),
 the adapter SHALL use that parameter's retained origin rather than the PLAN
-declaration's or program's source region. Imported-source locations retain the
+declaration's or program's source region. The refusal carries `unsupported_projection`, so it exits with that
+code's category exit, 21 (FR-285, one category per code; FSpec FR-806-AC-1),
+not a route-specific exit. Imported-source locations retain the
 imported form even when their native producer and its native source-label
 pair are known; neither that pair nor the program's pair is projected for
 the imported origin. Ordinary native byte spans retain actual native

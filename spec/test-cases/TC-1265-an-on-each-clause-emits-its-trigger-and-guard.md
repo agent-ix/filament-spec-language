@@ -33,8 +33,9 @@ infinite-trace and the formula `always holds(c.value <= 1)`.
    `package_id`s, and read each package back through the I2 reader. Compile
    step 1's clause with `when (c.value >= 2)`, with the binder renamed `r`,
    and reformatted; compare the keys.
-3. Compile the guards `q.value = 1`, `c.value`, `c.value = c.value + 1` and
-   `6 mod (2 - c.value) = 0`; a guard-less clause whose body reads
+3. Compile the guards `q.value = 1`, `c.value`, `c.value = c.value + 1`,
+   `c.value != 0 and 6 mod c.value = 0` and `6 mod (2 - c.value) = 0`; a
+   guard-less clause whose body reads
    `holds(q.value <= 1)`; the binder types `M::Absent` and `Integer`; the
    binder `on each (c: M::Counter)`; a clause whose guard is `c.value` and
    whose `holds` condition is `c.value`.
@@ -57,8 +58,10 @@ Tag the tests `#[trace("TC-1265", "FR-337-AC-n")]`.
   binder each change the clause key; reformatting changes neither.
 - Step 3: the `q.value = 1` guard checks and its field read references the
   level-1 trigger node; `ill_typed`/`non-boolean-root` at the guard;
-  `undefined_expression`/`unproved-range` at `c.value + 1`; the `mod` guard
-  checks; `missing_declaration`/`missing-name` at the body's read of `q`;
+  `undefined_expression`/`unproved-range` at `c.value + 1`; the
+  `c.value != 0` guard checks; `undefined_expression`/`unproved-nonzero` at
+  `6 mod (2 - c.value)`; `missing_declaration`/`missing-name` at the body's
+  read of `q`;
   `missing_declaration`/`missing-name` at `Absent`; `ill_typed`/
   `type-mismatch` at `Integer`; `conflicting_declaration`/
   `duplicate-declaration` at the binder `c`, naming both declarations; one

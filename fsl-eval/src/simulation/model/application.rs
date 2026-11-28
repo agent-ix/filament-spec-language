@@ -89,7 +89,7 @@ impl<'a> ModelSystem<'a> {
     /// The `semantic` member of `state`'s key (FR-120 "State, state key and
     /// anchor"), the member a protocol state's key shares (ADR-027 PS-8).
     pub(crate) fn semantic_enc(&self, state: &ModelSimState) -> super::encode::Enc {
-        super::encode::semantic_enc(&self.model, &state.state, self.typing())
+        super::encode::semantic_enc(&self.model, state.state(), self.typing())
     }
 
     /// Every value of `value_type` over the objects of `state`, in FR-120's
@@ -106,7 +106,7 @@ impl<'a> ModelSystem<'a> {
         state: &ModelSimState,
         budget: &mut Budget,
     ) -> Result<Option<Vec<filament_exact::Value>>, ExpansionStop> {
-        let references: Vec<_> = rows_of(self, &state.state)?
+        let references: Vec<_> = rows_of(self, state.state())?
             .into_iter()
             .map(|row| row.reference)
             .collect();
@@ -407,7 +407,7 @@ impl<'a> ModelSystem<'a> {
         select: &dyn Fn(NodeKey) -> bool,
     ) -> Result<FirstApplication, ExpansionStop> {
         let walk: Walk<'_, '_> = walk_of(self, observed, None)?;
-        for row in rows_of(self, &observed.state)? {
+        for row in rows_of(self, observed.state())? {
             let Some(application) = self.application_at(&row, operation) else {
                 continue;
             };
@@ -532,7 +532,7 @@ impl<'b> ObservedIdentities<'b> {
     /// No identity yet of an observation of `base`.
     pub(crate) fn new(base: &'b ModelSimState) -> Self {
         Self {
-            base: &base.state,
+            base: base.state(),
             known: RefCell::new(BTreeMap::new()),
         }
     }
@@ -615,7 +615,7 @@ impl<'a> ModelSystem<'a> {
     /// `state` as an observation the application memo identifies by its
     /// model key bytes and anchor.
     pub(crate) fn observed<'s>(&self, state: Cow<'s, ModelSimState>) -> Observed<'s> {
-        let key = super::encode::model_key(&self.model, &state.state, self.typing());
+        let key = super::encode::model_key(&self.model, state.state(), self.typing());
         let identity = self
             .canonical()
             .to_vec(
@@ -649,7 +649,7 @@ impl<'a> ModelSystem<'a> {
                 system: self,
                 state: observed.state(),
                 observation: Observation::clone(observation),
-                rows: rows_of(self, &observed.state().state)?,
+                rows: rows_of(self, observed.state().state())?,
                 enforcement: None,
                 // Protocol attempts have no timed-profile selector authority.
                 // check_protocol_bounds runs the model's requires-bound
@@ -702,7 +702,7 @@ impl<'a> ModelSystem<'a> {
         state: Cow<'s, ModelSimState>,
         identities: &ObservedIdentities<'_>,
     ) -> Observed<'s> {
-        let Some(departure) = departure(identities.base, &state.state) else {
+        let Some(departure) = departure(identities.base, state.state()) else {
             return self.observed(state);
         };
         let key = (format!("{:?}", state.anchor()), departure);
@@ -947,7 +947,7 @@ mod tests {
         let world = World::new(&cells());
         let system = world.system();
         let state = initial(&system);
-        let [row] = <[_; 1]>::try_from(rows_of(&system, &state.state).expect("rows"))
+        let [row] = <[_; 1]>::try_from(rows_of(&system, state.state()).expect("rows"))
             .unwrap_or_else(|_| panic!("one cell"));
         let operation = OperationRef {
             declaring: row.type_id(),

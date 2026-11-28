@@ -11,13 +11,17 @@ use fsl_eval::simulation::model::{
     TimedSystem, TransitionId,
 };
 use fsl_package::CheckedPackage;
+use ix_trace_rs::implements;
 
 mod bounded;
 mod measure;
 mod step;
 mod subsystem;
 mod undefined;
-pub use undefined::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
+pub use undefined::{
+    replay_probabilistic_undefined, replay_probabilistic_undefined_with_work_scope,
+    ProbabilityUndefinedWitness,
+};
 
 /// A semantic operation, draw and resulting state in a finite witness.
 #[derive(Clone, Debug)]
@@ -124,9 +128,59 @@ impl ProbabilitySubsystemCertificate {
         limits: ProbabilityDocumentLimits,
         cancel: &Cancel,
     ) -> Result<Self, ProbabilityDocumentError> {
+        Self::value_bound_in_scope(
+            system, claims, item, kind, values, ranking, limits, cancel, None,
+        )
+    }
+
+    /// Encode a `lower` or `upper` certificate under the item's shared work
+    /// allowance. The base objective is derived from the checked subject; the
+    /// values and ranks are unchecked evidence.
+    ///
+    /// # Errors
+    /// Subject admission, caller limits, cancellation or the shared allowance.
+    #[implements("FR-203-AC-29")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn value_bound_with_work_scope(
+        system: &ModelSystem<'_>,
+        claims: &[CheckedProbabilisticClaim],
+        item: &ObligationIdentity,
+        kind: SubsystemBoundKind,
+        values: &[ExactProbabilityValue],
+        ranking: Option<&[(ProbabilityProductKey, u64)]>,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+        work: &filament_exact::WorkScope,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        Self::value_bound_in_scope(
+            system,
+            claims,
+            item,
+            kind,
+            values,
+            ranking,
+            limits,
+            cancel,
+            Some(work),
+        )
+    }
+
+    #[implements("FR-203-AC-29")]
+    #[allow(clippy::too_many_arguments)]
+    fn value_bound_in_scope(
+        system: &ModelSystem<'_>,
+        claims: &[CheckedProbabilisticClaim],
+        item: &ObligationIdentity,
+        kind: SubsystemBoundKind,
+        values: &[ExactProbabilityValue],
+        ranking: Option<&[(ProbabilityProductKey, u64)]>,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+        work: Option<&filament_exact::WorkScope>,
+    ) -> Result<Self, ProbabilityDocumentError> {
         Ok(Self {
             bytes: super::document::refutation::write(
-                system, claims, item, kind, values, ranking, limits, cancel,
+                system, claims, item, kind, values, ranking, limits, cancel, work,
             )?
             .into_boxed_slice(),
         })
@@ -472,6 +526,23 @@ pub fn replay_probabilistic_witness(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    replay_probabilistic_witness_with_work_scope(
+        package, system, item, witness, limits, cancel, None,
+    )
+}
+
+/// Replay a witness under the item's shared work allowance.
+#[implements("FR-203-AC-32")]
+#[allow(clippy::too_many_arguments)]
+pub fn replay_probabilistic_witness_with_work_scope(
+    package: &CheckedPackage,
+    system: &ModelSystem<'_>,
+    item: &ObligationIdentity,
+    witness: &ProbabilisticCounterexample,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     authenticate_source(package, system, cancel)?;
     replay_probabilistic_witness_impl(
         package.graph().probabilistic_model(),
@@ -480,6 +551,7 @@ pub fn replay_probabilistic_witness(
         witness,
         limits,
         cancel,
+        work,
         #[cfg(feature = "test-support")]
         &mut |_| {},
     )
@@ -505,6 +577,7 @@ pub fn replay_probabilistic_witness_observing(
         witness,
         limits,
         cancel,
+        None,
         observe,
     )
 }
@@ -541,6 +614,23 @@ pub fn replay_probabilistic_witness_from_package(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    replay_probabilistic_witness_from_package_with_work_scope(
+        owner, system, item, witness, limits, cancel, None,
+    )
+}
+
+/// Package-owned witness replay under the item's shared work allowance.
+#[implements("FR-203-AC-32")]
+#[allow(clippy::too_many_arguments)]
+pub fn replay_probabilistic_witness_from_package_with_work_scope(
+    owner: &PackageModelInput<'_>,
+    system: &ModelSystem<'_>,
+    item: &ObligationIdentity,
+    witness: &ProbabilisticCounterexample,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
     if !system
         .input()
@@ -556,12 +646,14 @@ pub fn replay_probabilistic_witness_from_package(
         witness,
         limits,
         cancel,
+        work,
         #[cfg(feature = "test-support")]
         &mut |_| {},
     )
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-202-AC-47", "FR-203-AC-32", "FR-204-AC-1", "FR-204-AC-5")]
 fn replay_probabilistic_witness_impl(
     probabilistic: &fsl_semantics::check::CheckedProbabilisticModel,
     system: &ModelSystem<'_>,
@@ -569,6 +661,7 @@ fn replay_probabilistic_witness_impl(
     witness: &ProbabilisticCounterexample,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
     #[cfg(feature = "test-support")] observe: &mut dyn FnMut(ProbabilityWitnessSemanticPhase),
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
@@ -579,21 +672,25 @@ fn replay_probabilistic_witness_impl(
         ExactProbabilityGraphError::ClaimNotBound => ProbabilityWitnessError::Refused,
         _ => ProbabilityWitnessError::Graph(error),
     })?;
+    // An `on each` instance has its own replay entry.
+    if witness.instance.is_some() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
     if witness.subsystem.is_some() {
         return if matches!(claim.form, ProbForm::MeanOfFraction { .. }) {
-            measure::replay_subsystem(system, claim, witness, limits, cancel)
+            measure::replay_subsystem(system, claim, witness, limits, cancel, work)
         } else {
-            subsystem::replay(system, claim, witness, limits, cancel)
+            subsystem::replay(system, claim, witness, limits, cancel, work)
         };
     }
     if super::document::is_timed_witness_claim(system, claim) {
-        return super::document::replay_timed_witness(system, claim, witness, limits, cancel);
+        return super::document::replay_timed_witness(system, claim, witness, limits, cancel, work);
     }
     if claim.bounded_measure() {
-        return measure::replay(system, claim, witness, limits, cancel);
+        return measure::replay(system, claim, witness, limits, cancel, work);
     }
     if matches!(claim.form, ProbForm::Probability { .. }) {
-        return bounded::replay(system, claim, witness, limits, cancel);
+        return bounded::replay(system, claim, witness, limits, cancel, work);
     }
     let ProbForm::Reach { bound, target } = &claim.form else {
         return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
@@ -627,7 +724,12 @@ fn replay_probabilistic_witness_impl(
     }
     let mut model_states = BTreeMap::new();
     let graph_storage = std::cell::RefCell::new(0u64);
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let key_error = std::cell::RefCell::new(None);
     let mut issue = None;
     let graph = enumerate_model_graph_with_keys_and_reservation(
@@ -1486,7 +1588,7 @@ fn key_of(
     cancel: &Cancel,
 ) -> Result<ProbabilityProductKey, ProbabilityWitnessError> {
     let (bytes, _) = system
-        .state_key(state)
+        .state_key(state, fsl_foundation::IdentityLimits::default())
         .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
     ProbabilityProductKey::for_model_state_with_limits(binding, &bytes, limits.document, cancel)
         .map_err(bounded::document_error)

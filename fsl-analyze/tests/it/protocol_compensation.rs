@@ -13,11 +13,12 @@ use std::collections::{BTreeSet, VecDeque};
 
 use filament_contract_model::ClockConfiguration;
 use filament_exact::{Cancel, FieldValue, Value};
+use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
-    protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolState,
-    ProtocolSystem, ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath,
-    WaitCause,
+    protocol_domains, visible, AnchorName, ClaimReads, FairnessOrigin, PathStep, ProtocolFairness,
+    ProtocolLocation, ProtocolState, ProtocolSystem, ProtocolTarget, ProtocolTransition,
+    RegistrationKey, RestKind, Sc, StepKind, ThreadPath, WaitCause,
 };
 use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};
 use fsl_foundation::bound::{DomainKey, DomainKind};
@@ -2192,5 +2193,68 @@ fn pay_reaches_its_states_with_every_compensation_outcome() {
         assert_eq!(reached.len(), 17);
         let transitions: usize = reached.iter().map(|state| state.steps.len()).sum();
         assert_eq!(transitions, 22);
+    });
+}
+
+/// The kinds of the explored steps that are in a class of the fairness member
+/// over `target`, which its `whole` and `each` granularities agree on.
+fn class_kinds(explored: &Explored, target: &ProtocolTarget) -> BTreeSet<String> {
+    let of = |granularity| -> BTreeSet<String> {
+        let member = ProtocolFairness::new(
+            FairnessKind::Weak,
+            target.clone(),
+            granularity,
+            FairnessOrigin::Authored,
+        );
+        explored
+            .reached
+            .iter()
+            .flat_map(|state| state.steps.iter())
+            .filter(|(step, _)| member.class_of(step).is_some())
+            .map(|(step, _)| format!("{:?}", step.kind()))
+            .collect()
+    };
+    let whole = of(FairnessGranularity::Whole);
+    assert_eq!(whole, of(FairnessGranularity::Each));
+    whole
+}
+
+/// FSpec FR-430: an operation's classes hold the `attempt` and `cattempt`
+/// steps that apply it, and no `cfail` or `ctimeout` of the same application.
+/// Here `touch` is both the charge and the refund.
+#[trace("TC-657", "FR-212-AC-5", "FSpec-TC-384", "FSpec-FR-430")]
+#[test]
+fn an_operation_fairness_class_holds_attempts_and_compensation_attempts_only() {
+    explore(&twice(), |_, explored| {
+        let touch = explored
+            .reached
+            .iter()
+            .flat_map(|state| state.steps.iter())
+            .find(|(step, _)| step.kind() == StepKind::CFail)
+            .and_then(|(step, _)| step.application())
+            .expect("a failed refund names its application")
+            .operation()
+            .to_owned();
+        assert_eq!(
+            class_kinds(explored, &ProtocolTarget::Operation { name: touch }),
+            BTreeSet::from(["Attempt".to_owned(), "CAttempt".to_owned()])
+        );
+    });
+}
+
+/// FSpec FR-430: a compensation template's class holds the `cattempt` and
+/// `cend` steps of its threads, so a `cfail`, `ctimeout` or `cexpire` neither
+/// enables nor discharges a constraint on it.
+#[trace("FSpec-TC-384", "FSpec-FR-430-AC-4")]
+#[test]
+fn a_compensation_template_fairness_class_holds_cattempt_and_cend_only() {
+    explore(&pay("true"), |_, explored| {
+        let target = ProtocolTarget::CompensationTemplate {
+            template: TEMPLATE.to_owned(),
+        };
+        assert_eq!(
+            class_kinds(explored, &target),
+            BTreeSet::from(["CAttempt".to_owned(), "CEnd".to_owned()])
+        );
     });
 }

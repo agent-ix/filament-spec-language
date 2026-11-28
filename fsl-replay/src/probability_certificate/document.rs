@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -10,51 +11,70 @@ use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{
-    MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
-    measure_probability_certificate_document, measure_probability_objective,
-    measure_probability_product_key, read_measure_probability_certificate,
-    vacuous_measure_probability_certificate_document, write_measure_probability_certificate,
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_certificate_document_with_work_scope, measure_probability_objective,
+    measure_probability_product_key, partial_lower_measure_probability_certificate_document,
+    partial_lower_measure_probability_certificate_document_with_work_scope,
+    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
+    vacuous_measure_probability_certificate_document_with_work_scope,
+    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
-pub use instances::{OnEachOutcome, on_each_has_instance, on_each_outcome, replay_on_each_witness};
+pub use instances::{
+    on_each_has_instance, on_each_outcome, on_each_outcome_with_work_scope, replay_on_each_witness,
+    replay_on_each_witness_with_work_scope, OnEachOutcome,
+};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity,
+    check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
 };
 pub use mdp::{
-    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
-    cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
-    read_probability_proof_document, write_probability_proof_document,
-    write_value_bounds_proof_document,
+    cyclic_mdp_probability_certificate_document,
+    cyclic_mdp_probability_certificate_document_with_work_scope,
+    cyclic_mdp_reward_probability_certificate_document,
+    cyclic_mdp_reward_probability_certificate_document_with_work_scope, probability_proof_document,
+    probability_proof_document_with_work_scope, read_probability_proof_document,
+    write_probability_proof_document, write_probability_proof_document_with_work_scope,
+    write_value_bounds_proof_document, write_value_bounds_proof_document_with_work_scope,
+    ProbabilityProofDocument,
 };
 pub(super) mod long_run;
-pub(super) mod refutation;
-pub use long_run::{
-    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
-    long_run_probability_certificate_document, read_long_run_probability_certificate,
-    read_weighted_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate,
+mod partial;
+pub use partial::{
+    partial_lower_probability_proof_document,
+    partial_lower_probability_proof_document_with_work_scope,
 };
+pub(super) mod refutation;
 #[cfg(feature = "test-support")]
 pub use long_run::{
-    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity,
+    check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
+};
+pub use long_run::{
+    long_run_probability_certificate_document,
+    long_run_probability_certificate_document_with_work_scope,
+    read_long_run_probability_certificate, read_weighted_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document,
+    weighted_long_run_probability_certificate_document_with_work_scope,
+    write_long_run_probability_certificate, write_weighted_long_run_probability_certificate,
+    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
+    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
+pub(crate) use crate::timed::clock_constraints;
 pub use timed::digital_key_clocks;
 pub(super) use timed::{is_timed_witness_claim, replay_timed_witness};
 mod unit;
 mod value_bounds;
 mod writer;
+pub(crate) use key::is_model_state_key;
 pub(super) use key::{
     activated_product_key, formula_product_key_with_budget, model_product_key,
     model_product_key_with_budget,
@@ -72,7 +92,7 @@ const CYCLIC_MDP_STATE_PROFILE: &str =
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
-const FAIR_MDP_PROFILE: &str = "filament.probability-objective/fair-mdp-eventual/v1";
+const FAIR_MDP_PROFILE: &str = "filament.probability-objective/cyclic-mdp-fair-eventual/v1";
 const TIMED_PROFILE: &str = "filament.probability-objective/timed-product/v1";
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -248,6 +268,23 @@ pub struct ProbabilityDocumentLimits {
 const INTERVAL_BITS_PER_PRECISION_BIT: u64 = 16;
 
 impl ProbabilityDocumentLimits {
+    /// Create a checker meter using this document's scalar accounting ceilings.
+    pub(crate) fn accounting_meter(&self, cancel: &Cancel) -> filament_exact::Meter {
+        filament_exact::Meter::new(self.accounting).with_cancel(cancel.clone())
+    }
+
+    fn accounting_meter_in_scope(
+        &self,
+        cancel: &Cancel,
+        work: Option<&filament_exact::WorkScope>,
+    ) -> filament_exact::Meter {
+        work.map_or_else(
+            || filament_exact::Meter::new(self.accounting),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone())
+    }
+
     /// Project the existing exact-probability ceilings into the document checker
     /// while retaining the caller's actual scalar accounting scope.
     pub fn for_exact(limits: &ExactProbLimits, accounting: filament_exact::ScalarLimits) -> Self {
@@ -480,6 +517,7 @@ struct WireTimedObjective {
     form: String,
 }
 
+#[ix_trace_rs::string_edge]
 fn read_timed_objective(
     wire: WireTimedObjective,
 ) -> Result<TimedProbabilityObjective, ProbabilityDocumentError> {
@@ -1392,6 +1430,9 @@ type SubjectGraph = (
     Option<super::cyclic::CapturedStates>,
 );
 
+/// The graph the checker rebuilds for `item`'s base. With `expand`, it is the
+/// explored part of a partial product, those states and their successors,
+/// which only a base `partial` admits.
 #[allow(clippy::too_many_arguments)]
 fn subject_graph_with_identity(
     system: &ModelSystem<'_>,
@@ -1402,6 +1443,7 @@ fn subject_graph_with_identity(
     identity: fsl_foundation::IdentityLimits,
     cyclic_dtmc: bool,
     allow_fair: bool,
+    expand: Option<&BTreeSet<ProbabilityProductKey>>,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
     control: &super::reward::RewardControl<'_>,
@@ -1431,6 +1473,9 @@ fn subject_graph_with_identity(
             Err(TimedSubjectRefusal::NoTimedModel { .. })
         )
     {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    if expand.is_some() && (allow_fair || partial::cyclic_dtmc(claim) != Some(cyclic_dtmc)) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if allow_fair {
@@ -1479,6 +1524,7 @@ fn subject_graph_with_identity(
                 } else {
                     super::reward::RewardProfile::Acyclic
                 },
+                expand,
                 meter,
                 storage,
                 control,
@@ -1549,6 +1595,7 @@ fn subject_graph_with_identity(
             bound,
             super::cyclic::enumerate(
                 system, predicate, reference, workload, limits, cancel, identity, meter, storage,
+                expand,
             )
             .map(|(graph, ranks)| (graph, Some(ranks))),
         ),
@@ -1676,6 +1723,17 @@ fn subject_graph_with_identity(
     ))
 }
 
+/// Whether `claim` asks for unbounded `eventually` reachability.
+fn is_eventual_reach(claim: &CheckedProbabilisticClaim) -> bool {
+    matches!(
+        claim.form,
+        ProbForm::Reach {
+            target: ReachTarget::Eventually(_),
+            ..
+        }
+    )
+}
+
 fn target_keys(graph: &CheckerGraph) -> Vec<ProbabilityProductKey> {
     graph
         .states
@@ -1742,6 +1800,7 @@ fn admit_reward_with_identity(
         identity,
         false,
         false,
+        None,
         &mut meter,
         &mut storage,
         &super::reward::RewardControl::new(cancel),
@@ -1757,6 +1816,7 @@ fn admit_reward_with_identity(
                 identity,
                 true,
                 false,
+                None,
                 &mut meter,
                 &mut storage,
                 &super::reward::RewardControl::new(cancel),
@@ -1832,6 +1892,7 @@ pub fn admit_cyclic_eventual_certificate_subject_with_identity(
         identity,
         true,
         false,
+        None,
         &mut meter,
         &mut 0,
         &super::reward::RewardControl::new(cancel),
@@ -1865,6 +1926,7 @@ pub fn probability_certificate_document(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-201-AC-11", "FR-1042-AC-25")]
 fn construct_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1886,6 +1948,7 @@ fn construct_document(
         identity,
         false,
         allow_fair,
+        None,
         meter,
         storage,
         &super::reward::RewardControl::new(cancel),
@@ -1913,6 +1976,7 @@ fn construct_document(
             identity,
             true,
             allow_fair,
+            None,
             meter,
             storage,
             &super::reward::RewardControl::new(cancel),
@@ -1920,7 +1984,13 @@ fn construct_document(
     } else {
         original?
     };
-    let stopped = event.is_some() || reward.is_some() || cyclic_dtmc;
+    // An `eventually`, until, always or reward graph stops at its decided
+    // states, so rows the solver holds only past them are dropped. A bounded
+    // formula's product already stops there.
+    let stopped = matches!(
+        bind_claim(claims, item, cancel)?.form,
+        ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. }
+    );
     let bounded = bounded_ranks.is_some();
     let mut ranks = bounded_ranks.unwrap_or_default();
     if bounded {
@@ -2009,6 +2079,7 @@ fn construct_document(
 /// The document is checked as the claim side
 /// ([`check_probability_certificate_document_as`] with
 /// [`CertificateRole::Claim`]).
+#[implements("FR-201-AC-1")]
 pub fn check_probability_certificate_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2033,6 +2104,7 @@ pub fn check_probability_certificate_document(
 /// claim's threshold, and one of the wrong kind is rejected `Malformed` at
 /// `kind`; a counterpart is a `lower` or `upper` document that meets its
 /// conditions and no threshold.
+#[implements("FR-1042-AC-1")]
 pub fn check_probability_certificate_document_as(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2052,6 +2124,34 @@ pub fn check_probability_certificate_document_as(
         cancel,
         &super::reward::RewardControl::new(cancel),
         &fairness::Control::new(cancel),
+        None,
+    )
+}
+
+/// Check a document while debiting the item's shared work allowance.
+#[implements("FR-203-AC-30")]
+#[allow(clippy::too_many_arguments)]
+pub fn check_probability_certificate_document_as_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    role: CertificateRole,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    check_document_with_control(
+        system,
+        claims,
+        item,
+        bytes,
+        role,
+        limits,
+        cancel,
+        &super::reward::RewardControl::new(cancel),
+        &fairness::Control::new(cancel),
+        Some(work),
     )
 }
 
@@ -2078,6 +2178,7 @@ pub fn check_cyclic_reward_probability_certificate_observing(
         cancel,
         &control,
         &fairness::Control::new(cancel),
+        None,
     )
 }
 
@@ -2104,10 +2205,12 @@ pub fn check_bounded_fair_probability_certificate_observing(
         cancel,
         &super::reward::RewardControl::new(cancel),
         &control,
+        None,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-30")]
 fn check_document_with_control(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2118,6 +2221,7 @@ fn check_document_with_control(
     cancel: &Cancel,
     control: &super::reward::RewardControl<'_>,
     fair_control: &fairness::Control<'_>,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let bound = match value_bounds::unwrap(bytes, limits, cancel) {
         Ok(bound) => bound,
@@ -2142,6 +2246,7 @@ fn check_document_with_control(
         cancel,
         control,
         fair_control,
+        work,
     )?;
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
         if offer.side.is_some() {
@@ -2179,6 +2284,7 @@ impl Offer<'_> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-30", "FR-1042-AC-19", "FR-1042-AC-25", "FR-1042-AC-26")]
 fn check_document_bytes(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2189,6 +2295,7 @@ fn check_document_bytes(
     cancel: &Cancel,
     control: &super::reward::RewardControl<'_>,
     fair_control: &fairness::Control<'_>,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let bound_side = offer.side;
     let dispatch = profile_dispatch(bytes, limits, cancel)?;
@@ -2204,7 +2311,18 @@ fn check_document_bytes(
     match dispatch {
         ProfileDispatch::Measure => {
             return measure::check(
-                system, claims, item, bytes, false, bound_side, offer.role, limits, cancel,
+                system,
+                claims,
+                item,
+                bytes,
+                measure::CheckOptions {
+                    partial_lower: false,
+                    bound_side,
+                    role: offer.role,
+                    limits,
+                    cancel,
+                    work,
+                },
             );
         }
         ProfileDispatch::Timed => {
@@ -2216,33 +2334,44 @@ fn check_document_bytes(
                 offer.relation(),
                 limits,
                 cancel,
+                work,
             );
         }
         ProfileDispatch::OnEach => {
-            return instances::check(system, claims, item, bytes, limits, cancel)
+            return instances::check(system, claims, item, bytes, limits, cancel, work)
                 .or_else(document_admission_error);
         }
         ProfileDispatch::LongRun => {
-            return long_run::check(system, claims, item, bytes, limits, cancel);
+            return long_run::check(system, claims, item, bytes, limits, cancel, work);
         }
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward => {
             return mdp::check_with_reward_control(
-                system, claims, item, bytes, offer, limits, cancel, control,
+                system, claims, item, bytes, offer, limits, cancel, control, work,
             );
         }
         ProfileDispatch::FairMdp => {
-            if let Some(side) = bound_side {
+            if bound_side.is_some() {
                 return mdp::check_with_value_bound_control(
-                    system, claims, item, bytes, offer, side, limits, cancel, control,
+                    system,
+                    claims,
+                    item,
+                    bytes,
+                    offer,
+                    mdp::ValueBoundControl {
+                        limits,
+                        cancel,
+                        reward: control,
+                        work,
+                    },
                 );
             }
             return mdp::check_with_reward_control(
-                system, claims, item, bytes, offer, limits, cancel, control,
+                system, claims, item, bytes, offer, limits, cancel, control, work,
             );
         }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
     }
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Intake)?;
     let mut fairness_records = Vec::new();
     let mut storage = 0;
@@ -2287,20 +2416,53 @@ fn check_document_bytes(
         }
     }
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Graph)?;
-    let (graph, objective, bound, bounded_ranks, event, failures, reward, _captured) =
-        subject_graph_with_identity(
-            system,
-            claims,
-            item,
-            limits,
-            cancel,
-            fsl_foundation::IdentityLimits::default(),
-            document.cyclic_dtmc,
-            !fairness_records.is_empty(),
-            &mut meter,
-            &mut storage,
-            control,
-        )?;
+    // The whole graph first; its subject, or the reason it could not be built.
+    let whole = subject_graph_with_identity(
+        system,
+        claims,
+        item,
+        limits,
+        cancel,
+        fsl_foundation::IdentityLimits::default(),
+        document.cyclic_dtmc,
+        !fairness_records.is_empty(),
+        None,
+        &mut meter,
+        &mut storage,
+        control,
+    );
+    // FSpec FR-411 "Evidence on a partial product": where `max_states` stops
+    // the whole graph, a claim-side `lower` document is checked over the
+    // states it names and their successors.
+    let (subject, explored) = match whole {
+        Err(
+            exhausted @ ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::States,
+                ..
+            },
+        ) if bound_side == Some(SubsystemBoundKind::Lower)
+            && offer.role == CertificateRole::Claim
+            && fairness_records.is_empty() =>
+        {
+            let subject = partial::explored_subject(
+                system,
+                claims,
+                item,
+                limits,
+                cancel,
+                document.cyclic_dtmc,
+                &document.values,
+                &document.targets,
+                exhausted,
+                &mut meter,
+                &mut storage,
+                control,
+            )?;
+            (subject, true)
+        }
+        whole => (whole?, false),
+    };
+    let (graph, objective, bound, bounded_ranks, event, failures, reward, _captured) = subject;
     if objective != document.optimization
         || target_keys(&graph) != document.targets
         || event != document.event
@@ -2310,12 +2472,18 @@ fn check_document_bytes(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     // FR-1042: a bounded base's acyclic product bounds a value by the
-    // one-step inequalities alone; an unbounded eventual chain adds the
-    // `lower` document's progress ranking.
+    // one-step inequalities alone; an unbounded eventual chain, cyclic or
+    // not, adds the `lower` document's progress ranking. The acyclic
+    // `reachability/v1` base is checked under a workload alone: an
+    // every-scheduler bound needs one action that meets the inequality and
+    // progress together, which these checks do not select.
+    let acyclic_eventual = !document.cyclic_dtmc
+        && objective == ProbabilityObjective::Workload
+        && is_eventual_reach(claim);
     let bound_base = if document.cyclic_dtmc {
         event.is_none()
     } else {
-        bounded_ranks.is_some()
+        bounded_ranks.is_some() || acyclic_eventual
     };
     if bound_side.is_some() && (!bound_base || !fairness_records.is_empty()) {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -2344,6 +2512,11 @@ fn check_document_bytes(
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
+    // FR-1042 "Document": over the explored part, or a subset of the whole
+    // graph, a ranking has rows for named states only.
+    if (explored || partial) && ranks.keys().any(|key| !named.contains(key)) {
+        return Ok(malformed_ranking());
+    }
     let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
     let ranked = bound_side != Some(SubsystemBoundKind::Upper) || reward_upper;
     for (key, state) in graph
@@ -2368,11 +2541,20 @@ fn check_document_bytes(
     if ranked && !partial && ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
-    if let Some(expected) = bounded_ranks
-        .filter(|_| ranked)
-        .filter(|_| !(document.cyclic_dtmc && reward.is_some()))
+    // The derived ranks are a whole graph's, and a subset `lower` carries
+    // those of its named states. A cyclic reward ranks progress instead, and
+    // so does a partial `lower` over a chain; a partial expected reward
+    // `lower` needs no ranking to be sound (FR-1042 "Conditions"). No height
+    // is derivable past a state the document does not name.
+    let progress_ranked = reward.is_some() && document.cyclic_dtmc;
+    let partial_unbounded = partial && (reward.is_some() || document.cyclic_dtmc);
+    if let Some(expected) =
+        bounded_ranks.filter(|_| ranked && !progress_ranked && !partial_unbounded)
     {
-        for (key, actual) in &expected {
+        for (key, actual) in expected
+            .iter()
+            .filter(|(key, _)| !partial || named.contains(*key))
+        {
             poll(cancel)?;
             if ranks.get(key) != Some(actual) {
                 return Ok(rejected(
@@ -2387,7 +2569,7 @@ fn check_document_bytes(
     // remaining horizon instead, and an `upper` document has no ranking.
     let progress_checked = match bound_side {
         None => true,
-        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
+        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc || acyclic_eventual,
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
     for (key, state) in graph
@@ -2408,8 +2590,12 @@ fn check_document_bytes(
                 let mut progress = false;
                 for edge in state.choices.iter().flatten() {
                     super::reward::visit(cancel, &mut meter)?;
+                    // A successor a partial `lower` omits has no rank row,
+                    // and progress goes through it: an expected reward
+                    // `lower` is sound without ranks (FR-1042 "Conditions").
+                    let omitted = partial && !named.contains(&edge.target);
                     if edge.probability > rational(0)
-                        && ranks.get(&edge.target).is_some_and(|next| next < rank)
+                        && (omitted || ranks.get(&edge.target).is_some_and(|next| next < rank))
                     {
                         progress = true;
                         break;

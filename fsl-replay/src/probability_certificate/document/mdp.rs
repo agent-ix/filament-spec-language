@@ -2,6 +2,7 @@
 //! FR-201's exact cyclic MDP values, independently checked against all actions.
 
 use super::*;
+use ix_trace_rs::implements;
 
 /// Unchecked exact document with its closed wire-profile selection retained.
 /// Existing document literals retain their original meaning and encoding.
@@ -14,6 +15,31 @@ pub struct ProbabilityProofDocument {
 }
 
 impl ProbabilityProofDocument {
+    /// A document of a base with no fairness and no every-scheduler cyclic
+    /// route.
+    pub(super) fn unfair(document: ProbabilityCertificateDocument) -> Self {
+        Self {
+            document,
+            cyclic_mdp: false,
+            fair_mdp: false,
+            fairness: Vec::new(),
+        }
+    }
+
+    /// Rank the named states alone, as a `lower` document does (FR-1042
+    /// "Document"). The cyclic and fair MDP routes keep their own ranks.
+    #[implements("FR-1042-AC-26")]
+    pub(super) fn rank_named_rows(&mut self) {
+        if self.cyclic_mdp || self.fair_mdp {
+            return;
+        }
+        let ProbabilityCertificateDocument {
+            values, ranking, ..
+        } = &mut self.document;
+        let named: BTreeSet<_> = values.iter().map(|row| &row.state).collect();
+        ranking.retain(|(key, _)| named.contains(key));
+    }
+
     /// Borrow the untrusted identity, values, ranks and objective data.
     pub fn document(&self) -> &ProbabilityCertificateDocument {
         &self.document
@@ -54,6 +80,16 @@ pub fn read_probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    read_probability_proof_document_in_scope(bytes, limits, cancel, None)
+}
+
+#[implements("FR-203-AC-29")]
+fn read_probability_proof_document_in_scope(
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     let cyclic_mdp = matches!(
         profile_dispatch(bytes, limits, cancel)?,
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward
@@ -62,7 +98,7 @@ pub fn read_probability_proof_document(
         profile_dispatch(bytes, limits, cancel)?,
         ProfileDispatch::FairMdp
     );
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut fairness = Vec::new();
     let document = read_document_profile(
         bytes,
@@ -88,6 +124,27 @@ pub fn write_probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    write_probability_proof_document_in_scope(document, limits, cancel, None)
+}
+
+/// Write and validate an exact proof document against the caller's item budget.
+#[implements("FR-203-AC-29")]
+pub fn write_probability_proof_document_with_work_scope(
+    document: &ProbabilityProofDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    write_probability_proof_document_in_scope(document, limits, cancel, Some(work))
+}
+
+#[implements("FR-203-AC-29")]
+fn write_probability_proof_document_in_scope(
+    document: &ProbabilityProofDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
     if !document.fairness.is_empty() {
         super::fairness::admit_encoding(&document.fairness, limits, cancel)?;
     }
@@ -99,7 +156,7 @@ pub fn write_probability_proof_document(
         document.fair_mdp,
         &document.fairness,
     )?;
-    read_probability_proof_document(&bytes, limits, cancel)?;
+    read_probability_proof_document_in_scope(&bytes, limits, cancel, work)?;
     Ok(bytes)
 }
 
@@ -115,6 +172,19 @@ pub fn write_value_bounds_proof_document(
     value_bounds::wrap(&exact, side, limits)
 }
 
+/// Write an interval-bound proof document using the caller's item work scope.
+#[implements("FR-203-AC-29")]
+pub fn write_value_bounds_proof_document_with_work_scope(
+    document: &ProbabilityProofDocument,
+    side: SubsystemBoundKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let exact = write_probability_proof_document_with_work_scope(document, limits, cancel, work)?;
+    value_bounds::wrap(&exact, side, limits)
+}
+
 /// Prefer existing eligible profiles before constructing cyclic MDP evidence.
 /// All admission attempts share the same arithmetic and retained-storage scope.
 pub fn probability_proof_document(
@@ -125,7 +195,73 @@ pub fn probability_proof_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
-    let mut cx = Context::new(limits, cancel, None);
+    probability_proof_document_in_scope(system, claims, item, certificate, limits, cancel, None)
+}
+
+#[implements("FR-203-AC-29")]
+/// Produce an exact proof document using the caller's remaining item allowance.
+pub fn probability_proof_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    probability_proof_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn probability_proof_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    let mut cx = Context::new_with_work(limits, cancel, None, work);
+    proof_document_in(system, claims, item, certificate, &mut cx)
+}
+
+/// [`probability_proof_document`], with the arithmetic and retained-storage
+/// scope its attempts spent, for a further attempt to continue.
+#[implements("FR-203-AC-29")]
+pub(super) fn probability_proof_document_spending(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> (
+    Result<ProbabilityProofDocument, ProbabilityDocumentError>,
+    filament_exact::Meter,
+    u64,
+) {
+    let mut cx = Context::new_with_work(limits, cancel, None, work);
+    let proof = proof_document_in(system, claims, item, certificate, &mut cx);
+    (proof, cx.meter, cx.storage)
+}
+
+fn proof_document_in(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    cx: &mut Context<'_, '_>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    let (limits, cancel) = (cx.limits, cx.cancel);
     let claim = bind_claim(claims, item, cancel)?;
     if !claim.fairness.is_empty() {
         super::fairness::admit(claim)?;
@@ -146,7 +282,7 @@ pub fn probability_proof_document(
         )?;
         if fair_mdp {
             cx.fair_mdp = true;
-            let mut proof = construct(system, claims, item, certificate, &mut cx)?;
+            let mut proof = construct(system, claims, item, certificate, cx)?;
             proof.document.cyclic_dtmc = false;
             proof.cyclic_mdp = false;
             proof.fair_mdp = true;
@@ -193,7 +329,7 @@ pub fn probability_proof_document(
                 || (error == ProbabilityDocumentError::ObjectiveMismatch
                     && super::super::cyclic_state::is_claim(claim)) =>
         {
-            construct(system, claims, item, certificate, &mut cx)
+            construct(system, claims, item, certificate, cx)
         }
         Err(error) => Err(error),
     }
@@ -219,6 +355,48 @@ pub fn cyclic_mdp_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+#[implements("FR-203-AC-29")]
+/// Produce cyclic MDP certificate evidence using the caller's item work scope.
+pub fn cyclic_mdp_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn cyclic_mdp_probability_certificate_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     if !matches!(
         bind_claim(claims, item, cancel)?.form,
         ProbForm::Reach {
@@ -233,7 +411,7 @@ pub fn cyclic_mdp_probability_certificate_document(
         claims,
         item,
         certificate,
-        &mut Context::new(limits, cancel, None),
+        &mut Context::new_with_work(limits, cancel, None, work),
     )
 }
 
@@ -247,6 +425,48 @@ pub fn cyclic_mdp_reward_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_reward_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+#[implements("FR-203-AC-29")]
+/// Produce cyclic reward certificate evidence using the caller's item work scope.
+pub fn cyclic_mdp_reward_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: &filament_exact::WorkScope,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
+    cyclic_mdp_reward_probability_certificate_document_in_scope(
+        system,
+        claims,
+        item,
+        certificate,
+        limits,
+        cancel,
+        Some(work),
+    )
+}
+
+fn cyclic_mdp_reward_probability_certificate_document_in_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     if !matches!(
         bind_claim(claims, item, cancel)?.form,
         ProbForm::ExpectedReward { .. }
@@ -258,7 +478,7 @@ pub fn cyclic_mdp_reward_probability_certificate_document(
         claims,
         item,
         certificate,
-        &mut Context::new(limits, cancel, None),
+        &mut Context::new_with_work(limits, cancel, None, work),
     )
 }
 
@@ -296,8 +516,51 @@ struct Context<'a, 'control> {
     storage: u64,
     reward: bool,
     reward_control: Option<&'a super::super::reward::RewardControl<'control>>,
+    work: Option<&'a filament_exact::WorkScope>,
     identity: fsl_foundation::IdentityLimits,
     observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
+}
+
+struct FairProgress<'a> {
+    zero: Option<&'a BTreeSet<ProbabilityProductKey>>,
+    selected_policy: Option<&'a BTreeMap<ProbabilityProductKey, usize>>,
+}
+
+pub(super) struct ValueBoundControl<'a, 'control> {
+    pub(super) limits: ProbabilityDocumentLimits,
+    pub(super) cancel: &'a Cancel,
+    pub(super) reward: &'a super::super::reward::RewardControl<'control>,
+    pub(super) work: Option<&'a filament_exact::WorkScope>,
+}
+
+/// The states a fair *minimum* values at zero: `U`, the non-target states in a
+/// maximal fair end component. A fair maximum takes FR-201's cyclic maximum
+/// conditions unchanged (FR-1041 "Check"), where a state of `U` may reach the
+/// target, so it has no such set.
+#[implements("FR-1041-AC-3")]
+fn fair_minimum_zero_states(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    graph: &CheckerGraph,
+    objective: ProbabilityObjective,
+    cx: &mut Context<'_, '_>,
+) -> Result<Option<BTreeSet<ProbabilityProductKey>>, ProbabilityDocumentError> {
+    if !cx.fair_mdp || objective != ProbabilityObjective::Minimum {
+        return Ok(None);
+    }
+    let claim = bind_claim(claims, item, cx.cancel)?;
+    super::fairness::non_target_fair_end_component_states(
+        system,
+        claim,
+        graph,
+        cx.limits,
+        cx.cancel,
+        cx.identity,
+        &mut cx.meter,
+        &mut cx.storage,
+    )
+    .map(Some)
 }
 
 /// Independently reconstruct the unbounded fair eventual MDP and verify that
@@ -349,15 +612,26 @@ impl<'a, 'control> Context<'a, 'control> {
         cancel: &'a Cancel,
         observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
     ) -> Self {
+        Self::new_with_work(limits, cancel, observe, None)
+    }
+
+    #[implements("FR-203-AC-29")]
+    fn new_with_work(
+        limits: ProbabilityDocumentLimits,
+        cancel: &'a Cancel,
+        observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
+        work: Option<&'a filament_exact::WorkScope>,
+    ) -> Self {
         Self {
             limits,
             cancel,
             fair_mdp: false,
             bound_side: None,
-            meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+            meter: limits.accounting_meter_in_scope(cancel, work),
             storage: 0,
             reward: false,
             reward_control: None,
+            work,
             identity: fsl_foundation::IdentityLimits::default(),
             observe,
         }
@@ -506,6 +780,7 @@ fn reward_subject(
         cancel,
         identity,
         super::super::reward::RewardProfile::CyclicMdp,
+        None,
         meter,
         storage,
         control,
@@ -864,7 +1139,18 @@ fn progress_failure(
     objective: ProbabilityObjective,
     cx: &mut Context<'_, '_>,
 ) -> Result<Option<(ProbabilityCertificateRule, ProbabilityProductKey)>, ProbabilityDocumentError> {
-    progress_failure_with_fair_zero(graph, values, sums, ranks, objective, None, None, cx)
+    progress_failure_with_fair_zero(
+        graph,
+        values,
+        sums,
+        ranks,
+        objective,
+        FairProgress {
+            zero: None,
+            selected_policy: None,
+        },
+        cx,
+    )
 }
 
 fn progress_failure_with_fair_zero(
@@ -873,8 +1159,7 @@ fn progress_failure_with_fair_zero(
     sums: &Sums,
     ranks: &BTreeMap<ProbabilityProductKey, u64>,
     objective: ProbabilityObjective,
-    fair_zero: Option<&BTreeSet<ProbabilityProductKey>>,
-    selected_policy: Option<&BTreeMap<ProbabilityProductKey, usize>>,
+    fair: FairProgress<'_>,
     cx: &mut Context<'_, '_>,
 ) -> Result<Option<(ProbabilityCertificateRule, ProbabilityProductKey)>, ProbabilityDocumentError> {
     for (key, state) in &graph.states {
@@ -883,7 +1168,9 @@ fn progress_failure_with_fair_zero(
         cx.tick(CyclicMdpProbabilityPhase::Progress)?;
         let certified_zero = !cx.reward
             && *value == rational(0)
-            && (!cx.fair_mdp || fair_zero.is_some_and(|states| states.contains(key)));
+            && (!cx.fair_mdp
+                || objective == ProbabilityObjective::Maximum
+                || fair.zero.is_some_and(|states| states.contains(key)));
         if state.terminal == Some(true) || certified_zero {
             if *rank != 0 {
                 return Ok(Some((ProbabilityCertificateRule::RankBroken, key.clone())));
@@ -933,7 +1220,8 @@ fn progress_failure_with_fair_zero(
         let mut any = false;
         let mut all = true;
         for (index, choice) in state.choices.iter().enumerate() {
-            if selected_policy
+            if fair
+                .selected_policy
                 .and_then(|policy| policy.get(key))
                 .is_some_and(|selected| *selected != index)
             {
@@ -953,7 +1241,7 @@ fn progress_failure_with_fair_zero(
                 any |= lower;
             }
         }
-        let progress = if let Some(policy) = selected_policy.filter(|_| cx.fair_mdp) {
+        let progress = if let Some(policy) = fair.selected_policy.filter(|_| cx.fair_mdp) {
             let progresses = |index: usize| {
                 state.choices.get(index).is_some_and(|choice| {
                     choice.iter().any(|edge| {
@@ -962,12 +1250,22 @@ fn progress_failure_with_fair_zero(
                     })
                 })
             };
-            if let Some(index) = policy.get(key) {
-                action_sums.get(*index).is_some_and(|sum| sum <= value) && progresses(*index)
-            } else {
-                state.choices.iter().enumerate().any(|(index, _)| {
-                    action_sums.get(index).is_some_and(|sum| sum <= value) && progresses(index)
+            // The action must be tight, listed or not. A minimum equation
+            // gives `sum >= value`, so `<=` is tight there; a maximum one
+            // gives `sum <= value`, so only equality is.
+            let tight = |index: usize| {
+                action_sums.get(index).is_some_and(|sum| {
+                    if objective == ProbabilityObjective::Maximum {
+                        sum == value
+                    } else {
+                        sum <= value
+                    }
                 })
+            };
+            if let Some(index) = policy.get(key) {
+                tight(*index) && progresses(*index)
+            } else {
+                (0..state.choices.len()).any(|index| tight(index) && progresses(index))
             }
         } else {
             match objective {
@@ -1015,7 +1313,9 @@ fn derive_ranks_with_fair_zero(
         if state.terminal == Some(true)
             || !cx.reward
                 && values.get(key) == Some(&rational(0))
-                && (!cx.fair_mdp || fair_zero.is_some_and(|states| states.contains(key)))
+                && (!cx.fair_mdp
+                    || objective == ProbabilityObjective::Maximum
+                    || fair_zero.is_some_and(|states| states.contains(key)))
         {
             cx.reserve(std::mem::size_of::<(ProbabilityProductKey, u64)>() + key.as_bytes().len())?;
             ranks.insert(key.clone(), 0);
@@ -1158,21 +1458,7 @@ fn construct(
     if equality_failure(&graph, &values, &action_sums, objective, cx)?.is_some() {
         return Err(ProbabilityDocumentError::MalformedMember("values"));
     }
-    let fair_zero = if cx.fair_mdp {
-        let claim = bind_claim(claims, item, cx.cancel)?;
-        Some(super::fairness::non_target_fair_end_component_states(
-            system,
-            claim,
-            &graph,
-            cx.limits,
-            cx.cancel,
-            cx.identity,
-            &mut cx.meter,
-            &mut cx.storage,
-        )?)
-    } else {
-        None
-    };
+    let fair_zero = fair_minimum_zero_states(system, claims, item, &graph, objective, cx)?;
     let ranks = derive_ranks_with_fair_zero(
         &graph,
         &values,
@@ -1240,6 +1526,7 @@ pub(super) fn check<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-30")]
 pub(super) fn check_with_reward_control<'a, 'control>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1249,29 +1536,36 @@ pub(super) fn check_with_reward_control<'a, 'control>(
     limits: ProbabilityDocumentLimits,
     cancel: &'a Cancel,
     control: &'a super::super::reward::RewardControl<'control>,
+    work: Option<&'a filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel, None);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
+    cx.work = work;
     cx.reward_control = Some(control);
     check_with_context(system, claims, item, bytes, offer, cx)
 }
 
+#[implements("FR-203-AC-30")]
 pub(super) fn check_with_value_bound_control<'a, 'control>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
     offer: Offer<'_>,
-    side: SubsystemBoundKind,
-    limits: ProbabilityDocumentLimits,
-    cancel: &'a Cancel,
-    control: &'a super::super::reward::RewardControl<'control>,
+    control: ValueBoundControl<'a, 'control>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let mut cx = Context::new(limits, cancel, None);
-    cx.reward_control = Some(control);
-    cx.bound_side = Some(side);
+    let mut cx = Context::new(control.limits, control.cancel, None);
+    cx.meter = control
+        .limits
+        .accounting_meter_in_scope(control.cancel, control.work);
+    cx.work = control.work;
+    cx.reward_control = Some(control.reward);
+    cx.bound_side = offer.side;
     check_with_context(system, claims, item, bytes, offer, cx)
 }
 
+#[implements("FR-1042-AC-19")]
+#[implements("FR-201-AC-3")]
 fn check_with_context(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1413,10 +1707,12 @@ fn check_with_context(
         } else if cx.reward {
             match side {
                 SubsystemBoundKind::Lower => BTreeMap::new(),
-                SubsystemBoundKind::Upper => match offered_ranks(&graph, document.ranking, &mut cx)? {
-                    Some(ranks) => ranks,
-                    None => return Ok(malformed_ranking()),
-                },
+                SubsystemBoundKind::Upper => {
+                    match offered_ranks(&graph, document.ranking, &mut cx)? {
+                        Some(ranks) => ranks,
+                        None => return Ok(malformed_ranking()),
+                    }
+                }
             }
         } else {
             match side {
@@ -1441,30 +1737,15 @@ fn check_with_context(
                 Err(error) => return document_admission_error(error),
             },
         };
-        let fair_zero = if fair_mdp {
-            let claim = bind_claim(claims, item, cancel)?;
-            let states = super::fairness::non_target_fair_end_component_states(
-                system,
-                claim,
-                &graph,
-                limits,
-                cancel,
-                cx.identity,
-                &mut cx.meter,
-                &mut cx.storage,
-            )?;
-            for key in &states {
-                if values.get(key) != Some(&rational(0)) {
-                    return Ok(rejected(
-                        ProbabilityCertificateRule::InequalityFails,
-                        key.clone(),
-                    ));
-                }
+        let fair_zero = fair_minimum_zero_states(system, claims, item, &graph, objective, &mut cx)?;
+        for key in fair_zero.iter().flatten() {
+            if values.get(key) != Some(&rational(0)) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
             }
-            Some(states)
-        } else {
-            None
-        };
+        }
         let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
         let selected = match bound_failure(
             system,
@@ -1528,31 +1809,16 @@ fn check_with_context(
     } else if ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
-    let fair_zero = if fair_mdp {
-        let claim = bind_claim(claims, item, cancel)?;
-        let states = super::fairness::non_target_fair_end_component_states(
-            system,
-            claim,
-            &graph,
-            limits,
-            cancel,
-            cx.identity,
-            &mut cx.meter,
-            &mut cx.storage,
-        )?;
-        for key in &states {
-            cx.tick(CyclicMdpProbabilityPhase::Rows)?;
-            if values.get(&key) != Some(&rational(0)) {
-                return Ok(rejected(
-                    ProbabilityCertificateRule::InequalityFails,
-                    key.clone(),
-                ));
-            }
+    let fair_zero = fair_minimum_zero_states(system, claims, item, &graph, objective, &mut cx)?;
+    for key in fair_zero.iter().flatten() {
+        cx.tick(CyclicMdpProbabilityPhase::Rows)?;
+        if values.get(key) != Some(&rational(0)) {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                key.clone(),
+            ));
         }
-        Some(states)
-    } else {
-        None
-    };
+    }
     let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
     let fair_upper_bound = fair_mdp && cx.bound_side == Some(SubsystemBoundKind::Upper);
     if fair_mdp && cx.bound_side.is_none() {
@@ -1585,11 +1851,13 @@ fn check_with_context(
             &action_sums,
             &ranks,
             objective,
-            fair_zero.as_ref(),
-            if fair_upper_bound || (fair_mdp && !policy.is_empty()) {
-                Some(&policy)
-            } else {
-                None
+            FairProgress {
+                zero: fair_zero.as_ref(),
+                selected_policy: if fair_upper_bound || (fair_mdp && !policy.is_empty()) {
+                    Some(&policy)
+                } else {
+                    None
+                },
             },
             &mut cx,
         )? {
@@ -2167,18 +2435,16 @@ mod tests {
         let values = BTreeMap::from([(key(0), rational(1)), (key(1), rational(1))]);
         let action_sums = sums(&graph, &values, None, &mut cx).unwrap();
         for objective in [ProbabilityObjective::Minimum, ProbabilityObjective::Maximum] {
-            assert!(
-                progress_failure(
-                    &graph,
-                    &values,
-                    &action_sums,
-                    &BTreeMap::from([(key(0), 1), (key(1), 0)]),
-                    objective,
-                    &mut cx
-                )
-                .unwrap()
-                .is_some()
-            );
+            assert!(progress_failure(
+                &graph,
+                &values,
+                &action_sums,
+                &BTreeMap::from([(key(0), 1), (key(1), 0)]),
+                objective,
+                &mut cx
+            )
+            .unwrap()
+            .is_some());
         }
         let mut graph = graph;
         graph.states.get_mut(&key(0)).unwrap().choices[0] = vec![ProbabilityEdge {
@@ -2199,18 +2465,16 @@ mod tests {
                 .unwrap(),
                 None
             );
-            assert!(
-                progress_failure(
-                    &graph,
-                    &values,
-                    &action_sums,
-                    &BTreeMap::from([(key(0), 0), (key(1), 0)]),
-                    objective,
-                    &mut cx
-                )
-                .unwrap()
-                .is_some()
-            );
+            assert!(progress_failure(
+                &graph,
+                &values,
+                &action_sums,
+                &BTreeMap::from([(key(0), 0), (key(1), 0)]),
+                objective,
+                &mut cx
+            )
+            .unwrap()
+            .is_some());
         }
     }
 }

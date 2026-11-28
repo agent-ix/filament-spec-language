@@ -15,6 +15,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-753
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-416
+    type: depends_on
 ---
 # FR-924: Certify verdicts over time-divergent behaviours
 
@@ -46,8 +50,9 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
 ## Behavior
 
 - A zero-time action SHALL be one whose every outcome takes no time: a
-  discrete move, a `WorkloadResolve`, a race won at delay 0, or
-  `IdleObserve`. The checker SHALL compute, by its own end-component
+  discrete move, a `WorkloadResolve`, a race won at delay 0, `IdleObserve`
+  or `EnterIdleTail` (whose target is decided, so it is never inside a
+  component). The checker SHALL compute, by its own end-component
   decomposition, the maximal end components of the rebuilt product whose
   actions are all zero-time and whose states are undecided.
 - All states of such a component SHALL carry one value. Its exits are the
@@ -71,10 +76,18 @@ value per pair equal to its best exit, and rejects the Zeno certificate.
   that holds a delay is progressive and only zero-time components collapse.
   The progress condition was chosen over a unit tick clock in the region key
   because it needs no extra key member and leaves digital keys unchanged.
+- In a bounded-window product (FR-204 "Form shapes"), every residual is
+  decided once time passes the formula's horizon, so a behaviour that stays
+  in undecided states forever is Zeno. There the checker SHALL check every
+  maximal end component whose states are all undecided as a zero-time
+  component above, whatever its delays, in place of the progress condition
+  (FR-196 "Idle tail of a timed window monitor", item 7).
 - A component with no exit, and a state with no admissible delay and no
-  enabled discrete move, SHALL be a time-lock: a terminal state, value 0 for
-  an event not yet met and no further elapsed reward, a pending deadline
-  rejected.
+  enabled discrete move, SHALL be a time-lock: a terminal state, read for the
+  objective as FSpec FR-416 "How claims read a time-lock" states: value 0 for
+  an event not yet met, value 1 for an `always` that the positions read
+  satisfy, and an expected-until whose target the run has not reached is
+  +infinity (FSpec FR-407).
 
 ## Acceptance Criteria
 

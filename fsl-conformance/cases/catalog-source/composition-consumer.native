@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.infinite-trace/v1";
+model M = "catalog/composition";
+temporal Done using t over (c: M::Consumer) clock "model-steps" on origin { always (holds(c.received) implies eventually holds(c.done)) }
+temporal Bounded using t over (c: M::Consumer) clock "model-steps" on origin { always holds(c.received_count >= 0) }

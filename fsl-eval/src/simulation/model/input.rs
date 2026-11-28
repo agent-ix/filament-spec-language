@@ -40,6 +40,7 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{AdmittedObservations, ModelSelections};
 use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
+use ix_trace_rs::implements;
 
 use crate::value::{
     CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, ProtocolSlot,
@@ -136,6 +137,18 @@ impl std::fmt::Debug for TerminalWhen<'_> {
 }
 
 impl TerminalWhen<'_> {
+    /// Where the predicate's body is: the source route's checked body, the
+    /// package route's projection of the condition node.
+    fn location(self) -> Option<filament_semantic_value::location::ExpressionLocation> {
+        match self {
+            Self::Source(predicate) => Some(predicate.body().location().clone()),
+            Self::Package(predicate) => {
+                let projection = predicate.projection();
+                projection.location(projection.root()).cloned()
+            }
+        }
+    }
+
     /// The object type `self` ranges over, when the predicate names one.
     pub fn context(&self) -> Option<&EffectiveId> {
         match self {
@@ -174,7 +187,8 @@ pub struct ModelCheckInput<'a> {
     /// The authenticated declaration table of the clock places, which a
     /// `Reference<Clock>` identity is validated and enumerated against;
     /// `None` when the route supplies no table.
-    pub clock_declarations: Option<&'a fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable>,
+    pub clock_declarations:
+        Option<&'a fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable>,
     /// The model time sources (FR-230).
     pub time_sources: &'a [ModelTimeSource],
     /// The `random`, `reward` and `workload` declarations (FR-185).
@@ -286,15 +300,24 @@ impl<'a> ModelCheckInput<'a> {
             let ModelTerminalDeclaration::When(when) = terminal.declaration else {
                 return None;
             };
-            let at = match when {
-                TerminalWhen::Source(predicate) => Some(predicate.body().location()),
-                TerminalWhen::Package(predicate) => {
-                    let projection = predicate.projection();
-                    projection.location(projection.root())
-                }
-            };
-            (at == Some(locus)).then(|| terminal.model.clone())
+            (when.location().as_ref() == Some(locus)).then(|| terminal.model.clone())
         }))
+    }
+
+    /// Where the `terminal when` predicate of the declaration `model` is.
+    pub(super) fn terminal_location(
+        &self,
+        model: &super::TerminalModel,
+    ) -> Option<filament_semantic_value::location::ExpressionLocation> {
+        self.terminals
+            .as_ref()
+            .ok()?
+            .iter()
+            .filter(|terminal| terminal.model == *model)
+            .find_map(|terminal| match terminal.declaration {
+                ModelTerminalDeclaration::When(when) => when.location(),
+                ModelTerminalDeclaration::Any => None,
+            })
     }
 
     /// FR-411 "Deadlock-freedom verdict join": each declared terminal's node
@@ -659,6 +682,7 @@ impl<'p> PackageModelInput<'p> {
         Self::of_trace_input(package, packages, normalization, true)
     }
 
+    #[ix_trace_rs::string_edge]
     fn of_trace_input(
         package: &'p BarePackage<'p>,
         packages: &fsl_semantics::model::intake::PackageInput,
@@ -870,6 +894,36 @@ impl<'p> PackageModelInput<'p> {
             .map_err(PendingClauseForm::Build)
     }
 
+    /// FR-940: the hyper clause declared at the `claim` occurrence `claim`,
+    /// read from the package's nodes ([`BarePackage::hyper_clause_form`]) with
+    /// the populations of the supplied domain packages that overlap each
+    /// object parameter's type, and rebuilt as S3 builds it
+    /// ([`CheckedHyperClause::of_package_form`]) within S3's domain
+    /// `position_limit`.
+    ///
+    /// # Errors
+    ///
+    /// [`PendingClauseForm`] for a clause the package does not select or
+    /// whose facts do not rebuild it.
+    #[implements("FR-172-AC-10")]
+    pub fn hyper_clause(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        position_limit: u64,
+    ) -> Result<fsl_semantics::check::CheckedHyperClause, PendingClauseForm> {
+        let mut form = self
+            .package
+            .hyper_clause_form(claim)
+            .map_err(PendingClauseForm::Read)?;
+        form.bind_populations(&self.model);
+        fsl_semantics::check::CheckedHyperClause::of_package_form(
+            form,
+            self.world.types(),
+            position_limit,
+        )
+        .map_err(PendingClauseForm::Build)
+    }
+
     /// FR-940 "Package form of a state-graph claim": the state-graph claim
     /// declared at the `claim` occurrence `claim`, read from the package's
     /// nodes ([`BarePackage::state_graph_claim_form`]) and rebuilt as S3
@@ -991,22 +1045,27 @@ impl<'p> PackageModelInput<'p> {
             && input.state_clauses == self.state_clauses
             && input.terminals.as_ref().is_ok_and(|terminals| {
                 terminals.len() == self.terminals.len()
-                    && terminals.iter().zip(&self.terminals).all(|(actual, owned)| {
-                        actual.model.identity() == owned.model
-                            && actual.model.ordinal() == owned.ordinal
-                            && actual.node == owned.node
-                            && match (&actual.declaration, &owned.declaration) {
-                                (
-                                    ModelTerminalDeclaration::Any,
-                                    fsl_package::BareTerminalDeclaration::Any,
-                                ) => true,
-                                (
-                                    ModelTerminalDeclaration::When(TerminalWhen::Package(actual)),
-                                    fsl_package::BareTerminalDeclaration::When(owned),
-                                ) => std::ptr::eq(*actual, owned),
-                                _ => false,
-                            }
-                    })
+                    && terminals
+                        .iter()
+                        .zip(&self.terminals)
+                        .all(|(actual, owned)| {
+                            actual.model.identity() == owned.model
+                                && actual.model.ordinal() == owned.ordinal
+                                && actual.node == owned.node
+                                && match (&actual.declaration, &owned.declaration) {
+                                    (
+                                        ModelTerminalDeclaration::Any,
+                                        fsl_package::BareTerminalDeclaration::Any,
+                                    ) => true,
+                                    (
+                                        ModelTerminalDeclaration::When(TerminalWhen::Package(
+                                            actual,
+                                        )),
+                                        fsl_package::BareTerminalDeclaration::When(owned),
+                                    ) => std::ptr::eq(*actual, owned),
+                                    _ => false,
+                                }
+                        })
             })
     }
 
@@ -1560,6 +1619,12 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
 
     /// The checked state clause `name`, for a reading of its body.
     fn state_clause(&self, name: &str) -> Option<&CheckedStateClause>;
+
+    /// Where the body of the state clause `name` is, on either route.
+    fn state_clause_location(
+        &self,
+        name: &str,
+    ) -> Option<filament_semantic_value::location::ExpressionLocation>;
 
     /// The checked protocol `name`.
     fn protocol(&self, name: &str) -> Option<&CheckedProtocol>;
@@ -2231,6 +2296,15 @@ impl ModelEvaluator for CheckedPackage {
         self.graph().state_clause(name)
     }
 
+    fn state_clause_location(
+        &self,
+        name: &str,
+    ) -> Option<filament_semantic_value::location::ExpressionLocation> {
+        self.graph()
+            .state_clause(name)
+            .map(|clause| clause.body().location().clone())
+    }
+
     fn protocol(&self, name: &str) -> Option<&CheckedProtocol> {
         self.graph().protocol(name)
     }
@@ -2862,6 +2936,22 @@ impl ModelEvaluator for BarePackage<'_> {
 
     fn state_clause(&self, _name: &str) -> Option<&CheckedStateClause> {
         None
+    }
+
+    fn state_clause_location(
+        &self,
+        name: &str,
+    ) -> Option<filament_semantic_value::location::ExpressionLocation> {
+        let declaration = self
+            .state_clause_declarations()
+            .ok()?
+            .into_iter()
+            .find(|declaration| declaration.name == name)?;
+        let clause = self
+            .project_state_clause(&declaration.identity, &declaration.name)
+            .ok()?;
+        let projection = clause.projection();
+        projection.location(projection.root()).cloned()
     }
 
     fn protocol(&self, _name: &str) -> Option<&CheckedProtocol> {

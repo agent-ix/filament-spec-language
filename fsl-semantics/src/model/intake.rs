@@ -68,6 +68,7 @@ use filament_exact::{
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 use fsl_foundation::source::{LocatedSpan, Position};
 use fsl_foundation::IntakeLimits;
+use ix_trace_rs::implements;
 use quire_canonical::Node;
 
 /// The declared-unit name an `ix://filament/unit/<name>` reference names, `None`
@@ -212,13 +213,13 @@ pub use model_unit::{
     compile_model_unit, compile_model_unit_with_causes, is_model_unit_source,
     package_input_from_sources, CompiledModelUnit,
 };
+pub(crate) use unit::SelectedModelsParts;
 pub use unit::{
     admit_unit, admit_unit_with_cancel, admit_units_with_cancel, NormalizedModel,
     OperationClauseFailure, SelectedModel, SelectedModels, TypeInvariantFailure, UnitIntakeCause,
     UnitIntakeRefusal,
 };
 pub(crate) use unit::{normalize_model_with_provenance, NormalizedModelProvenance};
-pub(crate) use unit::SelectedModelsParts;
 
 /// A Quire meaning id (FR-208): the sole legitimate way to determine what a
 /// construct or type definition IS. Kind names and modules are never
@@ -1873,6 +1874,7 @@ fn rational_value_type_schema_diagnostic(
 /// the first node of its alias chain that is a policy-less `decimal` scalar
 /// or a policy-less alias of native Decimal. `None` when the chain carries a
 /// policy, or ends anywhere else.
+#[ix_trace_rs::string_edge]
 fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&'t str> {
     let mut current = reference;
     for _ in 0..=types.len() {
@@ -1901,6 +1903,7 @@ fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&
 /// Whether `reference` reaches native Decimal through a value type bound to it
 /// by `target`, with no policy on the way. Such a value type is an untyped
 /// native alias, not a Decimal walk that lacks its policy.
+#[ix_trace_rs::string_edge]
 fn reaches_target_bound_decimal(types: &[Value], reference: &str) -> bool {
     let mut current = reference;
     for _ in 0..=types.len() {
@@ -2269,10 +2272,84 @@ fn duplicate_member_identity_refusal(
     })
 }
 
-/// Translate only the reader's typed unresolved-reference codes, using its
-/// actual pointer and the selected document. Diagnostic prose never selects
-/// a cause or supplies a declaration identity.
+/// Identify the package graph namespace addressed by an unresolved edge.
+/// FCD's diagnostic constants for these edges are private, so classify them
+/// from the exact member path and whether the selected package has the target.
+#[implements("FR-056-AC-5")]
 #[ix_trace_rs::string_edge]
+fn missing_graph_reference_kind(document: &PackageDocument, pointer: &str) -> Option<&'static str> {
+    let mut segments = pointer.strip_prefix('/')?.split('/');
+    let collection = segments.next()?;
+    segments.next()?.parse::<usize>().ok()?;
+    let kind = match collection {
+        "dimensions" => {
+            if segments.next()? != "terms" {
+                return None;
+            }
+            segments.next()?.parse::<usize>().ok()?;
+            (segments.next()? == "dimension" && segments.next().is_none()).then_some("dimension")
+        }
+        "units" => match segments.next()? {
+            "dimension" if segments.next().is_none() => Some("dimension"),
+            "target" if segments.next().is_none() => Some("unit"),
+            _ => None,
+        },
+        _ => None,
+    }?;
+    let reference = document.tree.pointer(pointer)?.as_str()?;
+    let package = document.tree.get("package")?.get("identity")?.as_str()?;
+    package_graph_identity_segment(package, kind, reference)?;
+    let target_collection = if kind == "dimension" {
+        "dimensions"
+    } else {
+        "units"
+    };
+    let target_is_declared = document
+        .tree
+        .get(target_collection)?
+        .as_array()?
+        .iter()
+        .any(|node| node.get("identity").and_then(Value::as_str) == Some(reference));
+    (!target_is_declared).then_some(kind)
+}
+
+/// The one identity segment after a selected package's dimension or unit
+/// namespace.
+#[implements("FR-056-AC-5")]
+#[ix_trace_rs::string_edge]
+fn package_graph_identity_segment<'a>(
+    package_identity: &str,
+    namespace: &str,
+    identity: &'a str,
+) -> Option<&'a str> {
+    let rest = identity
+        .strip_prefix("ix://")?
+        .strip_prefix(package_identity)?
+        .strip_prefix('/')?;
+    let (actual_namespace, name) = rest.split_once('/')?;
+    (actual_namespace == namespace
+        && !name.is_empty()
+        && !name.contains('/')
+        && is_artifact_id_segment(name))
+    .then_some(name)
+}
+
+/// Resolve the owning dimension or unit for one of the graph-reference
+/// pointers recognized above. Those declarations live beside `types` in the
+/// package document, so `declared_node_for_pointer` cannot resolve them.
+#[implements("FR-056-AC-5")]
+fn graph_reference_owner<'a>(document: &'a PackageDocument, pointer: &str) -> Option<&'a Value> {
+    let mut segments = pointer.strip_prefix('/')?.split('/');
+    let collection = segments.next()?;
+    let position = segments.next()?.parse::<usize>().ok()?;
+    if !matches!(collection, "dimensions" | "units") {
+        return None;
+    }
+    document.tree.get(collection)?.as_array()?.get(position)
+}
+
+#[ix_trace_rs::string_edge]
+#[implements("FR-056-AC-5")]
 fn missing_reader_reference(
     document: &PackageDocument,
     located: &agent_ix_semantic_ir::diag::Located,
@@ -2304,9 +2381,11 @@ fn missing_reader_reference(
             "occurrenceField" | "persists" | "members"
         )
         && located.code == agent_ix_semantic_ir::constructs::UNRESOLVED_CONSTRUCT_REF;
+    let graph_reference_kind = missing_graph_reference_kind(document, pointer);
     if !transition_reference
         && !process_step_reference
         && !occurrence_reference
+        && graph_reference_kind.is_none()
         && located.code != agent_ix_semantic_ir::rules::UNRESOLVED_RELATIONSHIP_TARGET
         && located.code != agent_ix_semantic_ir::rules::UNRESOLVED_TYPE_REF
         && located.code != agent_ix_semantic_ir::rules::UNRESOLVED_OPTION_INNER
@@ -2330,7 +2409,9 @@ fn missing_reader_reference(
     let package = document.tree.get("package")?.get("identity")?.as_str()?;
     // A malformed native or foreign identity is not a missing declaration
     // of this selected package.
-    if !transition_reference && transition_member != "occurrenceField" {
+    if let Some(kind) = graph_reference_kind {
+        package_graph_identity_segment(package, kind, reference)?;
+    } else if !transition_reference && transition_member != "occurrenceField" {
         type_identity_segment(package, reference)?;
     }
     if process_step_reference {
@@ -2361,7 +2442,11 @@ fn missing_reader_reference(
             ),
         });
     }
-    let owner = declared_node_for_pointer(document, pointer)?;
+    let owner = if graph_reference_kind.is_some() {
+        graph_reference_owner(document, pointer)?
+    } else {
+        declared_node_for_pointer(document, pointer)?
+    };
     let origin = owner.get("origin")?.clone();
     // TC-235 M05/M06: a transition's unresolved `from`, `to`, `trigger`,
     // `guard` or `emits` names the state machine, not the transition node.
@@ -3037,6 +3122,7 @@ fn refuse_repeated_operation_name(
     Ok(())
 }
 
+#[ix_trace_rs::string_edge]
 fn read_operation_parameter(
     package: &str,
     owner_identity: &str,
@@ -3955,6 +4041,7 @@ fn read_decimal_value_type(
 
 /// Convert a canonical decimal string into its coefficient at `scale`,
 /// without passing through a floating-point value.
+#[ix_trace_rs::string_edge]
 fn decimal_coefficient(text: &str, scale: u64) -> Option<Integer> {
     let (negative, unsigned) = match text.strip_prefix('-') {
         Some(unsigned) => (true, unsigned),
@@ -5492,6 +5579,7 @@ pub(super) fn read_tuple_value_type(
                             | meaning::RECORD_VALUE_TYPE
                             | meaning::TUPLE_VALUE_TYPE
                             | meaning::VARIANT_TYPE
+                            | meaning::OBJECT_TYPE
                     )
                 })
             }
@@ -5556,6 +5644,7 @@ fn variant_payload_is_value_type(
                     | meaning::RECORD_VALUE_TYPE
                     | meaning::TUPLE_VALUE_TYPE
                     | meaning::VARIANT_TYPE
+                    | meaning::OBJECT_TYPE
             )
         }),
     }
@@ -6729,6 +6818,7 @@ pub fn read_records(
 /// declaration refusals are retained on the package until normalization has
 /// charged all source records, as FR-154 requires. A shared reader refusal
 /// ends intake before those declaration checks, retaining the reader's order.
+#[ix_trace_rs::string_edge]
 pub fn read_domain_package(
     selection: DomainPackageRef,
     document: &PackageDocument,

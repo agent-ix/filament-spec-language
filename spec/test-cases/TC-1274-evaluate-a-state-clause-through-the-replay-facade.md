@@ -26,7 +26,9 @@ FR-491-AC-6), plus unit tests in `src/clause_evaluation.rs`.
 1. Evaluate `ParentOrder` at current snapshots that satisfy and violate it.
 2. Evaluate `ParentPresent` at pre-call snapshots with and without a parent.
 3. Evaluate each clause at the other kind's observation.
-4. Evaluate `10 mod self.versionNumber >= 0` at versions 0 and 1; settle
+4. Compile the invariant body `10 mod self.versionNumber >= 0` and read the
+   refusal; evaluate FR-491-AC-4's invariant `q(self.versionNumber) >= 0`,
+   `q` checked under `Kernel`, at versions 0 and 1; settle
    `Undefined`/`Completed` outcomes and input refusals (unit tests).
 5. Evaluate a snapshot over `observation_limits.document_bytes` and at it.
 6. Evaluate an undeclared clause, a non-snapshot byte string, and a clause
@@ -39,6 +41,7 @@ Tag the tests `#[trace("TC-1274", "FR-491-AC-n")]`.
 - Step 1: `Completed(true)` then `Completed(false)`. Step 2: `Completed(true)`
   then `Completed(false)`.
 - Step 3: `Refused(WrongObservation)`.
-- Step 4: `Undefined` (division-by-zero) then `Completed(true)`. Step 5:
+- Step 4: the inline body refuses `undefined_expression`/`unproved-nonzero`;
+  the call gives `Undefined` (division-by-zero) then `Completed(true)`. Step 5:
   `Incomplete(Observation)` then `Completed(true)`. Step 6: `Refused(MissingClause)`,
   `Refused(UnreadableObservation)`, `Incomplete(Accounting)`.

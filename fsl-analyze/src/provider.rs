@@ -2,13 +2,14 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
-    SubjectBinding, analyze_bound,
+    analyze_bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
+    SourceProvision, SubjectBinding,
 };
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_package::CheckedPackage;
+use fsl_replay::CertificationPolicy;
 use fsl_replay::ToolFailure;
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 pub use fsl_replay::{
@@ -23,20 +24,21 @@ use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{EmitLimits, EmittedPackage};
-use fsl_replay::planner::{InterfaceMismatch, interface_mismatch};
+use fsl_replay::planner::{interface_mismatch, InterfaceMismatch};
 use fsl_replay::value_check::{Selection, ValueTarget};
 use fsl_replay::{Certification, InconclusiveCause, Value};
 use fsl_route::request::{ExtentClassification, ItemKind, RequirementItem};
 use fsl_route::{BackendDescriptor, CandidateOutcome, ProviderOrigin, Registry};
-use fsl_semantics::check::Capability;
 use fsl_semantics::check::wire_id::WireGraph;
+use fsl_semantics::check::Capability;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::PackageInput;
+use ix_trace_rs::implements;
 
 use crate::analyze::{AnalyzeItem, Engine, EngineReport, Refusal};
 use crate::claim_family::claim_family;
 use crate::value_check::{
-    ValueCounterexample, ValueRefusal, ValueReport, confirm_reported, manifest,
+    confirm_reported, manifest, ValueCounterexample, ValueRefusal, ValueReport,
 };
 
 /// Records and reproduced counterexamples for one provider request.
@@ -62,6 +64,10 @@ impl ProviderResults {
 
 /// Run the caller's negotiated items over its checked package, source bytes
 /// and subject binding. This boundary chooses no engine and reads no file.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the public boundary takes the checked subject, its items, the engines and the caller's limits, cancellation and certification policy"
+)]
 pub fn run(
     package: &CheckedPackage,
     binding: &SubjectBinding<'_>,
@@ -70,6 +76,7 @@ pub fn run(
     engines: &Engines,
     limits: &AnalyzeLimits,
     cancel: &Cancel,
+    certification: CertificationPolicy,
 ) -> ProviderResults {
     let run = crate::analyze::RunInput::source(package);
     match analyze_bound(
@@ -82,6 +89,7 @@ pub fn run(
             engines,
             limits,
             cancel,
+            certification,
         },
     ) {
         Ok(staged) => {
@@ -203,6 +211,7 @@ impl ProviderLimits {
 
     /// The limit FR-287 names `name`, for the caller to set; `None` for a
     /// name FR-287 does not give.
+    #[ix_trace_rs::string_edge]
     pub fn named_mut(&mut self, name: &str) -> Option<&mut u64> {
         match name {
             "max_frame_bytes" => Some(&mut self.max_frame_bytes),
@@ -1249,6 +1258,7 @@ pub(crate) fn read_package<'p>(
 }
 
 /// Read the source package under its checked acquisition's clock selections.
+#[implements("FR-940-AC-21")]
 pub(crate) fn read_package_with_temporal_selections<'p>(
     package: &'p CheckedPackage,
     packages: &PackageInput,
@@ -1714,6 +1724,7 @@ pub(crate) fn settle_record(
 /// is written against the graph of the package of the component of the peer
 /// guarantee it names (`packages`), never the graph its own `package` member
 /// names.
+#[ix_trace_rs::string_edge]
 fn component_premises(
     graphs: &BTreeMap<String, WireGraph>,
     packages: &fsl_semantics::check::ComponentPackages,
@@ -1751,7 +1762,7 @@ fn read_contract(
     received: &fsl_replay::contract_check::ContractCounterexample,
 ) -> EngineReport {
     use crate::contract_check::ContractRefusal;
-    use crate::contract_check::{ContractOutcome, ContractReport, ReceivedContract, read_received};
+    use crate::contract_check::{read_received, ContractOutcome, ContractReport, ReceivedContract};
     let found = |outcome| EngineReport::Provider(Box::new(ProviderReport::Contract(outcome)));
     match read_received(request, received) {
         Ok(ReceivedContract::Reproduced(reproduced, wire)) => found(ContractReport::Found(

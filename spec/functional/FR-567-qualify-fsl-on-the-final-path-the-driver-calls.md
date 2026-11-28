@@ -44,10 +44,15 @@ The `lifecycle-matrix` part passes when every `Case` passes.
 When the workspace links no non-interpreter backend, the `parity` part is
 reported `no-backend` and passes: the final path is then the interpreter
 alone, which the other two parts cover. Every parity finding, a
-`reference-fault` included, fails the part. A `ParityRefusal` other than
-`empty-scope` (an unreadable corpus) is a preflight refusal of `qualify`
-(exit 2, before any vector executes), as FR-353 already refuses an
-unreadable corpus.
+`reference-fault`, `reference-prepare-limit`, `generator-exhausted` or
+`unbuildable-case` included, fails the part. FR-353's corpus preflight governs
+`qualify` before any part runs, and its refusal exits 2 before any vector
+executes. A `ParityRefusal` for an unreadable corpus, a document-level failure
+only (FR-563), is likewise a preflight refusal of `qualify`. In a corpus that
+passes the preflight, a problem confined to one vector refuses nothing: the
+`corpus` part settles it per vector (FR-350), and where the parity runner
+selects that vector it is an unbuildable case, which fails the `parity` part
+when FR-563 records `unbuildable-case` for it.
 
 The FR-352 report gains one `parts` member naming each part and its result;
 its capability coverage is unchanged. The FSL version the report names is the
@@ -59,8 +64,13 @@ The gate's library entry is `xtask::qualify::run(inputs: &QualifyInputs)`,
 which `cargo run --package xtask -- qualify` calls with the defaults:
 FR-565's `lifecycle_matrix()` and the non-interpreter backends the workspace
 links. Under xtask's `test-support` feature, `QualifyInputs` also accepts a
-replacement matrix cell set and replacement backends, so a test can make
-each part fail; the command line offers neither. The exit contract stays
+replacement matrix cell set, replacement backends, a substituted parity
+reference and a replacement parity generated-unit count, so a test can make
+each part fail without running the default generated units; the command line
+offers none of them. With no replacement, and always from the command line,
+the `parity` part takes FR-295's default seed and count 10,000 and
+`ParityLimits::default()`. The replacement count sets how many units are
+generated and excuses no finding on a unit that runs. The exit contract stays
 FR-353's: 0 when `qualified`, 1 when any part fails, 2 on a refusal before a
 verdict. The `complete-v1: qualified` label keeps FR-353's meaning and also
 requires the `lifecycle-matrix` and `parity` parts to pass.
@@ -90,6 +100,11 @@ The FR-352 report with the three parts and the verdict; the exit code.
   `qualify` gate shall report `not-qualified`, naming `parity/<backend>`, and exit 1.
 - When the workspace links no non-interpreter backend, the gate shall report
   the `parity` part `no-backend` and treat it as passed.
+- If the parity runner records `unbuildable-case` for a vector of a corpus
+  that passes FR-353's preflight, then the gate shall report `not-qualified`,
+  naming `parity/<backend>`, and exit 1 without refusing.
+- The `qualify` command line shall offer no setting of the parity
+  generated-unit count.
 - The FR-352 report shall name each part and its result.
 - The FR-352 report shall name as the FSL version the
   `filament-spec-language` package's `CARGO_PKG_VERSION` from the build that
@@ -104,6 +119,8 @@ The FR-352 report with the three parts and the verdict; the exit code.
 | FR-567-AC-3 | Through `xtask::qualify::run` under `test-support`, the AC-1 run with FR-295-AC-1's rounding backend supplied in place of the delegating one reports `not-qualified`, naming `parity/jit` and the finding, and exits 1. | Test (TC-1396) |
 | FR-567-AC-4 | The AC-1 run with no non-interpreter backend linked reports the `parity` part `no-backend` and `complete-v1: qualified`, exit 0; the AC-1 run whose parity reference (substituted under `test-support`) returns `Fault` reports `not-qualified`, naming `parity/jit` with a `reference-fault` finding, exit 1. | Test (TC-1396) |
 | FR-567-AC-5 | The AC-1 report's FSL version is the filament-spec-language crate version (the root package's version, not the `xtask` crate's) and equals `env!("CARGO_PKG_VERSION")` evaluated in the `filament-spec-language` crate of the same build; built from a scratch copy whose `filament-spec-language` package version is changed to `9.9.9`, the report names `9.9.9`. | Test (TC-1396) |
+| FR-567-AC-7 | Through `xtask::qualify::run` under `test-support`, the AC-1 run with a replacement generated-unit count of 3 and a delegating backend that counts its `prepare` calls passes, with one call for each corpus parity case and three more; `cargo xtask qualify` given `--count 3` refuses it as a malformed argument, exit 2; with no replacement the `parity` part takes FR-295's default seed, count 10,000 and `ParityLimits::default()`. | Test (TC-1396) and Inspection |
+| FR-567-AC-8 | The AC-1 run over a corpus that passes the preflight and also holds a `runtime`/`run` vector that expects a value and names an absent source file does not refuse: it executes the other vectors, reports `not-qualified`, naming `parity/jit` with an `unbuildable-case` finding carrying that vector id, and exits 1; the AC-1 run over a corpus with two vectors of one id, and the AC-1 run over a corpus with a parent-traversing input path, each refuse under FR-353's preflight before any part runs, calling no backend's `prepare`, give no verdict and exit 2. | Test (TC-1396) |
 
 ## Dependencies
 

@@ -27,6 +27,12 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-940
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-099
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-850
+    type: references
+  - target: ix://agent-ix/filament-contract-ir/FR-038
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-090
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-397
@@ -141,6 +147,13 @@ impl ReadEqualityRows {
   a public read-only iterator over the retained direct dependencies in
   lock-selection order; `BarePackage::dependencies()` reads the closure from it,
   each dependency once, nearest first.
+- The library artifacts are not the source of that closure. Each
+  `DependencyArtifact` of the unique library closure (FR-517 "The dependency
+  artifact closure") holds one library's admitted package and witnesses.
+  `BarePackage::with_dependency_artifacts` attaches them, with their witnesses,
+  to the `BarePackage` of the root, and `fsl_replay::HandoffSupply` carries them
+  to the replay entries beside the root's package bytes. Both routes check the
+  artifacts' names ("Dependency artifact names").
 - The domain package documents (FR-056's `PackageInput`) stay a caller input of
   observation admission, as for the in-process route; they are bytes the caller
   holds, not source.
@@ -191,14 +204,14 @@ entry defines no result type of its own.
 | HP-1 distinct subject aliases in source model declaration order | the admitted `step_relation` body's optional `subject_declaration_order` Group, joined exactly to `subjects` by alias and model-root identity (FR-940 "Declaration-order member contract"); absence refuses only selection of an HP-1 package form | the same witness of its own S4 emission, emitted from `CheckedModelRelation::aliases()` |
 | clause name, capture names and capture value types | the occurrence's `temporal_clause_names` row, the captures argument's binding names and the typed result types of the capture initializer terms | the source clause's `name()` and `captures()` |
 | arithmetic exactness and bounds | the lock and the nodes' types | the same, through the source |
-| the package's requirement records: each record's occurrence key, capability kind and extent, its request index (its position in package order) and, for a `value-validity` record, its owner function, application occurrence, result bound, direct conversion, path condition, extent roots and object types | the `requirement_items` rows and their `claim`/`value_validity` nodes (FSpec FR-825), through Contract IR's `requirement_items()` and `value_validity_records_of()` | the same rows of its own S4 emission, through `AdmittedPackageRead` |
+| the package's FR-825 source requirement records: each source record's occurrence key, capability kind and extent, its request index (its position in package order), and for a `value-validity` record its owner function, application occurrence, result bound, direct conversion, path condition, extent roots and object types, or for a source-owned function pre/post `operation-contract` record its result-bound type, invariant flag, optional operation anchor, model-object references and ordered populations with their member types, ordinals and optional maxima | the `requirement_items` rows and their `claim`/`value_validity` or source-owned `claim`/`operation_contract` nodes required by FSpec FR-825, through Contract IR's `requirement_items()` and record accessors; generated relation/refinement operation-contract items have no source row or record node | the same FR-825 source rows of its own S4 emission, through `AdmittedPackageRead` |
 
-**Requirement records in the bytes.** S4 SHALL write every record of
-`CheckedGraph::requirements()` (FR-062 "Records") as one FSpec FR-825
-`requirement_items` row, in the order `RequirementMap` iterates, which is
-FR-825's package order (structural node key, occurrence role, occurrence
-ordinal, then capability spelling), so a row's position is the record's
-FR-395 request index. Each row's `claim` is the record's occurrence key,
+**Requirement records in the bytes.** S4 SHALL write every source requirement
+record FR-825 requires from `CheckedGraph::requirements()` (FR-062 "Records")
+as one FSpec FR-825 `requirement_items` row, in the order `RequirementMap`
+iterates, which is FR-825's package order (structural node key, occurrence
+role, occurrence ordinal, then capability spelling), so a row's position is
+the record's FR-395 request index. Each row's `claim` is the record's occurrence key,
 `kind` is `Capability::to_wire()` and `extent` is the record's `ClaimExtent`
 (no domain for `Bounded`; each `DomainKey` and `DomainKind` of `Unbounded`, in
 domain-key order). Each `value-validity` record SHALL also be written as a
@@ -208,8 +221,22 @@ type node of its `ResultBound`, `conversion` its conversion context,
 `path_condition` its `PathGuard`s in order, `extent_roots` its
 `extent_roots()` and `objects` the declaration nodes of its references'
 object types; its `generated` ordinal is its position among its owner's
-records. S4 writes no record by any other route and omits none, because the
-package order counts every record of every kind. A record S4 cannot write
+records. Each source-owned function precondition or postcondition
+`operation-contract` record in this requirement's scope SHALL also be written as a
+`claim`/`operation_contract` node whose `result_bound` is the record's
+Boolean bound type, `invariant` is its invariant-clause flag, `operation` is
+its optional operation anchor, `model_objects` are its referenced object
+types in structural order, and `populations` are its population member types,
+declaration ordinals and authored maxima in record order. A generated
+`operation-contract` item on a `claim`/`step_relation` or model-refinement
+`refinement` node is not an FR-825 source requirement record: S4 SHALL NOT
+write a `requirement_items` row or `claim`/`operation_contract` record node
+for it; the item retains FR-290's `operation-contract` kind (FSpec FR-825).
+The package reader's
+`requirement_items()` SHALL expose both record variants alongside the same
+claim, occurrence, capability and extent facts; a consumer SHALL preserve the
+row's position as its request index. S4 writes no record by any other route and omits none, because the
+package order counts every FR-825 source record of every kind. A source record S4 cannot write
 (an owner with no function node, a key with no `source_map` occurrence, an
 object type with no declaration node) is `EmitRefusal::UnlocatedOccurrence`
 with no bytes, as FR-062-AC-9 refuses an unlocatable occurrence; it is never
@@ -880,8 +907,9 @@ names this file beside `identities.json`.
 - A slot call on a `BarePackage` that has no supply SHALL refuse
   `ViewFailure::Unsupported` with `MissingIdentityWitness` at the package locus
   (FR-390). A supply whose rows name no admitted identity or another package
-  refuses `UnknownIdentityWitness` or `ForeignIdentityWitness`. There is no
-  dependency refusal: `read_checked_package` refuses `MissingImport` for a lock
+  refuses `UnknownIdentityWitness` or `ForeignIdentityWitness`. A call has no
+  dependency refusal (a library artifact's name is refused where the artifacts
+  are supplied, "Dependency artifact names"): `read_checked_package` refuses `MissingImport` for a lock
   that selects a dependency the read evidence does not supply, so a package it
   admitted retains every dependency its lock selects, and the type system leaves
   no package in the state a `DependencyUnheld` refusal would name. Each refusal
@@ -919,6 +947,60 @@ names this file beside `identities.json`.
   refusal dimension at call time, as on the in-process route.
 - The 18 temporal refusal dimensions of FR-516, the five `PackageMismatch`
   variants and FR-390's refusals are the whole vocabulary of the bare route.
+
+### Dependency artifact names
+
+An artifact is named by the `name` of the package in its admitted bytes, which
+keys that package's node ids, and not by the `identity` label it is supplied
+with; the refusals below are decided by that name. The root is the package the
+artifacts are supplied beside: the package of the `BarePackage` that
+`with_dependency_artifacts` extends, or the package a `HandoffSupply` is
+replayed with.
+
+- Both library routes, `HandoffSupply` and
+  `BarePackage::with_dependency_artifacts`, SHALL refuse a supplied artifact
+  named as the root, whether its content equals the root's or differs from it,
+  and whether or not any lock selects that name.
+- Both routes SHALL refuse two supplied artifacts of one name, whether their
+  packages are identical or differ. A library that two dependency paths reach is
+  one artifact (FR-517), so a diamond supplies its name once.
+- Each of these refusals carries the code `invalid_package` and no cause. A
+  replay entry given a `HandoffSupply` returns it as
+  `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`. A refused supply
+  yields no `BarePackage`, no partly joined view and no result.
+- `BarePackage::with_dependency_artifacts` SHALL refuse with a
+  `DependencyJoinRefusal`, whose arms are `Name` and
+  `Native(NativeJoinFailure)`. `Name` is the refusal of this section: it carries
+  the package name that is the root's or is repeated, its `code()` is
+  `invalid_package` and it has no cause. `Native` carries a native join refusal,
+  a denied charge included, unchanged ("The native join budget"). A caller SHALL
+  keep `Name` out of the stage-limit path: it is not a resource denial, carries
+  no `LimitExceeded` and names no setting, and no caller reports it as
+  `stage_limit_exceeded`.
+- The unit table of a world is built from the unit and dimension definitions of
+  the root and of every attached library view. When two of those definitions
+  under one node key are unequal, `BarePackage::world()` and
+  `BarePackage::world_with_source_objects()` SHALL refuse with a world fault, the
+  internal fault whose invariant is `authenticated-unit-definitions-agree`, as
+  they refuse `authenticated-composite-declarations-agree` for two unequal
+  composite declarations under one key. No definition replaces an unequal
+  one. Equal definitions under one key are
+  one definition. This check is made where the world is assembled, and it does not
+  depend on the name refusals above.
+
+A package whose dependency closure holds its own name, directly or through a
+library, is an import cycle and is never admitted, so no `BarePackage` exists
+for it. `read_checked_package`, supplied the packages the closure selects,
+refuses it as `invalid_package`/`definition-cycle` at the full selection path to
+the entry that names it (FSpec FR-322-AC-551; Contract IR FR-038-AC-637), and
+reports the first failing entry in depth-first lock order (FSpec
+FR-322-AC-552). It checks supply first: a direct entry naming the package with
+no package supplied under that name refuses `missing_import`/`missing-selection`
+at that entry. The FR-850 directory loader finds the cycle before admission and
+refuses `invalid_package`/`definition-cycle` at the location FR-850 states, for
+an entry naming the root too, which the manifest's closure excludes; a source
+compile refuses the same code and cause (FR-099). Each of these answers is a
+refusal.
 
 ### The native join budget
 
@@ -972,7 +1054,9 @@ follows.
   `NativeJoinFailure` retaining Contract IR's original typed cause: an
   `ExactTypeProjectionError` with code `ExhaustedWork` or `ExhaustedStorage`
   for identity/type projection, or an `AdmittedEqualityReadError` with code
-  `WorkLimit` or `StorageLimit` for equality admission. The shared budget
+  `WorkLimit` or `StorageLimit` for equality admission.
+  `BarePackage::with_dependency_artifacts` returns that failure as
+  `DependencyJoinRefusal::Native`. The shared budget
   retains the first unpaid charge and cumulative admitted counters. No
   `BarePackage` is returned. It is not an `UnknownIdentityWitness`, not an
   `InternalFault` and not an empty set of identities. A denial surfaced through
@@ -1133,7 +1217,7 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-2 | `BarePackage` has no constructor from bytes, from a decoded graph or from a term, and no public signature of `BarePackage`, `BareSupply`, `EvidencePackage::from_package` or the `BarePackage` evaluation names `CheckedPackage`, `Emission` or `AdmittedPackageRead`; compile-fail probes of each construction fail, and an API-surface inspection lists the signatures. | Test (TC-1331) |
 | FR-531-AC-3 | The evaluation code reached from `BarePackage` does not read a source graph: the same calls over a `BarePackage` whose package was read in a run where the source unit was never compiled give the results the calls give where it was (TC-1331 row 1 runs the calls in a child run that is given the handoff directory only). | Test (TC-1331) |
 | FR-531-AC-4 | Over **R**'s three packages the bare route evaluates every temporal clause form (event position, fixed sample, timestamped event) and every protocol slot kind of FR-390's slot table that **R** holds; a node that is not a temporal clause refuses `clause-root-unresolved` and a slot node that is not a protocol node refuses as FR-390-AC-4 states, each with an empty charge log. | Test (TC-1331) |
-| FR-531-AC-5 | Over a `BarePackage` with no supply, a protocol-slot call refuses `MissingIdentityWitness`; with rows of another package, `ForeignIdentityWitness`; with rows of the package naming no admitted identity, `UnknownIdentityWitness`; rows of another package are `ForeignIdentityWitness` also when they name no admitted identity. Each is `CallFailure::Admission` with `unknown_required_feature`/`unsupported-feature`, category unsupported, exit 21, and the meter untouched. A temporal evidence call over the same `BarePackage` with no supply returns its result; and `read_checked_package` over bytes whose lock selects a dependency the evidence does not supply refuses `MissingImport`, so no `BarePackage` exists for it and no dependency refusal is defined. | Test (TC-1331) |
+| FR-531-AC-5 | Over a `BarePackage` with no supply, a protocol-slot call refuses `MissingIdentityWitness`; with rows of another package, `ForeignIdentityWitness`; with rows of the package naming no admitted identity, `UnknownIdentityWitness`; rows of another package are `ForeignIdentityWitness` also when they name no admitted identity. Each is `CallFailure::Admission` with `unknown_required_feature`/`unsupported-feature`, category unsupported, exit 21, and the meter untouched. A temporal evidence call over the same `BarePackage` with no supply returns its result; and `read_checked_package` over bytes whose lock selects a dependency the evidence does not supply refuses `MissingImport`, so no `BarePackage` exists for it and no call-time dependency refusal is defined. | Test (TC-1331) |
 | FR-531-AC-6 | For an admitted temporal clause whose clock requires a `temporal_bindings` row but whose admitted channel has no row for that clause, the call returns `activation = Unavailable` with the `Missing` non-value for that clock, and the meter's charge log remains empty. | Test (TC-1331) |
 | FR-531-AC-7 | No result of the bare route holds, in its canonical bytes or its fields, a clause name, a source label or a source span: over **R**, the encoded `EvidenceResult` and `ProtocolSlotEvaluation` values do not contain the unit's `source:` labels or a byte region of the source map, and a clause name appears only as the `temporal_clause_names` row of its occurrence gives it, identically on every route. Identity is spelled as the "What the bytes do not carry" list states, and the progress binding of a result holds `package.name()`. | Test (TC-1331) |
 | FR-531-AC-8 | The handoff directory of **R** holds required `identities.json` with `format` `filament.checked-handoff.identities/7`; `ReadIdentityRows::read` over it and the package gives a slot call that evaluates; the file equals, byte for byte, the encoding above of the in-process unit's rows, and two writes of equal requests give equal files; omitting the file from a `BareSupply` makes the slot call refuse `MissingIdentityWitness` while the temporal call is unaffected. | Test |
@@ -1187,6 +1271,12 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-56 | For the profile-unknown refusal of AC-54, the call's charges equal the FR-516 source-route counterpart. | Test (TC-1331) |
 | FR-531-AC-57 | For the infinite-profile refusal of AC-55, the call's charges equal the FR-516 source-route counterpart. | Test (TC-1331) |
 | FR-531-AC-58 | The strict-read refusal of AC-53 occurs before any evaluation call and incurs no evaluation work. | Test (TC-1331) |
+| FR-531-AC-59 | Over a root package named `dep` that declares `unit ms : Time = rational(1, 1000) * s`, a replay given a `HandoffSupply` holding one artifact whose admitted bytes name `dep`, once with the root's own content, once declaring `unit ms : Time = rational(1, 2000) * s`, and once supplied under the identity `lib` while its admitted bytes still name `dep`, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result, both where the selected function converts a quantity and where it compares a function call's result with a quantity literal (`three_seconds_in_ms() = 3000 ms`). | Test (TC-1331) |
+| FR-531-AC-60 | A replay given a `HandoffSupply` holding two artifacts whose admitted bytes name one package, identical in one case and differing in another, in either order, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result; the same supply with that package name held once, and no artifact whose package name is the root's, is not refused for its names. | Test (TC-1331) |
+| FR-531-AC-61 | `BarePackage::with_dependency_artifacts` given an artifact whose package name is the root's, equal in content to the root or differing from it, or two artifacts of one package name, identical or differing, returns `DependencyJoinRefusal::Name` carrying that package name, whose `code()` is `invalid_package` and which has no cause, and returns no `BarePackage`. A caller keeps this refusal out of the stage-limit path: it carries no `LimitExceeded` and is never reported as `stage_limit_exceeded`. Given artifacts of distinct package names, none of them the root's, it returns the `BarePackage`. | Test (TC-1331) |
+| FR-531-AC-62 | A `BarePackage` whose root and library views hold unequal unit definitions, or unequal dimension definitions, under one node key refuses `world()` and `world_with_source_objects()` with the internal fault whose invariant is `authenticated-unit-definitions-agree` and yields no unit table; views whose definitions under one key are equal give one world holding that definition once. A crate-internal `fsl-package` test that sets the view unit tables verifies this: no public route builds unequal definitions under one key once the artifact names are checked. | Test (TC-1331) |
+| FR-531-AC-63 | For a package whose dependency closure holds its own name, directly and through a library, the FR-850 directory loader refuses `invalid_package`/`definition-cycle`, with or without an artifact supplied under that name. `read_checked_package`, supplied every package the closure selects, refuses the same code and cause, whatever the content of the package supplied under that name, and refuses a direct selection of the name with no package supplied under it as `missing_import`/`missing-selection`. Each refusal precedes any item evaluation, and no `BarePackage` is built. | Test (TC-1331) |
+| FR-531-AC-64 | For a checked source unit declaring `object ConfigVersion { versionNumber: Integer; operation probe(): Integer; operation size(): Integer; }`, `body sizeA using P on ConfigVersion::size() { 1 }`, `pre rootCall using P on ConfigVersion::probe { self.size() > 0 }` and `pre versioned using P on ConfigVersion::size { self.versionNumber > 0 }`, source-route evaluation of `versioned` and evaluation of the `BarePackage` read from the unit's emitted checked bytes, given the same `ConfigVersion` object with `versionNumber = 1` and the same remaining budget, both return `Completed(true)` with equal charge logs. The strict reader admits the package; the bytes route does not refuse `missing-type-representation` while reading `versionNumber`. | Test (TC-1331) |
 
 ## Dependencies
 

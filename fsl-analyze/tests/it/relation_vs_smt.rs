@@ -15,7 +15,7 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, Vault};
-use crate::relation_claims;
+use crate::relation_claims_support as relation_claims;
 
 #[trace("TC-604", "FR-179-AC-2")]
 #[test]

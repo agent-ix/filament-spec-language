@@ -1,0 +1,390 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The replay handoff supply admits one artifact per library identity
+//! (FR-850 "Admission").
+
+use super::{handoff_identities_refusal, handoff_join_refusal, HandoffSupply, ReplayRefusal};
+use crate::execute::PackageReadRefusal;
+use filament_contract_model::{
+    encode_checked_package_v2, CheckedDependencySelection, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, NativeJoinBudget,
+};
+use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::Setting;
+use fsl_package::{DependencyArtifact, Emission, EmitLimits, V2ReadLimits};
+use fsl_semantics::check::PackageDeclarations;
+use ix_trace_rs::trace;
+use serde_json::Value;
+use std::sync::Arc;
+
+fn read_limits() -> V2ReadLimits {
+    let mut limits = V2ReadLimits::bounded(1 << 40);
+    limits.work = 1 << 40;
+    limits
+}
+
+fn join_budget() -> NativeJoinBudget {
+    let mut budget = read_limits()
+        .native_join_limits()
+        .budget()
+        .with_read_storage_limit(u64::MAX);
+    budget.resume();
+    budget
+}
+
+/// The emission of the unit-declaring source `declarations` under `name`, and
+/// its strictly admitted package.
+fn emitted(name: &str, declarations: &str) -> (Emission, CheckedPackageV2) {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("fixture", name),
+        "unit.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the source parses");
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        name.to_owned(),
+        fsl_forms::build_unit(&parsed).expect("the unit forms"),
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the unit assembles");
+    let checked = fsl_package::CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .expect("the unit checks"),
+    );
+    let emission =
+        fsl_package::emit_checked(&checked, EmitLimits::fixture()).expect("the declarations emit");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        &Default::default(),
+        read_limits(),
+    )
+    .expect("the emitted declarations admit");
+    (emission, admitted)
+}
+
+/// The artifact of `declarations` emitted under `name`, with its witness files.
+fn artifact(name: &str, declarations: &str) -> DependencyArtifact {
+    let (emission, package) = emitted(name, declarations);
+    let mut budget = join_budget();
+    let identities = emission
+        .identity_rows(&package, &mut budget)
+        .expect("identity rows");
+    let equality = emission
+        .equality_witness(&package, &mut budget)
+        .expect("equality rows");
+    DependencyArtifact {
+        identity: package.name().to_owned(),
+        bytes: emission.package().bytes().into(),
+        identity_bytes: identities
+            .to_bytes(&package)
+            .expect("identity bytes")
+            .into(),
+        equality_bytes: equality.to_bytes(&package).expect("equality bytes").into(),
+        package: Arc::new(package),
+        identities,
+        equality,
+    }
+}
+
+/// Library `dep`, whose one source difference between calls is the ratio of
+/// its dimension equivalence.
+fn library(ratio: u8) -> DependencyArtifact {
+    artifact(
+        "dep",
+        &format!(
+            "dimension Time;\ndimension Period;\nunit s : Time = rational(1, 1);\n\
+             unit sec : Period = rational(1, 1);\ndimension Period ~ Time by 1 sec = {ratio} s;\n"
+        ),
+    )
+}
+
+/// A package `name` whose lock selects `selected`, with its witness files. The
+/// selection is added to the emitted lock, so `package` stays the emission:
+/// handoff admission reads `bytes` alone.
+fn selecting(name: &str, selected: &str) -> DependencyArtifact {
+    let mut artifact = artifact(
+        name,
+        "dimension Beat;\nunit beat : Beat = rational(1, 1);\n",
+    );
+    let package = &artifact.package;
+    let mut lock = package.lock().clone();
+    lock.dependency_selections.push(CheckedDependencySelection {
+        identity: selected.into(),
+    });
+    let bytes = encode_checked_package_v2(
+        package.name(),
+        &lock,
+        package.graph(),
+        CheckedPackageSourceCorrespondenceRef {
+            source_map: package.source_map(),
+            refinement_step_rows: None,
+        },
+        CheckedPackageSidecarsRef {
+            checked_term_data: package.checked_term_data(),
+            temporal_bindings: package.temporal_bindings(),
+            temporal_clause_names: package.temporal_clause_names(),
+            claim_names: package.claim_names(),
+            schedulability_claims: None,
+            operation_effects: None,
+            operation_bodies: None,
+        },
+        package.capability_report(),
+        package.diagnostics(),
+        quire_canonical::Limits::new(1 << 32),
+    )
+    .expect("the package encodes with its selection");
+    artifact.bytes = bytes.into();
+    artifact
+}
+
+/// The number of dependencies handoff admission keeps for `root` over
+/// `dependencies`, or its refusal.
+fn admit(
+    root: &DependencyArtifact,
+    dependencies: &[DependencyArtifact],
+) -> Result<usize, ReplayRefusal> {
+    HandoffSupply {
+        dependencies,
+        identities: &root.identity_bytes,
+        equality: Some(&root.equality_bytes),
+    }
+    .admit_package(
+        &root.bytes,
+        &Default::default(),
+        read_limits(),
+        &mut join_budget(),
+    )
+    .map(|(_, admitted)| admitted.len())
+}
+
+fn wire(artifact: &DependencyArtifact) -> Value {
+    serde_json::from_slice(&artifact.bytes).expect("the library wire")
+}
+
+/// Handoff admission refuses a second artifact under one library identity by
+/// its name, before reading it: byte-identical artifacts and two contents
+/// differing only in an equivalence's `root_scale` refuse alike. No content is
+/// compared here; the link diamond rule does that.
+#[trace("TC-1331", "FR-531-AC-60")]
+#[test]
+fn a_second_supplied_artifact_of_one_name_refuses_whatever_its_content() {
+    let one = wire(&library(1));
+    let mut two = wire(&library(2));
+    let position = one["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .position(|node| node["semantic_form"] == "dimension_equivalence")
+        .expect("the equivalence node");
+    let scale = format!("/semantic_graph/nodes/{position}/body/root_scale/numerator");
+    assert_eq!(one.pointer(&scale), Some(&Value::from("1")));
+    assert_eq!(two.pointer(&scale), Some(&Value::from("2")));
+    *two.pointer_mut(&scale).expect("the ratio") = Value::from("1");
+    assert_eq!(one, two, "the ratio is the only difference");
+    assert_eq!(
+        library(1).bytes,
+        library(1).bytes,
+        "the control pair is byte-identical"
+    );
+
+    let root = selecting("root", "dep");
+    for ratio in [1, 2] {
+        assert!(
+            matches!(admit(&root, &[library(ratio)]), Ok(1)),
+            "each content admits alone"
+        );
+    }
+    for ratios in [[1, 1], [1, 2], [2, 1]] {
+        let refusal = admit(&root, &ratios.map(library)).expect_err("a repeated name refuses");
+        assert!(
+            matches!(
+                refusal,
+                ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)
+            ),
+            "{ratios:?}: {refusal:?}"
+        );
+    }
+}
+
+/// Handoff admission refuses with the code it gives a repeated name.
+fn assert_refuses(outcome: Result<usize, ReplayRefusal>, case: &str) {
+    assert!(
+        matches!(
+            outcome,
+            Err(ReplayRefusal::PackageRead(PackageReadRefusal::Malformed))
+        ),
+        "{case}: {outcome:?}"
+    );
+}
+
+/// Handoff admission refuses an artifact that carries the root package's name,
+/// with the root's own content or another: that name already holds the root.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn an_artifact_named_as_the_root_refuses() {
+    for (root_ratio, supplied_ratio) in [(1, 1), (1, 2), (2, 1)] {
+        assert_refuses(
+            admit(&library(root_ratio), &[library(supplied_ratio)]),
+            &format!("root ratio {root_ratio}, supplied ratio {supplied_ratio}"),
+        );
+    }
+}
+
+/// A root whose lock selects its own name refuses.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn a_root_selecting_its_own_name_refuses() {
+    let control = admit(&selecting("root", "dep"), &[library(2)]);
+    assert!(matches!(control, Ok(1)), "{control:?}");
+    assert_refuses(
+        admit(&selecting("dep", "dep"), &[library(2)]),
+        "the root selects its own name",
+    );
+}
+
+/// The same refusal holds when a selected library selects the root's name.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn a_library_selecting_the_root_name_refuses() {
+    let closure = [library(2), selecting("mid", "dep")];
+    let control = admit(&selecting("root", "mid"), &closure);
+    assert!(matches!(control, Ok(2)), "{control:?}");
+    assert_refuses(
+        admit(&selecting("dep", "mid"), &closure),
+        "a library selects the root's name",
+    );
+}
+
+/// An artifact is named by the package in its bytes: a root-named one refuses
+/// under whatever identity it is supplied.
+#[trace("TC-1331", "FR-531-AC-59")]
+#[test]
+fn a_root_named_artifact_supplied_under_another_identity_refuses() {
+    let mut relabelled = library(2);
+    relabelled.identity = "other".to_owned();
+    assert_refuses(
+        admit(&library(1), &[relabelled]),
+        "a root-named package supplied as `other`",
+    );
+}
+
+/// A join that refuses an artifact name gives a replay the refusal handoff
+/// admission gives it, and a native denial is not turned into it.
+#[trace("TC-1331", "FR-531-AC-61")]
+#[test]
+fn a_join_refusal_of_an_artifact_name_is_the_handoff_refusal() {
+    let root = library(1);
+    for (artifacts, case) in [
+        (vec![library(2)], "an artifact named as the root"),
+        (
+            vec![selecting("mid", "dep"), selecting("mid", "dep")],
+            "a repeated artifact name",
+        ),
+    ] {
+        let joined = fsl_package::BarePackage::new(&root.package)
+            .with_dependency_artifacts(&artifacts, &mut join_budget());
+        let Err(refusal) = joined else {
+            panic!("{case}: the join attached the artifacts");
+        };
+        assert_refuses(Err(handoff_join_refusal(refusal, &join_budget())), case);
+    }
+    let denial = fsl_package::NativeJoinFailure::UnitDefinitions {
+        setting: fsl_foundation::Setting::I2WorkUnits,
+    };
+    let control = handoff_join_refusal(denial.into(), &join_budget());
+    assert!(matches!(control, ReplayRefusal::Fault(_)), "{control:?}");
+}
+
+/// The replay's refusal of a denied native charge: the stage-limit class
+/// naming `setting`, with the original configured bound.
+fn assert_stage_limit(refusal: &ReplayRefusal, setting: Setting, bound: u64) {
+    let ReplayRefusal::Recompile { refusal: stage, .. } = refusal else {
+        panic!("a denied native charge is not a stage refusal: {refusal:?}");
+    };
+    assert_eq!(refusal.code(), Code::StageLimitExceeded, "{refusal:?}");
+    let limit = stage.limit().expect("the refusal carries its limit");
+    assert_eq!(limit.setting(), setting);
+    assert_eq!(limit.configured_bound(), bound);
+}
+
+/// A denied native-join charge of the handoff supply settles as
+/// `stage_limit_exceeded` naming the exhausted setting, never as the internal
+/// fault `handoff-supply-joins`; the expected class is stated by hand.
+#[trace("TC-1331", "FR-531-AC-21")]
+#[test]
+fn a_denied_native_join_charge_settles_as_a_stage_limit() {
+    let artifact = library(2);
+    let join = |budget: &mut NativeJoinBudget| {
+        fsl_package::BarePackage::new(&artifact.package).with_supply(
+            fsl_package::BareSupply {
+                identities: &artifact.identities,
+                equality: Some(&artifact.equality),
+            },
+            budget,
+        )
+    };
+    let mut measure = join_budget();
+    join(&mut measure).expect("the join on an ample budget");
+    let need = measure.consumed();
+    assert!(need.work > 0 && need.storage > 0, "{need:?}");
+    for (work, storage, setting, bound) in [
+        (
+            need.work - 1,
+            need.storage,
+            Setting::I2WorkUnits,
+            need.work - 1,
+        ),
+        (
+            need.work,
+            need.storage - 1,
+            Setting::I2NativeJoinStorage,
+            need.storage - 1,
+        ),
+    ] {
+        let mut budget = NativeJoinBudget::new(work, storage);
+        let Err(failure) = join(&mut budget) else {
+            panic!("one short of {setting:?} must be denied");
+        };
+        let refusal = handoff_join_refusal(failure.into(), &budget);
+        assert_stage_limit(&refusal, setting, bound);
+    }
+}
+
+/// A denied identity-row charge of the handoff read settles as
+/// `stage_limit_exceeded`, never as the internal fault
+/// `handoff-identities-admit`; another identity-file refusal stays the fault.
+#[trace("TC-1331", "FR-531-AC-21")]
+#[test]
+fn a_denied_identity_row_charge_settles_as_a_stage_limit() {
+    let artifact = library(2);
+    let read = |budget: &mut NativeJoinBudget| {
+        fsl_package::ReadIdentityRows::read(&artifact.identity_bytes, &artifact.package, budget)
+    };
+    let mut measure = join_budget();
+    read(&mut measure).expect("the read on an ample budget");
+    let need = measure.consumed();
+    assert!(need.work > 0, "{need:?}");
+    let mut budget = NativeJoinBudget::new(need.work - 1, need.storage);
+    let Err(failure) = read(&mut budget) else {
+        panic!("one work unit short must be denied");
+    };
+    let refusal = handoff_identities_refusal(failure, &budget);
+    assert_stage_limit(&refusal, Setting::I2WorkUnits, need.work - 1);
+
+    let malformed =
+        fsl_package::ReadIdentityRows::read(b"{", &artifact.package, &mut join_budget())
+            .expect_err("not JSON");
+    let control = handoff_identities_refusal(malformed, &join_budget());
+    assert!(matches!(control, ReplayRefusal::Fault(_)), "{control:?}");
+}

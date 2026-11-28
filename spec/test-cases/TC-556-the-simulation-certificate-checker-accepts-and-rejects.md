@@ -27,7 +27,8 @@ row, and its lost-update model; the light ring fixture `RingIsQueue`
 (FR-141-AC-9); a model whose concrete contract costs more than B;
 `CasRefinesCounter` without its `ensure` row with `peek` and `begin` of the
 second thread never enabled, for a terminal chain; a concrete model with the
-precondition `6 mod (2 - self.value) >= 0`, for `BadState`; and a concrete model
+precondition `peek_defined(self.value)`, FR-149-AC-7's `Kernel`-checked
+function, for `BadState`; and a concrete model
 whose state constraint has a refused family, for an unnamed expansion stop.
 
 1. Run the refinement without the `ensure` row and check its certificate.

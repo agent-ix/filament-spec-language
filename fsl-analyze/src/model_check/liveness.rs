@@ -24,8 +24,15 @@
 //! binding, the first phase and model-only pass settle its canonical
 //! breadth-first finding; if neither finds a violation, the second phase
 //! settles that binding's canonical lasso. The engine proceeds to the next
-//! binding only after the current one is `Holds{Exhaustive}`. Findings and
-//! lassos from different bindings are never ranked against one another.
+//! binding only after the current one is decided to hold, over its full or
+//! reduced product, and so decides every binding before any proof. Findings
+//! and lassos from different bindings are never ranked against one another.
+//!
+//! Known deviation from FR-126 (QSL-3472): a horizon, a bound, a state
+//! constraint or an ignored fairness constraint ends the loop early. FR-126
+//! requires the next binding to be decided after one ends undecided, at a
+//! bound or at a constraint; until it is, a later binding's refutation can be
+//! missed and the run settles as a non-proof.
 //!
 //! Each binding's second phase decomposes its retained graph into strongly
 //! connected components in
@@ -93,47 +100,49 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
+    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{
-    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
+use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
+use fsl_eval::simulation::protocol::{
+    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
+    ProtocolTransition,
+};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
-use fsl_eval::simulation::protocol::{
-    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
-    protocol_constraints,
-};
 use fsl_eval::simulation::{
     Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint,
     InitialStateRefusal, Limit, Limits, OfferedReductions, Outcome, Permutation, SubjectSystem,
     SubjectTransition, SymmetryGroup, TransitionSystem,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
-use fsl_foundation::IdentityLimits;
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::{IdentityLimits, Setting};
 use fsl_replay::{
-    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
-    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
-    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
-    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
-    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
+    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
+    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
+    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
+    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
+    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Sink, Writer};
 use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
-    precheck, refuse_capture_read,
+    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
+    ModelCheckRequest, BOUND_POSITIONS, EN1_STATE_OVERHEAD_BYTES,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{FairModel, fairness_constraints, tree_path};
+use super::fair_walk::{fairness_constraints, tree_path, FairModel};
 use super::graph::{
-    Ample, Choice, GraphExploration, ProductStateId, RetainConfig, RetainedEdge, RetainedGraph,
-    retain_reduced_with_key,
+    retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainConfig,
+    RetainHooks, RetainedEdge, RetainedGraph,
 };
 use super::product::{ProductKey, ProductTransition};
 use super::quotient::{
@@ -172,6 +181,7 @@ pub(super) fn check(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
     stutter_closure: bool,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let ModelCheckItem::Clause { clause, letters } = request.item else {
         return Err(fault("a-liveness-item-is-a-clause"));
@@ -263,6 +273,7 @@ pub(super) fn check(
             message_bound: None,
             instance_bound: None,
             constraint: request.reductions.constraint.as_deref(),
+            retained,
             root_cancelled,
             no_initial,
             certify: Certify {
@@ -310,6 +321,8 @@ pub(super) struct ProtocolLivenessOptions<'c> {
     pub(super) instance_bound: Option<InstanceBound>,
     /// The request's state constraint (FR-158).
     pub(super) constraint: Option<&'c str>,
+    /// The item's `analysis.retained_bytes` allowance.
+    pub(super) retained: &'c Budget,
 }
 
 #[allow(
@@ -395,6 +408,7 @@ where
             }),
             instance_bound: options.instance_bound,
             constraint: options.constraint,
+            retained: options.retained,
             root_cancelled,
             no_initial: simulation.initial.is_empty(),
             certify: Certify {
@@ -444,6 +458,8 @@ struct Bound<'r, S: LiveSubject> {
     /// The cancellation that stopped the clause identity's resolution.
     /// The request's state constraint (FR-158).
     constraint: Option<&'r str>,
+    /// The item's `analysis.retained_bytes` allowance, one for all bindings.
+    retained: &'r Budget,
     root_cancelled: Option<CancelCause>,
     no_initial: bool,
     certify: Certify<'r>,
@@ -509,6 +525,7 @@ fn decide_bindings<S: LiveSubject>(
         instance_bound: bound.instance_bound,
         request,
         constraint: bound.constraint,
+        retained: bound.retained,
         dead_constrained: RefCell::new(BTreeSet::new()),
         cancel,
         meter: RefCell::new(Meter::new(meter)),
@@ -541,7 +558,7 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         enforce: bool,
         stutter_closure: bool,
         workers: usize,
-    ) -> Vec<Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>>;
+    ) -> Vec<BoundedExpansion<Tr<Self>, Self::State>>;
 
     /// How the state constraint `name` reads at `state` (FR-158).
     fn constraint_value(
@@ -586,6 +603,12 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
     ) -> Result<Second<Tr<Self>>, ModelCheckRefusal>;
 }
 
+type BoundedExpansion<Transition, State> = Result<Bounded<Transition, State>, ExpansionStop>;
+type PrefetchedExpansions<State, Transition> =
+    RefCell<BTreeMap<RawExpansionKey, BoundedExpansion<Transition, State>>>;
+type ProductIdentity = (StateKey, PropertyKey, u64);
+type ProductKeyCache = RefCell<ByteCache<ProductIdentity, Arc<[u8]>>>;
+
 /// The retained product of `product` under `group` and `ample`.
 fn retained<'l, S: LiveSubject>(
     run: &Run<'_, S>,
@@ -595,6 +618,14 @@ fn retained<'l, S: LiveSubject>(
     limits: Limits,
 ) -> Result<Exploration<S>, ModelCheckRefusal> {
     let identity = IdentityLimits::default();
+    let hooks = RetainHooks::<LassoSystem<'l, S>, _, _, _, _>::new(
+        |product: &LassoSystem<'l, S>, states: &[LState<S::State>], workers: usize| {
+            product.prefetch_expansions(states, workers)
+        },
+        || run.cancel.poll() && run.cancel.cause().is_some(),
+        |state: &LState<S::State>| product.encoded_key(state, identity),
+        |state: &LState<S::State>, key_len: usize| product.admit(run.retained, state, key_len),
+    );
     retain_reduced_with_key(
         product,
         group,
@@ -605,9 +636,7 @@ fn retained<'l, S: LiveSubject>(
             max_depth: None,
         },
         run.request.workers,
-        |product, states, workers| product.prefetch_expansions(states, workers),
-        || run.cancel.poll() && run.cancel.cause().is_some(),
-        |state| product.encoded_key(state, identity),
+        hooks,
     )
     .map_err(|error| error.model_refusal(IdentityLimits::default()))
 }
@@ -1033,6 +1062,9 @@ enum Halt {
     Automaton(u64),
     /// Another distinct initial product state would exceed the remaining budget.
     InitialStates,
+    /// Storing another product state would exceed `analysis.retained_bytes`
+    /// (FR-255), at this configured bound.
+    RetainedBytes(u64),
     /// An identity has no canonical encoding, or an invariant broke.
     Refusal(ModelCheckRefusal),
 }
@@ -1214,7 +1246,7 @@ mod prefetch_window_tests {
 
 #[cfg(test)]
 mod cache_budget_tests {
-    use super::{ByteCache, PropertyKey, StateKey, cache_product_key, cache_successor_keys};
+    use super::{cache_product_key, cache_successor_keys, ByteCache, PropertyKey, StateKey};
 
     #[test]
     fn byte_cache_evicts_and_releases_charged_bytes() {
@@ -1258,11 +1290,9 @@ mod cache_budget_tests {
         cache_product_key(&mut product_cache, first_key.clone(), first_value);
         cache_product_key(&mut product_cache, second_key.clone(), first_value);
         assert!(product_cache.get(&first_key).is_none());
-        assert!(
-            product_cache
-                .get(&second_key)
-                .is_some_and(|value| value.as_ref() == first_value)
-        );
+        assert!(product_cache
+            .get(&second_key)
+            .is_some_and(|value| value.as_ref() == first_value));
         assert!(product_cache.used_bytes() <= charged);
 
         let root = StateKey::from_canonical_bytes(b"root".to_vec());
@@ -1313,10 +1343,10 @@ struct LassoSystem<'r, S: LiveSubject> {
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
     /// One worker batch of raw expansions, consumed by model-state identity.
-    prefetched: RefCell<BTreeMap<RawExpansionKey, Result<Bounded<Tr<S>, S::State>, ExpansionStop>>>,
+    prefetched: PrefetchedExpansions<S::State, Tr<S>>,
     /// Complete product keys reused for repeated model/property pairs in this
     /// pass. The exact bytes remain the FR-101 identity.
-    product_keys: RefCell<ByteCache<(StateKey, PropertyKey, u64), Arc<[u8]>>>,
+    product_keys: ProductKeyCache,
     /// Exact successor keys reused within this product pass. Expansion values
     /// are not retained because their generic payloads have no deep-size API.
     successor_keys: RefCell<ByteCache<StateKey, Vec<StateKey>>>,
@@ -1406,6 +1436,31 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// Record why the run stops, keeping the first reason, and return the
     /// stop the exploration engine takes.
+    /// Charge a product state to the item's `analysis.retained_bytes` before
+    /// the graph stores it: the fixed entry overhead, its key as the graph and
+    /// the index each hold it, and its model state's key.
+    #[implements("FR-255-AC-42")]
+    fn admit(
+        &self,
+        retained: &Budget,
+        state: &LState<S::State>,
+        key_len: usize,
+    ) -> Result<(), CatalogCode> {
+        let bytes = widen(key_len)
+            .saturating_mul(2)
+            .saturating_add(widen(state.model_key.as_bytes().len()))
+            .saturating_add(EN1_STATE_OVERHEAD_BYTES);
+        let halt = match retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+            Ok(()) => return Ok(()),
+            Err(BudgetStop::Limit(limit)) => Halt::RetainedBytes(limit.configured_bound()),
+            Err(BudgetStop::Cancelled(source)) => Halt::Cancelled(source),
+            Err(BudgetStop::Accounting(_)) => {
+                Halt::Refusal(fault("a-byte-charge-is-no-kernel-charge"))
+            }
+        };
+        Err(self.record(halt).cause)
+    }
+
     fn record(&self, halt: Halt) -> ExpansionStop {
         let mut slot = self.halt.borrow_mut();
         if slot.is_none() {
@@ -1459,7 +1514,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     fn expand_model_only(
         &self,
         state: &S::State,
-        prefetched: Option<Result<Bounded<Tr<S>, S::State>, ExpansionStop>>,
+        prefetched: Option<BoundedExpansion<Tr<S>, S::State>>,
     ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
         self.poll()?;
         let expansion = prefetched
@@ -1667,20 +1722,29 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     ) -> Result<(), ExpansionStop> {
         let mut initial = BTreeMap::new();
         let identity = IdentityLimits::default();
-        for model in self
+        'models: for model in self
             .system
             .initial_for_check_with_symmetry(max_states, group)
         {
-            let model = model.map_err(|refusal| match refusal {
-                InitialStateRefusal::OverBudget(_) => self.record(Halt::InitialStates),
-                InitialStateRefusal::Encoding(refusal) => {
-                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal)))
+            let model = match model {
+                Ok(model) => model,
+                Err(InitialStateRefusal::OverBudget(_)) => {
+                    // Keep the roots already admitted. The product explorer
+                    // must account for those states before this initial-set
+                    // limit becomes the result.
+                    self.record(Halt::InitialStates);
+                    break 'models;
                 }
-                InitialStateRefusal::Expansion(stop) => self.record(Halt::Expansion(stop)),
-                InitialStateRefusal::Construction(refusal) => {
-                    self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal)))
+                Err(InitialStateRefusal::Encoding(refusal)) => {
+                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal))));
                 }
-            })?;
+                Err(InitialStateRefusal::Expansion(stop)) => {
+                    return Err(self.record(Halt::Expansion(stop)));
+                }
+                Err(InitialStateRefusal::Construction(refusal)) => {
+                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal))));
+                }
+            };
             let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
             if properties.is_empty() {
@@ -1715,10 +1779,11 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                         EncodingRefusal::of(&error, identity),
                     )))
                 })?;
-                initial.entry(key).or_insert(state);
-                if initial.len() > max_states {
-                    return Err(self.record(Halt::InitialStates));
+                if !initial.contains_key(&key) && initial.len() >= max_states {
+                    self.record(Halt::InitialStates);
+                    break 'models;
                 }
+                initial.entry(key).or_insert(state);
             }
         }
         self.initial = initial.into_values().collect();
@@ -1728,12 +1793,12 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
 #[cfg(test)]
 mod key_encoding_tests {
-    use super::{PropertyKey, canonical_api};
+    use super::{canonical_api, PropertyKey};
     use crate::model_check::product::ProductKey;
     use fsl_eval::automaton::GbaBuilder;
     use fsl_foundation::IdentityLimits;
     use ix_trace_rs::trace;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     #[trace("TC-453", "FR-101-AC-2")]
     #[test]
@@ -2306,6 +2371,8 @@ struct Run<'r, S: LiveSubject> {
     message_bound: Option<MemoryBound>,
     /// The request's state constraint (FR-158).
     constraint: Option<&'r str>,
+    /// The item's `analysis.retained_bytes` allowance, one for all bindings.
+    retained: &'r Budget,
     /// The model states the constraint cut in the model-only passes.
     dead_constrained: RefCell<BTreeSet<StateKey>>,
     instance_bound: Option<InstanceBound>,
@@ -2336,8 +2403,17 @@ impl<'r, S: LiveSubject> Run<'r, S> {
         self.diagnostic_fairness.unwrap_or(self.fairness)
     }
 
+    /// Decide the bindings in canonical order and settle the run.
+    #[implements(
+        "FR-126-AC-14",
+        "FR-126-AC-15",
+        "FR-156-AC-1",
+        "FR-160-AC-6",
+        "FR-161-AC-5"
+    )]
     fn decide(&self, mut totals: Totals) -> Result<ModelCheckOutcome<Tr<S>>, ModelCheckRefusal> {
         let mut explored = Vec::with_capacity(self.bindings.len());
+        let mut reduced_refutation: Option<Box<TemporalCounterexample<Tr<S>>>> = None;
         let mut cut = false;
         let mut ignored_fairness_lasso = false;
         for binding in self.bindings {
@@ -2403,11 +2479,21 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     .any(|state| state.findings.contains(&Finding::HorizonCut));
             match self.second_phase(&run)? {
                 Second::Lasso(counterexample) => {
-                    let stats = totals.stats();
-                    return Ok(ModelCheckOutcome::Violated {
-                        counterexample,
-                        stats,
-                    });
+                    if run.binding.applied.is_none() {
+                        return Ok(ModelCheckOutcome::Violated {
+                            counterexample,
+                            stats: totals.stats(),
+                        });
+                    }
+                    if reduced_refutation.is_none() {
+                        reduced_refutation = Some(counterexample);
+                    }
+                    // Each reduced binding has its own product. Keep the
+                    // first lasso, then charge its concrete steps before the
+                    // next binding uses the shared transition budget.
+                    self.charge_lifted(&mut totals);
+                    explored.push(run);
+                    continue;
                 }
                 Second::IgnoringConstraints => ignored_fairness_lasso = true,
                 Second::Cancelled(source) => {
@@ -2420,9 +2506,10 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
             }
-            let settled_exhaustively = !run.dead_cut
-                && run.binding.applied.is_none()
-                && !self.request.partial_order
+            // A reduction never ends the loop: each binding, or each orbit
+            // under symmetry, is its own product and must be decided. The
+            // other stops below are a known deviation from FR-126 (QSL-3472).
+            let binding_decided = !run.dead_cut
                 && !run.graph.states().iter().any(|state| {
                     state.findings.iter().any(|finding| {
                         matches!(
@@ -2430,18 +2517,16 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                             Finding::HorizonCut
                                 | Finding::BoundLimited
                                 | Finding::MessagesBoundLimited
-                                | Finding::ConstraintBoundary
                                 | Finding::InstanceBoundLimited
                         )
                     })
                 })
                 && self.dead_limited.borrow().is_empty()
                 && self.dead_message_limited.borrow().is_empty()
-                && self.dead_constrained.borrow().is_empty()
                 && totals.instance_limited.is_empty()
                 && !ignored_fairness_lasso;
             explored.push(run);
-            if !settled_exhaustively {
+            if !binding_decided {
                 break;
             }
         }
@@ -2510,6 +2595,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     bound,
                     states: widen(totals.instance_limited.len()),
                 },
+                stats: totals.stats(),
+            });
+        }
+        if let Some(counterexample) = reduced_refutation {
+            return Ok(ModelCheckOutcome::Violated {
+                counterexample,
                 stats: totals.stats(),
             });
         }
@@ -2637,31 +2728,36 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
         }
         self.charge_lifted(totals);
-        let ending = match &exploration.outcome {
-            Outcome::Exhaustive(_) => Ending::Complete,
-            Outcome::Bounded { limit, .. } => {
-                let (limit, value) = match limit {
-                    Limit::States(_) => (ModelCheckLimit::MaxStates, widen(spent.max_states)),
-                    Limit::Transitions(_) => (
-                        ModelCheckLimit::MaxTransitions,
-                        widen(spent.max_transitions),
-                    ),
-                };
-                Ending::Stopped(
-                    IncompleteCause::ResourceExhausted,
-                    Some(ReachedLimit { limit, value }),
-                )
-            }
-            Outcome::Cancelled { .. } => match self.cancel.cause() {
-                Some(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
-                None => return Err(fault("a-cancelled-run-has-a-cause")),
-            },
-            Outcome::Stopped { .. } => match self.halt_ending(&product)? {
-                Some(ending) => ending,
-                None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
-            },
-            Outcome::BoundReached { .. } => {
-                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
+        let initial_limit = matches!(product.halt.borrow().as_ref(), Some(Halt::InitialStates));
+        let ending = if initial_limit {
+            self.ending(Halt::InitialStates)?
+        } else {
+            match &exploration.outcome {
+                Outcome::Exhaustive(_) => Ending::Complete,
+                Outcome::Bounded { limit, .. } => {
+                    let (limit, value) = match limit {
+                        Limit::States(_) => (ModelCheckLimit::MaxStates, widen(spent.max_states)),
+                        Limit::Transitions(_) => (
+                            ModelCheckLimit::MaxTransitions,
+                            widen(spent.max_transitions),
+                        ),
+                    };
+                    Ending::Stopped(
+                        IncompleteCause::ResourceExhausted,
+                        Some(ReachedLimit { limit, value }),
+                    )
+                }
+                Outcome::Cancelled { .. } => match self.cancel.cause() {
+                    Some(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
+                    None => return Err(fault("a-cancelled-run-has-a-cause")),
+                },
+                Outcome::Stopped { .. } => match self.halt_ending(&product)? {
+                    Some(ending) => ending,
+                    None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
+                },
+                Outcome::BoundReached { .. } => {
+                    return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
+                }
             }
         };
         Ok(Ok(Explored {
@@ -2711,6 +2807,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             ),
             Halt::Cancelled(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
             Halt::Automaton(limit) => reached(ModelCheckLimit::MaxAutomatonStates, limit),
+            Halt::RetainedBytes(bound) => reached(ModelCheckLimit::AnalysisRetainedBytes, bound),
             Halt::InitialStates => reached(
                 ModelCheckLimit::MaxStates,
                 widen(self.request.limits.limits.max_states),

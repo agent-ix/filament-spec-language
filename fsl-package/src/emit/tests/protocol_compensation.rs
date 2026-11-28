@@ -4,7 +4,7 @@
 use super::child_composite::fixture;
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::CheckRefusal;
+use fsl_semantics::check::SemanticCheckRefusal;
 
 fn emitted_compensation_unit() -> (Emission, Value, Read) {
     emitted_unit("", "true", "false").expect("unit checks")
@@ -56,11 +56,11 @@ fn emitted_unit(
     declarations: &str,
     guard: &str,
     retry: &str,
-) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
+) -> Result<(Emission, Value, Read), Vec<SemanticCheckRefusal>> {
     emitted_text(&unit_text(declarations, guard, retry))
 }
 
-fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
+fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<SemanticCheckRefusal>> {
     let graph = checked_graph(unit)?;
     let clock = filament_contract_model::ClockConfiguration::EventPosition {
         sequence_authority: "compensation-events".into(),
@@ -134,7 +134,9 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>
     Ok((emission, wire, read))
 }
 
-fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+fn checked_graph(
+    unit: &str,
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<SemanticCheckRefusal>> {
     let document =
         crate::emit::tests::wire_bytes(&fixture::document()).expect("fixture serializes");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
@@ -584,4 +586,117 @@ fn a_sum_binder_in_a_recovery_predicate_is_a_parameter_named_by_its_source() {
     );
     let read = &capture["members"][1]["value"];
     assert_eq!(parameter(nodes, read), ("saved", "2"), "{capture}");
+}
+
+/// FR-640-AC-15 (TC-1660): under the `timed` profile a template's and an
+/// await's clock selections are checked and consumed, and the package binds no
+/// clock to either.
+#[trace("TC-1660", "FR-640-AC-15")]
+#[test]
+fn a_timed_protocol_clock_selection_is_checked_and_writes_no_row() {
+    let unit = unit_text("", "true", "false")
+        .replace(
+            "filament.temporal.event-position.false-extension/v1",
+            "filament.temporal.timed/v1",
+        )
+        .replace(
+            "effect Applied of Update as (applied: M::Money) { true };\n",
+            "effect Applied of Update as (applied: M::Money) { true };\n\
+             event Started by R as (started: Boolean) { true };\n\
+             await Wait after Started using t clock \"c\" within [0, 120] \
+               match event Seen by R as (seen: Boolean) { true }; \
+               then sequence Continued { } timeout sequence TimedOut { }\n",
+        );
+    let graph = checked_graph(&unit).expect("the timed unit checks");
+    let source = graph.source().clone();
+    let spans: Vec<_> = graph
+        .protocols()
+        .iter()
+        .flat_map(|protocol| {
+            let templates = protocol.obligations.compensations.iter();
+            let awaits = protocol.awaits.iter();
+            templates
+                .map(|template| template.span)
+                .chain(awaits.map(|awaited| awaited.span))
+        })
+        .collect();
+    assert_eq!(spans.len(), 3, "two templates and one await");
+    let package = CheckedPackage::link(graph);
+    let select = |span, clock: &filament_contract_model::ClockConfiguration| {
+        crate::emit::TemporalClockSelection::new(source.clone(), span, clock.clone())
+    };
+    let emit_selected = |selections: &[crate::emit::TemporalClockSelection]| {
+        crate::emit::emit_checked_with_temporal_selections(
+            &package,
+            selections,
+            crate::EmitLimits::fixture(),
+        )
+    };
+    let emit = |clock: Option<filament_contract_model::ClockConfiguration>| {
+        let selections: Vec<_> = clock
+            .iter()
+            .flat_map(|clock| spans.iter().map(|span| select(*span, clock)))
+            .collect();
+        emit_selected(&selections)
+    };
+
+    let timed = filament_contract_model::ClockConfiguration::Timed { unit: "s".into() };
+    for clock in [Some(timed.clone()), None] {
+        let emission = emit(clock).expect("a timed protocol emits");
+        assert_eq!(emission.omitted, []);
+        assert_eq!(wire(&emission).get("temporal_bindings"), None);
+        let document =
+            crate::emit::tests::wire_bytes(&fixture::document()).expect("fixture serializes");
+        let mut evidence = CheckedPackageEvidence::new();
+        for feature in wire(&emission)["lock"]["required_features"]
+            .as_array()
+            .expect("features")
+        {
+            evidence.support_feature(feature.as_str().expect("a feature"));
+        }
+        evidence
+            .insert_domain_package_document(package_identity(&document), document.as_slice())
+            .expect("fresh evidence key");
+        let read = read_v2(
+            emission.package.bytes(),
+            library(),
+            V2ReadLimits::fixture(),
+            &evidence,
+        );
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    }
+
+    let event_position = filament_contract_model::ClockConfiguration::EventPosition {
+        sequence_authority: "compensation-events".into(),
+    };
+    let refusal = emit(Some(event_position.clone()))
+        .expect_err("an event-position clock under the timed profile");
+    assert!(
+        matches!(
+            refusal,
+            crate::emit::EmitRefusal::TemporalClockProfileMismatch { .. }
+        ),
+        "{refusal:?}"
+    );
+
+    // Each declaration's selection is checked although it takes no row: the
+    // other selections stay valid and the refusal names the one at fault.
+    for (at, span) in spans.iter().enumerate() {
+        let valid: Vec<_> = spans.iter().map(|span| select(*span, &timed)).collect();
+        let mut empty_unit = valid.clone();
+        empty_unit[at].clock =
+            filament_contract_model::ClockConfiguration::Timed { unit: "".into() };
+        let mut other_definition = valid;
+        other_definition[at].definition = select(*span, &event_position).definition;
+        for (selections, field) in [(empty_unit, "unit"), (other_definition, "definition")] {
+            assert_eq!(
+                emit_selected(&selections).expect_err("an invalid timed selection"),
+                crate::emit::EmitRefusal::InvalidTemporalClockValue {
+                    source_ref: source.clone(),
+                    span: *span,
+                    field,
+                }
+            );
+        }
+    }
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Fail when a tracked file is executable/binary content, or exceeds the size
 # ceiling. Two stripped x86-64 ELF executables (5.2 MB and 5.8 MB) were once
 # committed at a `dependencies/0.bin` path (since purged from history

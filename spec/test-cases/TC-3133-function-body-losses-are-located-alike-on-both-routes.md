@@ -51,8 +51,10 @@ Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
 `every_flag_raising_ieee_operation_is_located_alike_on_both_routes` (step 5),
 `a_denied_charge_in_a_body_is_located_alike_on_both_routes` (step 6);
 `tests/it/dispatch_emission.rs`
-`a_clause_function_body_carries_its_location_rows` (step 7) and a new
-`a_source_clause_function_is_named_alike_on_both_routes` (step 8).
+`a_clause_function_body_carries_its_location_rows` (step 7);
+`fsl-eval/tests/it/ieee_ordering_route_parity.rs`
+`source_operation_precondition_is_selected_by_anchor_and_located_on_both_routes`
+(step 8).
 
 ## Expected Results
 

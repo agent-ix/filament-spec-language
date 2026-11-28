@@ -23,6 +23,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-361
+    type: depends_on
 ---
 # FR-126: Check a temporal clause over every behaviour of a model (explicit-state)
 
@@ -415,28 +419,59 @@ zero, the first distinct initial state causes the limit refusal.
   and no candidate passes, the engine SHALL return `Holds{basis:
   Exhaustive}`.
 
-### Bindings and ranking (TP-4)
+### Bindings and ranking
 
-- The engine SHALL explore one product for each binding of the clause's
-  `over` parameter, taking the bindings in FR-125's canonical instance
-  order (population, then key).
-- The engine SHALL decide bindings in that order, completing the clause's
-  required phases for one binding before proceeding to the next. For a
-  binding, the engine SHALL return its first-phase violation if one is found;
-  if the first phase completes without a violation, it SHALL run the second
-  phase for that binding and return its lasso violation if one is found. The
-  counterexample SHALL name that binding. Within a binding, the engine SHALL
-  retain the first phase's canonical breadth-first finding and the second
-  phase's canonical lasso selection, including its shortest stem-and-loop
-  witness. It SHALL NOT rank findings from different bindings by depth,
-  state order, or lasso length.
-- The engine SHALL proceed to the next binding only after the current binding
-  has been proved `Holds{Exhaustive}`. If a binding is `Undecided`, reaches a
-  bound, or stops because of a resource limit or cancellation before it is
-  decided, the engine SHALL return that incomplete outcome without reporting
-  a finding from any later binding. This ensures that a refutation names the
-  first refuted instance in canonical order, as FR-125 requires; a binding's
-  own shortest counterexample remains local to that binding.
+**Which binding the item reports.** These two rules hold for every clause
+item, safety (TP-1 to TP-3) and TP-4 alike.
+
+- The item SHALL be refuted by the first refuted binding of the clause's
+  `over` parameter in FR-125's canonical instance order (population, then
+  universe list order) (FR-621 "Items over several claim instances", FSpec
+  FR-361), also when an earlier binding is undecided, reached a bound or
+  stopped. A refutation the run found SHALL NOT be replaced by an earlier
+  binding's outcome that is not a refutation. The counterexample SHALL name
+  the reported binding.
+- Depth, state order and lasso length SHALL rank findings within one
+  binding only, never findings of different bindings.
+
+**Safety items.** A safety item's search covers its bindings together, each
+with its own monitor state. When it reaches a violation of one
+binding, the engine SHALL look for a violation of the bindings before it
+under what remains of the run's limits, and SHALL report the violation it
+holds when it finds none, whether that search proves them or ends without
+deciding them.
+
+**TP-4 items.** Where a rule of "Pre-check", "First phase", "Second phase
+(TP-4)" or "Model-only pass (TP-4)" says the engine returns an outcome from a
+product, that is the outcome of that product's binding. The pre-check
+outcomes, which precede every product, are the item's.
+
+- The engine SHALL explore one product for each binding, taking the bindings
+  in canonical instance order, and SHALL complete the required phases of one
+  binding before it decides the next. For a binding, the engine SHALL return
+  its first-phase violation if one is found; when the first phase completes
+  without a violation, it SHALL run the second phase for that binding and
+  return its lasso violation if one is found. Within a binding, the engine
+  SHALL retain the first phase's canonical breadth-first finding and the
+  second phase's canonical lasso selection, including its shortest
+  stem-and-loop witness.
+- The engine SHALL decide no binding after a refuted one.
+- When a binding ends undecided, at a bound, or on `max_candidates` or
+  `max_automaton_states`, the engine SHALL decide the next binding. This
+  covers `Undecided(UndecidedSuccessor)`, `BoundReached` at `max_depth` and
+  every outcome that reports a method bound or a constraint reached. Each
+  such limit applies to one binding: each binding's product has its own
+  depth horizon and its own automaton-state count, and `max_candidates`
+  counts one expansion (FR-120).
+- `max_states`, `max_transitions`, the evaluation meter and cancellation end
+  the whole run: when one stops a binding, the engine SHALL decide no later
+  binding.
+- When no binding is refuted, the engine SHALL return a proof only when
+  every binding is proved, and otherwise the outcome of the first binding in
+  canonical order that is not proved. A binding the run did not decide is
+  not proved. A run cancelled before it refutes a binding SHALL return
+  `Stopped{cause: Cancelled, limit: None}` (FR-276), whatever an earlier
+  binding's outcome.
 - The run's `max_states` and `max_transitions` SHALL be shared by every
   binding; the run's `automaton_states` SHALL be the largest count of any one
   binding; the run's `product_states` SHALL be the sum over bindings.
@@ -451,7 +486,7 @@ zero, the first distinct initial state causes the limit refusal.
 - The engine SHALL rank the pass's findings with the same binding's product
   findings using the first-phase canonical breadth-first order; a product
   finding wins a tie at equal depth. The engine SHALL finish this binding's
-  model-only pass before deciding whether to proceed to a later binding.
+  model-only pass before it decides a later binding.
 - If the pass reads an undefined letter or contract conjunction, then the
   engine SHALL end the first phase with the `UndefinedEvaluation` violation.
 - If the pass reads a refused contract conjunction, then the engine SHALL
@@ -585,13 +620,13 @@ zero, the first distinct initial state causes the limit refusal.
 | FR-126-AC-3 | Over the `Counter` subject with no `terminal` declaration, the `DeadlockFreedom` item returns `Violated` with `kind: Deadlock` and the prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`; with a `When` declaration covering value 3 it returns `Holds{Exhaustive}`. Under infinite-trace, `always eventually holds(c.value = 0)` returns `Violated` whose loop is the terminal stutter step at value 3, with the stutter marker set. | Test (TC-521) |
 | FR-126-AC-4 | Over the `Health` subject (object `s`, fields `healthy: Boolean` and `failures: Int[0, 1]`; operation `fail` with precondition `self.failures = 0` setting `healthy` false and `failures` 1; operation `recover` with precondition `not self.healthy` setting `healthy` true; `terminal any`; initial `healthy` true and `failures` 0), the recovery-stability formula `always (holds(not s.healthy) implies eventually always[0,2] holds(s.healthy))` returns `Holds{Exhaustive}`. In the `Restless` variant, where `fail` has no precondition, it returns `Violated` with a lasso on which `healthy` never holds at three consecutive positions. | Test (TC-521) |
 | FR-126-AC-5 | Limits over the example subject and the TP-4 claim of AC-1 with no granularity: `max_depth` 2 returns `BoundReached{depth: 2}`, since the length-3 loop needs an edge out of depth 2; `max_depth` 3 returns `Violated` with the AC-1 loop, found by the second phase over the retained graph although depth 3 left a frontier; `max_states` 2 returns `Stopped{ResourceExhausted, {MaxStates, 2}}`; `max_transitions` 3 returns `Stopped{ResourceExhausted, {MaxTransitions, 3}}`; an already-cancelled `Cancel` handle returns `Stopped{Cancelled, None}`. Over the `Counter` subject, the `DeadlockFreedom` claim with an evaluation meter budget of zero stops at the `inc` precondition's evaluation with `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}`. | Test (TC-521) |
-| FR-126-AC-6 | `always (holds(not s.healthy) implies eventually[0,100] holds(s.healthy))` over the `Restless` subject, where `fail` can repeat forever, with `max_automaton_states` 50 returns `Stopped{ResourceExhausted, {MaxAutomatonStates, 50}}` with an automaton-state count of 50 and no counterexample; with the default limit it returns `Violated`, a finite prefix with at least 101 consecutive unhealthy positions. A test `TransitionSystem` (FR-101) over the `Counter` subject, whose initial state (value 0) and expansions of values 0, 2 and 3 are the `Counter` subject's own (`0 -inc-> 1`, `2 -inc-> 3`, no successor from 3) and whose expansion of value 1, reached by `inc` from 0, records FR-120's `ContractUndetermined` for `inc` with one `Refused` evaluation (`wrong_snapshot`/`wrong-anchor`) and no `Undefined` one, with no clause false and none undefined, returns `Undecided(UndecidedSuccessor)` for `always holds(true)` (no checked clause evaluates to a kernel `Refused` in `CheckMode::Linked`, FR-107, so the refusal is supplied by the system); over the `Counter` subject with `pre CanInc { 6 mod (2 - self.value) >= 0 }` from value 2, whose `pre` evaluates undefined, `always holds(true)` returns `Violated` with the empty prefix at value 2 and `kind: UndefinedEvaluation` with cause `DivisionByZero` at position 0; and one with an unbounded population root returns `RequiresBound` before exploring. | Test (TC-521) |
+| FR-126-AC-6 | `always (holds(not s.healthy) implies eventually[0,100] holds(s.healthy))` over the `Restless` subject, where `fail` can repeat forever, with `max_automaton_states` 50 returns `Stopped{ResourceExhausted, {MaxAutomatonStates, 50}}` with an automaton-state count of 50 and no counterexample; with the default limit it returns `Violated`, a finite prefix with at least 101 consecutive unhealthy positions. A test `TransitionSystem` (FR-101) over the `Counter` subject, whose initial state (value 0) and expansions of values 0, 2 and 3 are the `Counter` subject's own (`0 -inc-> 1`, `2 -inc-> 3`, no successor from 3) and whose expansion of value 1, reached by `inc` from 0, records FR-120's `ContractUndetermined` for `inc` with one `Refused` evaluation (`wrong_snapshot`/`wrong-anchor`) and no `Undefined` one, with no clause false and none undefined, returns `Undecided(UndecidedSuccessor)` for `always holds(true)` (no checked clause evaluates to a kernel `Refused` in `CheckMode::Linked`, FR-107, so the refusal is supplied by the system); over the `Counter` subject with `pre CanInc { q(2 - self.value) >= 0 }`, `q` the function `q using v(x: Integer): Integer pure { 6 mod x }` whose body is checked under `Kernel` (FR-495-AC-3), from value 2, whose `pre` evaluates undefined, `always holds(true)` returns `Violated` with the empty prefix at value 2 and `kind: UndefinedEvaluation` with cause `DivisionByZero` at position 0; and one with an unbounded population root returns `RequiresBound` before exploring. | Test (TC-521) |
 | FR-126-AC-7 | Running AC-1's two requests twice each gives equal outcomes and byte-equal counterexamples. | Test (TC-521) |
 | FR-126-AC-8 | `ModelCheckLimits::default()` has `limits` equal to FR-101's `Limits::default()` (`max_states` 10,000,000, `max_transitions` 100,000,000) and `max_automaton_states` 1,048,576, with no depth member; a request with `max_depth: None` sets no horizon, `max_live_instances: None`, so FR-209's published default applies, and `max_store_buffer` and `max_messages` `None`, so FR-225's published defaults apply. AC-1's requests with the default limits return the AC-1 outcomes. A run stopped by `max_states` 2 with the other members at their defaults returns `Stopped{ResourceExhausted, {MaxStates, 2}}`, naming the `ModelCheckLimits` member that raises it. | Test (TC-536) |
-| FR-126-AC-9 | Over the `Counter` subject (no `terminal` declaration), `always holds(6 mod (2 - c.value) >= 0)` under infinite-trace returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2` and `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}`. The TP-4 claim `always eventually holds(6 mod (2 - c.value) = 0 and c.value = 1)` returns the same counterexample, not the terminal stutter lasso. `always (holds(c.value <= 0) and holds(6 mod (2 - c.value) >= 0))` returns `kind: Formula` with the prefix `0 -inc-> 1`, which violates before position 2. `eventually[0,1] holds(6 mod (2 - c.value) = 0 and c.value = 1)` under event-position false-extension, `on origin`, returns `Holds{Exhaustive}`. With a `terminal when 6 mod (3 - c.value) = 0` declaration, the `DeadlockFreedom` item returns `Violated` with the prefix to value 3 and `kind: UndefinedEvaluation{where: position 3, cause: division-by-zero}`. | Test (TC-537) |
+| FR-126-AC-9 | Over the `Counter` subject (no `terminal` declaration), with the function `q using v(x: Integer): Integer pure { 6 mod x }` whose body is checked under `Kernel` (FR-495-AC-3; S3 refuses a possibly-zero `mod` written in a declared clause, FR-337-AC-7), `always holds(q(2 - c.value) >= 0)` under infinite-trace returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2` and `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}`. The TP-4 claim `always eventually holds(q(2 - c.value) = 0 and c.value = 1)` returns the same counterexample, not the terminal stutter lasso. `always (holds(c.value <= 0) and holds(q(2 - c.value) >= 0))` returns `kind: Formula` with the prefix `0 -inc-> 1`, which violates before position 2. `eventually[0,1] holds(q(2 - c.value) = 0 and c.value = 1)` under event-position false-extension, `on origin`, returns `Holds{Exhaustive}`. With a `terminal when q(3 - self.value) = 0` declaration, the `DeadlockFreedom` item returns `Violated` with the prefix to value 3 and `kind: UndefinedEvaluation{where: position 3, cause: division-by-zero}`. | Test (TC-537) |
 | FR-126-AC-10 | Over the example subject with initial versions `a` 2 and `b` 0, `always eventually holds(c.versionNumber = 2)` under a weak constraint with no granularity returns `Violated` bound to `a`, the first binding in canonical order, with the one-transition stem `(2,0) -upd(a)-> (0,0)` and the three-transition loop `(0,0) -upd(b)-> (0,1) -upd(b)-> (0,2) -upd(b)-> (0,0)`, length 4 in total, even though binding `b` has a shorter lasso. | Test (TC-521) |
-| FR-126-AC-11 | Over the example subject with both versions 0, `always holds(6 mod (2 - c.versionNumber) >= 0)` returns `Violated` bound to `a` with the prefix `(0,0) -upd(a)-> (1,0) -upd(a)-> (2,0)` and `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}`. With initial versions `a` 0 and `b` 1, it returns the same kind of violation bound to `a`, with prefix `(0,1) -upd(a)-> (1,1) -upd(a)-> (2,1)` and `where: position 2`, even though binding `b` has a shallower finding at position 1. | Test (TC-521) |
-| FR-126-AC-12 | Over the example subject with both versions 0, `eventually (holds(c.versionNumber = 0) and holds(6 mod (2 - c.versionNumber) >= 0))`, whose negation automaton has no move at position 0, returns `Violated` bound to `a` with `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}` and the prefix `(0,0) -upd(a)-> (1,0) -upd(a)-> (2,0)`, found by the model-only pass; the run's statistics report no product state for the dead positions. With `max_states` 1 it returns `Stopped{ResourceExhausted, {MaxStates, 1}}`, the pass's second state exhausting the budget. | Test (TC-1085) |
+| FR-126-AC-11 | Over the example subject with both versions 0, with the function `mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (2 - n) >= 0 }` whose body is checked under `Kernel` (FR-495-AC-3), `always holds(mod_defined(c.versionNumber))` returns `Violated` bound to `a` with the prefix `(0,0) -upd(a)-> (1,0) -upd(a)-> (2,0)` and `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}`. With initial versions `a` 0 and `b` 1, it returns the same kind of violation bound to `a`, with prefix `(0,1) -upd(a)-> (1,1) -upd(a)-> (2,1)` and `where: position 2`, even though binding `b` has a shallower finding at position 1. | Test (TC-521) |
+| FR-126-AC-12 | Over the example subject with both versions 0, `eventually (holds(c.versionNumber = 0) and holds(mod_defined(c.versionNumber)))`, `mod_defined` FR-126-AC-11's `Kernel`-checked function, whose negation automaton has no move at position 0, returns `Violated` bound to `a` with `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}` and the prefix `(0,0) -upd(a)-> (1,0) -upd(a)-> (2,0)`, found by the model-only pass; the run's statistics report no product state for the dead positions. With `max_states` 1 it returns `Stopped{ResourceExhausted, {MaxStates, 1}}`, the pass's second state exhausting the budget. | Test (TC-1085) |
 | FR-126-AC-13 | AC-1's weak `each` claim, whose second phase finds no fair accepting cycle, returns `Holds{Exhaustive}` with a `ComponentCertificate` that FR-339's checker accepts, never `Holds` without one. | Test (TC-1085) |
 | FR-126-AC-14 | With initial versions `a` 0 and `b` 1, the AC-12 claim returns `Violated` bound to `a` with the prefix `(0,1) -upd(a)-> (1,1) -upd(a)-> (2,1)` and `where: position 2`, because binding `a` is first in canonical order, even though binding `b` has a shallower finding at position 1. | Test (TC-1085) |
 | FR-126-AC-15 | With initial versions `a` 0 and `b` 1 and the AC-12 claim, `max_states` 6 and `max_states` 1,000 both return the AC-14 finding for `a`; neither evaluates later binding `b` after `a` is refuted. With `max_states` 1, the first binding is incomplete and the result is `Stopped{ResourceExhausted, {MaxStates, 1}}` with no counterexample from `b`. With both versions 0 and `max_states` 1,000, the result is the AC-12 finding for `a`. | Test (TC-1085) |
@@ -606,6 +641,9 @@ zero, the first distinct initial state causes the limit refusal.
 | FR-126-AC-24 | A concrete protocol system with an unordered Boolean channel declared `delivery unknown capacity 2 overflow block`, a send on that channel, and enabled duplicate and lose steps, using its concrete delivery indices without cycle-key canonicalization, returns `ReachRefusal::Limit(Limit::States(16))` from the direct reachable-state search with `max_states` 16 and worker limits 1 and 4. The run returns no partial successful graph; the test remains bounded even though repeated duplicate/lose steps can produce indefinitely fresh concrete keys. | Test |
 | FR-126-AC-25 | The direct reachable-state search admits breadth-first states in chunks of `workers x 64` expansions, so a level that exceeds `max_states` refuses within one chunk of the crossing state: the expansions started before `Limit::States(max_states)` is returned exceed the budget by less than one chunk (counted, not wall time), for worker limits 1, 2 and 4, with the same refusal value as FR-126-AC-23. | Test |
 | FR-126-AC-26 | Explicit-state model and protocol checks, refinement and state-graph exploration consume initial candidates lazily, one at a time. Equal keys coalesce. The first distinct key past the budget returns `Stopped{ResourceExhausted, {MaxStates, max_states}}` before constructing that candidate; no later candidate is generated. A protocol check admits the model and `over` identity before settling the corresponding root. With `max_states` 1 and four distinct protocol roots, exactly one root is constructed. A construction failure in an admitted root is yielded as a typed iterator error with the same variant and location as the construction refusal, and is surfaced unchanged. If that failure is at the crossing root or a later root, the already-reached limit refusal wins and the failing root is never constructed. Model clock-count and presence-bit combinations are generated on demand. Pulling three states from a set of 2^40 combinations builds exactly three. Partial-order reduction with no symmetry needs no initial closure. Nontrivial symmetry and state-graph sampling respect the initial-state budget before completing closure or drawing walks. An in-budget state-graph run generates its initial set once for sampling and exploration. The standalone graph retainer lists every distinct initial key when its result contains a `Bounded` frontier. | Test (TC-521) |
+| FR-126-AC-27 | A later binding's refutation is reported past an earlier binding that reached a bound. Over the example subject with initial versions `a` 0 and `b` 1 and `mod_defined` of AC-11, `always holds(mod_defined(c.versionNumber))` with `max_depth` 1 returns `Violated` bound to `b` with the prefix `(0,1) -upd(b)-> (0,2)` and `kind: UndefinedEvaluation{where: position 1, cause: division-by-zero}`, although binding `a`, whose version is at most 1 to depth 1, has only reached the horizon; with `max_depth` 2 it returns AC-11's finding for `a`. The TP-4 claim `always eventually holds(mod_defined(c.versionNumber))` with no fairness constraint and `max_depth` 1 returns the same violation bound to `b`. | Test (TC-1085) |
+| FR-126-AC-28 | A run limit does not discard a refutation the run found. AC-27's safety request with `max_depth` 2 and `max_states` 3 returns AC-27's violation bound to `b`: the product states of `(0,1)`, `(1,1)` and `(0,2)` use the budget, so the engine cannot reach the state `(2,1)` at which `a` is violated. | Test (TC-1085) |
+| FR-126-AC-29 | A later binding's refutation is reported past an earlier undecided binding. Given to the engine as a test `TransitionSystem` (FR-101) whose initial state and expansions are those of AC-27's subject except that the expansion of `(1,1)` records FR-120's `ContractUndetermined` with one `Refused` evaluation and no `Undefined` one, `always holds(mod_defined(c.versionNumber))` returns `Violated` bound to `b` with AC-27's prefix and `kind`: a search for `a`'s violation ends undecided at the expansion of `(1,1)`, the first state after the initial one in breadth-first order, while `b`'s undefined letter is read at `(0,2)`, a successor of the initial state. | Test (TC-1085) |
 
 ## Dependencies
 
@@ -624,6 +662,9 @@ zero, the first distinct initial state causes the limit refusal.
   [FR-075](FR-075-compute-candidates-from-registered-backends.md) (the EN-1
   provider manifest advertising (`temporal-satisfaction`, `bounded`) and
   (`temporal-satisfaction`, `unbounded`) registers through it).
+- [FR-621](FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md)
+  "Items over several claim instances" and FSpec FR-361 own which binding's
+  outcome the item takes; FR-276 owns cancellation.
 - FR-205 (protocol subject), FR-209 (`max_live_instances`) and FR-215
   (checking a protocol subject).
 - FR-225 (`max_store_buffer`, `max_messages`).

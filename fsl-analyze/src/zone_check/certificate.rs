@@ -23,6 +23,10 @@ use fsl_replay::{
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use num_bigint::BigInt;
 
+#[cfg(test)]
+#[path = "certificate/mutation_tests.rs"]
+mod mutation_tests;
+
 use super::divergence::{EscapeTarget, EscapeWitness, Move};
 use super::search::{Halt, Run, SymbolicEdge, TimedStateGraph};
 use super::{Bound, Dbm, ZoneCheckRefusal};
@@ -102,7 +106,7 @@ pub(crate) fn state_graph_certificate<S>(
         .map(|node| {
             let (bytes, _) = subject
                 .system()
-                .state_key(&node.state)
+                .state_key(&node.state, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| ZoneCheckRefusal::Fault("state-graph-certificate-key"))?;
             Ok(CertNode {
                 state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
@@ -186,7 +190,7 @@ impl Run<'_, '_, '_> {
             let (_, state_key) = self
                 .timed
                 .system()
-                .state_key(&node.state)
+                .state_key(&node.state, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| Halt::Refusal(ZoneCheckRefusal::Fault("state-key")))?;
             nodes.push(CertNode {
                 state_key,

@@ -64,6 +64,7 @@ use fsl_replay::{
     UndefinedEvaluation, UndefinedLocus, UndefinedSite, WitnessSource, DEFAULT_WITNESS_SEED,
 };
 use fsl_semantics::check::{CheckedHyperClause, HyperForm, TemporalProfile};
+use ix_trace_rs::implements;
 
 use super::{
     fault, instances, retain, tree_path, widen, FairModel, HyperGraph, HyperRefusal, Positions,
@@ -299,7 +300,7 @@ impl<'a> Run<'_, 'a> {
                         .iter()
                         .map(|state| {
                             self.system
-                                .state_key(state)
+                                .state_key(state, fsl_foundation::IdentityLimits::default())
                                 .map(|(bytes, _)| {
                                     fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
                                 })
@@ -471,7 +472,10 @@ impl<'a> Run<'_, 'a> {
                     stop = Some(Ok(halt));
                     return true;
                 }
-                let key = match self.system.state_key(state) {
+                let key = match self
+                    .system
+                    .state_key(state, fsl_foundation::IdentityLimits::default())
+                {
                     Ok((key, _)) => key,
                     Err(refusal) => {
                         stop = Some(Err(ModelCheckRefusal::Encoding(refusal)));
@@ -822,10 +826,11 @@ impl<'a> Run<'_, 'a> {
                     OpenCause::NotExpanded
                 };
                 open.insert(id, cause);
-            } else if state.findings.iter().any(|finding| {
-                matches!(finding, HyperFinding::Contract { finding, .. }
-                    if finding.undefined_contract().is_some() || finding.is_refused_contract())
-            }) {
+            } else if state
+                .findings
+                .iter()
+                .any(HyperFinding::leaves_successors_unknown)
+            {
                 open.insert(id, OpenCause::UndecidedSuccessor);
             }
         }
@@ -848,6 +853,7 @@ impl<'a> Run<'_, 'a> {
 
 impl<'a> Decision<'_, '_, 'a> {
     /// Decide the instance (FR-181 Outcomes).
+    #[implements("FR-181-AC-13")]
     fn decide(
         &self,
         sampled: &[Option<LassoWitness>],
@@ -885,7 +891,7 @@ impl<'a> Decision<'_, '_, 'a> {
                 Ok(Some(witness)) => *slot = Some(witness),
                 Ok(None) => {
                     let closed = !part.roots.is_empty()
-                        && part.members.iter().all(|id| !self.open.contains_key(id));
+                        && part.members.iter().all(|id| self.closed_for_trap(*id));
                     if closed && trap.is_none() {
                         let rank = part.roots.first().map_or(0, |root| root.index());
                         trap = Some((initial, rank));
@@ -899,10 +905,13 @@ impl<'a> Decision<'_, '_, 'a> {
                 }
             }
         }
-        let undefined = graph
-            .states()
-            .iter()
-            .position(|state| matches!(state.state.property, Property::Undefined { .. }));
+        // The first product state in discovery order with an undefined
+        // letter or an undefined contract conjunction; at one state the
+        // letter, read first, comes before the contract (ADR-018 UE-4, UE-6).
+        let undefined = graph.states().iter().position(|state| {
+            matches!(state.state.property, Property::Undefined { .. })
+                || Self::undefined_contract_of(&state.findings).is_some()
+        });
         match (undefined, trap) {
             (Some(at), Some((_, rank))) if at <= rank => self.undefined(ProductStateId(at)),
             (Some(at), None) => self.undefined(ProductStateId(at)),
@@ -955,7 +964,7 @@ impl<'a> Decision<'_, '_, 'a> {
             .ok_or_else(|| fault("a-product-state-has-its-component"))?;
         self.run
             .system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(bytes, _)| fsl_eval::simulation::StateKey::from_canonical_bytes(bytes))
             .map_err(ModelCheckRefusal::Encoding)
     }
@@ -1246,15 +1255,45 @@ impl<'a> Decision<'_, '_, 'a> {
         Ok(steps)
     }
 
+    /// Whether the state at `id` leaves its part closed for `Trapped`. A
+    /// state the body automaton has no run from accepts nothing, and neither
+    /// does any state after it, so one the run did not expand hides no
+    /// witness, provided its contract conjunctions all have a value: one
+    /// without is never read as a disabled step (ADR-018 UE-6). It stays
+    /// open for `Witnessed`, which also needs every letter beyond it.
+    #[implements("FR-181-AC-13")]
+    fn closed_for_trap(&self, id: ProductStateId) -> bool {
+        match self.open.get(&id) {
+            None => true,
+            Some(OpenCause::UndecidedSuccessor) => false,
+            Some(_) => self.product.graph.state(id).is_some_and(|member| {
+                member.state.property == Property::Dead && !member.state.has_unknown_successors()
+            }),
+        }
+    }
+
     /// The `Undefined` outcome for the product state `at`, whose letter has no
     /// value (ADR-023 HV-8): the canonical breadth-first path to it, `where`
     /// naming its position, and the evaluator's cause.
     fn undefined(&self, at: ProductStateId) -> Result<ExistentialOutcome, ModelCheckRefusal> {
         let graph = &self.product.graph;
-        let Some(Property::Undefined { atom, cause, .. }) =
-            graph.state(at).map(|state| &state.state.property)
-        else {
-            return Err(fault("an-undefined-state-is-undefined"));
+        let Some(state) = graph.state(at) else {
+            return Err(fault("an-undefined-state-is-retained"));
+        };
+        let (locus, transition, cause) = match &state.state.property {
+            Property::Undefined { atom, cause, .. } => {
+                (UndefinedLocus::Atom(*atom), None, cause.clone())
+            }
+            _ => {
+                let Some(contract) = Self::undefined_contract_of(&state.findings) else {
+                    return Err(fault("an-undefined-state-is-undefined"));
+                };
+                (
+                    UndefinedLocus::Contract(contract.clause),
+                    contract.guard_of,
+                    contract.cause,
+                )
+            }
         };
         let (root, path) = tree_path(graph, at);
         let steps = self.model_steps(&path)?;
@@ -1272,12 +1311,24 @@ impl<'a> Decision<'_, '_, 'a> {
                 site: UndefinedSite {
                     position: widen(steps.len()),
                     state_key: self.model_state_key(at)?,
-                    locus: UndefinedLocus::Atom(*atom),
-                    transition: None,
+                    locus,
+                    transition,
                     time: None,
                 },
-                cause: cause.clone(),
+                cause,
             },
+        })
+    }
+
+    /// The first contract conjunction with no value among a state's findings,
+    /// in the order its expansion recorded them (ADR-018 UE-6).
+    #[implements("FR-181-AC-15")]
+    fn undefined_contract_of(
+        findings: &[HyperFinding],
+    ) -> Option<fsl_eval::simulation::model::UndefinedContract> {
+        findings.iter().find_map(|finding| match finding {
+            HyperFinding::Contract { finding, .. } => finding.undefined_contract(),
+            _ => None,
         })
     }
 }
@@ -1335,20 +1386,87 @@ fn decide_closed(
         cancel,
     ) {
         Ok(executions) => executions,
-        Err(stop) => {
-            let end = match stop {
-                ClosedStop::Encoding(refusal) => return Err(ModelCheckRefusal::Encoding(refusal)),
-                ClosedStop::Cancelled => cancelled(cancel)
-                    .map(|halt| halt.end())
-                    .ok_or_else(|| fault("a-cancelled-run-has-a-cause"))?,
-                ClosedStop::Executions { limit } => RunEnd::Stopped {
-                    cause: IncompleteCause::ResourceExhausted,
-                    limit: Some(ReachedLimit {
-                        limit: ModelCheckLimit::MaxStates,
-                        value: widen(limit),
-                    }),
+        Err(ClosedStop::Undefined { prefix, contract }) => {
+            // The state's contract conjunction has no value: the instance is
+            // refuted there, never read as a disabled step (ADR-018 UE-6).
+            let steps: Vec<ModelStep> = prefix
+                .steps
+                .iter()
+                .map(|step| ModelStep {
+                    transition: step.transition.clone(),
+                    post_state: step.post_state.clone(),
+                    delay: None,
+                })
+                .collect();
+            let (_, state_key) = prefix
+                .states
+                .last()
+                .ok_or_else(|| fault("a-closed-prefix-has-a-state"))
+                .and_then(|state| {
+                    system
+                        .state_key(state, IdentityLimits::default())
+                        .map_err(ModelCheckRefusal::Encoding)
+                })?;
+            stats.depth = depth;
+            let outcome = ExistentialOutcome::Undefined {
+                stem: ModelPath {
+                    initial: u32::try_from(prefix.initial)
+                        .map_err(|_| fault("an-initial-fits-u32"))?,
+                    steps: steps.clone(),
                 },
-                ClosedStop::Expansion(stop) => expansion_stop(&stop, budgets)?.end(),
+                undefined: UndefinedEvaluation {
+                    site: UndefinedSite {
+                        position: widen(steps.len()),
+                        state_key,
+                        locus: UndefinedLocus::Contract(contract.clause),
+                        transition: contract.guard_of,
+                        time: None,
+                    },
+                    cause: contract.cause,
+                },
+            };
+            return Ok(SingleExistentialRun {
+                instances: bindings
+                    .iter()
+                    .map(|binding| ExistentialInstanceOutcome {
+                        certificate: None,
+                        instance: named(binding),
+                        outcome: outcome.clone(),
+                        sampled: Vec::new(),
+                        walks_stopped: 0,
+                        stats,
+                    })
+                    .collect(),
+                seed,
+            });
+        }
+        Err(stop) => {
+            let (end, open) = match stop {
+                ClosedStop::Undefined { .. } => return Err(fault("an-undefined-stop-is-handled")),
+                ClosedStop::Refused => (
+                    RunEnd::Completed,
+                    BTreeSet::from([OpenCause::UndecidedSuccessor]),
+                ),
+                ClosedStop::Encoding(refusal) => return Err(ModelCheckRefusal::Encoding(refusal)),
+                ClosedStop::Cancelled => (
+                    cancelled(cancel)
+                        .map(|halt| halt.end())
+                        .ok_or_else(|| fault("a-cancelled-run-has-a-cause"))?,
+                    BTreeSet::new(),
+                ),
+                ClosedStop::Executions { limit } => (
+                    RunEnd::Stopped {
+                        cause: IncompleteCause::ResourceExhausted,
+                        limit: Some(ReachedLimit {
+                            limit: ModelCheckLimit::MaxStates,
+                            value: widen(limit),
+                        }),
+                    },
+                    BTreeSet::new(),
+                ),
+                ClosedStop::Expansion(stop) => {
+                    (expansion_stop(&stop, budgets)?.end(), BTreeSet::new())
+                }
             };
             return Ok(SingleExistentialRun {
                 instances: bindings
@@ -1358,7 +1476,7 @@ fn decide_closed(
                         instance: named(binding),
                         outcome: ExistentialOutcome::NoDecision {
                             end: end.clone(),
-                            open: BTreeSet::new(),
+                            open: open.clone(),
                         },
                         sampled: Vec::new(),
                         walks_stopped: 0,

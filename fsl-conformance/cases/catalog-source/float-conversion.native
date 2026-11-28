@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F32 = Float32[nearest-even];
+type F64 = Float64[nearest-even];
+function narrow using v(x: F64): F32 pure { convert<F32>(x) }
+function widen using v(x: F32): F64 pure { convert<F64>(x) }
+function exact using v(x: Rational[0,9;1,9]): F64 pure { convert<F64>(x) }

@@ -18,6 +18,7 @@ use fsl_semantics::check::{
 use serde_json::{json, Value};
 
 use fsl_package::ObligationIdentity;
+use ix_trace_rs::implements;
 
 mod bounded;
 mod key_admission;
@@ -35,6 +36,7 @@ mod state_predicate;
 pub use bounded::probabilistic_formula_monitor_context;
 mod source;
 pub use document::*;
+pub(crate) use document::{clock_constraints, is_model_state_key};
 pub use source::*;
 mod witness;
 pub use witness::*;
@@ -332,6 +334,7 @@ pub struct DigitalProductKeyInput {
 /// `accumulator` and `pending` must already have been derived from the checked
 /// subject and claim. This routine owns only their canonical representation;
 /// contextual admission and derivation remain the caller's responsibility.
+#[implements("FR-196-AC-6")]
 pub fn digital_probability_product_key(
     input: DigitalProductKeyInput,
 ) -> Result<ProbabilityProductKey, ExactProbabilityGraphError> {
@@ -762,9 +765,9 @@ pub struct ExactProbabilityAcceptance {
 struct CheckedInitialValues {
     values: Vec<(u32, Option<Rational>)>,
     // The instance each entry of `values` was read for, in the same order.
-    bindings: Vec<Option<crate::ExactBinding>>,
+    bindings: Vec<Option<ObjectReference>>,
     // The `on each` object beside an `over` binding, in the same order.
-    instances: Vec<Option<crate::ExactBinding>>,
+    instances: Vec<Option<ObjectReference>>,
 }
 
 impl ExactProbabilityAcceptance {
@@ -800,13 +803,13 @@ impl ExactProbabilityAcceptance {
             .map(|coverage| coverage.values.as_slice())
     }
 
-    pub(crate) fn initial_bindings(&self) -> Option<&[Option<crate::ExactBinding>]> {
+    pub(crate) fn initial_bindings(&self) -> Option<&[Option<ObjectReference>]> {
         self.initial_values
             .as_ref()
             .map(|coverage| coverage.bindings.as_slice())
     }
 
-    pub(crate) fn initial_instances(&self) -> Option<&[Option<crate::ExactBinding>]> {
+    pub(crate) fn initial_instances(&self) -> Option<&[Option<ObjectReference>]> {
         self.initial_values
             .as_ref()
             .map(|coverage| coverage.instances.as_slice())
@@ -847,15 +850,16 @@ impl ExactProbabilityAcceptance {
     }
 }
 
-/// A value-free vacuous probability proof accepted by the independent checker.
-/// Its private document can only be obtained by proving activation unreachable.
+/// A proof with no numeric value, accepted by the independent checker: a
+/// vacuous one, whose activation it proved unreachable, or an expected time it
+/// proved infinite. Only the checker builds one.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProbabilityVacuityAcceptance {
+pub struct ProbabilityValueFreeAcceptance {
     document: Box<[u8]>,
     side: ProbabilityBoundSide,
 }
-impl ProbabilityVacuityAcceptance {
-    /// The accepted Conditional::Vacuous document's canonical bytes.
+impl ProbabilityValueFreeAcceptance {
+    /// The accepted document's canonical bytes.
     pub fn document(&self) -> &[u8] {
         &self.document
     }
@@ -872,7 +876,10 @@ pub enum ExactProbabilityCertificateCheck {
     /// value satisfies the claim bound.
     Accepted(ExactProbabilityAcceptance),
     /// Activation is unreachable; this certified proof has no numeric value.
-    AcceptedVacuous(ProbabilityVacuityAcceptance),
+    AcceptedVacuous(ProbabilityValueFreeAcceptance),
+    /// Every scheduler's expected time is infinite, as the checker rederives
+    /// from its own graph; an `>=` bound holds with no finite value.
+    AcceptedInfinite(ProbabilityValueFreeAcceptance),
     /// The certificate fails a checked condition.
     Rejected(ProbabilityCertificateRejection),
 }
@@ -943,7 +950,7 @@ fn enumerate_model_graph<P: StatePredicate>(
 ) -> Result<CheckerGraph, ExactProbabilityGraphError> {
     let key_of = |state: &ModelSimState| {
         let (model_bytes, _) = system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         product_key(binding, &model_bytes)
     };
@@ -1076,6 +1083,7 @@ fn enumerate_model_graph_with_distributions<P: StatePredicate>(
         max_edges,
         cancel,
         stop_at_target,
+        None,
         key_of,
         reserve,
         distributions,
@@ -1092,6 +1100,13 @@ enum ModelVisitPhase {
     AfterTarget,
 }
 
+/// Rebuild the model graph breadth-first from the one initial state.
+///
+/// With `expand`, only those keys are expanded (FSpec FR-411 "Evidence on a
+/// partial product"): every other reached state has its target read and is kept
+/// with no choices, and is never passed to `visit`. `max_states` then bounds
+/// nothing here, since the caller bounds `expand` by it, and `max_edges` still
+/// bounds the successors kept.
 #[allow(clippy::too_many_arguments)]
 fn enumerate_model_graph_visiting<P: StatePredicate>(
     system: &ModelSystem<'_>,
@@ -1101,6 +1116,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     max_edges: usize,
     cancel: &Cancel,
     stop_at_target: bool,
+    expand: Option<&BTreeSet<ProbabilityProductKey>>,
     key_of: &impl Fn(&ModelSimState) -> Result<ProbabilityProductKey, ExactProbabilityGraphError>,
     reserve: &mut impl FnMut(usize) -> Result<(), ExactProbabilityGraphError>,
     distributions: &mut impl FnMut(
@@ -1146,7 +1162,8 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     let mut edge_count = 0usize;
     while let Some((key, state)) = pending.pop_front() {
         poll_cancel(cancel)?;
-        if visit_phase == ModelVisitPhase::BeforeTarget {
+        let expanded = expand.is_none_or(|named| named.contains(&key));
+        if expanded && visit_phase == ModelVisitPhase::BeforeTarget {
             visit(&key, &state, None)?;
         }
         let terminal = if let Some(target) = target {
@@ -1177,10 +1194,10 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
         } else {
             None
         };
-        if visit_phase == ModelVisitPhase::AfterTarget {
+        if expanded && visit_phase == ModelVisitPhase::AfterTarget {
             visit(&key, &state, terminal)?;
         }
-        let (choices, action_hints) = if terminal.is_some() && stop_at_target {
+        let (choices, action_hints) = if !expanded || (terminal.is_some() && stop_at_target) {
             (Vec::new(), Vec::new())
         } else {
             let distributions = distributions(&state, failure)?;
@@ -1230,7 +1247,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
                         probability,
                     });
                     if !seen.contains(&target_key) {
-                        if seen.len() >= max_states {
+                        if expand.is_none() && seen.len() >= max_states {
                             return Err(ExactProbabilityGraphError::LimitReached);
                         }
                         reserve(
@@ -1609,6 +1626,7 @@ pub struct ClaimBinding {
 /// [`ExactProbabilityGraphError::ExtentLimit`] when the universe is unbounded or
 /// its classification reached its limit; [`ExactProbabilityGraphError::ExpansionRefused`]
 /// when the subject cannot otherwise enumerate or reference them.
+#[implements("FR-125-AC-9")]
 pub fn claim_binding(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -1634,7 +1652,7 @@ pub fn claim_binding(
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
     let reference = system
-        .bound_reference(object.clone(), &instance)
+        .written_reference(object.clone(), &instance)
         .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
     Ok(Some(ClaimBinding {
         instance,
@@ -1843,6 +1861,7 @@ enum GraphCycles {
 /// Under [`GraphCycles::CollapseNonprogressive`] closed nonprogressive action
 /// components are reconstructed here and checked against their best exit
 /// values before ordinary Bellman equations are checked.
+#[implements("FR-201-AC-1")]
 fn check_exact_reachability(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
@@ -2412,7 +2431,9 @@ fn certificate_values(
         }
         let named = values.keys().cloned().collect::<BTreeSet<_>>();
         for key in graph.states.keys() {
-            values.entry(key.clone()).or_insert_with(|| Rational::from_integer(0_i64.into()));
+            values
+                .entry(key.clone())
+                .or_insert_with(|| Rational::from_integer(0_i64.into()));
         }
         return Ok(CertificateValues::Partial { values, named });
     }

@@ -52,7 +52,7 @@ pub(super) fn charge(meter: &mut Meter, cancel: &Cancel) -> Result<(), Stop> {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub(super) struct Member {
+pub(super) struct ClosedOrderMember {
     positions: Vec<usize>,
     renaming: Permutation,
 }
@@ -96,8 +96,8 @@ impl Run<'_, '_> {
         instance: &[ParameterBinding],
         selected: bool,
         meter: &mut Meter,
-    ) -> Result<Vec<Member>, Stop> {
-        let mut members = vec![Member {
+    ) -> Result<Vec<ClosedOrderMember>, Stop> {
+        let mut members = vec![ClosedOrderMember {
             positions: (0..self.slots.len()).collect(),
             renaming: Permutation::identity(),
         }];
@@ -116,7 +116,7 @@ impl Run<'_, '_> {
             }
             for (_, generator) in &generators {
                 charge(meter, self.cancel)?;
-                following.push(Member {
+                following.push(ClosedOrderMember {
                     positions: member.positions.clone(),
                     renaming: generator.compose(&member.renaming),
                 });
@@ -146,7 +146,7 @@ impl Run<'_, '_> {
         &self,
         choices: &[Vec<ClosedExecution>],
         ranges: &[Range<usize>],
-        members: &[Member],
+        members: &[ClosedOrderMember],
         selected: bool,
         meter: &mut Meter,
     ) -> Result<Order, Stop> {
@@ -262,7 +262,7 @@ impl Run<'_, '_> {
     ) -> Result<TupleKey, Stop> {
         self.closed_image_key(
             tuple,
-            &Member {
+            &ClosedOrderMember {
                 positions: (0..tuple.len()).collect(),
                 renaming: Permutation::identity(),
             },
@@ -280,7 +280,7 @@ impl Run<'_, '_> {
         instance: &[ParameterBinding],
         meter: &mut Meter,
     ) -> Result<TupleKey, Stop> {
-        let initial = Member {
+        let initial = ClosedOrderMember {
             positions: (0..tuple.len()).collect(),
             renaming: Permutation::identity(),
         };
@@ -302,7 +302,7 @@ impl Run<'_, '_> {
                     return Err(fault("a-copy-generator-names-two-closed-components").into());
                 };
                 positions.swap(generator.first, generator.second);
-                let exchanged = Member {
+                let exchanged = ClosedOrderMember {
                     positions,
                     renaming: member.renaming.clone(),
                 };
@@ -316,7 +316,7 @@ impl Run<'_, '_> {
             }
             for (_, generator) in &generators {
                 charge(meter, self.cancel)?;
-                let renamed = Member {
+                let renamed = ClosedOrderMember {
                     positions: member.positions.clone(),
                     renaming: generator.compose(&member.renaming),
                 };
@@ -337,7 +337,7 @@ impl Run<'_, '_> {
     fn closed_image_key(
         &self,
         tuple: &[ClosedExecution],
-        member: &Member,
+        member: &ClosedOrderMember,
         meter: &mut Meter,
     ) -> Result<TupleKey, Stop> {
         let mut components = Vec::with_capacity(tuple.len());
@@ -369,7 +369,7 @@ impl Run<'_, '_> {
                 .permute(state, renaming)
                 .map_err(|_| fault("a-closed-key-permutation-preserves-state-encoding"))?;
             let key = system
-                .state_key(&state)
+                .state_key(&state, fsl_foundation::IdentityLimits::default())
                 .map_err(ModelCheckRefusal::Encoding)?
                 .0;
             let incoming = position

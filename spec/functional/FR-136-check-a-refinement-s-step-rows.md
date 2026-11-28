@@ -51,7 +51,7 @@ pub struct StepRow { pub class: StepClass, pub target: StepTarget }
 pub enum StepClass {
     Operation(DeclarationKey),
     AttemptNode(NodeKey),            // takes precedence over its operation's row
-    CompensationTemplate(NodeKey),   // `cattempt` and `cend`
+    CompensationTemplate(NodeKey),   // `cattempt`, `cend`, `cfail`, `ctimeout`, `cexpire`
     ProtocolNode { kind: ProtocolStepKind, node: NodeKey }, // recommend, event, send, receive, fork, join, timeout, finish
     Channel { kind: ChannelStepKind, channel: NodeKey },    // duplicate, lose
     Role { kind: RoleStepKind, role: NodeKey },             // spawn, retire
@@ -108,10 +108,11 @@ pub enum StepTarget {
 
 - The concrete alias `<C>` of the header (FR-135) names the concrete model
   and never a protocol. The step rows select the protocol: a row whose left
-  side is `<C>::<protocol>::<name>`, `fork`, `join`, `cend`, `duplicate`,
-  `lose`, `spawn` or `retire` followed by that form, or `activate
-  <C>::<protocol>` (FSpec FR-432), names the protocol clause `<protocol>`,
-  a protocol clause of the declaring package whose roles act on `<C>`.
+  side is `<C>::<protocol>::<name>`, `fork`, `join`, `cend`, `cfail`,
+  `ctimeout`, `cexpire`, `duplicate`, `lose`, `spawn` or `retire` followed
+  by that form, or `activate <C>::<protocol>` (FSpec FR-432), names the
+  protocol clause `<protocol>`, a protocol clause of the declaring package
+  whose roles act on `<C>`.
 - S3 SHALL classify a row's source by resolving the segment after `<C>::`
   among the concrete model's object types and the protocol clauses of the
   declaring package (FR-310 builds the source unclassified): a type makes it
@@ -213,13 +214,15 @@ subject until the checked clause is available meets the same rule.
 
 - When the rows select a concrete protocol (above), the checker SHALL
   require one row for every concrete step class of that protocol
-  (ADR-027 ST-1 to ST-15):
+  (ADR-027 ST-1 to ST-18):
   - an `attempt` step SHALL be covered by its operation's row or by a row
     naming its attempt node, and the node row SHALL take precedence for that
     node;
   - a `cattempt` step SHALL be covered by its operation's row or by a row
-    naming its compensation template, and a `cend` step by the template's
-    row;
+    naming its compensation template;
+  - each compensation template SHALL have a template row of its own for each
+    of `cend`, `cfail`, `ctimeout` and `cexpire`: these steps apply no
+    operation (FSpec FR-432, FR-736);
   - each `recommend` node SHALL have its own node row: a row of the
     recommended operation does not cover it, because a `recommend` step
     applies no operation and changes no state (FSpec FR-432, FR-822);
@@ -298,10 +301,11 @@ subject until the checked clause is available meets the same rule.
 | FR-136-AC-11 | In a build whose support set holds `protocol-abstract-side`, a unit declaring, in this source order, an invariant over a concrete object type whose body is a non-Boolean field read, `CasTwice` (FR-147) with its `population` row written twice, and FR-136-AC-6's refinement over `Run` with a further row naming a second protocol clause `Other` and no `fork`, `join` or `finish` row, is refused with exactly, in order: the invariant's `ill_typed`/`non-boolean-root`; `CasTwice`'s `invalid_model_binding`/`conflicting-binding` naming both `population` rows (FR-135-AC-2); and the `Run` refinement's `invalid_model_binding`/`conflicting-binding` at `Other`'s first row. No refusal names `Twice`'s header or a coverage class, and no `CheckedRefinement` is produced. With the invariant and the `Other` row removed, `CasTwice`'s refusal does not stop the unit, and the unit reports `CasTwice`'s `conflicting-binding` and FR-136-AC-4's `missing-name` naming the `fork` node. | Test (TC-541) |
 | FR-136-AC-12 | `CasRefinesCounter` over object-type-only models with no `state_machine` record emits and reads back as a refinement whose `abstract` and `semantic_type` keys identify the canonical whole-model roots selected by `Spec` and `Impl`, and whose `objects` row maps `Spec::Counter` from `Impl::Counter`; it has no synthetic state-machine key and chooses no object type as the model identity. A refinement with two state-machine declarations on each side emits one object row per mapped field set, ordered by the canonical object-row rule, with no missing-subject or ambiguous-subject refusal. | Test (TC-541) |
 | FR-136-AC-13 | With two concrete step rows declared in the order `commitB`, then `commitA`, S4 emits exactly two `steps` entries in that order, each retaining its checked class and target. Reversing the declarations reverses the emitted entries consistently; the `steps` array is not digest-ordered. | Test (TC-541) |
+| FR-136-AC-14 | Over a protocol with the compensation template `Refund`, `on origin` or `on each`, complete step rows check exactly one `cend`, one `cfail`, one `ctimeout` and one `cexpire` template class of `Refund`. Removing only the `cfail`, only the `ctimeout` or only the `cexpire` row refuses `missing_declaration`/`missing-name` once, naming that keyword and the template. | Test (TC-541) |
 
 ## Dependencies
 
-- ADR-020 §1 RM-5 and §11 RU-1; ADR-027 §2 ST-1 to ST-15, PR-1 and RU-5.
+- ADR-020 §1 RM-5 and §11 RU-1; ADR-027 §2 ST-1 to ST-18, PR-1 and RU-5.
 - [FR-135](FR-135-check-a-refinement-declaration-s-subjects-and-state-mapping.md),
   [FR-103](FR-103-admit-model-operations-and-frames-on-the-spine.md).
 - ADR-027 SE-4 (the resolved memory model of an outermost `parallel`).

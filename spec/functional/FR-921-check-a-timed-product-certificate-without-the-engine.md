@@ -13,6 +13,12 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-751
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/ADR-038
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-421
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-125
+    type: depends_on
 ---
 # FR-921: Check a timed-product certificate without the engine
 
@@ -42,7 +48,8 @@ certificate `InequalityFails` at the first such state; the item settles
 
 ## Outputs
 
-- `ExactProbabilityCertificateCheck` (`Accepted` or `Rejected`) or a
+- `ExactProbabilityCertificateCheck` (`Accepted`, `AcceptedInfinite`,
+  `Rejected`, `NoInitialState` or `NoInstance`) or a
   `ProbabilityDocumentError` refusal.
 
 ## Behavior
@@ -50,11 +57,22 @@ certificate `InequalityFails` at the first such state; the item settles
 ### Re-derived by the checker
 
 The checker SHALL compute, with code in the qualified core that EN-5 does not
-share:
+share (excepted: the one concrete timed run, which is exact clock values,
+delay admissibility, the discrete step, positions and outcome types, and the
+one type of a product state key with its validator and encoder, ADR-038 RL-1,
+RL-2, RL-5; and, as data only, the route admission table, being its rows and
+the names of the conditions each row tests, and the mapping of FSpec FR-416
+"How claims read a time-lock" from a claim monitor's kind and reading to a
+value, ADR-038 RL-7):
 
-1. the route, digital exactly when every clock constraint of every guard and
-   time invariant, every timed interval of the claim and every elapsed
-   comparison is non-strict, the transform's `M < c` counting as strict;
+1. the route: the checker establishes every condition a row of FSpec FR-421
+   "Closed and strict conditions" (ADR-038's route admission table) tests with
+   its own code (the subject's closedness, its delay class, whether the claim
+   states a fairness set, whether a
+   time-lock is reachable where no delay is given, from the dense subject and
+   never from the digital product, the claim form and the position it is read
+   from; the transform's `M < c` counts as strict) and then looks the route up
+   in the shared table; every claim the table does not admit is region;
 2. the unit, the scale (FR-196's least common denominator) and each clock's
    cap;
 3. the digital moves, or each region's time successor and each guard's
@@ -63,18 +81,68 @@ share:
 4. each race's drawn vectors with their exact probabilities, conditioned on
    their windows, from the checked `delay_distribution` nodes, and the
    scheduler's remaining choices (FR-923);
-5. the maximal end components whose actions take zero time, their exits, and
-   the time-locks (FR-924);
+5. the maximal end components whose actions take zero time, their exits, their
+   progress and the time-locks, each found by its own code (FR-924); a locked
+   state's value is the shared mapping's;
 6. the deadline and elapsed clocks, activation, completion, censoring and the
    quantile transform's terminal reward (FR-877);
-7. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
+7. the claim monitor of every other bounded-window formula, nested interval
+   operators included: its readings at positions only and the pending target
+   times it keeps, giving FSpec FR-416's pointwise value (FR-204 "Form
+   shapes" and "Positions") and FR-196's `["window",residual]` key member,
+   by code EN-5 does not call, sharing no monitor, progression or
+   deadline-advance function with EN-5 (such as fsl-eval's
+   `advance_nested_timed_deadline`), so a defect in the producer's monitor
+   is not certified; and, by FR-196 "Idle tail of a timed window monitor",
+   each tail-entry state, its tail folding, its layered tail search and its
+   tail value, by its own search code, together with that rule's end
+   components of undecided states (its item 7, FR-924). A tail-entry row
+   whose value differs from the checker's tail value rejects
+   `InequalityFails` at that key. The checker computes that rule's item 6
+   count (complete deciding layers, the document's optimization only, no
+   transition capacity spent by tail moves). When it exceeds the limit the
+   checker checks under, the check stops with
+   FR-203's typed `Incomplete(LimitReached{…})` before any truth value, as
+   any limit reached before checking completes does; it neither accepts nor
+   rejects the document;
+8. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
+
+### Infinite expected time
+
+For an `expected-elapsed` document the checker SHALL compute, on its own
+rebuilt product and with its own graph code, the states from which some policy
+reaches a target with probability one: the greatest set whose members reach a
+target through choices that never leave the set. A quiescent state (FR-231:
+no time invariant and not urgent) keeps the steps enabled at it, which the
+checker derives for it as for any state; only a state with no enabled step is
+dead, and no target is reached from it. When the initial state
+is outside that set, the least expected time is `+infinity` (ADR-028 CE-3).
+The checker SHALL then accept the document as `AcceptedInfinite` only for a
+`>=` bound with no `values` row and no `ranking` row, rejecting it
+`ThresholdMissed` for a `<=` bound and `Malformed` when it has a row. When the
+initial state is in the set under every scheduler, the expected time is finite
+and the conditions above apply, so a document without rows is rejected
+`Malformed`; a rebuilt product that then holds a quiescent state is refused as
+unsupported.
+
+Under a workload the checker SHALL certify only an infinite expected time. It
+computes the set first over the every-scheduler product: the workload is one
+of those schedulers, so an initial state outside the set proves the infinity,
+and the document's `targets` SHALL be among that product's targets. Otherwise,
+on the digital route, it builds its own workload product of the unbounded
+`until` (FR-204's race and weight rules), whose `targets` the document's SHALL
+equal, and computes the set over that product; an initial state in the set
+rejects the document `Malformed`. It refuses as unsupported a claim with a
+fairness set, a region-route workload product, and a predicate that holds at a
+position inside a step but not at its end.
 
 ### Not trusted
 
 The stated `route`, `unit`, `scale` and `form` SHALL only be compared; a
 difference refuses `ObjectiveMismatch` before any value is read. Every
 reachable state of the rebuilt product SHALL have a row in an `exact` or
-`upper` document; a missing row, or a row for a key the rebuilt product does
+`upper` document, except a document of an infinite expected time ("Infinite
+expected time"), which has none; a missing row, or a row for a key the rebuilt product does
 not reach, rejects `Malformed` at `values`. A key with a wrong cap, clock
 set, unit or scale rejects `Malformed` at `values`. No transition, race,
 component, time-lock or phase is read from the document, because it has none
@@ -82,9 +150,9 @@ component, time-lock or phase is read from the document, because it has none
 
 ### Order
 
-Identity, then member set, then objective comparison, then rebuild, then the
-conditions in canonical key order, then the threshold; the first failure is
-the result.
+Identity, then member set, then FR-201's instancing outcomes, then objective
+comparison, then rebuild, then the conditions in canonical key order, then the
+threshold; the first failure or instancing outcome is the result.
 
 ## Acceptance Criteria
 
@@ -94,6 +162,9 @@ the result.
 | FR-921-AC-2 | The same document with `route` set to `"region"`, or `scale` set to `"2"`, is refused `ObjectiveMismatch`; with the cap of `x` in one key changed from 3 to 2 it is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-3 | The same document with one reachable row removed, or with one added row for a key the product does not reach, is rejected `Malformed` at `values`. | Test (TC-2490) |
 | FR-921-AC-4 | `fsl-probability-check`, a separate process with no `fsl-analyze` linkage, accepts the documents of FR-922-AC-1, FR-923-AC-1, FR-924-AC-1 and FR-877-AC-1 from their bytes and the byte provision, and rejects each with one value altered. | Test (TC-2495) |
+| FR-921-AC-5 | For each row of the route admission table and each entry of the locked-run value mapping, EN-5 and the checker each give the route or value the test states by hand, none derived from the shared declaration. | Test (TC-2490) |
+| FR-921-AC-6 | FR-920-AC-5's document with one value row added, or with one ranking row added, is rejected `Malformed`; the document of the proved claim `expected elapsed until holds(c.late) >= 1 ms`, whose least expected time is `10/9 ms`, with its `values` and `ranking` emptied is rejected `Malformed`. | Test (TC-2490) |
+| FR-921-AC-7 | Under a workload, FR-204-AC-24's delay-independent infinite expected-time documents are accepted `AcceptedInfinite` only when the checker independently rebuilds the workload product and proves the target unreachable for every scheduler-chosen free delay, including `ClosesBeforeFiring` and `ManyFreeEnabled`; a false-infinity document for a workload that can reach the target is rejected `Malformed`, and a value row added to a value-free infinity document is rejected. | Test (TC-2490) |
 
 ## Dependencies
 

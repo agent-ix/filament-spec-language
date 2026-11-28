@@ -149,9 +149,10 @@ refinement <Name> using <infinite-trace profile> abstract <A>[::<protocol>] conc
 | RM-8 | **Population-valued expressions (data refinement).** Inside a refinement declaration (mapping rows, step-row arguments and history updates), a concrete population name `<C>::<pop>` denotes the set of that population's objects in the current state, of type `Set<Reference<T>>[0, n]` with `T` the population's member type and `n` its universe size. Rows read it through these forms: `count(x in P where c)`, `sum(x in P where c: e)`, `exists(x in P where c)`, `all(x in P where c)`, `only(x in P where c: e)`, which is `e` for the one object of `P` satisfying `c`, and `seq(i in lo .. hi: e)`, the sequence of `e` for each integer from `lo` to `hi` (empty when `hi < lo`), whose declared maximum length is computed from the bounds of `lo` and `hi`. One abstract object or field value can so be built from a whole concrete population. S3 types each form and checks the result against the abstract field as RM-4 does. An `only` that finds no object or several objects evaluates undefined, which refutes the refinement with `UndefinedEvaluation{where, cause}` at that state (RE-5). State-clause bodies keep ADR-016 FE-4; the forms live in refinement declarations. The spelling is FSpec's (QS-10). |
 | RM-9 | **An abstract protocol side.** The abstract side may name a checked protocol clause of the abstract model, written `abstract <A>::<protocol>`, which makes the abstract subject a protocol subject (MC-1, ADR-027 PS-1). The declaration carries no `internal` or `visible` row: the refinement's internal list names the abstract step classes that are internal, and an abstract step class the list does not name is visible (FSpec FR-432, MC-1). A profile selection carries an identity only, so the list is the compilation's optional `refinement_internals` input, whose shape, spellings, resolution, node member, lock and replay are FSpec's (FR-375, FR-432); FR-147 states how S3 applies them, and a build that has not built the list refuses a non-empty one. A step row may target an abstract protocol node as well as an abstract operation. FSpec's shared grammar owns the spelling (QS-11). |
 
-The refinement declaration enters the checked package as a node, so its
-identity enters the `package_id` and every obligation identity that cites it
-(ADR-013 O-02, O-09). Its v2 node is QS-4.
+The refinement declaration enters the checked package as a node, and its node
+key enters every obligation identity that cites it (ADR-013 O-09). Its rows
+are the node's body and not its node key (FSpec FR-375), and the package
+identity does not depend on them (ADR-013 O-02). Its v2 node is QS-4.
 
 ### 2. Mapped behaviours and stuttering
 

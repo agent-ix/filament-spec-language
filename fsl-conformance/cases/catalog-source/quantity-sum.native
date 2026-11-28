@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+unit m : Length = rational(1,1);
+type T = Quantity<m>;
+function f using v(s: Sequence<Quantity<m>>[0,3]): T pure { sum<T>(x in s: x) }

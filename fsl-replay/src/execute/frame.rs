@@ -269,6 +269,7 @@ pub fn replay_frame(
         package_name: compiled.package.as_str(),
         sources: &sources,
         progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+        emit: limits.spine.package.emit(),
     };
     let FrameCheck {
         report, documents, ..

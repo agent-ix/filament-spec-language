@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use fsl_string_edge::{scan, EdgeRules, ScanRequest};
+use ix_trace_rs::implements;
 
 use crate::error::{Error, Result};
 
@@ -19,11 +20,14 @@ use crate::error::{Error, Result};
 /// `fsl-eval` (ADR-011 §7.3 X-8), `fsl-route` (ADR-011 §7.3 X-9),
 /// `fsl-replay` (ADR-011 §7.3 X-10 -- each extracted §6.1 layer crate adds its
 /// own entry here the same way), `fsl-analyze` (ADR-011 §7.3 X-12),
-/// `fsl-inspect` (the typed inspection CLI),
-/// `fsl-bench` (the benchmark harness) and `fsl-string-edge` (the scanner
-/// scans itself), and `checked-closure-consumer` (the standalone compile-fail
-/// consumer fixture).
-fn crate_roots() -> Vec<PathBuf> {
+/// `fsl-definitional-reference` (the dev-only semantic oracle),
+/// `fsl-inspect` (the typed inspection CLI), `fsl-jit` (the JIT backend),
+/// `fsl-bench` (the benchmark harness), `fsl-proptest-policy` (shared property
+/// test policy) and `fsl-string-edge` (the scanner scans itself), the other
+/// workspace members listed below and the standalone consumer fixtures under
+/// `tests/fixtures/`.
+#[implements("FR-064-AC-11")]
+pub(crate) fn crate_roots() -> Vec<PathBuf> {
     [
         "src",
         "xtask/src",
@@ -41,24 +45,29 @@ fn crate_roots() -> Vec<PathBuf> {
         "fsl-route/src",
         "fsl-replay/src",
         "fsl-analyze/src",
+        "fsl-definitional-reference/src",
         "fsl-hybrid-reference/src",
         "fsl-inspect/src",
+        "fsl-jit/src",
         "fsl-bench/src",
         "fsl-conformance/src",
+        "fsl-proptest-policy/src",
+        "fsl-certificate-mutation/src",
         "fsl-string-edge/src",
         "tests/fixtures/checked-closure-consumer/src",
         "tests/fixtures/hyper-query-consumer/src",
         "tests/fixtures/facade-contract-consumer/src",
+        "tests/fixtures/smt-proof-consumer/src",
     ]
     .into_iter()
     .map(PathBuf::from)
     .collect()
 }
 
-/// FSL's edge rules. The allow-list is empty: nothing in the FSL crates has
-/// yet been reviewed and admitted as a genuine non-branching string
-/// comparison; each addition is a deliberate, reviewed decision, not a
-/// default.
+/// FSL's edge rules. The allow-list is empty: every reviewed occurrence is
+/// either marked at its enclosing function or excluded by the detector's
+/// syntax-level scope.
+#[implements("FR-064-AC-11")]
 fn rules() -> EdgeRules {
     EdgeRules::default()
 }
@@ -69,6 +78,7 @@ fn rules() -> EdgeRules {
 /// occurrence report is returned as [`Error::StringEdgeFound`], not `Ok`, so
 /// the caller's exit code reflects the finding, and a scan that could not
 /// complete is [`Error::StringEdgeScan`].
+#[implements("FR-064-AC-11")]
 pub fn run(workspace_root: &Path) -> Result<String> {
     run_with(&ScanRequest {
         base_dir: workspace_root.to_path_buf(),
@@ -79,6 +89,7 @@ pub fn run(workspace_root: &Path) -> Result<String> {
 
 /// [`run`] over an explicit request: the one place a scanner report becomes
 /// this gate's `Ok`/`Err`.
+#[implements("FR-064-AC-11")]
 fn run_with(request: &ScanRequest) -> Result<String> {
     let report = scan(request)?;
     if report.is_clean() {

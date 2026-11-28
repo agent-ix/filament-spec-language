@@ -75,8 +75,8 @@ Tag the tests with the AC ids they back and `TC-481`.
 - Step 3: `isReady`'s parameter type is `ValueType::Enum` of `Status`'s
   shape; `ok` and `later` each complete with `true`.
 - Step 4: check refuses with `ill_typed`.
-- Step 5: check refuses with `missing_declaration`/`missing-name` naming
-  `Status::GONE`.
+- Step 5: check refuses with `ill_typed`/`type-mismatch` naming `Status` and
+  `GONE`.
 - Step 6: one refusal and no `PackageDeclarations`, holding a
   duplicate-enum-member error (`ambiguous_declaration`/`ambiguous-name`)
   naming `E`, `A` and both `A` spans; an ambiguous-type-name error naming

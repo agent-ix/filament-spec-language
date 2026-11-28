@@ -18,12 +18,7 @@ use super::abstraction::fixture as abstraction_fixture;
 use super::child_composite::fixture as ledger_fixture;
 #[path = "../../../../fsl-semantics/tests/support/receiver_frames.rs"]
 pub(super) mod fixture;
-#[path = "../../../../fsl-semantics/tests/support/tc235_k2.rs"]
-#[allow(
-    dead_code,
-    reason = "this focused test uses the model-form package records"
-)]
-mod k2_fixture;
+use super::tc235_k2 as k2_fixture;
 
 struct Emitted {
     wire: Value,

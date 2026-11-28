@@ -3,7 +3,7 @@
 //! clause are checked nodes, evaluated through the one clause evaluator over
 //! ADR-023 section 8's vault (`crate::hyper_world`).
 
-use filament_exact::{LimitKind, Meter, Refusal};
+use filament_exact::{LimitKind, Meter, Refusal, Undefined};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::hyper::{
     CheckedHyperLetters, CheckedStepMatch, HyperLetters, HyperSlot, MatchReading, StepLabel,
@@ -12,13 +12,14 @@ use fsl_eval::hyper::{
 use fsl_eval::model_subject::AtomStop;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
-use fsl_eval::temporal::AtomReading;
+use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_semantics::check::{operation_text, FormulaNode, FormulaNodeId, StepRead};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
 use crate::counter::{UNLIMITED, ZERO};
+use crate::hyper_witness::KERNEL_MOD_FUNCTION;
 use crate::hyper_world::{
     assert_hyper_division_refused, input_of, instance, non_interference, Vault, World, EQUAL_INPUTS,
 };
@@ -61,7 +62,7 @@ fn read(
 }
 
 /// FR-487-AC-3: an atom is evaluated over the slots of its traces' components.
-#[trace("TC-1264", "FR-495")]
+#[trace("TC-1264", "FR-487-AC-3", "FR-495")]
 #[test]
 fn an_atom_is_evaluated_over_its_components_and_is_deterministic() {
     let world = World::new(
@@ -149,6 +150,32 @@ fn an_exact_sqrt_refusal_reaches_the_hyper_atom_boundary() {
             )))
         ),
         "{outcome:?}"
+    );
+}
+
+/// FR-487-AC-3: an atom whose Kernel-checked function divides by zero in one
+/// component is undefined there.
+#[trace("TC-1264", "FR-487-AC-3")]
+#[test]
+fn an_atom_dividing_by_zero_in_one_component_is_undefined() {
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &[(1, 0), (0, 0)],
+        "hyper Divided using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always holds(q(1 - v.h @ a) = q(1 - v.h @ b)) }",
+        KERNEL_MOD_FUNCTION,
+    );
+    let system = system(&world);
+    let initial = system.initial();
+    let [high, low] = &initial[..] else {
+        panic!("two initial states");
+    };
+    let mut meter = Meter::new(UNLIMITED);
+    assert_eq!(
+        read(&world, atom(&world, 0), &[high, low], &mut meter).expect("reads"),
+        AtomReading::Undefined(UndefinedCause::Kernel(Undefined::DivisionByZero))
     );
 }
 
@@ -266,6 +293,79 @@ fn the_match_conjuncts_are_evaluated_in_order_and_short_circuit() {
     );
     assert_eq!(first_conjunct, single.consumed(LimitKind::WorkUnits));
     assert!(first_conjunct < both_conjuncts);
+}
+
+/// FR-487 "Evaluating a match conjunct": a conjunct without a value, or whose
+/// meter runs out, ends the reading at that conjunct; one that follows a false
+/// conjunct is not charged.
+#[trace("TC-1264")]
+#[test]
+fn a_conjunct_without_a_value_or_a_budget_ends_the_reading_there() {
+    let divided = "match { a.step.op = b.step.op and \
+         a.step.Vault::step.i = b.step.Vault::step.i and \
+         (if present(a.step.Vault::step.i) then q(value(a.step.Vault::step.i)) else 0) = 0 }";
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &non_interference(divided),
+        KERNEL_MOD_FUNCTION,
+    );
+    let (zero, one) = steps(&world);
+    let mut meter = Meter::new(UNLIMITED);
+    assert_eq!(
+        universal(
+            &world,
+            &[StepLabel::Operation(&zero), StepLabel::Operation(&zero)],
+            &mut meter
+        )
+        .expect("complete"),
+        MatchReading::Undefined {
+            conjunct: 2,
+            cause: UndefinedCause::Kernel(Undefined::DivisionByZero)
+        }
+    );
+    // Over `(step(0), step(1))` the second conjunct fails first, and the
+    // third charges nothing: the work equals that of the clause without it.
+    let plain = World::new(
+        Vault::Secure,
+        false,
+        &[(0, 0)],
+        &non_interference(EQUAL_INPUTS),
+    );
+    let labels = [StepLabel::Operation(&zero), StepLabel::Operation(&one)];
+    let (mut with, mut without) = (Meter::new(UNLIMITED), Meter::new(UNLIMITED));
+    assert_eq!(
+        universal(&world, &labels, &mut with).expect("complete"),
+        MatchReading::Fails
+    );
+    assert_eq!(
+        universal(&plain, &labels, &mut without).expect("complete"),
+        MatchReading::Fails
+    );
+    assert_eq!(
+        with.consumed(LimitKind::WorkUnits),
+        without.consumed(LimitKind::WorkUnits)
+    );
+    // A budget that covers the first two conjuncts and no more exhausts at
+    // the third.
+    let mut measured = Meter::new(UNLIMITED);
+    universal(
+        &plain,
+        &[StepLabel::Operation(&zero), StepLabel::Operation(&zero)],
+        &mut measured,
+    )
+    .expect("complete");
+    let mut limits = UNLIMITED;
+    limits.work_units = measured.consumed(LimitKind::WorkUnits);
+    let mut tight = Meter::new(limits);
+    let stop = universal(
+        &world,
+        &[StepLabel::Operation(&zero), StepLabel::Operation(&zero)],
+        &mut tight,
+    )
+    .expect_err("the third conjunct exhausts the meter");
+    assert_eq!(stop.conjunct, 2);
 }
 
 /// FR-495: a possibly-zero divisor in a declared match conjunct is refused by

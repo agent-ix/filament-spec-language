@@ -77,13 +77,15 @@ written again.
   adversarial`, the checker SHALL add no scheduler constraint.
 - Over a concrete protocol subject, the checker SHALL add the authored
   `assume` rows to `F_C` beside the scheduler constraints.
-- Both sets are part of the refinement's node identity (FR-135).
+- The authored rows of both sets are written in the refinement node's
+  `assume` and `ensure` body members, and are not part of its node key
+  (FR-135).
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-137-AC-1 | ADR-020 §8's `CasRefinesCounter` checks `F_C` as six `Weak` `Each` constraints in source order (`beginA`, `beginB`, `commitA`, `commitB`, `retryA`, `retryB`) and `F_A` as `[Weak Each Spec::Counter::inc]`. With the `ensure` row written `ensure fair weak Spec::Counter::inc`, `F_A` is `[Weak Whole inc]` and the node identity differs. With the `ensure` row removed, `F_A` is empty. | Test (TC-542) |
+| FR-137-AC-1 | ADR-020 §8's `CasRefinesCounter` checks `F_C` as six `Weak` `Each` constraints in source order (`beginA`, `beginB`, `commitA`, `commitB`, `retryA`, `retryB`) and `F_A` as `[Weak Each Spec::Counter::inc]`. With the `ensure` row written `ensure fair weak Spec::Counter::inc`, `F_A` is `[Weak Whole inc]`; the refinement's node key equals the first check's (equal `package` and `path`, ordinal 0 in both) and the node body differs: its one `ensure` entry has `granularity` `whole` where the first's has `each`. With the `ensure` row removed, `F_A` is empty. | Test (TC-542) |
 | FR-137-AC-2 | `assume fair weak Spec::Counter::inc` refuses `missing_declaration`/`missing-name` naming `Spec`; `ensure fair weak Impl::Counter::peek` refuses the same naming `Impl`; `assume fair weak Impl::Counter::nope` refuses `missing_declaration`/`missing-name`. `assume fair weak each Impl::Counter::beginA` written twice refuses `invalid_model_binding`/`conflicting-binding` naming both rows, as does `assume fair weak Impl::Counter::beginA` beside `assume fair weak whole Impl::Counter::beginA`. | Test (TC-542) |
 | FR-137-AC-3 | Over FR-136-AC-4's concrete protocol subject with no `assume` row, `F_C` holds three `Weak Whole` constraints with origin `Scheduler`, for branch `A`, branch `B` and the root. With `assume fair weak each incA` added, `F_C` holds those three and the authored constraint. With `scheduling adversarial` on the protocol, `F_C` holds only the authored constraint. | Test (TC-542) |
 | FR-137-AC-4 | `CasRefinesCounter` with `ensure fair strong each Spec::Counter::inc` checks `F_A` as `[Strong Each inc]`, and with `assume fair strong Impl::Counter::retryA` adds `Strong Whole retryA` to `F_C`. | Test (TC-542) |

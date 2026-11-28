@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared model fixture support spans split integration test binaries"
+)]
 //! ADR-027 §7's worked example as a fixture: the `test/fill` domain package
 //! (population `cells` of `Cell`, fields `v` and `w: Int[0, 3]`, operations
 //! `inc`, `setTwo`, `bump`, `flag` and `nudge(peer: Cell)` modifying their
@@ -462,7 +466,7 @@ pub(crate) fn package_over_with_mode(
 /// located at, when it has a source region.
 pub(crate) fn check_refusals(
     body: &str,
-) -> Vec<(fsl_semantics::check::CheckRefusal, Option<String>)> {
+) -> Vec<(fsl_semantics::check::SemanticCheckRefusal, Option<String>)> {
     let declarations = declarations_over(document(), "package", "", body);
     let regions = declarations.regions();
     let text = unit_text_with("", body);

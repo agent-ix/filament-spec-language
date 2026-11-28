@@ -81,7 +81,7 @@ impl Fixture {
                     Some("value_type" | "object_type" | "population")
                 )
             });
-        crate::related_by::add_owns_relationship(&mut model);
+        crate::related_by_support::add_owns_relationship(&mut model);
         let cell = model["types"]
             .as_array_mut()
             .expect("types")
@@ -717,15 +717,15 @@ fn replay_both(
 ) {
     use fsl_replay::{ModelTraceRefusal, ModelTraceSettlement, ReplayLimits, ReplayRefusal};
     let unit = fill::unit_text_with("", &fixture.body);
-    let wire = crate::model_settle::request(
+    let wire = crate::model_settle_support::request(
         &fixture.checked,
         &[],
         &fixture.model,
         fixture.documents.snapshots.iter(),
         unit.as_bytes(),
     );
-    let (node, occurrence) = crate::model_settle::protocol_anchor(&fixture.checked, "P");
-    let envelope = crate::model_settle::envelope_at(payload, node, occurrence);
+    let (node, occurrence) = crate::model_settle_support::protocol_anchor(&fixture.checked, "P");
+    let envelope = crate::model_settle_support::envelope_at(payload, node, occurrence);
     let subject = fixture.subject();
     let trace = fsl_replay::ProtocolTraceSubject {
         model: fsl_replay::ModelTraceSubject {

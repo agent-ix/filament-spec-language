@@ -72,6 +72,15 @@ pub(crate) fn trace_document(identity: &str, steps: &[Value]) -> Value {
 /// The analyze outcome of one `finite-replay` item over the order protocol
 /// and the trace document `trace`.
 fn replay_item(identity: &str, trace: &Value) -> crate::analyze_cli_support::Run {
+    let (ws, path) = prepare_replay_item(identity, trace);
+    let run = analyze(&path);
+    drop(ws);
+    run
+}
+
+/// Write [`replay_item`]'s request and trace; returns the workspace and the
+/// request path so a test can prepare multiple requests before analyzing them.
+fn prepare_replay_item(identity: &str, trace: &Value) -> (Workspace, std::path::PathBuf) {
     let ws = Workspace::new(&format!("protocol-trace-{identity}"));
     let path = litmus_request(
         &ws,
@@ -87,7 +96,52 @@ fn replay_item(identity: &str, trace: &Value) -> crate::analyze_cli_support::Run
         .expect("documents")
         .push(json!({"file": "trace.json"}));
     ws.write("analyze.json", document.to_string().as_bytes());
-    analyze(&path)
+    (ws, path)
+}
+
+/// Reusing a trace identity for separate requests must keep each request's
+/// input files isolated until its analyze call reads them.
+#[trace("TC-2621", "FR-941-AC-2")]
+#[test]
+fn replay_requests_with_the_same_trace_identity_keep_their_own_files() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let mut missing_post_state = steps.clone();
+    missing_post_state[2]
+        .as_object_mut()
+        .expect("a step")
+        .remove("post_state");
+    let mut missing_send_record = vec![steps[1].clone(), steps[0].clone()];
+    missing_send_record[1]
+        .as_object_mut()
+        .expect("a step")
+        .remove("send_record");
+
+    let first_trace = trace_document("shared", &missing_post_state);
+    let second_trace = trace_document("shared", &missing_send_record);
+    let (_first_workspace, first_path) = prepare_replay_item("shared", &first_trace);
+    let (_second_workspace, second_path) = prepare_replay_item("shared", &second_trace);
+
+    let first_item = analyze(&first_path).item(0);
+    assert_eq!(label(&first_item), "declined", "{first_item}");
+    assert_eq!(
+        first_item["record"]["diagnostic"]["detail"]["position"], 2,
+        "{first_item}"
+    );
+    assert_eq!(
+        first_item["record"]["diagnostic"]["detail"]["path"], "/prefix/2/post_state",
+        "{first_item}"
+    );
+
+    let second_item = analyze(&second_path).item(0);
+    assert_eq!(label(&second_item), "declined", "{second_item}");
+    assert_eq!(
+        second_item["record"]["diagnostic"]["detail"]["position"], 1,
+        "{second_item}"
+    );
+    assert_eq!(
+        second_item["record"]["diagnostic"]["detail"]["path"], "/prefix/1/send_record",
+        "{second_item}"
+    );
 }
 
 /// FR-636-AC-3: a supplied trace of `Placed`, `Got` and `Ship` settles
@@ -332,6 +386,33 @@ fn a_trace_is_read_before_it_is_replayed() {
     );
 }
 
+/// FR-941-AC-6: a `post_state.key` that is not the canonical unpadded
+/// base64url of any octets is a shape defect of the trace document, read
+/// before replay. `AB` has non-zero unused trailing bits.
+#[trace("TC-2621", "FR-941-AC-6")]
+#[test]
+fn a_non_canonical_post_state_key_is_invalid_value_at_its_member() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let declined = |identity: &str, steps: &[Value], position: u64, path: &str| {
+        let item = replay_item(identity, &trace_document(identity, steps)).item(0);
+        assert_eq!(label(&item), "declined", "{identity}: {item}");
+        assert_eq!(item["record"]["cause"]["kind"], "invalid-input", "{item}");
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(diagnostic["code"], "invalid_runtime_input", "{item}");
+        assert_eq!(diagnostic["cause"], "invalid-value", "{item}");
+        assert_eq!(diagnostic["detail"]["position"], position, "{item}");
+        assert_eq!(diagnostic["detail"]["path"], path, "{item}");
+    };
+
+    let mut changed = steps.clone();
+    changed[1]["post_state"]["key"] = json!("AB");
+    declined("bad-key", &changed, 1, "/prefix/1/post_state/key");
+
+    let mut late = vec![steps[1].clone(), steps[0].clone(), steps[2].clone()];
+    late[2]["post_state"]["key"] = json!("AB");
+    declined("late-bad-key", &late, 2, "/prefix/2/post_state/key");
+}
+
 /// FR-941-AC-3: a well-formed trace beginning with `Got` declines
 /// `invalid-value` at position 0.
 #[trace("TC-2621", "FR-941-AC-3")]
@@ -507,6 +588,7 @@ fn undefined_receive_unit() -> String {
 /// the trace document `trace`: the settled outcome items.
 fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> {
     use fsl_analyze::analyze::document::{settle_run, AnalyzeRun, ResolvedClaim, ResolvedItem};
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{
         AnalyzeLimits, ClaimItem, Engines, ItemOptions, SourceProvision, SubjectBinding,
     };
@@ -567,6 +649,7 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
         fsl_analyze::analyze::document::SubjectSelection::default_over(&documents.snapshots);
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: &package,
             binding: SubjectBinding {
                 packages: &documents.packages,
@@ -586,7 +669,8 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
                 unrouted: false,
             }))],
             engines: &engines,
-            limits: AnalyzeLimits::unbounded(),
+            limits: AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &filament_exact::Cancel::new(),

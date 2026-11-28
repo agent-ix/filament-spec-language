@@ -289,6 +289,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     use fsl_analyze::analyze::document::{
         resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{AnalyzeLimits, Counterexample, Engines, SubjectBinding};
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PopulationUniverse,
@@ -376,7 +377,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     };
     let limits = AnalyzeLimits {
         emit: compiled.emit_limits(),
-        ..AnalyzeLimits::unbounded()
+        ..AnalyzeLimits::published(DeadlineSupply::Unbounded)
     };
     let items = resolve_items(
         checked,
@@ -389,12 +390,14 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     );
     let settled = settle_run(
         AnalyzeRun {
+            selections: &[],
             package: checked,
             binding,
             provision: compiled.sources().clone(),
             items,
             engines: &engines,
             limits,
+            certification: Default::default(),
         },
         &crate::analyze_cli_support::Fr290,
         &Cancel::new(),
@@ -439,10 +442,12 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         ));
     }
     assert!(!scheduler.is_empty());
-    assert!(scheduler.iter().any(|(_, identity)| identity
-        .arguments
-        .iter()
-        .any(|value| matches!(value, Value::Enum(_)))));
+    assert!(scheduler.iter().any(|(_, identity)| {
+        identity
+            .arguments
+            .iter()
+            .any(|value| matches!(value, Value::Enum(_)))
+    }));
     let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let admitted = fsl_package::admit_checked_package(&bytes, compiled.packages(), limits)
         .expect("the actual package admits");
@@ -468,30 +473,33 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         )
         .expect("the actual supply joins");
     let world = bare.world().expect("the authenticated enum world reads");
-    let ProbForm::Reach { bound, .. } = &claim.form else {
-        panic!("the source claim is an eventuality");
-    };
+    assert!(matches!(claim.form, ProbForm::Reach { .. }));
+    let bound = fsl_replay::shared_wire::ProbabilisticBound::of_claim(&claim.form)
+        .expect("an eventuality has a claim bound");
     let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        system.state_key(state).ok().map(|(_, key)| key)
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .ok()
+            .map(|(_, key)| key)
     };
     let scope = checked.graph().scope();
     let expected = fsl_replay::probabilistic_wire(
         witness,
-        bound,
-        "probability",
-        scope.types(),
-        scope.variant_types(),
+        &bound,
+        &fsl_replay::ProbabilisticValueSchema::new(
+            scope.types(),
+            scope.variant_types(),
+            scope.enums(),
+        ),
         &state_key,
         &scheduler,
     )
     .expect("source declarations spell the actual evidence");
-    let actual = fsl_replay::probabilistic_wire_with_enum_members(
+    let actual = fsl_replay::probabilistic_wire(
         witness,
-        bound,
-        "probability",
-        world.types(),
-        &[],
-        world.enum_members(),
+        &bound,
+        &fsl_replay::ProbabilisticValueSchema::new(world.types(), &[], &[])
+            .with_enum_members(world.enum_members()),
         &state_key,
         &scheduler,
     )
@@ -730,6 +738,7 @@ fn package_replay_authenticates_owner_ordinal_model_and_slice(claim: &str) {
             world.request("TooLikely", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(

@@ -40,6 +40,7 @@ mod protocol_saga_route;
 #[cfg(feature = "checked-handoff")]
 mod protocol_source_routes;
 mod refinement_source_routes;
+mod scale_and_runtime_measurements;
 mod source_corpus;
 
 #[cfg(feature = "checked-handoff")]
@@ -82,6 +83,7 @@ mod error_producer_inputs;
 mod evaluate_reads_no_display_strings;
 mod evidence_ledger_file;
 mod exact_decimals;
+mod export_deep_nesting;
 mod export_rulings;
 mod export_state_lowering;
 mod export_surface;
@@ -90,6 +92,7 @@ mod extension_forms;
 mod extension_s1_parse;
 mod family_outcome_layering;
 mod first_rule_readme;
+mod float_member_literals;
 mod formal_source;
 mod formatter_identity;
 mod forms_package_contracts;
@@ -129,6 +132,7 @@ mod checked_handoff_realizability;
 mod checked_views;
 mod compound_quantity_types;
 mod fairness_item_path;
+mod hybrid_class_recursion;
 mod hybrid_request_items;
 mod layer_crate_reexports;
 mod lifecycle_boundaries;

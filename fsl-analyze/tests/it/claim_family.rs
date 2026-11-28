@@ -16,8 +16,8 @@ use filament_exact::{Cancel, NodeKey, Origin, Role};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
     analyze, analyze_items, AnalyzeItem, AnalyzeLimits, AnalyzeRecord, AnalyzeRequest, BackendTool,
-    ClaimItem, Diagnostic, DispositionKind, Engine, Engines, ItemForm, ItemOptions, NegotiatedItem,
-    Payload, Settlement, SubjectBinding, TemporalItem,
+    ClaimItem, DeadlineSupply, Diagnostic, DispositionKind, Engine, Engines, ItemForm, ItemOptions,
+    NegotiatedItem, Payload, Settlement, SubjectBinding, TemporalItem,
 };
 use fsl_analyze::claim_family::claim_family;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -72,7 +72,13 @@ fn settle(
         .at_claim(package, item_kind, claim);
     let mut engines = Engines::default();
     engines.with(Engine::probe(PROBE)).expect("one engine");
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     Settled {
         record,
         ran: ran.get(),
@@ -98,7 +104,12 @@ fn settle_many(
         .collect();
     let mut engines = Engines::default();
     engines.with(Engine::probe(PROBE)).expect("one engine");
-    let records = analyze_items(&engines, items, &Cancel::new());
+    let records = analyze_items(
+        &engines,
+        items,
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    );
     assert_eq!(records.len(), requests.len(), "one record per item");
     records
         .into_iter()
@@ -350,6 +361,7 @@ fn the_operation_contract_arm_runs_a_relations_code_claim() {
             request,
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     let terminal = record.terminal().expect("the arm settles the item");
@@ -512,7 +524,7 @@ fn derived_items_take_temporal_trace_from_their_item_kind_on_any_anchor() {
 /// The package of a `Value` function with a Boolean result and a scalar
 /// operation application in its body.
 fn value_package() -> CheckedPackage {
-    crate::value_validity::package_of(
+    crate::value_validity_support::package_of(
         "function f using v(x: Integer): Integer pure { x }\n\
          function subject using v(x: Integer): Boolean pure { f(x) + 1 > x }\n",
     )
@@ -768,12 +780,13 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
         binding,
         provision: world.source_provision(),
         items,
+        certification: Default::default(),
     };
     let outcome = analyze(
         package,
         &request,
         &engines,
-        &AnalyzeLimits::unbounded(),
+        &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         &Cancel::new(),
     )
     .expect("the package binding admits")
@@ -963,7 +976,7 @@ fn each_claim_form_is_read_from_its_node_tag_form_and_role() {
     );
 
     // `relation-claim`: a refinement whose abstract side is a protocol.
-    let source = crate::refinement_protocol::cas_twice(false, false);
+    let source = crate::refinement_protocol_support::cas_twice(false, false);
     let world = crate::refinement_fixture::World::with_internals(
         crate::refinement_fixture::Variant {
             peek: false,

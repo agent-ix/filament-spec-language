@@ -22,10 +22,12 @@ use filament_contract_model::{
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner;
-use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::check::wire_id::StructuralIds;
+use fsl_semantics::check::CheckedGraph;
+use ix_trace_rs::implements;
 
-use super::{EmitRefusal, Omitted, frames};
+use super::{frames, EmitRefusal, Omitted};
+use crate::emit::location_paths::Paths;
 
 /// What the checker located a use in: the declaration index of the function
 /// whose body or measure holds it, or somewhere no walk reaches.
@@ -42,6 +44,10 @@ enum Use {
 /// ordinal; `None` is a use that is dropped with its omitted owner.
 pub(in crate::emit) type Mapping = Vec<(u64, Option<u64>)>;
 
+/// The synthetic occurrences a rekey added to a node, by node: each new ordinal
+/// with the old ordinal of the source use it copies.
+pub(in crate::emit) type Synthetics = BTreeMap<CheckedNodeId, Vec<(u64, u64)>>;
+
 /// One expression occurrence the reader's owner walk will consume.
 #[derive(Clone, Copy)]
 enum Slot {
@@ -57,23 +63,13 @@ struct NodeMapping {
     slots: Vec<Slot>,
 }
 
-impl NodeMapping {
-    fn source_slots(mapping: Mapping) -> Self {
-        let mut slots: Vec<_> = mapping
-            .iter()
-            .filter_map(|&(old, new)| new.map(|ordinal| Slot::Source { old, ordinal }))
-            .collect();
-        slots.sort_by_key(|slot| match slot {
-            Slot::Source { ordinal, .. } | Slot::Synthetic { ordinal, .. } => *ordinal,
-        });
-        Self { slots }
-    }
-}
-
 /// The new ordinal of each renumbered expression occurrence, by node.
 #[derive(Default)]
 pub(in crate::emit) struct Renumbering {
     by_node: HashMap<NodeKey, Mapping>,
+    /// The synthetic occurrences of a node: the old ordinal of the use each
+    /// copies and its new ordinal.
+    synthetic: HashMap<NodeKey, Vec<(u64, u64)>>,
 }
 
 impl Renumbering {
@@ -94,21 +90,52 @@ impl Renumbering {
         !self.by_node.is_empty()
     }
 
-    /// Move every checked-term row naming a renumbered expression occurrence
-    /// to the occurrence's new ordinal, and put each changed table back in
-    /// its canonical order. `ids` names each node's id in the rows.
+    /// Relabel all term rows to the final owner-walk occurrence ordinals.
+    #[implements("FSpec-FR-322-AC-490")]
     pub(in crate::emit) fn relabel_term_data(
         &self,
         ids: &HashMap<NodeKey, CheckedNodeId>,
         data: &mut filament_contract_model::CheckedTermDataV2,
     ) {
+        let by_id = self.by_id(ids);
+        relabel_term_data_inner(&by_id, &self.synthetics(ids), data);
+    }
+
+    /// Relabel the equality rows to the final owner-walk occurrence ordinals.
+    pub(in crate::emit) fn relabel_equality_rows(
+        &self,
+        ids: &HashMap<NodeKey, CheckedNodeId>,
+        producers: &mut Vec<crate::emit::EqualityProducerEmissionRow>,
+        facts: &mut Vec<crate::emit::EqualityFactWitnessRow>,
+        source_map: &[CheckedSourceMapEntry],
+    ) {
+        relabel_equality_rows(
+            producers,
+            facts,
+            &self.by_id(ids),
+            &self.synthetics(ids),
+            source_map,
+        );
+    }
+
+    fn synthetics(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> Synthetics {
+        let mut by_id = Synthetics::new();
+        for (key, copies) in &self.synthetic {
+            if let Some(id) = ids.get(key) {
+                by_id.insert(id.clone(), copies.clone());
+            }
+        }
+        by_id
+    }
+
+    fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
         let mut by_id = BTreeMap::new();
         for (key, mapping) in &self.by_node {
             if let Some(id) = ids.get(key) {
                 by_id.insert(id.clone(), mapping.clone());
             }
         }
-        relabel_term_data(&by_id, data);
+        by_id
     }
 }
 
@@ -204,15 +231,16 @@ pub(in crate::emit) fn renumber(
         }
     }
     drop(walked);
-    // The uses the checker located, each node's by owner in the order of the
-    // body's source positions.
-    let mut located = HashMap::<&NodeKey, HashMap<Use, Vec<(Vec<usize>, u64)>>>::new();
     let by_key: HashSet<&NodeKey> = node_keys
         .iter()
         .zip(&keep)
         .filter(|(_, keep)| **keep)
         .map(|(key, _)| key)
         .collect();
+    // The uses the checker located, each node's by owner: the interned path of
+    // its position and its checker ordinal.
+    let mut paths = Paths::default();
+    let mut located = HashMap::<&NodeKey, HashMap<Use, Vec<(usize, u64)>>>::new();
     for (key, origin, location) in graph.occurrences() {
         if !crate::wire_form::is_expression_role(origin.role().as_str()) {
             continue;
@@ -225,8 +253,10 @@ pub(in crate::emit) fn renumber(
             .or_default()
             .entry(use_of(&location.origin))
             .or_default()
-            .push((location.path(), origin.ordinal()));
+            .push((paths.intern(location), origin.ordinal()));
     }
+    // A path's rank is its place in the body's source order.
+    let source_order = paths.lexicographic_ranks();
     let mut renumbering = Renumbering::default();
     let mut changed = BTreeMap::<usize, NodeMapping>::new();
     for (position, key) in node_keys.iter().enumerate() {
@@ -236,7 +266,7 @@ pub(in crate::emit) fn renumber(
         let mut mapping: Mapping = Vec::new();
         let mut kept: HashMap<Use, Vec<u64>> = HashMap::new();
         for (used, uses) in groups.iter_mut() {
-            uses.sort();
+            uses.sort_unstable_by_key(|&(path, old)| (source_order[path], old));
             let dropped = match used {
                 Use::Body(function) | Use::Measure(function) => {
                     omitted_functions.contains(function)
@@ -330,6 +360,10 @@ pub(in crate::emit) fn renumber(
             continue;
         }
         renumbering.by_node.insert(key.clone(), mapping.clone());
+        let copies = synthetic_copies_of(&slots);
+        if !copies.is_empty() {
+            renumbering.synthetic.insert(key.clone(), copies);
+        }
         changed.insert(position, NodeMapping { slots });
     }
     apply(nodes, source_map, &changed)?;
@@ -441,41 +475,43 @@ pub(in crate::emit) fn rewalk(
     base_nodes: &[CheckedSemanticNodeV2],
     base_source_map: &[CheckedSourceMapEntry],
     nodes: &mut [CheckedSemanticNodeV2],
-    source_map: &mut [CheckedSourceMapEntry],
-) -> Result<BTreeMap<CheckedNodeId, Mapping>, EmitRefusal> {
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+) -> Result<(BTreeMap<CheckedNodeId, Mapping>, Synthetics), EmitRefusal> {
     let carry = |reason| EmitRefusal::RequirementRowCarry(reason);
     let finals = nodes
         .get(..base_nodes.len())
         .ok_or(carry("the writer's graph holds fewer nodes than the base"))?;
     if frames::owner_order(base_nodes, base_source_map) == frames::owner_order(finals, source_map) {
-        return Ok(BTreeMap::new());
+        return Ok((BTreeMap::new(), Synthetics::new()));
     }
     let keep: Vec<bool> = base_nodes
         .iter()
         .map(|node| {
             node.occurrences
                 .iter()
-                .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
-                .count()
-                > 1
+                .any(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
         })
         .collect();
     let owners = |nodes: &[CheckedSemanticNodeV2],
                   source_map: &[CheckedSourceMapEntry]|
-     -> Result<HashMap<usize, Vec<(usize, bool)>>, EmitRefusal> {
-        let mut owners = HashMap::<usize, Vec<(usize, bool)>>::new();
-        let walked = frames::visits(nodes, source_map, &keep);
-        for visit in walked {
-            owners
-                .entry(visit.node)
-                .or_default()
-                .push((visit.owner, visit.measure));
+     -> HashMap<usize, Vec<WalkVisit>> {
+        let mut owners = HashMap::<usize, Vec<WalkVisit>>::new();
+        for visit in frames::visits(nodes, source_map, &keep) {
+            owners.entry(visit.node).or_default().push(WalkVisit {
+                owner: visit.owner,
+                measure: visit.measure,
+                lexical: (
+                    visit.syntax_owner,
+                    visit.syntax_measure,
+                    visit.syntax_ordinal,
+                ),
+            });
         }
-        Ok(owners)
+        owners
     };
-    let before = owners(base_nodes, base_source_map)?;
-    let after = owners(finals, source_map)?;
-    let mut changed = BTreeMap::<usize, Mapping>::new();
+    let before = owners(base_nodes, base_source_map);
+    let after = owners(finals, source_map);
+    let mut changed = BTreeMap::<usize, NodeMapping>::new();
     for (position, base) in &before {
         let Some(now) = after.get(position) else {
             return Err(carry("a rekey changed which nodes the owner walk reaches"));
@@ -485,59 +521,306 @@ pub(in crate::emit) fn rewalk(
                 "a rekey changed how often the owner walk visits a node",
             ));
         }
-        // The j-th visit of an owner takes, in the new order, the ordinal the
-        // owner's j-th visit is given there.
+        // The j-th visit of an owner takes, in the new order, the place the
+        // owner's j-th visit has there.
         let mut seen = HashMap::<(usize, bool), usize>::new();
         let mut places = HashMap::<(usize, bool, usize), usize>::new();
-        for (new, use_of_visit) in now.iter().enumerate() {
-            let nth = seen.entry(*use_of_visit).or_default();
-            places.insert((use_of_visit.0, use_of_visit.1, *nth), new);
+        for (new, visit) in now.iter().enumerate() {
+            let nth = seen.entry((visit.owner, visit.measure)).or_default();
+            places.insert((visit.owner, visit.measure, *nth), new);
             *nth += 1;
         }
         let mut seen = HashMap::<(usize, bool), usize>::new();
-        let mut mapping: Mapping = Vec::with_capacity(base.len());
-        for (old, use_of_visit) in base.iter().enumerate() {
-            let nth = seen.entry(*use_of_visit).or_default();
-            let new = *places
-                .get(&(use_of_visit.0, use_of_visit.1, *nth))
-                .ok_or(carry("a rekey changed an owner's visits of a node"))?;
+        let mut placed = Vec::with_capacity(base.len());
+        for visit in base {
+            let nth = seen.entry((visit.owner, visit.measure)).or_default();
+            placed.push(
+                *places
+                    .get(&(visit.owner, visit.measure, *nth))
+                    .ok_or(carry("a rekey changed an owner's visits of a node"))?,
+            );
             *nth += 1;
-            mapping.push((old as u64, Some(new as u64)));
         }
         let listed = base_nodes[*position]
             .occurrences
             .iter()
             .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
             .count();
-        // Uses the walk does not reach keep their ordinals after the visits.
-        mapping.extend((mapping.len()..listed).map(|rest| (rest as u64, Some(rest as u64))));
-        if mapping.iter().any(|(old, new)| Some(*old) != *new) {
-            changed.insert(*position, mapping);
+        let lexical: Vec<_> = base.iter().map(|visit| visit.lexical).collect();
+        let slots = rewalk_slots(listed, &lexical, &placed).ok_or(carry(
+            "a rekey moved a visit whose lexical occurrence has no source region",
+        ))?;
+        let identity = slots.len() == listed
+            && slots.iter().enumerate().all(|(at, slot)| {
+                matches!(*slot, Slot::Source { old, ordinal } if old == at as u64 && ordinal == old)
+            });
+        if !identity {
+            changed.insert(*position, NodeMapping { slots });
         }
     }
-    let applied: BTreeMap<_, _> = changed
-        .iter()
-        .map(|(&position, mapping)| (position, NodeMapping::source_slots(mapping.clone())))
-        .collect();
-    let mut rebuilt_source_map = source_map.to_vec();
-    apply(nodes, &mut rebuilt_source_map, &applied)?;
-    if rebuilt_source_map.len() != source_map.len() {
-        return Err(carry("a rekey changed the source-map occurrence count"));
+    let mut rebuilt_source_map = source_map.clone();
+    apply(nodes, &mut rebuilt_source_map, &changed)?;
+    *source_map = rebuilt_source_map;
+    let mut synthetics = Synthetics::new();
+    let mut moved = BTreeMap::new();
+    for (position, mapping) in changed {
+        let id = nodes[position].node_id.clone();
+        let copies = synthetic_copies_of(&mapping.slots);
+        if !copies.is_empty() {
+            synthetics.insert(id.clone(), copies);
+        }
+        let mut sources: Mapping = mapping
+            .slots
+            .iter()
+            .filter_map(|slot| match *slot {
+                Slot::Source { old, ordinal } => Some((old, Some(ordinal))),
+                Slot::Synthetic { .. } => None,
+            })
+            .collect();
+        sources.sort_unstable();
+        moved.insert(id, sources);
     }
-    source_map.clone_from_slice(&rebuilt_source_map);
-    Ok(changed
-        .into_iter()
-        .map(|(position, mapping)| (nodes[position].node_id.clone(), mapping))
-        .collect())
+    Ok((moved, synthetics))
+}
+
+/// The synthetic slots of a node as `(from, ordinal)`: the old ordinal of the
+/// use each copies and its new ordinal.
+fn synthetic_copies_of(slots: &[Slot]) -> Vec<(u64, u64)> {
+    slots
+        .iter()
+        .filter_map(|slot| match *slot {
+            Slot::Synthetic { from, ordinal } => Some((from, ordinal)),
+            Slot::Source { .. } => None,
+        })
+        .collect()
+}
+
+/// One visit of the owner walk to a node, as a rekey re-reads it.
+struct WalkVisit {
+    owner: usize,
+    measure: bool,
+    /// The lexical occurrence the visit is inside: the function whose syntax
+    /// it is, whether that is its measure, and its place among the node's
+    /// visits in that syntax scope.
+    lexical: (usize, bool, usize),
+}
+
+/// The slots of a node whose owner walk was reordered by a rekey. `listed` is
+/// the number of expression occurrences the base lists; the first of them
+/// belong, in order, to the base's visits (a visit's slot is a source use or a
+/// synthetic copy of one) and any beyond the visits are source uses the walk
+/// never reached. `lexical` names each base visit's lexical occurrence and
+/// `placed[i]` the place base visit `i` takes in the new walk. A visit keeps
+/// its occurrence and moves to its new place; a visit before the last moved
+/// one that had none gets a synthetic slot copying the region of an
+/// occurrence of the same lexical place. `None` when no such occurrence
+/// exists.
+fn rewalk_slots(
+    listed: usize,
+    lexical: &[(usize, bool, usize)],
+    placed: &[usize],
+) -> Option<Vec<Slot>> {
+    let numbered = listed.min(placed.len());
+    let end = placed[..numbered]
+        .iter()
+        .map(|place| place + 1)
+        .max()
+        .unwrap_or(0);
+    let mut at_place = vec![None; end];
+    for (visit, &place) in placed.iter().enumerate() {
+        if place < end {
+            at_place[place] = Some(visit);
+        }
+    }
+    let mut region_of = HashMap::<(usize, bool, usize), u64>::new();
+    for visit in 0..numbered {
+        region_of.entry(lexical[visit]).or_insert(visit as u64);
+    }
+    let mut slots = Vec::with_capacity(end + listed - numbered);
+    for place in 0..end {
+        let ordinal = place as u64;
+        let visit = at_place[place]?;
+        slots.push(if visit < numbered {
+            Slot::Source {
+                old: visit as u64,
+                ordinal,
+            }
+        } else {
+            // A place no numbered visit holds borrows the next numbered
+            // visit's occurrence, as `renumber` borrows the next future use.
+            let from = region_of.get(&lexical[visit]).copied().or_else(|| {
+                (place + 1..end)
+                    .find_map(|later| at_place[later].filter(|&v| v < numbered))
+                    .map(|v| v as u64)
+            })?;
+            Slot::Synthetic { from, ordinal }
+        });
+    }
+    for old in numbered..listed {
+        slots.push(Slot::Source {
+            old: old as u64,
+            ordinal: (end + old - numbered) as u64,
+        });
+    }
+    Some(slots)
 }
 
 /// Move the checked-term rows that name a renumbered expression occurrence of
 /// the nodes `by_id` holds, and drop the rows of a dropped use.
 pub(in crate::emit) fn relabel_term_data(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
+    data: &mut filament_contract_model::CheckedTermDataV2,
+) {
+    relabel_term_data_inner(by_id, synthetics, data);
+}
+
+/// The rows of a node a rekey gave synthetic occurrences, one copy per new
+/// occurrence. The rows of an application differ only in their ordinal (the
+/// schedule, operands and facts are the application's), so the copy follows the
+/// row of the use the occurrence copies when that use has one and the node's
+/// first row otherwise. `at` names a row's application and occurrence.
+fn synthetic_copies<T: Clone>(
+    rows: &[T],
+    synthetics: &Synthetics,
+    at: impl Fn(&T) -> (&CheckedNodeId, &CheckedOccurrence),
+    at_mut: impl Fn(&mut T) -> &mut CheckedOccurrence,
+) -> Vec<T> {
+    let mut copies = Vec::new();
+    for (application, wanted) in synthetics {
+        let mut own: Vec<(u64, &T)> = Vec::new();
+        for row in rows {
+            let (id, occurrence) = at(row);
+            if id == application && occurrence.role == CheckedOccurrenceRole::Expression {
+                own.push((occurrence.ordinal, row));
+            }
+        }
+        // Rows of one application at one occurrence are all copied together.
+        for &(from, ordinal) in wanted {
+            let source = if own.iter().any(|(old, _)| *old == from) {
+                from
+            } else if let Some(&(first, _)) = own.iter().min_by_key(|(old, _)| *old) {
+                first
+            } else {
+                continue;
+            };
+            for (old, row) in &own {
+                if *old == source {
+                    let mut copy = (*row).clone();
+                    at_mut(&mut copy).ordinal = ordinal;
+                    copies.push(copy);
+                }
+            }
+        }
+    }
+    copies
+}
+
+/// Move the equality rows that name a renumbered expression occurrence to its
+/// new ordinal, in the row, in the source-map entry it holds (the package's own
+/// entry of that occurrence) and in the exact location of a producer row, and
+/// give each synthetic occurrence the walk now has a copy of the row of the use
+/// it copies (FSpec FR-322: the walk's ordinals are the occurrences the rows
+/// name). The one function the checker's emission and a monitor re-encoder
+/// share.
+pub(in crate::emit) fn relabel_equality_rows(
+    producers: &mut Vec<crate::emit::EqualityProducerEmissionRow>,
+    facts: &mut Vec<crate::emit::EqualityFactWitnessRow>,
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
+    source_map: &[CheckedSourceMapEntry],
+) {
+    if by_id.is_empty() {
+        return;
+    }
+    relabel_occurrences(
+        producers,
+        by_id,
+        synthetics,
+        |row| (&row.checked_node, &row.occurrence),
+        |row| &mut row.occurrence,
+    );
+    relabel_occurrences(
+        facts,
+        by_id,
+        synthetics,
+        |row| (&row.checked_application, &row.occurrence),
+        |row| &mut row.occurrence,
+    );
+    let entries: BTreeMap<(&CheckedNodeId, u64), &CheckedSourceMapEntry> = source_map
+        .iter()
+        .filter(|entry| entry.role == CheckedOccurrenceRole::Expression)
+        .filter(|entry| by_id.contains_key(&entry.node_id))
+        .map(|entry| ((&entry.node_id, entry.ordinal), entry))
+        .collect();
+    for row in producers.iter_mut() {
+        if row.occurrence.role == CheckedOccurrenceRole::Expression {
+            if let Some(entry) = entries.get(&(&row.checked_node, row.occurrence.ordinal)) {
+                row.source_map_entry = (*entry).clone();
+            }
+        }
+        if row.location.occurrence().ordinal() != row.occurrence.ordinal {
+            row.location = filament_exact::Location::new(
+                row.location.node().clone(),
+                filament_exact::Origin::new(
+                    row.location.occurrence().role().clone(),
+                    row.occurrence.ordinal,
+                ),
+            );
+        }
+    }
+    for row in facts.iter_mut() {
+        if row.occurrence.role == CheckedOccurrenceRole::Expression {
+            if let Some(entry) = entries.get(&(&row.checked_application, row.occurrence.ordinal)) {
+                row.source_map_entry = (*entry).clone();
+            }
+        }
+    }
+}
+
+/// Move the rows of one equality kind that name a renumbered expression
+/// occurrence, drop the rows of a use dropped with its omitted owner and add the
+/// copies the synthetic occurrences need.
+fn relabel_occurrences<T: Clone>(
+    rows: &mut Vec<T>,
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
+    at: impl Fn(&T) -> (&CheckedNodeId, &CheckedOccurrence),
+    at_mut: impl Fn(&mut T) -> &mut CheckedOccurrence,
+) {
+    let copies = synthetic_copies(rows, synthetics, &at, &at_mut);
+    // A row of a use dropped with its omitted owner is dropped too, as
+    // the checked-term decision of that use is.
+    rows.retain_mut(|row| {
+        let (id, occurrence) = at(row);
+        if occurrence.role != CheckedOccurrenceRole::Expression {
+            return true;
+        }
+        let Some(mapping) = by_id.get(id) else {
+            return true;
+        };
+        let Ok(position) = mapping.binary_search_by_key(&occurrence.ordinal, |(old, _)| *old)
+        else {
+            return true;
+        };
+        match mapping[position].1 {
+            Some(new) => {
+                at_mut(row).ordinal = new;
+                true
+            }
+            None => false,
+        }
+    });
+    rows.extend(copies);
+}
+
+fn relabel_term_data_inner(
+    by_id: &BTreeMap<CheckedNodeId, Mapping>,
+    synthetics: &Synthetics,
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
     if by_id.is_empty() {
+        sort_body_rows(data);
         return;
     }
     // Some(true): the row moved, Some(false): unchanged, None: dropped.
@@ -563,12 +846,19 @@ pub(in crate::emit) fn relabel_term_data(
             Some(false)
         }
     };
-    let mut changed = false;
+    let copies = synthetic_copies(
+        &data.equality_decisions,
+        synthetics,
+        |row| (&row.application, &row.occurrence),
+        |row| &mut row.occurrence,
+    );
+    let mut changed = !copies.is_empty();
     data.equality_decisions.retain_mut(|row| {
         let moved = relabel(&row.application, &mut row.occurrence);
         changed |= moved != Some(false);
         moved.is_some()
     });
+    data.equality_decisions.extend(copies);
     if changed {
         data.equality_decisions.sort_by(|left, right| {
             (&left.application, &left.occurrence).cmp(&(&right.application, &right.occurrence))
@@ -600,19 +890,289 @@ pub(in crate::emit) fn relabel_term_data(
             ))
         });
     }
-    let mut changed = false;
-    data.body_locations.retain_mut(|row| {
-        let moved = relabel(&row.application, &mut row.occurrence);
-        changed |= moved != Some(false);
-        moved.is_some()
+    data.body_locations
+        .retain_mut(|row| relabel(&row.application, &mut row.occurrence).is_some());
+    deal_body_keys(data);
+    sort_body_rows(data);
+}
+
+/// The rows of one function at one application pair with that function's
+/// visits by rank (FR-322 "Pairing rows with visits"), and a row's path is
+/// encoded relative to the row of the visit before it. The array was in rank
+/// order before the renumbering; a renumbering takes the checker's uses to the
+/// walk's ordinals in source order, which can cross the uses of one function.
+/// So each (function, application) group keeps its rows in rank order and takes
+/// its own renumbered keys in ascending order: its k-th visit's row is keyed by
+/// the k-th ordinal the function's visits consume (FR-322-AC-541).
+#[implements("FSpec-FR-322-AC-541")]
+fn deal_body_keys(data: &mut filament_contract_model::CheckedTermDataV2) {
+    use filament_contract_model::CheckedBodyLocationOrigin;
+    let mut groups = BTreeMap::<(&CheckedNodeId, &CheckedNodeId), Vec<usize>>::new();
+    for (at, row) in data.body_locations.iter().enumerate() {
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+        groups
+            .entry((function, &row.application))
+            .or_default()
+            .push(at);
+    }
+    let mut dealt = Vec::new();
+    for rows in groups.values() {
+        let mut keys: Vec<_> = rows
+            .iter()
+            .map(|&at| {
+                let row = &data.body_locations[at];
+                (row.occurrence.clone(), row.term_ordinal)
+            })
+            .collect();
+        keys.sort();
+        dealt.extend(rows.iter().copied().zip(keys));
+    }
+    for (at, (occurrence, term_ordinal)) in dealt {
+        let row = &mut data.body_locations[at];
+        row.occurrence = occurrence;
+        row.term_ordinal = term_ordinal;
+    }
+}
+
+/// A record node's id also changes with a field rename (FR-487), which can
+/// move its place among the rows, so the rows are always put in key order
+/// again, with or without a renumbering.
+fn sort_body_rows(data: &mut filament_contract_model::CheckedTermDataV2) {
+    data.body_locations.sort_by(|left, right| {
+        (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
+            &right.application,
+            &right.occurrence,
+            right.term_ordinal,
+        ))
     });
-    if changed {
-        data.body_locations.sort_by(|left, right| {
-            (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
-                &right.application,
-                &right.occurrence,
-                right.term_ordinal,
-            ))
-        });
+}
+
+#[cfg(test)]
+mod rewalk_tests {
+    use super::{rewalk_slots, Slot};
+
+    use super::{relabel_occurrences, relabel_term_data, synthetic_copies, Mapping, Synthetics};
+    use filament_contract_model::{
+        CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation, CheckedNodeId,
+        CheckedNodePathSegment, CheckedOccurrence, CheckedOccurrenceRole, CheckedTermDataV2,
+    };
+    use std::collections::BTreeMap;
+
+    fn id(name: &str) -> CheckedNodeId {
+        CheckedNodeId {
+            package: "p".into(),
+            path: vec![CheckedNodePathSegment::Name(name.into())],
+            ordinal: 0,
+        }
+    }
+
+    type Row = (CheckedNodeId, CheckedOccurrence);
+
+    fn row(name: &str, ordinal: u64) -> Row {
+        (
+            id(name),
+            CheckedOccurrence {
+                role: CheckedOccurrenceRole::Expression,
+                ordinal,
+            },
+        )
+    }
+
+    fn ordinals(rows: &[Row]) -> Vec<(CheckedNodeId, u64)> {
+        rows.iter().map(|(id, o)| (id.clone(), o.ordinal)).collect()
+    }
+
+    fn relabel(rows: &mut Vec<Row>, mappings: &[(&str, Mapping)], synthetics: &Synthetics) {
+        let by_id: BTreeMap<_, _> = mappings
+            .iter()
+            .map(|(name, mapping)| (id(name), mapping.clone()))
+            .collect();
+        relabel_occurrences(
+            rows,
+            &by_id,
+            synthetics,
+            |row| (&row.0, &row.1),
+            |row| &mut row.1,
+        );
+    }
+
+    /// FSpec FR-322 (QSL-3559): an equality row of a use dropped with its
+    /// omitted owner is dropped, as its decision is, instead of keeping the
+    /// checker's ordinal that now names another use (or none).
+    #[test]
+    fn an_equality_row_of_a_dropped_use_is_dropped() {
+        let mut rows = vec![row("app", 0), row("app", 1), row("app", 2), row("other", 1)];
+        let mapping: Mapping = vec![(0, Some(1)), (1, None)];
+        relabel(&mut rows, &[("app", mapping)], &Synthetics::new());
+        assert_eq!(
+            ordinals(&rows),
+            [(id("app"), 1), (id("app"), 2), (id("other"), 1)],
+            "use 0 moves to 1, use 1 is dropped, use 2 has no entry and a node the map lacks stays"
+        );
+    }
+
+    /// FSpec FR-322 (QSL-3559): a synthetic occurrence gets a copy of the row
+    /// of the use it copies; a use with no row borrows the node's first row.
+    #[test]
+    fn a_synthetic_occurrence_copies_the_row_of_the_use_it_repeats() {
+        let mut rows = vec![row("app", 0), row("app", 1)];
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(2))];
+        let synthetics: Synthetics = [(id("app"), vec![(1, 0), (7, 3)])].into_iter().collect();
+        relabel(&mut rows, &[("app", mapping)], &synthetics);
+        let mut got = ordinals(&rows);
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                (id("app"), 0),
+                (id("app"), 1),
+                (id("app"), 2),
+                (id("app"), 3)
+            ],
+            "uses 0 and 1 move to 1 and 2; ordinal 0 copies use 1, ordinal 3 (an unlisted use) copies the first"
+        );
+    }
+
+    #[test]
+    fn synthetic_copies_read_rows_without_changing_them() {
+        let rows = vec![row("app", 4)];
+        let synthetics: Synthetics = [(id("app"), vec![(4, 9)])].into_iter().collect();
+        let copies = synthetic_copies(&rows, &synthetics, |row| (&row.0, &row.1), |row| &mut row.1);
+        assert_eq!(ordinals(&copies), [(id("app"), 9)]);
+        assert_eq!(ordinals(&rows), [(id("app"), 4)]);
+    }
+
+    fn body_row(function: &str, ordinal: u64) -> CheckedBodySemanticLocation {
+        CheckedBodySemanticLocation {
+            application: id("app"),
+            occurrence: CheckedOccurrence {
+                role: CheckedOccurrenceRole::Expression,
+                ordinal,
+            },
+            term_ordinal: 0,
+            location: CheckedBodyLocation {
+                origin: CheckedBodyLocationOrigin::FunctionBody {
+                    function: id(function),
+                    name: function.into(),
+                    index: 0,
+                },
+                up: 0,
+                down: Vec::new(),
+            },
+        }
+    }
+
+    fn functions(data: &CheckedTermDataV2) -> Vec<(String, u64)> {
+        data.body_locations
+            .iter()
+            .map(|row| {
+                let CheckedBodyLocationOrigin::FunctionBody { name, .. } = &row.location.origin;
+                (name.to_string(), row.occurrence.ordinal)
+            })
+            .collect()
+    }
+
+    /// FSpec FR-322-AC-541 (QSL-3613): a body row follows the occurrence of
+    /// the visit it locates. A crossing mapping (0 to 1, 1 to 0) gives g's row
+    /// occurrence 1 and h's occurrence 0, and the rows are in key order again.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-541")]
+    #[test]
+    fn body_rows_follow_a_crossing_renumbering_and_are_sorted_by_key() {
+        let mut data = CheckedTermDataV2 {
+            body_locations: vec![body_row("g", 0), body_row("h", 1)],
+            ..CheckedTermDataV2::default()
+        };
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(0))];
+        let by_id: BTreeMap<_, _> = [(id("app"), mapping)].into_iter().collect();
+        relabel_term_data(&by_id, &Synthetics::new(), &mut data);
+        assert_eq!(functions(&data), [("h".to_owned(), 0), ("g".to_owned(), 1)]);
+    }
+
+    /// FSpec FR-322-AC-541 (QSL-3613): a rename with no renumbering still puts
+    /// the body rows in key order.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-541")]
+    #[test]
+    fn body_rows_are_sorted_when_nothing_is_renumbered() {
+        let mut first = body_row("g", 0);
+        first.application = id("b");
+        let mut second = body_row("h", 0);
+        second.application = id("a");
+        let mut data = CheckedTermDataV2 {
+            body_locations: vec![first, second],
+            ..CheckedTermDataV2::default()
+        };
+        relabel_term_data(&BTreeMap::new(), &Synthetics::new(), &mut data);
+        let order: Vec<_> = data
+            .body_locations
+            .iter()
+            .map(|row| row.application.clone())
+            .collect();
+        assert_eq!(order, [id("a"), id("b")]);
+    }
+
+    /// FSpec FR-322-AC-541 (QSL-3627): one function's rows at one application
+    /// keep their rank order when a renumbering crosses their occurrences, and
+    /// take the renumbered keys in ascending order.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-541")]
+    #[test]
+    fn a_functions_rows_keep_their_rank_when_a_renumbering_crosses_them() {
+        let mut first = body_row("g", 0);
+        first.location.up = 0;
+        let mut second = body_row("g", 1);
+        second.location.up = 1;
+        let mut data = CheckedTermDataV2 {
+            body_locations: vec![first, second],
+            ..CheckedTermDataV2::default()
+        };
+        let mapping: Mapping = vec![(0, Some(1)), (1, Some(0))];
+        let by_id: BTreeMap<_, _> = [(id("app"), mapping)].into_iter().collect();
+        relabel_term_data(&by_id, &Synthetics::new(), &mut data);
+        let rows: Vec<_> = data
+            .body_locations
+            .iter()
+            .map(|row| (row.occurrence.ordinal, row.location.up))
+            .collect();
+        assert_eq!(rows, [(0, 0), (1, 1)]);
+    }
+
+    fn pairs(slots: &[Slot]) -> Vec<(bool, u64, u64)> {
+        slots
+            .iter()
+            .map(|slot| match *slot {
+                Slot::Source { old, ordinal } => (true, old, ordinal),
+                Slot::Synthetic { from, ordinal } => (false, from, ordinal),
+            })
+            .collect()
+    }
+
+    /// QSL-3559: two visits listed one slot each swap places: each occurrence
+    /// follows its visit and no synthetic slot appears.
+    #[test]
+    fn a_rekey_that_swaps_two_numbered_visits_moves_their_occurrences() {
+        let lexical = [(0, false, 0), (1, false, 0)];
+        let slots = rewalk_slots(2, &lexical, &[1, 0]).unwrap();
+        assert_eq!(pairs(&slots), [(true, 1, 0), (true, 0, 1)]);
+    }
+
+    /// QSL-3559: the base numbers two of three visits (a third visit comes
+    /// after the last source use, so it has no slot). A rekey moves that
+    /// third visit first and the numbered ones behind it: the moved visit now
+    /// precedes numbered visits, so it takes a synthetic slot that copies the
+    /// region of the occurrence of its lexical place, and the numbered
+    /// visits shift by one.
+    #[test]
+    fn a_rekey_moving_an_unnumbered_visit_first_gives_it_a_synthetic_slot() {
+        let lexical = [(0, false, 0), (1, false, 0), (0, false, 0)];
+        let slots = rewalk_slots(2, &lexical, &[1, 2, 0]).unwrap();
+        assert_eq!(pairs(&slots), [(false, 0, 0), (true, 0, 1), (true, 1, 2)]);
+    }
+
+    /// A visit moved before the numbered ones whose lexical place no numbered
+    /// visit holds borrows the next numbered visit's occurrence.
+    #[test]
+    fn an_unnumbered_visit_of_an_unseen_place_borrows_the_next_numbered_one() {
+        let lexical = [(0, false, 0), (1, false, 0), (2, false, 0)];
+        let slots = rewalk_slots(2, &lexical, &[1, 2, 0]).unwrap();
+        assert_eq!(pairs(&slots), [(false, 0, 0), (true, 0, 1), (true, 1, 2)]);
     }
 }

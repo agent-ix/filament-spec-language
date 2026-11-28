@@ -14,7 +14,8 @@ use ix_trace_rs::trace;
 use crate::fill::{reachable, reachable_with_workers, Explored};
 use crate::litmus::sb_unit;
 use crate::rc11_support::{self as rc11, Op, Order};
-use crate::weak_memory::{litmus_run, outcomes, register, select, steps, Case};
+use crate::weak_memory::{litmus_run, outcomes, register};
+use crate::weak_memory_support::{select, steps, Case};
 use filament_exact::Value;
 
 const X: usize = 0;

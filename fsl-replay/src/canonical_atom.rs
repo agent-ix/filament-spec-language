@@ -387,6 +387,7 @@ impl Printer<'_> {
 
     /// The nodes `index` renders from, each with the scope it is read under,
     /// in the order the binding sites' operands evaluate.
+    #[ix_trace_rs::string_edge]
     fn plan(&mut self, index: usize, env: Env) -> Result<Vec<Key>, String> {
         let node = self
             .expression
@@ -638,6 +639,7 @@ impl Printer<'_> {
         zero.then_some((condition, summand))
     }
 
+    #[ix_trace_rs::string_edge]
     fn print(&self, index: usize, env: Env) -> Result<Printed, String> {
         let rows = self.rows;
         let node = &self.expression.nodes[index];

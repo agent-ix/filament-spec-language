@@ -1,0 +1,343 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/slots",
+        "name": "object_type"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/slots",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.value-type/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/slots",
+        "name": "value_type"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/slots",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1.0.0"
+  },
+  "populations": [
+    {
+      "displayName": "ix://catalog/slots/config_history",
+      "extent": "closed",
+      "identity": "ix://catalog/slots/config_history",
+      "kind": {
+        "module": "catalog/slots",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/slots/ConfigVersion"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/slots/config_history",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/slots/config_history"
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/slots/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [
+        {
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "identity": "ix://catalog/slots/VersionNumber/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/VersionNumber",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/VersionNumber"
+              ]
+            }
+          }
+        },
+        {
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "identity": "ix://catalog/slots/VersionNumber/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "1000"
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/VersionNumber",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/VersionNumber"
+              ]
+            }
+          }
+        }
+      ],
+      "displayName": "ix://catalog/slots/VersionNumber",
+      "extensions": [],
+      "identity": "ix://catalog/slots/VersionNumber",
+      "kind": {
+        "module": "catalog/slots",
+        "name": "value_type"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/slots/VersionNumber",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/slots/VersionNumber"
+          ]
+        }
+      },
+      "roles": [],
+      "scalar": "integer",
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "ix://catalog/slots/ConfigVersion",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/slots/ConfigVersion/versionNumber",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "versionNumber",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/ConfigVersion/versionNumber",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/ConfigVersion/versionNumber"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/slots/VersionNumber"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/slots/ConfigVersion/parent",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "parent",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/ConfigVersion/parent",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/ConfigVersion/parent"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/slots/ConfigVersion"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/slots/ConfigVersion/x",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "x",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/ConfigVersion/x",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/ConfigVersion/x"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Clock"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/slots/ConfigVersion/peer",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "peer",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/ConfigVersion/peer",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/ConfigVersion/peer"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/slots/ConfigVersion"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/slots/ConfigVersion/v",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "v",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/ConfigVersion/v",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/ConfigVersion/v"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://filament/native/Clock"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/slots/ConfigVersion/q",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 2
+          },
+          "name": "q",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/slots/ConfigVersion/q",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/slots/ConfigVersion/q"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://filament/native/Clock"
+        }
+      ],
+      "identity": "ix://catalog/slots/ConfigVersion",
+      "kind": {
+        "module": "catalog/slots",
+        "name": "object_type"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": [
+              "ix://catalog/slots/ConfigVersion/versionNumber",
+              "ix://catalog/slots/ConfigVersion/x",
+              "ix://catalog/slots/ConfigVersion/v",
+              "ix://catalog/slots/ConfigVersion/q"
+            ]
+          },
+          "identity": "ix://catalog/slots/ConfigVersion/attemptUpdate",
+          "name": "attemptUpdate",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/slots/spec",
+              "startColumn": 1,
+              "startLine": 1
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": [],
+          "returns": {
+            "multiplicity": {
+              "lower": 1,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "nullable": false,
+            "typeRef": "ix://filament/native/Boolean"
+          }
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/slots/ConfigVersion",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/slots/ConfigVersion"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    }
+  ]
+}

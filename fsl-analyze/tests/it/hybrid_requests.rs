@@ -481,7 +481,8 @@ fn hybrid_replay_request_for(
 
 /// FR-751-AC-1 and FSpec FR-652-AC-1: an accepted `inductive-enclosure`
 /// settles `certified`; one excluding the initial `v = 20` is rejected at
-/// rule (a) at the `Moving` box and stays `uncertified`.
+/// rule (a) at the `Moving` box and settles `inconclusive`,
+/// `certificate-rejected`.
 #[test]
 #[trace("TC-2101", "FR-751-AC-1")]
 #[trace("FSpec-TC-2049", "FSpec-FR-652-AC-6")]
@@ -508,22 +509,40 @@ fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
         json!({}),
         vec![hybrid_fixture("hybrid-fixture", &inductive_entry("19"))],
     );
+    assert_eq!(rejected["record"]["result"], "inconclusive", "{rejected}");
+    assert!(
+        rejected["record"].get("certification").is_none(),
+        "{rejected}"
+    );
     assert_eq!(
-        rejected["record"]["certification"], "uncertified",
+        rejected["record"]["cause"],
+        json!({"kind": "certificate-rejected", "rule": "a", "at": "/certificate/boxes/Moving"}),
         "{rejected}"
     );
     assert_eq!(rejected["certificate"]["accepted"], false, "{rejected}");
     assert_eq!(rejected["certificate"]["rule"], "a", "{rejected}");
-    assert!(
-        rejected["certificate"]["at"]
-            .as_str()
-            .is_some_and(|at| at.contains("Moving")),
+    assert_eq!(
+        rejected["certificate"]["at"], "/certificate/boxes/Moving",
         "{rejected}"
+    );
+    let mut bare = inductive_entry("20");
+    bare.as_object_mut().expect("object").remove("certificate");
+    let (_, unchecked) = first_item(
+        "hybrid-751-1c",
+        &unit,
+        named("Bounded", "hybrid-fixture"),
+        json!({}),
+        vec![hybrid_fixture("hybrid-fixture", &bare)],
+    );
+    assert_eq!(unchecked["record"]["result"], "proved", "{unchecked}");
+    assert_eq!(
+        unchecked["record"]["certification"], "uncertified",
+        "{unchecked}"
     );
 }
 
 /// FR-751-AC-2 and FSpec FR-652-AC-2: a `flowpipe` step violating the Picard
-/// condition is rejected at that step and the proof stays `uncertified`.
+/// condition is rejected at that step and the item settles `inconclusive`.
 #[test]
 #[trace("TC-2101", "FR-751-AC-2")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-2")]
@@ -542,15 +561,22 @@ fn a_flowpipe_step_violating_picard_is_rejected() {
         json!({}),
         vec![hybrid_fixture("hybrid-fixture", &entry)],
     );
-    assert_eq!(item["record"]["certification"], "uncertified", "{item}");
+    assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+    assert!(item["record"].get("certification").is_none(), "{item}");
+    assert_eq!(
+        item["record"]["cause"],
+        json!({"kind": "certificate-rejected", "rule": "picard", "at": "/certificate/steps/0"}),
+        "{item}"
+    );
     assert_eq!(item["certificate"]["accepted"], false, "{item}");
     assert_eq!(item["certificate"]["at"], "/certificate/steps/0", "{item}");
 }
 
 /// FR-751-AC-3 and FSpec FR-652-AC-4: a check under a work limit of one unit
-/// is rejected `work-limit`, never accepted.
+/// is rejected `work-limit`, never accepted, and the item settles
+/// `incomplete` (FR-751-AC-8).
 #[test]
-#[trace("TC-2101", "FR-751-AC-3")]
+#[trace("TC-2101", "FR-751-AC-3", "FR-751-AC-8")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
 fn a_work_limited_certificate_check_is_rejected() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
@@ -563,6 +589,12 @@ fn a_work_limited_certificate_check_is_rejected() {
     );
     assert_eq!(item["certificate"]["accepted"], false, "{item}");
     assert_eq!(item["certificate"]["rule"], "work-limit", "{item}");
+    assert_eq!(
+        item["certificate"]["at"], "/certificate/boxes/Moving",
+        "{item}"
+    );
+    assert_eq!(item["record"]["result"], "incomplete", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
 }
 
 /// FSpec FR-652-AC-4: a `flowpipe` certificate on an `inductive-solver`
@@ -812,6 +844,7 @@ fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
         "{accepted}"
     );
     let late = check("hybrid-652-5b", "SlowEnough", ("1", "10"));
+    assert_eq!(late["record"]["result"], "inconclusive", "{late}");
     assert_eq!(late["certificate"]["accepted"], false, "{late}");
     assert_eq!(
         late["certificate"]["at"], "/certificate/steps/160",
@@ -821,6 +854,7 @@ fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
     let wide = check("hybrid-652-5d", "SlowEnough", ("0", "20"));
     assert_eq!(wide["record"]["certification"], "certified", "{wide}");
     let violated = check("hybrid-652-5c", "TooSlow", ("0", "10"));
+    assert_eq!(violated["record"]["result"], "inconclusive", "{violated}");
     assert_eq!(violated["certificate"]["accepted"], false, "{violated}");
     assert_eq!(violated["certificate"]["rule"], "claim", "{violated}");
 }
@@ -1599,4 +1633,81 @@ fn exact_replay_settles_before_any_witness_and_a_bad_witness_refuses() {
     assert!(certificate.contains_key("form"), "{item}");
     assert!(certificate.contains_key("identity"), "{item}");
     assert!(!certificate.contains_key("accepted"), "{item}");
+}
+
+/// The run and first item of FR-751-AC-1's `Braking` claim proved by `entry`,
+/// under the extra request members `extra`.
+fn braking_run(name: &str, entry: &Value, extra: Value) -> (Run, Value) {
+    let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
+    first_item(
+        name,
+        &unit,
+        named("Bounded", "hybrid-fixture"),
+        extra,
+        vec![hybrid_fixture("hybrid-fixture", entry)],
+    )
+}
+
+fn bare_inductive_entry() -> Value {
+    let mut entry = inductive_entry("20");
+    entry.as_object_mut().expect("object").remove("certificate");
+    entry
+}
+
+#[test]
+#[trace("TC-3240", "FR-1052-AC-1")]
+fn an_uncertified_hybrid_proof_is_inconclusive_only_when_certification_is_required() {
+    for (name, extra) in [
+        ("require-1052-1-absent", json!({})),
+        ("require-1052-1-false", json!({"require_certified": false})),
+    ] {
+        let (_, item) = braking_run(name, &bare_inductive_entry(), extra);
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+        assert_eq!(item["record"]["certification"], "uncertified", "{item}");
+    }
+    let required = json!({"require_certified": true});
+    let (_, item) = braking_run(
+        "require-1052-1-true",
+        &bare_inductive_entry(),
+        required.clone(),
+    );
+    assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+    assert_eq!(item["category"], "inconclusive", "{item}");
+    assert!(item["record"].get("certification").is_none(), "{item}");
+    assert_eq!(
+        item["record"]["cause"],
+        json!({"kind": "proof-not-certified",
+            "basis": {"type": "inductive-solver", "method": "inductive-enclosure"},
+            "certification": "uncertified"}),
+        "{item}"
+    );
+    for (name, extra) in [
+        ("require-1052-1-certified-default", json!({})),
+        ("require-1052-1-certified-required", required),
+    ] {
+        let (_, item) = braking_run(name, &inductive_entry("20"), extra);
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+        assert_eq!(item["record"]["certification"], "certified", "{item}");
+    }
+}
+
+#[test]
+#[trace("TC-3240", "FR-1052-AC-6")]
+fn a_required_item_without_a_certified_proof_is_a_not_proved_gap() {
+    let entry = bare_inductive_entry();
+    let (default, _) = braking_run("require-1052-6-default", &entry, json!({}));
+    assert_eq!(
+        default.document()["aggregate"],
+        json!({"status": "complete", "gaps": []})
+    );
+    let (required, _) = braking_run(
+        "require-1052-6-required",
+        &entry,
+        json!({"require_certified": true}),
+    );
+    assert_eq!(
+        required.document()["aggregate"],
+        json!({"status": "incomplete",
+            "gaps": [{"request_index": 0, "reason": "not-proved", "result": "inconclusive"}]})
+    );
 }

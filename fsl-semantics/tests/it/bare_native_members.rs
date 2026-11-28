@@ -105,7 +105,7 @@ const HEADER: &str = "profile d = \"filament.model.dispatch.single/v1\";\n";
 fn assembled(
     document: &[u8],
     clauses: &str,
-) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let declarations = crate::model_operations::admit_and_assemble_with_profiles(
         document,
         HEADER,
@@ -201,6 +201,20 @@ fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
             "{member} has a checked type"
         );
     }
+}
+
+/// FR-056-AC-43: a bare native field read after `deref` refuses the same way
+/// as its projection, not as an absent or mistyped field.
+#[test]
+fn a_dereferenced_bare_native_field_refuses_as_untyped() {
+    assert_eq!(
+        untyped(
+            &note_document(),
+            "function f using v(r: Reference<Config::ConfigVersion>): Boolean pure \
+             { deref(r).memo = deref(r).memo }\n"
+        ),
+        expect("ConfigVersion", "memo", "Field.typeRef")
+    );
 }
 
 /// FR-056-AC-43 (TC-897 step 8): a call of `scale` refuses at the call

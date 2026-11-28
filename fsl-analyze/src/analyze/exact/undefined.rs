@@ -5,9 +5,11 @@ use super::*;
 use crate::exact_probabilistic::{PredicateRole, UndefinedPath, UndefinedRead};
 use fsl_eval::automaton::{Monitor, PropertyAutomaton, QualifiedBoundedMonitor};
 use fsl_eval::simulation::model::{ModelSimulationRequest, PredicateReading};
-use fsl_replay::{ProbabilityUndefinedWitness, replay_probabilistic_undefined};
+use fsl_replay::{replay_probabilistic_undefined_with_work_scope, ProbabilityUndefinedWitness};
+use ix_trace_rs::implements;
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-33")]
 pub(super) fn run(
     simulation: ModelSimulationRequest<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -17,6 +19,7 @@ pub(super) fn run(
     cancel: &Cancel,
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    work: &filament_exact::WorkScope,
 ) -> EngineReport {
     // The checked-subject undefined entry is independent of the numerical
     // threshold and covers each supported product-predicate read.
@@ -35,7 +38,13 @@ pub(super) fn run(
         Ok(system) => system,
         Err(error) => return build_refusal(ProductRefusal::Admission(error), subject),
     };
-    let built = materialize(&system, claim, &path, monitor, limits, cancel);
+    record_work_checkpoint(ExactWorkPhase::UndefinedMaterialization, work, false);
+    let built = materialize(&system, claim, &path, monitor, limits, cancel, work);
+    record_work_checkpoint(
+        ExactWorkPhase::UndefinedMaterialization,
+        work,
+        built.is_ok(),
+    );
     let (mut witness, scheduler) = match built {
         Ok(built) => built,
         Err(ProducerFailure::Invariant) => return broken(),
@@ -47,33 +56,26 @@ pub(super) fn run(
     let Some(package) = system.source_package() else {
         return not_yet();
     };
-    match replay_probabilistic_undefined(
+    record_work_checkpoint(ExactWorkPhase::UndefinedReplay, work, false);
+    let replay = replay_probabilistic_undefined_with_work_scope(
         package,
         &system,
         &witness.path.item,
         &witness,
         limits,
         cancel,
-    ) {
+        Some(work),
+    );
+    record_work_checkpoint(
+        ExactWorkPhase::UndefinedReplay,
+        work,
+        matches!(&replay, Ok(ProbabilityWitnessReplay::Reproduced(_))),
+    );
+    match replay {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
-            let quantile_bound;
-            let Some(claim_type) = super::probabilistic_bound_type(&claim.form) else {
+            let Some(bound) = fsl_replay::shared_wire::ProbabilisticBound::of_claim(&claim.form)
+            else {
                 return not_yet();
-            };
-            let bound = match &claim.form {
-                ProbForm::Reach { bound, .. }
-                | ProbForm::Probability { bound, .. }
-                | ProbForm::LongRunFraction { bound, .. }
-                | ProbForm::ExpectedReward { bound, .. }
-                | ProbForm::MeanOfFraction { bound, .. } => bound,
-                ProbForm::Quantile { q, threshold, .. } => {
-                    quantile_bound = match threshold {
-                        Bound::AtMost(_) => Bound::AtLeast(q.clone()),
-                        Bound::AtLeast(_) => Bound::AtMost(q.clone()),
-                    };
-                    &quantile_bound
-                }
-                _ => return not_yet(),
             };
             let scope = package.graph().scope();
             let Some(occurrence) = claim.occurrence() else {
@@ -82,11 +84,18 @@ pub(super) fn run(
             let wire = fsl_replay::probabilistic_undefined_wire(
                 &witness,
                 occurrence,
-                bound,
-                claim_type,
-                scope.types(),
-                scope.variant_types(),
-                &|state| system.state_key(state).ok().map(|(_, key)| key),
+                &bound,
+                &fsl_replay::ProbabilisticValueSchema::new(
+                    scope.types(),
+                    scope.variant_types(),
+                    scope.enums(),
+                ),
+                &|state| {
+                    system
+                        .state_key(state, fsl_foundation::IdentityLimits::default())
+                        .ok()
+                        .map(|(_, key)| key)
+                },
                 &scheduler,
             );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
@@ -127,6 +136,7 @@ type SpelledScheduler = Vec<(
     fsl_eval::simulation::model::ScheduledIdentity,
 )>;
 
+#[implements("FR-203-AC-33")]
 fn materialize(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -134,10 +144,13 @@ fn materialize(
     monitor: Option<Monitor<PropertyAutomaton>>,
     limits: &crate::exact_probabilistic::ExactProbLimits,
     cancel: &Cancel,
+    work: &filament_exact::WorkScope,
 ) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProducerFailure> {
-    materialize_inner(system, claim, path, monitor, limits, cancel).map_err(ProducerFailure::from)
+    materialize_inner(system, claim, path, monitor, limits, cancel, work)
+        .map_err(ProducerFailure::from)
 }
 
+#[implements("FR-203-AC-33")]
 fn materialize_inner(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -145,15 +158,17 @@ fn materialize_inner(
     monitor: Option<Monitor<PropertyAutomaton>>,
     limits: &crate::exact_probabilistic::ExactProbLimits,
     cancel: &Cancel,
+    work: &filament_exact::WorkScope,
 ) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProbabilityWitnessError> {
+    let mut item_meter = work.meter().with_cancel(cancel.clone());
+    charge_undefined_materialization(&mut item_meter, cancel)?;
     let item = fsl_replay::probabilistic_claim_identity(claim)
         .map_err(|_| ProbabilityWitnessError::Refused)?;
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);
     let measured = claim.bounded_measure();
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut measure_meter =
-        filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut measure_meter = work.meter().with_cancel(cancel.clone());
     let mut measure_storage = 0;
     let reward = if measured {
         let kind = match claim.form {
@@ -273,7 +288,7 @@ fn materialize_inner(
             .key(control)
             .map_err(ProbabilityWitnessError::from)?;
         let (raw, _) = system
-            .state_key(initial)
+            .state_key(initial, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ProbabilityWitnessError::Refused)?;
         ProbabilityProductKey::for_formula_state(reference, &raw, &control, limits.document, cancel)
             .map_err(ProbabilityWitnessError::from)?
@@ -329,7 +344,7 @@ fn materialize_inner(
         .map_err(ProbabilityWitnessError::from)?
     } else {
         let (raw, _) = system
-            .state_key(initial)
+            .state_key(initial, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ProbabilityWitnessError::Refused)?;
         ProbabilityProductKey::for_model_state_with_limits(reference, &raw, limits.document, cancel)
             .map_err(ProbabilityWitnessError::from)?
@@ -340,6 +355,7 @@ fn materialize_inner(
     let mut spelled = Vec::new();
     let mut source_key = initial_key.clone();
     for step in &path.steps {
+        charge_undefined_materialization(&mut item_meter, cancel)?;
         if let Some(cause) = cancel.tripped() {
             return Err(ProbabilityWitnessError::Graph(
                 ExactProbabilityGraphError::Cancelled(cause),
@@ -361,7 +377,7 @@ fn materialize_inner(
                     )
                 } else {
                     system
-                        .state_key(&state)
+                        .state_key(&state, fsl_foundation::IdentityLimits::default())
                         .map_err(|_| ProbabilityWitnessError::Refused)?
                         .1
                 },
@@ -387,7 +403,7 @@ fn materialize_inner(
                 }
                 for (transition, post) in candidate_draw.successors {
                     if system
-                        .state_key(&post)
+                        .state_key(&post, fsl_foundation::IdentityLimits::default())
                         .map_err(|_| ProbabilityWitnessError::Refused)?
                         .0
                         == step.target.model
@@ -526,6 +542,27 @@ fn materialize_inner(
         },
         spelled,
     ))
+}
+
+#[implements("FR-203-AC-33")]
+fn charge_undefined_materialization(
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityWitnessError> {
+    meter
+        .charge(filament_exact::Charge::new(
+            filament_exact::ChargePoint::CollectionVisit,
+        ))
+        .map_err(|incomplete| {
+            if let Some(cause) = cancel.tripped() {
+                return ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(
+                    cause,
+                ));
+            }
+            ProbabilityWitnessError::Build(Box::new(ExactProbBuildIssue::Predicate(
+                fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete),
+            )))
+        })
 }
 
 enum ProducerFailure {

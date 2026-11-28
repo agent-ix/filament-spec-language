@@ -73,38 +73,38 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{
-    Atom, AutomatonStateKey, BoundedKind, BoundedState, BoundedTranslation, Letter, Monitor,
-    PropertyAutomaton, SafetyItem, SafetyState, SafetyStates, SafetyTranslation, StateId,
-    SubjectKind, translate, translate_counted,
+    translate, translate_counted, Atom, AutomatonStateKey, BoundedKind, BoundedState,
+    BoundedTranslation, Letter, Monitor, PropertyAutomaton, SafetyItem, SafetyState, SafetyStates,
+    SafetyTranslation, StateId, SubjectKind,
 };
 use fsl_eval::model_subject::{
-    AtomStop, ModelLetters, ModelSubject, ProtocolSubject, refused_invariant,
+    refused_invariant, AtomStop, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
     ModelFinding, ModelSimState, ModelSystem, ProtocolDefinition, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    Capacities, MemoryModel, ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget,
-    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory, activates_on_each, check_protocol_bounds,
-    live_instance_bound,
+    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, MemoryModel,
+    ProtocolFairnessError, ProtocolLoopProofKind, ProtocolLoopProofTarget, ProtocolRefusal,
+    ProtocolSystem, Sc, SubjectMemory,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    BOUND_POSITIONS, ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion,
-    ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress,
-    ZeroProgressError,
+    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
+    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
+    BOUND_POSITIONS,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
-use serde::{Serialize, Serializer, ser::SerializeStruct};
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::certificate::check::{
-    Budgets, Checker, Halt, Step, admit, admit_read_identities, expansion_halt, finish, poll,
-    stopped, widen,
+    admit, admit_read_identities, expansion_halt, finish, poll, stopped, widen, Budgets, Checker,
+    Halt, Step,
 };
 use crate::certificate::recording::Recording;
-use crate::certificate::scc::{Component, ComponentCertificate, check_partition};
-use crate::certificate::{CertificateLocus, CertificateRule};
+use crate::certificate::scc::{check_partition, Component, ComponentCertificate};
+use crate::certificate::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::ClauseRootRefusal;
 use crate::model_check::item::{
     Instance, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
@@ -113,6 +113,7 @@ use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits};
 use crate::proof_result::{IncompleteCause, InstanceBound, MemoryBound, MemoryBoundMember};
 use fsl_eval::smt::SmtEncodingLimits;
 use fsl_package::TemporalClockSelection;
+use ix_trace_rs::implements;
 
 /// One product state of a certificate: its model state's
 /// `filament.simulation.state-key/v1` state key and its automaton state's
@@ -131,9 +132,10 @@ impl Serialize for ProductStateRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use base64::Engine as _;
         let mut object = serializer.serialize_struct("ProductStateRef", 2)?;
-        let model_state =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.model_state.as_bytes());
-        object.serialize_field("model_state", &model_state)?;
+        object.serialize_field(
+            "model_state",
+            &crate::shared_wire::state_key_text(&self.model_state),
+        )?;
         let octets = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(self.automaton_state.as_bytes());
         object.serialize_field("automaton_state", &octets)?;
@@ -299,6 +301,7 @@ impl<'c> Proof<'c> {
 /// [`ClosureRefusal`] when the subject does not admit, a root is unbounded,
 /// the item has no translation or no instance, or a state cannot be
 /// encoded. A refusal is never an acceptance.
+#[implements("FR-338-AC-1")]
 pub fn check_closure(
     request: &CertificateRequest<'_>,
     certificate: &ClosureCertificate,
@@ -318,6 +321,7 @@ pub fn check_closure(
 /// [`ClosureRefusal`] as [`check_closure`] returns it, and
 /// [`ClosureRefusal::NotLiveness`] when the item is not a TP-4 clause. A
 /// refusal is never an acceptance.
+#[implements("FR-339-AC-1")]
 pub fn check_components(
     request: &CertificateRequest<'_>,
     certificate: &ComponentCertificate,
@@ -415,6 +419,7 @@ pub struct ProtocolCertificateRequest<'a> {
 ///
 /// [`ClosureRefusal`] as [`check_closure`] returns it, and
 /// [`ClosureRefusal::Protocol`] when the protocol system does not build.
+#[implements("FR-338-AC-21", "FR-338-AC-22", "FR-338-AC-26")]
 pub fn check_protocol_closure(
     request: &ProtocolCertificateRequest<'_>,
     certificate: &ClosureCertificate,
@@ -433,6 +438,7 @@ pub fn check_protocol_closure(
 ///
 /// [`ClosureRefusal`] as [`check_protocol_closure`] and [`check_components`]
 /// return it.
+#[implements("FR-339-AC-7")]
 pub fn check_protocol_components(
     request: &ProtocolCertificateRequest<'_>,
     certificate: &ComponentCertificate,
@@ -442,6 +448,7 @@ pub fn check_protocol_components(
     check_protocol(request, Proof::components(certificate), limits, cancel)
 }
 
+#[implements("FR-338-AC-31", "FR-339-AC-7")]
 fn check_protocol(
     request: &ProtocolCertificateRequest<'_>,
     proof: Proof<'_>,
@@ -627,6 +634,7 @@ struct Bounds {
 /// [`check_closure`] over `system`, whose model is `model` and whose memory
 /// and instance bounds are `bounds`.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-338-AC-1", "FR-339-AC-6")]
 fn check_system<S: SubjectSystem>(
     system: &S,
     model: &ModelSystem<'_>,
@@ -661,6 +669,17 @@ fn check_system<S: SubjectSystem>(
         }
         Err(refusal) => return Err(refusal.into()),
     };
+    // FR-125 Instancing orders the refusals: an unbounded root (above), then
+    // no initial state, then no instance.
+    if system
+        .initial_iter()
+        .next()
+        .transpose()
+        .map_err(|error| ClosureRefusal::Protocol(error.into()))?
+        .is_none()
+    {
+        return Err(ClosureRefusal::NoInitialState);
+    }
     if instances.is_empty() {
         return Err(ClosureRefusal::NoInstance);
     }
@@ -670,15 +689,6 @@ fn check_system<S: SubjectSystem>(
     }
     if proof.components.is_none() && instances.iter().any(liveness) {
         return Err(ClosureRefusal::LivenessNeedsComponents);
-    }
-    if system
-        .initial_iter()
-        .next()
-        .transpose()
-        .map_err(|error| ClosureRefusal::Protocol(error.into()))?
-        .is_none()
-    {
-        return Err(ClosureRefusal::NoInitialState);
     }
 
     // Admission reads at most one entry per product state the state budget
@@ -775,6 +785,23 @@ fn check_system<S: SubjectSystem>(
         }
         (closure, _, _) => Ok(closure),
     }
+}
+
+/// FR-339's partition rule over a product with no reached state: only no
+/// component partitions it. The locus is the first component's first listed
+/// state, or the `components` member when that component lists none.
+fn partition_of_no_state(components: &[Component]) -> TemporalCertificateCheck {
+    let Some(first) = components.first() else {
+        return TemporalCertificateCheck::Accepted;
+    };
+    let at = first.states.first().map_or(
+        CertificateLocus::CertificateMember(CertificateMember::Components),
+        |state| CertificateLocus::ProductState(state.clone()),
+    );
+    TemporalCertificateCheck::Rejected(CertificateRejection {
+        rule: CertificateRule::NotPartition,
+        at,
+    })
 }
 
 fn rejected(rule: CertificateRule, at: ProductStateRef) -> TemporalCertificateCheck {
@@ -931,6 +958,7 @@ impl<S: SubjectSystem> Check<'_, S> {
     /// FR-339: the partition `components` of the closure the run accepted,
     /// checked over the product graph the run recorded and the clause's
     /// resolved constraints. It reads no fact but the recorded ones.
+    #[implements("FR-339-AC-1", "FR-339-AC-2")]
     fn components(
         &self,
         recording: Recording<S>,
@@ -954,8 +982,14 @@ impl<S: SubjectSystem> Check<'_, S> {
                 ConstraintError::Protocol(error) => ClosureRefusal::Fairness(error),
                 ConstraintError::Unnumbered => fault("every-recorded-transition-is-numbered"),
             })?;
+        // The negated liveness automaton has no successor for any initial
+        // letter when the claim already holds at every initial state: no
+        // product state is reached, whatever else the closure lists.
+        if recorded.graph.is_empty() {
+            return Ok(partition_of_no_state(components));
+        }
         check_partition(&recorded.graph, components, &constraints, self.cancel)
-            .map_err(|_| fault("a-reached-closure-holds-an-initial-state"))
+            .map_err(|_| fault("the-partitioned-product-holds-a-state"))
     }
 
     fn run(&mut self, instances: &mut [Instance]) -> Step<()> {
@@ -1658,6 +1692,7 @@ impl<S: SubjectSystem> Check<'_, S> {
     /// The closure of a bounded instance (TP-2): every product state of a
     /// model state, its bounded monitor state and, up to one past the
     /// horizon, its counted distance, from the initial states.
+    #[implements("FR-338-AC-10", "FR-338-AC-28")]
     fn run_bounded(
         &mut self,
         binding: Option<&fsl_eval::model_subject::ModelInstance>,
@@ -2297,7 +2332,7 @@ fn fault(invariant: &'static str) -> ClosureRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProtocolLoopProofKind, ProtocolLoopProofTarget, loop_proof_target};
+    use super::{loop_proof_target, ProtocolLoopProofKind, ProtocolLoopProofTarget};
     use crate::ModelCheckItem;
     use fsl_semantics::check::ProtocolNodeId;
 

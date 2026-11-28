@@ -17,7 +17,9 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{AdmittedImport, CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{
+    AdmittedImport, CheckedGraph, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::library::{ImportView, LibraryName, LibraryPackage};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
@@ -29,7 +31,7 @@ pub(crate) const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 pub(crate) fn compile(
     source: &str,
     imports: Vec<AdmittedImport>,
-) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "imported-call"),
         "imported-call.native",
@@ -62,7 +64,7 @@ pub(crate) fn admitted_library(
     identity: &str,
     body: &str,
     exports: &[&str],
-) -> Result<AdmittedImport, Vec<CheckRefusal>> {
+) -> Result<AdmittedImport, Vec<SemanticCheckRefusal>> {
     let graph = compile(&format!("{HEADER}{body}"), Vec::new())?;
     let library = LibraryName::new(identity).expect("a non-empty identity");
     let package = LibraryPackage {
@@ -79,6 +81,7 @@ pub(crate) fn admitted_library(
                 )
             })
             .collect(),
+        model_correspondence: Vec::new(),
     };
     Ok(AdmittedImport {
         identity: library,
@@ -92,7 +95,7 @@ const LOCAL_F2: &str = "function f2 using v(x: Int[0, 9]): Boolean pure { x < 5 
 
 /// Checks one body that calls `f` as `g::f` and again as the local `f2`,
 /// each over the same argument shape; returns the two outcomes.
-type Checked = Result<CheckedGraph, Vec<CheckRefusal>>;
+type Checked = Result<CheckedGraph, Vec<SemanticCheckRefusal>>;
 
 fn pair(parameter: &str, argument: &str, wrap: impl Fn(&str) -> String) -> (Checked, Checked) {
     let library = admitted_library("test/geometry", GEOMETRY_F, &["f"]).expect("library checks");

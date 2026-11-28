@@ -8,13 +8,23 @@
 //! through FR-107 in ascending reference-key order under a fresh meter, as
 //! an invariant is (FR-120 "Invariants").
 
-use super::contracts::{Verdict, invariant_observations, verdict};
+use super::contracts::{invariant_observations, verdict, Verdict};
 use super::walk::{exhausted, stop, walk_of};
-use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem};
+use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::reduction::ConstraintValue;
+use filament_semantic_value::location::ExpressionLocation;
+use ix_trace_rs::implements;
 
 impl ModelSystem<'_> {
+    /// Where the body of the state clause `name` is, on either route: the
+    /// locus of an undefined guard or state constraint (FR-170
+    /// "Undefined"). `None` for a name with no clause.
+    #[implements("FR-168-AC-11", "FR-168-AC-13")]
+    pub fn state_clause_locus(&self, name: &str) -> Option<ExpressionLocation> {
+        self.evaluator().state_clause_location(name)
+    }
+
     /// The checked state constraint named `name`, identified by its node
     /// key (FR-158). Invariants, preconditions and postconditions are not
     /// valid constraint selections.

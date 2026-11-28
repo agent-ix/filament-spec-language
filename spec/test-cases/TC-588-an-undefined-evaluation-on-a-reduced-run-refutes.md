@@ -20,7 +20,9 @@ Scope: FR-160-AC-5.
 ## Test Procedure
 
 Fixture: ADR-021 §7.1's subject with its symmetry declaration, and
-`always holds(6 mod (2 - c.versionNumber) >= 0)` for `c = a`.
+`always holds(odd_value(c.versionNumber))` for `c = a`, with
+`function odd_value using v(n: Int[0, 3]): Boolean pure
+{ 6 mod (2 - n) >= 0 }`, its body checked under `Kernel` (FR-495-AC-3).
 
 1. Run the item with symmetry and settle it after replay.
 2. Run the item unreduced.

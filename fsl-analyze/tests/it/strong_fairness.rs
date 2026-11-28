@@ -28,7 +28,7 @@ use ix_trace_rs::trace;
 
 use crate::counter::{document_with_ranged_parameter, subject, Letters, UNLIMITED};
 use crate::lasso_replay::{found, refusal, replay_with};
-use crate::liveness::{counter, fixture, is_zero, Fixture};
+use crate::liveness_support::{counter, fixture, is_zero, Fixture};
 use crate::strong_hint::{is_one, mutex};
 
 const WEAK_EACH: &str = "fair weak each M::Counter::setTo;";

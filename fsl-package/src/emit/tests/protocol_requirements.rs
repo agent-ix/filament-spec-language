@@ -333,11 +333,11 @@ fn requirement_order_does_not_change_the_emitted_set() {
     assert!(rows
         .windows(2)
         .all(|pair| pair[0].required_temporal < pair[1].required_temporal));
+    // A row names the clause by its structural id; the wire writes the owner
+    // operand in the clause path as a graph index.
+    let clause_id = checked_node_id_of(&graph.key_of_value(&clause["node_id"]).unwrap());
     for row in rows {
-        assert_eq!(
-            serde_json::to_value(&row.clause).unwrap(),
-            clause["node_id"]
-        );
+        assert_eq!(row.clause, clause_id);
         assert_eq!(
             row.activation,
             filament_contract_model::CheckedProtocolActivation::Origin
@@ -870,7 +870,7 @@ fn a_requirement_with_a_protocol_profile_emits_a_protocol_node() {
 }
 
 /// The refusals of `clauses` checked over [`model`] with `profiles`.
-fn refusals_of(profiles: &str, clauses: &str) -> Vec<fsl_semantics::check::CheckRefusal> {
+fn refusals_of(profiles: &str, clauses: &str) -> Vec<fsl_semantics::check::SemanticCheckRefusal> {
     let document = model();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let unit = format!(
@@ -908,7 +908,8 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
         )
     );
     let refusals = refusals_of(PROFILES, &unit);
-    let name = |refusal: &fsl_semantics::check::CheckRefusal| match &refusal.location.origin {
+    let name = |refusal: &fsl_semantics::check::SemanticCheckRefusal| match &refusal.location.origin
+    {
         filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name } => {
             name.clone()
         }

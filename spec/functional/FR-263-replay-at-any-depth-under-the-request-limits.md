@@ -38,8 +38,9 @@ request (ADR-030 D-4.8, D-3).
    published default.
 2. **Request decode.** When a `stage_limits` entry names a setting that is
    in neither FR-255's setting table nor its accounting table, or names
-   `replay.input_bytes`, request decode SHALL refuse it, naming the entry
-   (FR-071). An entry naming an accounting counter sets that counter of the
+   `replay.input_bytes` or a stage setting replay does not consume (FR-255
+   "Lifecycle caller-limit coverage"), request decode SHALL refuse it, naming
+   the entry (FR-071). An entry naming an accounting counter sets that counter of the
    call's accounting limits (FR-255 Behavior 10).
 3. **Values.** Replay SHALL decode each canonical assignment value into a
    `filament_exact::Value` from `quire-canonical`'s reader tree (FR-259), over
@@ -58,7 +59,7 @@ request (ADR-030 D-4.8, D-3).
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-263-AC-1 | On a thread with a 512 KiB stack, a request whose source holds a function with a 100,000-term sum over a recursive list parameter, whose assignment carries a 100,000-long recursive list value, whose `stage_limits` carries the proving run's raised `s1.*` and `s3.*` settings, and whose `replay.input_bytes` is raised to fit the request, replays to the same verdict as the proving run, and its recompiled `package_id` equals the request's. | Test (TC-736) |
+| FR-263-AC-1 | On a thread with a 512 KiB stack, a request whose source holds a function with a 100,000-term sum over a recursive list parameter, whose assignment carries a 100,000-long recursive list value, whose `stage_limits` carries raised `s1.*`, `s3.*`, `i2.*` and `emit.output_bytes` settings, and whose `replay.input_bytes` is raised to fit the request, replays to the same verdict as the proving run, and its recompiled `package_id` equals the request's. | Test (TC-736) |
 | FR-263-AC-2 | For each `s1.*` and `s3.*` setting of FR-255's table, a request whose source reaches that limit at the bound its `stage_limits` entry gives refuses with the recompile stage-limit refusal naming the limit, the bound, the count reached and that setting; the same request with that entry raised to fit recompiles. A request with no `stage_limits` entries recompiles at the published defaults. | Test (TC-737) |
 | FR-263-AC-3 | A request whose `stage_limits` holds an entry `s9.nodes`, or an entry `replay.input_bytes`, refuses at decode naming the entry. A request one byte longer than `replay.input_bytes` at bound `B` refuses with `BoundExceeded`, bound `B`, actual `B + 1` and setting `replay.input_bytes`, and decodes once the library replay entry's limit or FR-255's settings operation given `replay.input_bytes=<B + 1>` (FR-255), which the driver CLI exposes as `--limit` (ADR-029 CB-1) raises it. | Test (TC-737) |
 | FR-263-AC-4 | For each stage reached by replay, every setting belonging to that stage is applied from `stage_limits` at the supplied value and every omitted setting uses its published default; each accounting counter entry is applied to that counter. A stage setting is not applied to another stage or counter. | Test (TC-737, TC-921) |

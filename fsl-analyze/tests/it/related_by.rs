@@ -6,6 +6,7 @@
 //! (one `p: M::Cell` field) and is `related by Owns (k, r.p)` may step only
 //! with `p = d`; a replayed `Pick` with `p = c` matches no enabled step.
 
+use crate::related_by_support::{add_owns_relationship, id};
 use std::collections::BTreeMap;
 
 use filament_exact::Cancel;
@@ -30,39 +31,16 @@ use crate::fill::{
     attempt, contracts, document, instance, json_of, model_subject, package_over, protocol,
     reachable, sc_system, source_memory, unit_text_with, universe, Documents, PACKAGE,
 };
-use crate::model_settle::{envelope_at, protocol_anchor, request};
+use crate::model_settle_support::{envelope_at, protocol_anchor, request};
 use crate::protocol_system::violated;
 
 const NO_ATOMS: Letters = Letters { atom: |_| None };
-
-fn id(suffix: &str) -> String {
-    format!("ix://{PACKAGE}/{suffix}")
-}
 
 /// `fill`'s model with the relationship `owns`, `Cell` to `Cell`.
 fn related_document() -> Vec<u8> {
     let mut doc: Json = serde_json::from_slice(&document()).expect("the fill model is JSON");
     add_owns_relationship(&mut doc);
     doc.to_string().into_bytes()
-}
-
-/// Add the `Cell`-to-`Cell` relationship used by protocol correlation fixtures.
-pub(crate) fn add_owns_relationship(doc: &mut Json) {
-    let cell = doc["types"]
-        .as_array_mut()
-        .expect("types")
-        .iter_mut()
-        .find(|ty| ty["identity"] == json!(id("Cell")))
-        .expect("the Cell type");
-    let many = json!({"lower": 0, "upper": 2, "ordered": false, "unique": true});
-    cell["relationships"] = json!([{
-        "identity": id("relationship/owns"), "category": "structural", "composite": false,
-        "direction": "source-to-target",
-        "origin": {"source": {"sourceIdentity": id("spec"), "path": "model.fspec",
-            "startLine": 1, "startColumn": 1}},
-        "sourceEnd": {"type": id("Cell"), "role": "owner", "multiplicity": many},
-        "targetEnd": {"type": id("Cell"), "role": "owned", "multiplicity": many}
-    }]);
 }
 
 /// The related model with an operation that returns one finite `Cell` value.

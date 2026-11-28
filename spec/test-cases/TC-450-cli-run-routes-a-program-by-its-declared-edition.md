@@ -38,9 +38,10 @@ Scope: FR-100-AC-1 to FR-100-AC-3 and FR-100-AC-25.
    a legacy `work_units` member directly in `call`. Run the program
    `extraction` request twice more: through the command built with no
    features and through the command built with `--all-features`.
-5. Starting from the native-run/1 request of step 1, remove `call` and submit
-   the `1-draft` function-run request with neither `call` nor the FR-031
-   clause-run form.
+5. Submit two native-run/1 requests with none of `call`, `clause` and
+   `items`, each lacking no other member: one selecting the step 1 program,
+   with a `models` and a `libraries` entry naming unavailable files, and one
+   selecting `package` by an unavailable file, with `models` `[]`.
 6. Run a `1-draft` program that imports `test/geometry` and declares
    `model M` by the identity of
    `tests/fixtures/spine-model.semantic-ir.json`, and calls a function using
@@ -68,7 +69,9 @@ Tag the tests `#[trace("TC-450", "FR-100-AC-1")]` (step 1),
   stage `request`, exit 20, no result document, and no model file is read.
   The `extraction` request refuses `invalid-request` naming `extraction` in the
   no-feature build, and `extraction-requires-run` in the feature-enabled build.
-- Step 5: the request refuses `invalid-request` at stage `request`, exit 20,
-  with no result document before model or library reads; the refusal message
-  is exactly `a 1-draft program runs through the spine; the request selects no call`.
+- Step 5: each request refuses `invalid-request` at stage `request`, exit 20,
+  with no result document before package, model or library reads; the refusal
+  message is exactly `a 1-draft program runs through the spine; the request selects no call`.
+  TC-3170 step 7 checks the refusal's `details`, with no program file
+  present.
 - Step 6: exit 0 and a `completed` outcome.

@@ -67,8 +67,6 @@ The crate holds the only copy of a case (FR-565).
   `9.9.9` makes the report say `9.9.9`) needs a rebuild of the copy; the
   version is a compile-time constant. The test covers the first half only and
   carries no `FR-567-AC-5` tag.
-- FR-567's `parity` part reports `no-backend`: FR-563's runner arrives from the
-  jit lane's branch and moves into `fsl-conformance` after this lands.
 
 ## What the driver companion exposes
 

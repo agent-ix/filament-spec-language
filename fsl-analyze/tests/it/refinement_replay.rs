@@ -94,6 +94,7 @@ fn outcome(subject: &Subject<'_>) -> RefinementOutcome {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -118,7 +119,12 @@ fn replay(
         subject.abstract_initials.clone(),
     )
     .expect("the subjects open");
-    replay_refinement_trace(subject.refinement, &systems, payload)
+    replay_refinement_trace(
+        subject.refinement,
+        &systems,
+        payload,
+        &fsl_replay::ModelCheckLimits::default(),
+    )
 }
 
 fn settle(subject: &Subject<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {
@@ -607,11 +613,19 @@ fn drifting_lasso(world: &AuxWorld<'_>) -> TemporalCounterexample {
         let (transition, next) = expansion
             .successors
             .into_iter()
-            .find(|(_, next)| system.state_key(next).is_ok_and(|(key, _)| key == one))
+            .find(|(_, next)| {
+                system
+                    .state_key(next, fsl_foundation::IdentityLimits::default())
+                    .is_ok_and(|(key, _)| key == one)
+            })
             .expect("write(r, 1)");
         prefix.push(ModelStep {
             transition,
-            post_state: system.state_key(&next).expect("a key").0.into(),
+            post_state: system
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
+                .expect("a key")
+                .0
+                .into(),
             delay: None,
         });
         state = next;
@@ -718,6 +732,54 @@ fn a_proved_liveness_half_is_uncertified_and_a_replayed_lasso_refutes() {
     assert!(settled.record.counterexample.is_some());
     assert_eq!(settled.safety, Some(proved(Certification::Certified)));
     assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
+}
+
+/// FR-630-AC-7/10 (TC-1590): the Box and nested Parcel initial snapshots hold
+/// a reference from `a` to distinct object `b`, and the checked simulation
+/// certificates accept the resulting abstract images.
+#[trace("TC-1590", "FR-630-AC-7", "FR-630-AC-10")]
+#[test]
+fn composite_nested_reference_refinements_receive_checked_certificates() {
+    for (name, field, variant) in [
+        (
+            "Box",
+            "box",
+            RingVariant {
+                boxed_reference: true,
+                composite_two_targets: true,
+                ..RingVariant::default()
+            },
+        ),
+        (
+            "Parcel",
+            "parcel",
+            RingVariant {
+                parcel_reference: true,
+                composite_two_targets: true,
+                ..RingVariant::default()
+            },
+        ),
+    ] {
+        let refinement = ring_is_queue(&format!("items = sequence[]; {field} = self.{field};"))
+            .replace("Q::Queue::enq(self.ring, x)", "stutter")
+            .replace("Q::Queue::deq(self.ring)", "stutter");
+        let world = RingWorld::with(variant, &refinement);
+        let subject = ring(&world);
+        let checked = outcome(&subject);
+        let settled = settle_item(&subject, &checked);
+        assert_eq!(
+            settled.record.value,
+            proved(Certification::Certified),
+            "{name}: {:?}",
+            settled.record
+        );
+        assert_eq!(settled.record.label, ResultLabel::Proved, "{name}");
+        assert_eq!(
+            settled.safety,
+            Some(proved(Certification::Certified)),
+            "{name}"
+        );
+    }
 }
 
 /// FR-899-AC-1/AC-5 (TC-2536/TC-550): a hidden-field peek loop refutes with
@@ -853,7 +915,11 @@ fn walk(system: &ModelSystem<'_>, operations: &[String]) -> Vec<ModelStep> {
             .unwrap_or_else(|| panic!("{operation} is enabled"));
         steps.push(ModelStep {
             transition,
-            post_state: system.state_key(&next).expect("a key").0.into(),
+            post_state: system
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
+                .expect("a key")
+                .0
+                .into(),
             delay: None,
         });
         state = next;

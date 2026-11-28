@@ -1,0 +1,8 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.complete/v1";
+model Config = "catalog/timed";
+dimension Time;
+unit ms : Time = rational(1, 1);
+time Config dense unit ms;
+delay ConfigVersion::attemptUpdate ~ discrete { 1 ms: 9, 3 ms: 1 };

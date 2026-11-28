@@ -33,13 +33,13 @@ use fsl_semantics::model::state::{ModelState, StateModel};
 use ix_trace_rs::trace;
 use serde_json::{json, Value as Json};
 
+#[path = "model_simulation/deep_state_key.rs"]
+mod deep_state_key;
 mod evaluator_closure_cases;
 #[path = "mbt_generate.rs"]
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
-#[path = "model_simulation/deep_state_key.rs"]
-mod deep_state_key;
 #[path = "model_simulation/model_based_run.rs"]
 mod model_based_run;
 #[path = "model_simulation/reference_literals.rs"]
@@ -292,7 +292,7 @@ fn world_with_unbounded_fields(operations: Vec<Json>) -> World {
 fn try_world(
     operations: Vec<Json>,
     clauses: &str,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     build_world(operations, clauses, false)
 }
 
@@ -300,7 +300,7 @@ fn build_world(
     operations: Vec<Json>,
     clauses: &str,
     extras: bool,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     build_world_with(operations, clauses, extras, Vec::new())
 }
 
@@ -309,7 +309,7 @@ fn build_world_with(
     clauses: &str,
     extras: bool,
     relationships: Vec<Json>,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let document = counters_document_with(operations, extras, relationships);
     build_world_document(document, clauses, extras, false)
 }
@@ -319,7 +319,7 @@ fn build_world_with(
 fn build_world_with_enum_mode(
     operations: Vec<Json>,
     clauses: &str,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let mut document: Json =
         serde_json::from_slice(&counters_document_with(operations, false, Vec::new()))
             .expect("the fixture document is JSON");
@@ -367,7 +367,7 @@ fn build_world_document(
     clauses: &str,
     extras: bool,
     enum_mode: bool,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     build_world_document_with_header(document, clauses, "", extras, enum_mode)
 }
 
@@ -377,7 +377,7 @@ fn build_world_document_with_header(
     header: &str,
     extras: bool,
     enum_mode: bool,
-) -> Result<World, Vec<fsl_semantics::check::CheckRefusal>> {
+) -> Result<World, Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let packages = package_input([document.as_slice()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n{header}\
@@ -1343,7 +1343,7 @@ fn a_sampled_trace_replays_and_two_equal_runs_agree() {
     let sampler = sampler();
     let initial = system.initial();
     let (_, initial_key) = system
-        .state_key(&initial[0])
+        .state_key(&initial[0], fsl_foundation::IdentityLimits::default())
         .expect("the state key encodes");
     let sampled = sample_model(&system, 10_000, &sampler, 424_242, 0, 4).expect("samples");
     assert_eq!(sampled.trace.initial, initial_key);
@@ -1696,7 +1696,9 @@ fn an_undecided_contract_is_an_undecided_successor() {
         let world = OrdersWorld::over(&format!("{undecided}{workload}"), wobble);
         let system = world.system();
         let state = system.initial().remove(0);
-        let (bytes, _) = system.state_key(&state).expect("a key");
+        let (bytes, _) = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("a key");
         let expected = UndecidedSuccessor {
             state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
         };
@@ -2101,7 +2103,10 @@ pub(super) fn admitted_raw_key(
         .expect("admitted raw identity");
     assert_eq!(
         bytes,
-        system.state_key(state).expect("legacy raw identity").0
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("legacy raw identity")
+            .0
     );
     bytes
 }
@@ -2153,7 +2158,9 @@ fn raw_model_key_preserves_legacy_reference_enum_and_extent_vectors() {
     );
     let enum_system = self::system(&enums, vec![first, second], &["c1", "c2"], UNLIMITED);
     let states = enum_system.initial();
-    let first = enum_system.state_key(&states[0]).expect("enum key");
+    let first = enum_system
+        .state_key(&states[0], fsl_foundation::IdentityLimits::default())
+        .expect("enum key");
     assert_eq!(bounded(&enum_system, &states[0]), first.0);
     use fsl_eval::simulation::model::ModelKeyError;
     let identity = fsl_foundation::IdentityLimits::default();
@@ -2236,13 +2243,16 @@ fn raw_model_key_preserves_legacy_reference_enum_and_extent_vectors() {
     );
     assert_eq!(bounded(&enum_system, &states[0]), first.0);
     assert_eq!(
-        enum_system.state_key(&states[0]).unwrap().0,
+        enum_system
+            .state_key(&states[0], fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0,
         first.0,
         "caller denial/cancellation must not change the next legacy call"
     );
 
     let second = enum_system
-        .state_key(&states[1])
+        .state_key(&states[1], fsl_foundation::IdentityLimits::default())
         .expect("permuted enum key");
     assert_eq!(
         first, second,
@@ -2290,8 +2300,12 @@ fn raw_model_key_preserves_legacy_reference_enum_and_extent_vectors() {
     );
     let extent_system = self::system(&extents, vec![linked, unlinked], &["c1", "c2"], UNLIMITED);
     let states = extent_system.initial();
-    let linked = extent_system.state_key(&states[0]).expect("extent key");
-    let unlinked = extent_system.state_key(&states[1]).expect("unlinked key");
+    let linked = extent_system
+        .state_key(&states[0], fsl_foundation::IdentityLimits::default())
+        .expect("extent key");
+    let unlinked = extent_system
+        .state_key(&states[1], fsl_foundation::IdentityLimits::default())
+        .expect("unlinked key");
     assert_eq!(bounded(&extent_system, &states[0]), linked.0);
     assert_eq!(bounded(&extent_system, &states[1]), unlinked.0);
     assert_ne!(
@@ -2326,7 +2340,7 @@ fn bounded_raw_model_key_refuses_large_initial_and_post_state_growth() {
     let system = self::system(&world, vec![initial], &[&large], UNLIMITED);
     let state = system.initial().remove(0);
     let legacy = system
-        .state_key(&state)
+        .state_key(&state, fsl_foundation::IdentityLimits::default())
         .expect("legacy identity fits its independent default cap")
         .0;
     assert!(legacy.len() > large.len());
@@ -2349,7 +2363,13 @@ fn bounded_raw_model_key_refuses_large_initial_and_post_state_growth() {
         "the large source reaches actual before-growth admission"
     );
     assert!(denied.storage <= denied.storage_limit);
-    assert_eq!(system.state_key(&state).unwrap().0, legacy);
+    assert_eq!(
+        system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0,
+        legacy
+    );
 
     let large = "y".repeat(256 * 1024);
     let spawn = operation("spawn", &[], None, frame(&[], true, false));
@@ -2477,8 +2497,12 @@ fn states_that_differ_only_in_extents_have_different_keys() {
         format!("{:?}", origin.state().extents),
         "different extents"
     );
-    let (_, origin_key) = system.state_key(origin).expect("encodes");
-    let (_, recreated_key) = system.state_key(&recreated).expect("encodes");
+    let (_, origin_key) = system
+        .state_key(origin, fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
+    let (_, recreated_key) = system
+        .state_key(&recreated, fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
     assert!(origin_key != recreated_key, "two states, two keys");
 }
 
@@ -2509,8 +2533,12 @@ fn a_repeated_extent_pair_is_a_different_state() {
     let system = self::system(&world, vec![once, twice], &["c1", "c2"], UNLIMITED);
     let initial = system.initial();
     assert_eq!(initial.len(), 2, "both snapshots are admitted");
-    let (_, first) = system.state_key(&initial[0]).expect("encodes");
-    let (_, second) = system.state_key(&initial[1]).expect("encodes");
+    let (_, first) = system
+        .state_key(&initial[0], fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
+    let (_, second) = system
+        .state_key(&initial[1], fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
     assert!(first != second, "one pair and a repeated pair are two keys");
     assert_eq!(stats(&explore(&system)).0, 2);
 }
@@ -2623,7 +2651,6 @@ fn float_snapshot(world: &mut World, name: &str, overrides: Json) -> DocumentRef
 
 #[trace("TC-3006", "FR-056-AC-60")]
 #[test]
-#[ignore = "QSL-2878: the explored float model yields no IEEE-bits state where the test expects [13830554455654793216]"]
 fn a_float_field_model_explores_by_its_ieee_bits() {
     let mut world = float_world();
     let one = float_start(&mut world, "one", "3ff0000000000000");
@@ -2635,7 +2662,22 @@ fn a_float_field_model_explores_by_its_ieee_bits() {
         .map(|(_, state)| float_bits(&state.0, "c1"))
         .collect();
     assert_eq!(successors, [0xbff0_0000_0000_0000]);
-    assert_eq!(stats(&explore(&from_one)).0, 2);
+    let from_one_stats = stats(&explore(&from_one));
+    assert_eq!(from_one_stats.0, 2, "the two IEEE states are reachable");
+    assert_eq!(from_one_stats.1, 2, "one candidate leaves each state");
+
+    let sampled = sample_model(&from_one, 10_000, &sampler(), 424_242, 0, 2)
+        .expect("the two-step float simulation completes");
+    assert_eq!(sampled.trace.steps.len(), 2);
+    assert!(sampled.trace.findings.is_empty(), "the run has no flag");
+    let last_change = sampled.effects[1]
+        .changed
+        .iter()
+        .find(|change| change.field == "a")
+        .expect("the second flip changes a");
+    let last_bits: Json = serde_json::from_str(last_change.post.as_deref().expect("post value"))
+        .expect("the float effect is canonical JSON");
+    assert_eq!(last_bits["bits"], "3ff0000000000000");
 
     let from_zero = system(&world, vec![zero], &["c1"], UNLIMITED);
     let mut successors: Vec<u64> = successors_of(&from_zero, 0)
@@ -2644,7 +2686,9 @@ fn a_float_field_model_explores_by_its_ieee_bits() {
         .collect();
     successors.sort_unstable();
     assert_eq!(successors, [0x0000_0000_0000_0000, 0x8000_0000_0000_0000]);
-    assert_eq!(stats(&explore(&from_zero)).0, 2);
+    let from_zero_stats = stats(&explore(&from_zero));
+    assert_eq!(from_zero_stats.0, 2, "the signed-zero states are distinct");
+    assert_eq!(from_zero_stats.1, 4, "each signed zero has two candidates");
 }
 
 /// FR-056-AC-58 (TC-3005): model state identity retains the Float64 bits of
@@ -2666,8 +2710,12 @@ fn float_model_state_keys_distinguish_signed_zero() {
         .iter()
         .find(|state| float_bits(state.state(), "c1") == 0x8000_0000_0000_0000)
         .expect("the -0 state is present");
-    let (_, plus_key) = system.state_key(plus).expect("plus-zero key encodes");
-    let (_, minus_key) = system.state_key(minus).expect("minus-zero key encodes");
+    let (_, plus_key) = system
+        .state_key(plus, fsl_foundation::IdentityLimits::default())
+        .expect("plus-zero key encodes");
+    let (_, minus_key) = system
+        .state_key(minus, fsl_foundation::IdentityLimits::default())
+        .expect("minus-zero key encodes");
     assert_ne!(
         plus_key, minus_key,
         "states differing only by signed zero have distinct keys"
@@ -2942,10 +2990,10 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
         assert_eq!(levels.elements().len(), 2);
     }
     let (_, plus_key) = zero_system
-        .state_key(&initial[0])
+        .state_key(&initial[0], fsl_foundation::IdentityLimits::default())
         .expect("plus-zero state key encodes");
     let (_, minus_key) = zero_system
-        .state_key(&initial[1])
+        .state_key(&initial[1], fsl_foundation::IdentityLimits::default())
         .expect("minus-zero state key encodes");
     assert_ne!(
         plus_key, minus_key,

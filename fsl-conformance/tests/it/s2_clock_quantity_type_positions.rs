@@ -46,7 +46,7 @@ fn by_name<'a>(unit: &'a fsl_forms::ParsedUnit, name: &str) -> &'a DeclarationFo
         .form()
 }
 
-fn span_text<'a>(source: &'a str, span: Span) -> &'a str {
+fn span_text(source: &str, span: Span) -> &str {
     &source[span.start..span.end]
 }
 
@@ -147,7 +147,7 @@ fn clock_and_quantity_forms_keep_type_position_and_span_under_each_facet() {
         assert_eq!(selected.forms().len(), plain.forms().len());
 
         for (name, expected) in [("f", "clock"), ("g", "quantity")] {
-            let DeclarationForm::Function(function) = by_name(&selected, name) else {
+            let DeclarationForm::Function(function) = by_name(selected, name) else {
                 panic!("function {name}");
             };
             if expected == "clock" {
@@ -159,14 +159,14 @@ fn clock_and_quantity_forms_keep_type_position_and_span_under_each_facet() {
             }
         }
 
-        let DeclarationForm::Function(predicate) = by_name(&selected, "p") else {
+        let DeclarationForm::Function(predicate) = by_name(selected, "p") else {
             panic!("predicate form");
         };
         assert_eq!(predicate.kind(), fsl_forms::DeclarationKind::Predicate);
         assert_clock(text, &predicate.parameters[0].1);
         assert_quantity(text, &predicate.parameters[1].1);
 
-        let DeclarationForm::Object(object) = by_name(&selected, "O") else {
+        let DeclarationForm::Object(object) = by_name(selected, "O") else {
             panic!("object form");
         };
         let operations: Vec<_> = object
@@ -186,34 +186,34 @@ fn clock_and_quantity_forms_keep_type_position_and_span_under_each_facet() {
             operations[1].result.as_ref().expect("Quantity result"),
         );
 
-        let DeclarationForm::Record(record) = by_name(&selected, "R") else {
+        let DeclarationForm::Record(record) = by_name(selected, "R") else {
             panic!("record form");
         };
         assert_clock(text, &record.fields[0].type_form);
         assert_quantity(text, &record.fields[1].type_form);
 
-        let DeclarationForm::Tuple(tuple) = by_name(&selected, "T") else {
+        let DeclarationForm::Tuple(tuple) = by_name(selected, "T") else {
             panic!("tuple form");
         };
         assert_clock(text, &tuple.elements[0]);
         assert_quantity(text, &tuple.elements[1]);
 
-        let DeclarationForm::Union(union) = by_name(&selected, "U") else {
+        let DeclarationForm::Union(union) = by_name(selected, "U") else {
             panic!("union form");
         };
         assert_clock(text, &union.members[0].payload[0]);
         assert_quantity(text, &union.members[1].payload[0]);
 
-        let DeclarationForm::Alias(alias_clock) = by_name(&selected, "AliasClock") else {
+        let DeclarationForm::Alias(alias_clock) = by_name(selected, "AliasClock") else {
             panic!("Clock alias");
         };
         assert_clock(text, &alias_clock.target);
-        let DeclarationForm::Alias(alias_quantity) = by_name(&selected, "AliasQuantity") else {
+        let DeclarationForm::Alias(alias_quantity) = by_name(selected, "AliasQuantity") else {
             panic!("Quantity alias");
         };
         assert_quantity(text, &alias_quantity.target);
 
-        let DeclarationForm::Record(collections) = by_name(&selected, "C") else {
+        let DeclarationForm::Record(collections) = by_name(selected, "C") else {
             panic!("collection record");
         };
         for (index, field) in collections.fields.iter().enumerate() {

@@ -7,6 +7,7 @@
 //! `NodeKey`, and constructs the import view and package source map. It
 //! returns staged refusals with IR's loci and the caller's exact limits.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -506,6 +507,8 @@ fn occurrence(
 /// "Operand index segments"): every id the package holds resolves its index
 /// segments against this graph.
 pub(crate) fn wire_graph(package: &CheckedPackageV2) -> Result<WireGraph, WireIdError> {
+    #[cfg(test)]
+    WIRE_GRAPH_BUILD_COUNT.with(|count| count.set(count.get() + 1));
     let graph = package.resolved_graph();
     let ids: Vec<_> = graph
         .nodes
@@ -513,6 +516,21 @@ pub(crate) fn wire_graph(package: &CheckedPackageV2) -> Result<WireGraph, WireId
         .map(|node| node.node_id.clone())
         .collect();
     WireGraph::with_operand_rows(&ids, &graph.operand_rows)
+}
+
+#[cfg(test)]
+thread_local! {
+    static WIRE_GRAPH_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_wire_graph_build_count() {
+    WIRE_GRAPH_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn wire_graph_build_count() -> usize {
+    WIRE_GRAPH_BUILD_COUNT.with(std::cell::Cell::get)
 }
 
 /// Exact unit identity carried by one admitted compound-unit type node.
@@ -702,7 +720,7 @@ impl SettingLimits for V2ReadLimits {
 
 /// The setting that raises each of IR's reader limits (FR-255's `i2.*`
 /// rows).
-const fn limit_setting(kind: CheckedPackageLimit) -> Setting {
+pub(crate) const fn limit_setting(kind: CheckedPackageLimit) -> Setting {
     match kind {
         CheckedPackageLimit::Bytes => Setting::I2InputBytes,
         CheckedPackageLimit::Nodes => Setting::I2Nodes,
@@ -903,10 +921,11 @@ pub(crate) fn read_checked_package_v2_at(
                 library: identity,
                 imports: Vec::new(),
                 exports,
+                model_correspondence,
             };
             match ImportView::of(&candidate) {
                 Ok(view) => Ok(Staged::new(V2Read {
-                    package: view.with_model_correspondence(model_correspondence),
+                    package: view,
                     source_map,
                     effective_limits: limits,
                     admitted: Arc::from(package),
@@ -1426,9 +1445,9 @@ impl AdmittedPackageRead<'_> {
         hold_closure(self.source, &mut held);
         let dependencies = held
             .iter()
-            .map(|(identity, source)| {
+            .map(|(identity, (_, linked))| {
                 let admitted = self.dependencies.package(identity).ok_or_else(fault)?;
-                let emission = source.remembered_emission().ok_or_else(fault)?;
+                let emission = linked.ok_or_else(fault)?;
                 Ok((admitted, emission))
             })
             .collect::<Result<Vec<_>, ViewFailure>>()?;
@@ -1564,16 +1583,19 @@ pub fn supply_closure(
     .supply(package, evidence)
 }
 
-/// Every package of `package`'s dependency closure, by recomputed
-/// library name.
-fn hold_closure<'p>(
-    package: &'p CheckedPackage,
-    held: &mut BTreeMap<LibraryName, &'p CheckedPackage>,
-) {
-    let mut pending = vec![package];
+/// One library of a closure: its checked package, and the emission the
+/// closure's root linked it at.
+type HeldLibrary<'p> = (&'p CheckedPackage, Option<&'p Emission>);
+
+/// Every library of `root`'s dependency closure, by recomputed library name,
+/// as `root` linked it.
+#[implements("FR-640-AC-17")]
+fn hold_closure<'p>(root: &'p CheckedPackage, held: &mut BTreeMap<LibraryName, HeldLibrary<'p>>) {
+    let mut pending = vec![root];
     while let Some(package) = pending.pop() {
         for (id, dependency) in package.dependencies() {
-            if held.insert(id.clone(), dependency).is_none() {
+            let library = (&**dependency, root.dependency_emission(id));
+            if held.insert(id.clone(), library).is_none() {
                 pending.push(dependency);
             }
         }
@@ -1583,7 +1605,7 @@ fn hold_closure<'p>(
 /// One [`read_import_view`] call's reads: each package of the closure is
 /// admitted at most once.
 struct ClosureReader<'p> {
-    held: BTreeMap<LibraryName, &'p CheckedPackage>,
+    held: BTreeMap<LibraryName, HeldLibrary<'p>>,
     domain_packages: &'p fsl_semantics::model::intake::PackageInput,
     admitted: BTreeMap<LibraryName, Arc<CheckedPackageV2>>,
     limits: V2ReadLimits,
@@ -1591,15 +1613,17 @@ struct ClosureReader<'p> {
 }
 
 impl ClosureReader<'_> {
-    /// `package`, emitted and read under `identity`, with its closure's
-    /// admitted packages supplied first.
+    /// `package` read under `identity` from the emission it was linked at,
+    /// emitted when none was, with its closure's admitted packages supplied
+    /// first.
     fn read(
         &mut self,
         package: &CheckedPackage,
+        linked: Option<&Emission>,
         identity: LibraryName,
     ) -> Result<V2Read, ImportViewRefusal> {
         let fresh;
-        let emission = match package.remembered_emission() {
+        let emission = match linked {
             Some(emission) => emission,
             None => {
                 fresh = emit_checked(package, self.emit).map_err(|refusal| {
@@ -1691,7 +1715,7 @@ impl ClosureReader<'_> {
             if self.admitted.contains_key(&identity) {
                 continue;
             }
-            let held =
+            let (held, linked) =
                 *self
                     .held
                     .get(&identity)
@@ -1707,7 +1731,7 @@ impl ClosureReader<'_> {
                 }
                 continue;
             }
-            let read = self.read(held, identity.clone())?;
+            let read = self.read(held, linked, identity.clone())?;
             self.admitted.insert(identity, read.admitted);
         }
         Ok(())

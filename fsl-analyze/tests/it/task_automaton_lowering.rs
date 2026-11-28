@@ -9,11 +9,12 @@
 use fsl_eval::simulation::model::{
     TaskProductState, TaskProductSystem, TaskTransitionAction, TimedSystem,
 };
+use fsl_foundation::Setting;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
-use crate::analyze_family_cli::{rpc_snapshot, rpc_unit};
+use crate::analyze_cli_support::{analyze, analyze_under, label, request_over, Run, Workspace};
+use crate::analyze_family_support::{rpc_snapshot, rpc_unit};
 
 /// One always-enabled operation per task, each releasing that task of `set`.
 fn sources(set: &str, tasks: &[&str]) -> String {
@@ -29,6 +30,10 @@ fn sources(set: &str, tasks: &[&str]) -> String {
 }
 
 fn run(name: &str, tasks: &[&str], declarations: &str, items: Value) -> Run {
+    analyze(&request_for(name, tasks, declarations, items))
+}
+
+fn request_for(name: &str, tasks: &[&str], declarations: &str, items: Value) -> std::path::PathBuf {
     let ws = Workspace::new(name);
     let operations: Vec<(String, &[&str])> = tasks
         .iter()
@@ -38,13 +43,13 @@ fn run(name: &str, tasks: &[&str], declarations: &str, items: Value) -> Run {
         .iter()
         .map(|(name, fields)| (name.as_str(), *fields))
         .collect();
-    analyze(&request_over(
+    request_over(
         &ws,
         &rpc_unit(4, declarations),
         &crate::zone_search::rpc_document_with(&extra),
         &[rpc_snapshot()],
         json!({"items": items}),
-    ))
+    )
 }
 
 /// `Pair`: `a` periodic 4 ms, deadline 3 ms; `b` sporadic 6 ms, deadline
@@ -112,24 +117,24 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
 
     take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("t1 reaches its completion boundary at 1");
     take_action(&mut state, TaskTransitionAction::Complete, "t1");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t2");
     state = product
-        .delay(&state, &crate::zone_search::exact(2, 1))
+        .delay(&state, &crate::zone_support::exact(2, 1))
         .expect("source admits time")
         .expect("t2 reaches its completion boundary at 3");
     take_action(&mut state, TaskTransitionAction::Complete, "t2");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t3");
-    assert_eq!(state.now(), &crate::zone_search::exact(3, 1));
+    assert_eq!(state.now(), &crate::zone_support::exact(3, 1));
 
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("stop at t1's next periodic release at 4");
-    assert_eq!(state.now(), &crate::zone_search::exact(4, 1));
+    assert_eq!(state.now(), &crate::zone_support::exact(4, 1));
     state = product
         .source_steps(&state)
         .expect("source transitions")
@@ -144,13 +149,13 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
     take_action(&mut state, TaskTransitionAction::Preempt, "t3");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("t1's second job completes at 5");
     take_action(&mut state, TaskTransitionAction::Complete, "t1");
     take_action(&mut state, TaskTransitionAction::Resume, "t3");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("reach t2's next release at 6");
     state = product
@@ -167,7 +172,7 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
     take_action(&mut state, TaskTransitionAction::Preempt, "t3");
     take_action(&mut state, TaskTransitionAction::Dispatch, "t2");
     state = product
-        .delay(&state, &crate::zone_search::exact(2, 1))
+        .delay(&state, &crate::zone_support::exact(2, 1))
         .expect("source admits time")
         .expect("t2's second job completes at 8");
     take_action(&mut state, TaskTransitionAction::Complete, "t2");
@@ -184,13 +189,13 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
         .state;
     take_action(&mut state, TaskTransitionAction::Dispatch, "t1");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("t1's third job completes at 9");
     take_action(&mut state, TaskTransitionAction::Complete, "t1");
     take_action(&mut state, TaskTransitionAction::Resume, "t3");
     state = product
-        .delay(&state, &crate::zone_search::exact(1, 1))
+        .delay(&state, &crate::zone_support::exact(1, 1))
         .expect("source admits time")
         .expect("reach t3's first deadline at 10");
     state = product
@@ -212,7 +217,7 @@ fn task_scheduler_stops_at_completion_and_release_boundaries() {
     assert_eq!((miss.identity.task.as_str(), miss.identity.job), ("t3", 0));
     assert_eq!(
         miss.state.jobs()[0].service,
-        crate::zone_search::exact(3, 1)
+        crate::zone_support::exact(3, 1)
     );
 }
 
@@ -330,7 +335,7 @@ fn a_two_task_set_lowers_with_its_declared_periods_and_deadlines() {
             )
         })
         .collect();
-    let exact = crate::zone_search::exact;
+    let exact = crate::zone_support::exact;
     assert_eq!(
         lowered,
         vec![
@@ -766,7 +771,11 @@ fn a_release_does_not_make_a_response_claim_release_backed() {
         json!([{"claim": "PairAResponse", "backend": "en-6"}]),
     );
     let item = run.item(0);
-    assert_eq!(item["request"]["candidates"]["backends"], json!([]), "{item}");
+    assert_eq!(
+        item["request"]["candidates"]["backends"],
+        json!([]),
+        "{item}"
+    );
     assert_eq!(label(&item), "unsupported", "{item}");
 }
 
@@ -778,6 +787,7 @@ fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
     use fsl_analyze::analyze::document::{
         resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
     };
+    use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
     use fsl_route::request::ExtentClassification;
     use fsl_semantics::check::Capability;
@@ -826,7 +836,7 @@ fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
             &registry,
             &[world.package.graph().source().clone()],
             &binding,
-            &AnalyzeLimits::unbounded(),
+            &AnalyzeLimits::published(DeadlineSupply::Unbounded),
         );
         let claims: Vec<_> = resolved
             .iter()
@@ -1195,4 +1205,85 @@ fn a_refutable_set_refutes_before_the_symbolic_pass() {
     let item = run.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// One task of period 2, worst-case execution time 1 and deadline 2, with its
+/// release, so EN-6 runs the task-product pass.
+fn one_task(name: &str, items: Value) -> std::path::PathBuf {
+    let declarations = format!(
+        "taskset One {{ task t periodic 2 ms deadline 2 ms bcet 1 ms wcet 1 ms priority 1 lo; }}\n\
+         schedulable OneFp on One under fixed_priority;\n{}",
+        sources("One", &["t"])
+    );
+    request_for(name, &["t"], &declarations, items)
+}
+
+fn assert_symbolic_stop(item: &Value, limit: &str, value: u64) {
+    assert_eq!(label(item), "incomplete", "{item}");
+    let cause = &item["record"]["cause"];
+    assert_eq!(cause["kind"], "limit-reached", "{item}");
+    assert_eq!(cause["limit"], limit, "{item}");
+    assert_eq!(cause["value"], json!(value), "{item}");
+    assert_eq!(cause["setting"], format!("zone_check.{limit}"), "{item}");
+    assert!(item.get("certificate").is_none(), "{item}");
+}
+
+/// FR-239-AC-9: `analyze` accepts `--limit zone_check.max_symbolic_states=2`
+/// and the bound stops the task product, whose quotient holds more than two
+/// symbolic states: no job, a released job and a running job differ.
+#[trace("FR-239-AC-9")]
+#[test]
+fn a_caller_symbolic_state_bound_stops_the_task_product() {
+    let request = one_task(
+        "task-product-caller-states",
+        json!([{"claim": "OneFp", "backend": "en-6"}]),
+    );
+    let run = analyze_under(&request, &[(Setting::ZoneCheckMaxSymbolicStates, 2)]);
+    assert_symbolic_stop(&run.item(0), "max_symbolic_states", 2);
+    assert_eq!(run.exit, 22);
+}
+
+/// FR-239 "Budget sources": an item's own `max_states` and `max_transitions`
+/// bound the task product's symbolic states and edges, named as those bounds.
+#[trace("FR-239-AC-9")]
+#[test]
+fn an_item_states_the_task_product_symbolic_bounds() {
+    for (member, limit) in [
+        ("max_states", "max_symbolic_states"),
+        ("max_transitions", "max_symbolic_transitions"),
+    ] {
+        let request = one_task(
+            &format!("task-product-item-{member}"),
+            json!([{"claim": "OneFp", "backend": "en-6", "temporal": {"limits": {member: 1}}}]),
+        );
+        let run = analyze(&request);
+        assert_symbolic_stop(&run.item(0), limit, 1);
+    }
+}
+
+/// FR-255 "Two sources of one bound": an item member and the caller's setting
+/// for the same bound are refused before any item runs.
+#[trace("FR-239-AC-9")]
+#[test]
+fn a_symbolic_bound_stated_twice_is_refused() {
+    let request = one_task(
+        "task-product-twice",
+        json!([{"claim": "OneFp", "backend": "en-6", "temporal": {"limits": {"max_states": 5}}}]),
+    );
+    let run = analyze_under(&request, &[(Setting::ZoneCheckMaxSymbolicStates, 2)]);
+    assert_eq!(run.exit, 20);
+}
+
+/// FR-239 "Budget sources": the caller's `zone_check.max_check_work` bounds
+/// the task product's pass.
+#[trace("FR-239-AC-9")]
+#[test]
+fn a_caller_work_bound_stops_the_task_product() {
+    let request = one_task(
+        "task-product-caller-work",
+        json!([{"claim": "OneFp", "backend": "en-6"}]),
+    );
+    let run = analyze_under(&request, &[(Setting::ZoneCheckMaxCheckWork, 2)]);
+    assert_symbolic_stop(&run.item(0), "max_check_work", 2);
+    assert_eq!(run.exit, 22);
 }

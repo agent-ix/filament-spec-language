@@ -12,354 +12,47 @@
 //!
 //! ADR-018 §6's ConfigVersion units and FR-126-AC-4's `Health` unit are
 //! `example_units`. Not covered here: the `holds` atoms are read through the
-//! test's own [`Letters`]; the lasso's replay is FR-128's.
+//! test's own [`crate::counter::Letters`]; the lasso's replay is FR-128's.
 
-use filament_exact::{Cancel, CancelCause, Meter, ScalarLimits};
-use fsl_analyze::model_check::{
-    check_model, ModelCheckRefusal, ModelCheckRequest, Product, ProductTransition,
-    PropertyComponent,
+use crate::liveness_support::{
+    applies, assert_weakly_fair, counter, fixture, fixture_in_mode, instance, is_three, is_zero,
+    lasso_of, violated, Fixture,
 };
-use fsl_eval::model_subject::{ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use filament_exact::{Cancel, CancelCause, Meter};
+use fsl_analyze::model_check::{Product, ProductTransition, PropertyComponent};
 use fsl_eval::simulation::{ExpansionStop, TransitionSystem};
 use fsl_eval::temporal::{
     evaluate, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalTrace, UndefinedCause,
 };
-use fsl_package::CheckedPackage;
 use fsl_replay::{
-    check_components, check_components_over_stutter_closure, CertificateRequest,
-    ComponentCertificate, ComponentWitness, CounterexampleKind, IncompleteCause, Lasso,
-    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProofCertificate,
-    ReachedLimit, SmtEncodingLimits, TemporalCertificateCheck, TemporalCounterexample,
-    UndefinedLocus,
+    check_components_over_stutter_closure, ComponentWitness, CounterexampleKind, IncompleteCause,
+    Lasso, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit,
+    TemporalCertificateCheck, UndefinedLocus,
 };
-use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::check::FormulaNodeId;
-use fsl_semantics::model::observation::{AnchorKind, DocumentRef};
+use fsl_semantics::model::observation::AnchorKind;
 use ix_trace_rs::trace;
 
-use crate::counter::{
-    clause_text, document, document_with_ranged_parameter, key, subject, unit_text, value,
-    Documents, Letters, CONTRACT, UNLIMITED, ZERO,
-};
+use crate::counter::{document, document_with_ranged_parameter, value, CONTRACT, UNLIMITED, ZERO};
 
-/// A Counter world with one declared clause.
-pub(crate) struct Fixture {
-    pub(crate) package: CheckedPackage,
-    pub(crate) temporal_clock_selections: Vec<fsl_package::TemporalClockSelection>,
-    pub(crate) clauses: Vec<CheckedTemporalClause>,
-    pub(crate) documents: Documents,
-    pub(crate) initial: Vec<DocumentRef>,
-    pub(crate) keys: Vec<&'static str>,
-    /// The native unit the package was checked from.
-    pub(crate) unit: Vec<u8>,
-}
-
-/// The world over `document` with `body`, one start with the counters
-/// `starts`, and the clause `fairness` + `formula` over `c`.
-pub(crate) fn fixture(
-    document: Vec<u8>,
-    body: &str,
-    fairness: &str,
-    formula: &str,
-    starts: &[(&'static str, i64)],
-) -> Fixture {
-    fixture_in_mode(
-        document,
-        body,
-        fairness,
-        formula,
-        starts,
-        filament_semantic_value::checking::CheckMode::Linked,
-    )
-}
-
-/// A fixture with an explicit function-body mode; declared clauses stay Linked.
-pub(crate) fn fixture_in_mode(
-    document: Vec<u8>,
-    body: &str,
-    fairness: &str,
-    formula: &str,
-    starts: &[(&'static str, i64)],
-    mode: filament_semantic_value::checking::CheckMode,
-) -> Fixture {
-    let (package, clauses) = crate::counter::package_with_clauses_mode(
-        &document,
-        body,
-        &[("C", fairness, formula)],
-        mode,
+/// FR-125-AC-7: an empty universe has no instance and must settle
+/// inconclusive, without asking the closure checker to validate a proof.
+#[trace("TC-520", "FR-125-AC-7")]
+#[test]
+fn an_empty_object_population_is_no_instance_not_a_closure_fault() {
+    let no_object = fixture(
+        document(false),
+        CONTRACT,
+        "",
+        "eventually holds(c.value <= 1)",
+        &[],
     );
-    let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&package);
-    let unit = unit_text(&(body.to_owned() + &clause_text("C", fairness, formula))).into_bytes();
-    let mut documents = Documents::new(document);
-    let initial = vec![documents.start("s0", starts)];
-    Fixture {
-        package,
-        temporal_clock_selections,
-        clauses,
-        documents,
-        initial,
-        keys: starts.iter().map(|(key, _)| *key).collect(),
-        unit,
-    }
-}
-
-/// The one-counter fixture over `document`, started at `c = 0`.
-pub(crate) fn counter(document: Vec<u8>, fairness: &str, formula: &str) -> Fixture {
-    fixture(document, CONTRACT, fairness, formula, &[("c", 0)])
-}
-
-impl Fixture {
-    pub(crate) fn letters(&self, atom: fn(i64) -> Option<bool>) -> Letters {
-        Letters { atom }
-    }
-
-    pub(crate) fn run(
-        &self,
-        atom: fn(i64) -> Option<bool>,
-        max_depth: Option<usize>,
-        limits: ModelCheckLimits,
-        meter: ScalarLimits,
-        cancel: &Cancel,
-    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-        let letters = self.letters(atom);
-        check_model(
-            ModelCheckRequest {
-                workers: 1,
-                temporal_clock_selections: &self.temporal_clock_selections,
-                subject: subject(
-                    &self.package,
-                    &self.documents,
-                    self.initial.clone(),
-                    &self.keys,
-                    meter,
-                ),
-                item: ModelCheckItem::Clause {
-                    clause: &self.clauses[0],
-                    letters: &letters,
-                },
-                max_depth,
-                limits,
-                smt_encoding: Default::default(),
-                smt_run: Default::default(),
-                reductions: Default::default(),
-            },
-            cancel,
-        )
-    }
-
-    pub(crate) fn decide(
-        &self,
-        atom: fn(i64) -> Option<bool>,
-    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-        self.run(
-            atom,
-            None,
-            ModelCheckLimits::default(),
-            UNLIMITED,
-            &Cancel::new(),
-        )
-    }
-
-    /// The request FR-339's checker reads this fixture's clause under.
-    pub(crate) fn certificate_request<'a>(
-        &'a self,
-        letters: &'a Letters,
-        meter: ScalarLimits,
-    ) -> CertificateRequest<'a> {
-        CertificateRequest {
-            temporal_clock_selections: &self.temporal_clock_selections,
-            subject: subject(
-                &self.package,
-                &self.documents,
-                self.initial.clone(),
-                &self.keys,
-                meter,
-            ),
-            item: ModelCheckItem::Clause {
-                clause: &self.clauses[0],
-                letters,
-            },
-            smt_encoding: SmtEncodingLimits::default(),
-        }
-    }
-
-    /// The component certificate of a proved run, accepted by the core's
-    /// checker, and the run's counts.
-    pub(crate) fn certified(
-        &self,
-        atom: fn(i64) -> Option<bool>,
-    ) -> (ComponentCertificate, fsl_replay::RunStats) {
-        let outcome = self.decide(atom).expect("the clause is decided");
-        let ModelCheckOutcome::Holds {
-            certificate: ProofCertificate::Component(certificate),
-            stats,
-        } = outcome
-        else {
-            panic!("expected a component certificate: {outcome:?}");
-        };
-        let letters = self.letters(atom);
-        let checked = check_components(
-            &self.certificate_request(&letters, UNLIMITED),
-            &certificate,
-            &ModelCheckLimits::default(),
-            &Cancel::new(),
-        )
-        .expect("the request is checked");
-        assert_eq!(checked, TemporalCertificateCheck::Accepted);
-        (certificate, stats)
-    }
-
-    fn system(&self) -> ModelSystem<'_> {
-        ModelSystem::new(
-            subject(
-                &self.package,
-                &self.documents,
-                self.initial.clone(),
-                &self.keys,
-                UNLIMITED,
-            )
-            .simulation,
-        )
-        .expect("the subject admits")
-    }
-
-    /// The model states a counterexample's steps reach, position by
-    /// position: each step's post-state is the successor of its transition
-    /// identity whose state key it records.
-    fn positions(&self, counterexample: &TemporalCounterexample) -> Vec<ModelSimState> {
-        let system = self.system();
-        let mut current = system.initial()[counterexample.initial_state].clone();
-        let mut states = vec![current.clone()];
-        for step in &counterexample.prefix {
-            let expansion = system.successors(&current).expect("the state expands");
-            current = expansion
-                .successors
-                .into_iter()
-                .find(|(transition, state)| {
-                    *transition == step.transition
-                        && system.state_key(state).expect("encodes").0.as_slice()
-                            == step.post_state.as_bytes()
-                })
-                .map(|(_, state)| state)
-                .expect("the recorded step is a successor");
-            states.push(current.clone());
-        }
-        states
-    }
-
-    pub(crate) fn values(&self, counterexample: &TemporalCounterexample, object: &str) -> Vec<i64> {
-        self.positions(counterexample)
-            .iter()
-            .map(|state| value(state, object))
-            .collect()
-    }
-}
-
-/// The instance of the clause that binds the counter `object`.
-fn instance(object: &str) -> ModelInstance {
-    ModelInstance {
-        population: key("counters"),
-        key: object.to_owned(),
-    }
-}
-
-fn violated(outcome: &ModelCheckOutcome) -> &TemporalCounterexample {
-    match outcome {
-        ModelCheckOutcome::Violated { counterexample, .. } => counterexample,
-        other => panic!("expected a violation, got {other:?}"),
-    }
-}
-
-fn lasso_of(counterexample: &TemporalCounterexample) -> Lasso {
-    counterexample
-        .lasso
-        .as_ref()
-        .expect("a liveness refutation is a lasso")
-        .clone()
-}
-
-/// Whether the transition is an application of the `Counter` operation
-/// `operation`.
-fn applies(transition: &fsl_replay::ModelStep, operation: &str) -> bool {
-    transition
-        .transition
-        .operation()
-        .contains(&format!("Counter/{operation}"))
-}
-
-/// The oracle for a lasso over `fixture`, read from the model's own
-/// successor relation: the last post-state of the prefix is the state at
-/// the loop's entry, and a weak constraint on the `Counter` operation
-/// `operation` (all of its transitions together, or each transition alone
-/// when `each`) is taken in the loop or disabled at some state of it.
-fn assert_weakly_fair(
-    fixture: &Fixture,
-    counterexample: &TemporalCounterexample,
-    operation: &str,
-    each: bool,
-) {
-    let lasso = lasso_of(counterexample);
-    assert!(!lasso.terminal_stutter);
-    let states = fixture.positions(counterexample);
-    let system = fixture.system();
-    let state_key = |state: &ModelSimState| system.state_key(state).expect("encodes").1;
-    assert_eq!(
-        state_key(states.last().expect("a position")),
-        state_key(&states[lasso.entry]),
-        "the loop re-enters its entry state"
-    );
-    let loop_steps = &counterexample.prefix[lasso.entry..];
-    assert!(!loop_steps.is_empty(), "a model loop has a step");
-    let loop_states = &states[lasso.entry..states.len() - 1];
-    let enabled: Vec<Vec<fsl_replay::ModelStep>> = loop_states
-        .iter()
-        .map(|state| {
-            system
-                .successors(state)
-                .expect("the state expands")
-                .successors
-                .into_iter()
-                .map(|(transition, next)| fsl_replay::ModelStep {
-                    transition,
-                    post_state: state_key(&next),
-                    delay: None,
-                })
-                .collect()
-        })
-        .collect();
-    let groups: Vec<Option<&fsl_replay::ModelStep>> = if each {
-        let mut identities: Vec<&fsl_replay::ModelStep> = enabled
-            .iter()
-            .flatten()
-            .filter(|step| applies(step, operation))
-            .collect();
-        identities.sort_by(|left, right| left.transition.cmp(&right.transition));
-        identities.dedup_by(|left, right| left.transition == right.transition);
-        identities.into_iter().map(Some).collect()
-    } else {
-        vec![None]
+    let cause = match no_object.decide(|value| Some(value <= 1)).expect("checked") {
+        ModelCheckOutcome::Undecided { cause, .. } => cause,
+        other => panic!("expected NoInstance for an empty object set, got {other:?}"),
     };
-    for group in groups {
-        let covers = |step: &fsl_replay::ModelStep| {
-            applies(step, operation) && group.is_none_or(|one| one.transition == step.transition)
-        };
-        let taken = loop_steps.iter().any(covers);
-        let disabled_somewhere = enabled.iter().any(|steps| !steps.iter().any(covers));
-        assert!(
-            taken || disabled_somewhere,
-            "the weak constraint on {operation} ({group:?}) is starved in the loop"
-        );
-    }
-}
-
-pub(crate) fn is_three(value: i64) -> Option<bool> {
-    Some(value == 3)
-}
-
-pub(crate) fn is_zero(value: i64) -> Option<bool> {
-    Some(value == 0)
+    assert_eq!(cause, fsl_replay::UndecidedCause::NoInstance);
 }
 
 /// FR-126-AC-3's last sentence, with the deadlock half in
@@ -662,17 +355,20 @@ fn each_needs_every_transition_of_the_operation_and_whole_needs_one() {
     }
 }
 
-/// FR-125-AC-6's TP-4 half and FR-126-AC-9's TP-4 claim: when the letter is
-/// undefined at position 2 (`6 mod (2 - c.value)` at value 2), `always
-/// eventually holds(...)` returns the undefined-evaluation counterexample,
-/// the prefix `0 -inc-> 1 -inc-> 2` with no lasso, not the terminal stutter
-/// lasso. The same holds for an undefined precondition guard (ADR-018 UE-6):
-/// the item is refuted at the expanded state, naming the guarded transition.
+/// FR-125-AC-6's TP-4 half and FR-126-AC-9's TP-4 claim. `always eventually
+/// holds(q(2 - c.value) = 0 and c.value = 1)`, with `q` the function
+/// `6 mod x`, has a letter that is false at value 0, true at 1, undefined at
+/// 2 and false at 3. It returns the undefined-evaluation counterexample, the
+/// prefix `0 -inc-> 1 -inc-> 2` with no lasso. With the letter at 2 read as
+/// false instead, the same claim is refuted by the terminal stutter lasso at
+/// value 3, so the undefined position is what withholds that lasso. The same
+/// holds for an undefined precondition guard (ADR-018 UE-6): the item is
+/// refuted at the expanded state, naming the guarded transition.
 #[trace("TC-537", "FR-126-AC-9")]
 #[test]
 fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
     let helper = "function undefined_remainder using v(x: Integer): Integer pure { 6 mod x }\n";
-    let formula = "always eventually holds(undefined_remainder(2 - c.value) = 0)";
+    let formula = "always eventually holds(undefined_remainder(2 - c.value) = 0 and c.value = 1)";
     let fixture = fixture_in_mode(
         document(false),
         &format!("{CONTRACT}{helper}"),
@@ -682,7 +378,7 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let outcome = fixture
-        .decide(|v| (v != 2).then(|| 6 % (2 - v) == 0))
+        .decide(|v| (v != 2).then(|| 6 % (2 - v) == 0 && v == 1))
         .expect("checked");
     let counterexample = violated(&outcome);
     assert_eq!(fixture.values(counterexample, "c"), [0, 1, 2]);
@@ -697,6 +393,19 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
         UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
     );
     assert_eq!(counterexample.trace_position(), Some(2));
+
+    let outcome = fixture.decide(|v| Some(v == 1)).expect("checked");
+    let counterexample = violated(&outcome);
+    assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+    assert_eq!(fixture.values(counterexample, "c"), [0, 1, 2, 3]);
+    assert_eq!(
+        counterexample.lasso,
+        Some(Lasso {
+            entry: 3,
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
+        })
+    );
 
     let guarded =
         "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
@@ -823,39 +532,17 @@ fn two_liveness_runs_give_equal_outcomes() {
     assert_eq!(once(), once());
 }
 
-/// Letters that read the counter an instance binds by its key.
-struct ByKey(fn(&str, i64) -> bool);
-
-impl ModelLetters for ByKey {
-    crate::units::unguarded!();
-
-    fn reads(&self, _atom: fsl_semantics::check::FormulaNodeId) -> crate::units::Reads {
-        crate::units::unread()
-    }
-
-    fn atom(
-        &self,
-        _atom: fsl_semantics::check::FormulaNodeId,
-        instance: &ModelInstance,
-        state: &ModelSimState,
-        _meter: &mut filament_exact::Meter,
-    ) -> Result<fsl_eval::temporal::AtomReading, fsl_eval::model_subject::AtomStop> {
-        Ok(if (self.0)(&instance.key, value(state, &instance.key)) {
-            fsl_eval::temporal::AtomReading::True
-        } else {
-            fsl_eval::temporal::AtomReading::False
-        })
-    }
-}
-
-/// FR-126 "Explicit-state limits": the model-only pass's states are charged
-/// to the run's `max_states`, across instances. Over two counters, `eventually
-/// holds(c.value = 1)` is read as `value = 1` for `a` and as always true for
-/// `b`. For `b` the negation has no move at the first position, so `b` has no
-/// product state and its model-only pass reads all 16 model states. The least
-/// `max_states` that lets a run finish is then more than `a`'s product plus
-/// those 16: `a`'s own model-only pass has been charged too, so the budget
-/// `b` gets is what `a`'s product and pass left.
+/// FR-126 "Bindings and ranking (TP-4)" and "Model-only pass (TP-4)": the
+/// run's `max_states` is shared by every binding, and each state a model-only
+/// pass creates is charged to it and counted in no product total. Over two
+/// counters, `eventually holds(c.value = 1)` is read as always true, so
+/// neither `a` nor `b` is refuted and both are decided. The negation then has
+/// no move at the first position: no binding has a product state, and each
+/// binding's pass reads the whole model from the initial state. The frame
+/// lets `inc` on one counter give the other any value, so all 4 x 4 states
+/// are reached. Two passes of 16 states need `max_states` 32; 31 runs out in
+/// `b`'s pass, on what `a`'s pass left.
+#[trace("TC-1085")]
 #[test]
 fn the_model_only_pass_spends_the_budget_the_next_instance_gets() {
     let fixture = fixture(
@@ -865,45 +552,40 @@ fn the_model_only_pass_spends_the_budget_the_next_instance_gets() {
         "eventually holds(c.value = 1)",
         &[("a", 0), ("b", 0)],
     );
-    let letters = ByKey(|object, value| object == "b" || value == 1);
-    let run = |budget: usize| {
-        let mut limits = ModelCheckLimits::default();
-        limits.limits.max_states = budget;
-        check_model(
-            ModelCheckRequest {
-                workers: 1,
-                temporal_clock_selections: &fixture.temporal_clock_selections,
-                subject: subject(
-                    &fixture.package,
-                    &fixture.documents,
-                    fixture.initial.clone(),
-                    &fixture.keys,
-                    UNLIMITED,
-                ),
-                item: ModelCheckItem::Clause {
-                    clause: &fixture.clauses[0],
-                    letters: &letters,
-                },
-                max_depth: None,
-                limits,
-                smt_encoding: Default::default(),
-                smt_run: Default::default(),
-                reductions: Default::default(),
-            },
-            &Cancel::new(),
-        )
-        .expect("checked")
+    let run = |limits| {
+        fixture
+            .run(|_| Some(true), None, limits, UNLIMITED, &Cancel::new())
+            .expect("checked")
     };
-    let least = (1..=200)
-        .find(|budget| !matches!(run(*budget), ModelCheckOutcome::Stopped { .. }))
-        .expect("a budget finishes the run");
-    let counted = run(least).stats().product_states;
-    let counted = usize::try_from(counted).expect("small");
-    // `b` has no product state, so the product states are `a`'s alone.
-    assert!(
-        least > counted + 16,
-        "a's model-only pass is charged before b's: {least} against {counted} + 16"
+    let budget = |max_states| {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = max_states;
+        run(limits)
+    };
+    for outcome in [budget(32), run(ModelCheckLimits::default())] {
+        let ModelCheckOutcome::Holds { stats, .. } = outcome else {
+            panic!("expected a proof: {outcome:?}");
+        };
+        assert_eq!((stats.product_states, stats.product_edges), (0, 0));
+    }
+    let ModelCheckOutcome::Stopped {
+        cause,
+        limit,
+        stats,
+        ..
+    } = budget(31)
+    else {
+        panic!("31 states do not cover both passes");
+    };
+    assert_eq!(cause, IncompleteCause::ResourceExhausted);
+    assert_eq!(
+        limit,
+        Some(ReachedLimit {
+            limit: ModelCheckLimit::MaxStates,
+            value: 31
+        })
     );
+    assert_eq!((stats.product_states, stats.product_edges), (0, 0));
 }
 
 fn is_at_most_three(value: i64) -> Option<bool> {
@@ -990,7 +672,7 @@ fn evaluated(
 #[test]
 fn a_bounded_always_reads_past_closure_as_false_only_under_event_position_false_extension() {
     let window = "always[0,5] holds(c.value <= 3)";
-    let closed = crate::lasso_replay::bounded_fixture(window);
+    let closed = crate::lasso_support::bounded_fixture(window);
     let infinite = counter(document(false), "", window);
     let reaches = counter(document(false), "", "eventually holds(c.value = 3)");
     let recurs = counter(document(false), "", "always eventually holds(c.value = 0)");
@@ -1131,8 +813,14 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
     assert_eq!(stutter, ProductTransition::TerminalStutter);
     assert_eq!(value(&again.model, "c"), 3, "position 3 repeats");
     assert_eq!(
-        model.state_key(&again.model).expect("encodes").1,
-        model.state_key(&state.model).expect("encodes").1,
+        model
+            .state_key(&again.model, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .1,
+        model
+            .state_key(&state.model, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .1,
         "the stutter returns to the same state"
     );
     let written = |step: &ProductTransition<_>| {
@@ -1142,4 +830,68 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
     for inc in incs {
         assert_ne!(stutter_identity, written(&ProductTransition::Model(inc)));
     }
+}
+
+/// FR-255 behaviour 14 over the liveness product: the Counter behaviour
+/// `0, 1, 2, 3, 3, ...` has four product states, each charged more than its
+/// 256-byte entry overhead, so neither one byte nor 1,024 bytes holds them
+/// all. With no setting the claim proves.
+#[trace("FR-255-AC-42")]
+#[test]
+fn a_liveness_run_charges_each_product_state_to_retained_bytes() {
+    use fsl_analyze::analyze::{analyze_items, model_item, split_records, Engines, ModelItem};
+    use fsl_foundation::{RequestIndex, Setting};
+    use fsl_replay::TerminalValue;
+
+    let fixture = counter(document(false), "", "always eventually holds(c.value = 3)");
+    let letters = fixture.letters(is_three);
+    let run = |bound: Option<u64>| {
+        let request = fsl_analyze::model_check::ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &fixture.temporal_clock_selections,
+            subject: crate::counter::subject(
+                &fixture.package,
+                &fixture.documents,
+                fixture.initial.clone(),
+                &fixture.keys,
+                UNLIMITED,
+            ),
+            item: fsl_replay::ModelCheckItem::Clause {
+                clause: &fixture.clauses[0],
+                letters: &letters,
+            },
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+            reductions: Default::default(),
+        };
+        let mut item = ModelItem {
+            request,
+            stutter_closure: false,
+            certificate: fixture.certificate_request(&letters, UNLIMITED),
+            engines: Default::default(),
+            replay: Box::new(|_| panic!("a claim that holds has no counterexample")),
+        };
+        if let Some(bound) = bound {
+            assert!(item.engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let records = analyze_items(
+            &Engines::fsl().expect("the engines register"),
+            vec![model_item(RequestIndex::new(0), item).expect("a clause run")],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
+        let (mut records, _) = split_records(records, &fixture.package);
+        records.remove(0)
+    };
+    for bound in [1, 1_024] {
+        let printed = format!("{:?}", run(Some(bound)));
+        assert!(
+            printed.contains("AnalysisRetainedBytes")
+                && printed.contains(&format!("value: {bound}")),
+            "{printed}"
+        );
+    }
+    assert!(!matches!(run(None).value(), TerminalValue::Incomplete(_)));
 }

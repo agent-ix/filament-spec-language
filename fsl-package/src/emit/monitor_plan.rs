@@ -19,13 +19,13 @@ use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use filament_exact::Rational;
 
-use crate::wire_form::{WireForm, WireTag, has_form, has_tag};
+use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
 
 use super::{
-    CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedSemanticGraphV2,
-    CheckedSourceMapEntry, Emission, EmitRefusal, EmittedPackage, ForeignNodes, GRAPH_V2,
-    OmittedNode, StructuralIds, own_evidence, read_index_segments, write_index_segments,
+    own_evidence, read_index_segments, write_index_segments, CheckedNodeId, CheckedOccurrence,
+    CheckedOccurrenceRole, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedSemanticGraphV2, CheckedSourceMapEntry, Emission, EmitRefusal,
+    EmittedPackage, ForeignNodes, OmittedNode, StructuralIds, GRAPH_V2,
 };
 
 /// What the writer needs of one plan.
@@ -142,12 +142,13 @@ fn rename_bindings(body: &mut CheckedTerm, renames: &[(&str, &str)]) {
 
 /// Rename the field of every field projection (`filament.op.record.project`)
 /// of a renamed record in `body`. The operation record is read-only in the
-/// typed model, so the body goes through its wire form.
+/// typed model, so the body goes through its wire form. Returns whether
+/// `body` changed.
 fn rename_projections(
     body: &mut CheckedTerm,
     renamed_types: &BTreeSet<CheckedNodeId>,
     renames: &[(&str, &str)],
-) -> Result<(), EmitRefusal> {
+) -> Result<bool, EmitRefusal> {
     fn visit(
         value: &mut serde_json::Value,
         declarations: &[serde_json::Value],
@@ -192,11 +193,12 @@ fn rename_projections(
         .map(|id| serde_json::to_value(id).map_err(|_| invariant("a node id is JSON")))
         .collect::<Result<Vec<_>, _>>()?;
     let mut wire = serde_json::to_value(&*body).map_err(|_| invariant("a body is JSON"))?;
-    if visit(&mut wire, &declarations, renames) {
-        *body = serde_json::from_value(wire)
-            .map_err(|_| invariant("a renamed body is a checked term"))?;
+    if !visit(&mut wire, &declarations, renames) {
+        return Ok(false);
     }
-    Ok(())
+    *body =
+        serde_json::from_value(wire).map_err(|_| invariant("a renamed body is a checked term"))?;
+    Ok(true)
 }
 
 /// Replace every reference to a node id, and the node's own id, and its
@@ -426,11 +428,20 @@ fn emit_monitor_plan(
         rename_bindings(&mut nodes[at].body, plan.renames);
         renamed_types.insert(nodes[at].node_id.clone());
     }
+    // A derived node's path spells the field names its body holds, so a
+    // renamed projection is re-keyed as a renamed record value is.
+    let mut changes = Vec::new();
     for node in nodes.iter_mut() {
-        rename_projections(&mut node.body, &renamed_types, plan.renames)?;
+        if rename_projections(&mut node.body, &renamed_types, plan.renames)?
+            && node.declaration.is_none()
+        {
+            let new = renamed_id(&node.node_id, plan.renames);
+            if new != node.node_id {
+                changes.push((node.node_id.clone(), new));
+            }
+        }
     }
     let mut all_changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
-    let mut changes = Vec::new();
     for node in nodes.iter_mut() {
         if WireForm::from_wire(&node.semantic_form) == Some(WireForm::RecordValue)
             && renamed_types.contains(&node.semantic_type)
@@ -1356,12 +1367,8 @@ pub(super) fn finish(
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
-    let (requirement_rows, path_condition_frames, renumbered) =
-        super::value_validity_requirements::carry_rows(
-            base,
-            &mut nodes,
-            &mut source_map,
-        )?;
+    let (requirement_rows, path_condition_frames, renumbered, synthetics) =
+        super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -1386,7 +1393,11 @@ pub(super) fn finish(
         for (old, new) in changes {
             super::replace_term_data_node(data, old, new);
         }
-        super::value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+        super::value_validity_requirements::ordinals::relabel_term_data(
+            &renumbered,
+            &synthetics,
+            data,
+        );
     }
     let operation_bodies = base.operation_body_rows().map(|rows| {
         let mut rows = rows.to_vec();
@@ -1458,6 +1469,13 @@ pub(super) fn finish(
     #[cfg(test)]
     WRITTEN_NODES.with(|written| *written.borrow_mut() = nodes.clone());
     let mut rows = carry_rows(retained, changes);
+    super::value_validity_requirements::ordinals::relabel_equality_rows(
+        &mut rows.equality_producer_identity_rows,
+        &mut rows.equality_fact_witness_rows,
+        &renumbered,
+        &synthetics,
+        &source_map,
+    );
     follow_final_bindings(&mut rows.selected_source_record_rows, &nodes)?;
     follow_final_positions(&mut rows.selected_source_tuple_rows, &nodes)?;
     follow_final_collections(&mut rows.selected_source_collection_rows, &nodes)?;
@@ -1529,8 +1547,8 @@ fn binding_reference<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t Checke
 mod tests {
     use super::*;
     use filament_contract_model::{
-        CheckedBodyLocationOrigin, CheckedDeclaration, CheckedPackageDispatchResult,
-        CheckedPackageRefusalCause, CheckedPackageRefusalCode, read_checked_package,
+        read_checked_package, CheckedBodyLocationOrigin, CheckedDeclaration,
+        CheckedPackageDispatchResult, CheckedPackageRefusalCause, CheckedPackageRefusalCode,
     };
 
     /// The production final writer rekeys body origins with all four entries,
@@ -2022,23 +2040,19 @@ mod tests {
              function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n",
         );
         let records = rekeyed.assert_rows_follow_the_rekey(records_of_entries(&rekeyed));
-        assert!(
-            records
-                .iter()
-                .any(|record| record.path_condition_frame.is_some())
-        );
+        assert!(records
+            .iter()
+            .any(|record| record.path_condition_frame.is_some()));
         assert!(records.iter().any(|record| record.conversion.is_some()));
         assert!(records.iter().all(|record| !record.extent_roots.is_empty()));
-        assert!(
-            rekeyed
-                .final_package
-                .requirement_items()
-                .iter()
-                .any(|row| matches!(
-                    row.extent,
-                    filament_contract_model::RequirementExtent::Unbounded(_)
-                ))
-        );
+        assert!(rekeyed
+            .final_package
+            .requirement_items()
+            .iter()
+            .any(|row| matches!(
+                row.extent,
+                filament_contract_model::RequirementExtent::Unbounded(_)
+            )));
     }
 
     /// The claims of `owner`'s records, in the package's row order.

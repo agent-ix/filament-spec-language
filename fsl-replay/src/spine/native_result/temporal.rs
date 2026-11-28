@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use serde_json::value::RawValue;
+use serde_json::Value;
 
 use super::{
     Basis, CallLocationRead, CallLocationWire, Category, DeclarationKeyRead, DispositionRead,
@@ -26,7 +26,8 @@ use fsl_eval::temporal::ObservedLocus;
 use fsl_eval::temporal::TemporalOutcome;
 
 mod model_read;
-pub use model_read::{ModelBindingRead, ModelStepRead, ModelTransitionRead, StateRead};
+use crate::shared_wire::StateLocus;
+pub use model_read::{ModelBindingRead, ModelStepRead, ModelTransitionRead};
 
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
@@ -257,6 +258,7 @@ enum StepWire {
 }
 
 impl StepWire {
+    #[ix_trace_rs::string_edge]
     fn of(document: &fsl_semantics::model::observation::DocumentRef) -> Self {
         if document.authority == crate::spine::clause::SAMPLE_AUTHORITY {
             Self::Sample {
@@ -1076,6 +1078,7 @@ impl TemporalRecord {
     /// the budget's counters. A family undefined cause restores with an
     /// empty `fields`: the outcome carries its reason only. An unwitnessed
     /// model undefined row also returns `None`: its reason is in `outcome`.
+    #[ix_trace_rs::string_edge]
     pub fn verdict(&self) -> Option<TemporalVerdict> {
         Some(match self {
             Self::Inactive {} => TemporalVerdict::Inactive,
@@ -1360,7 +1363,7 @@ impl CounterexampleRead {
     }
 
     /// The carried model undefined evaluation's state, when present.
-    pub fn undefined_state(&self) -> Option<&StateRead> {
+    pub fn undefined_state(&self) -> Option<&StateLocus> {
         match &self.kind {
             CounterexampleKindRead::Undefined(envelope) => envelope.point.state(),
             CounterexampleKindRead::Formula(_) => None,
@@ -1444,7 +1447,7 @@ enum WhereRead {
     },
     Model {
         position: u64,
-        state_key: StateRead,
+        state_key: StateLocus,
         locus: UndefinedLocusRead,
     },
 }
@@ -1462,7 +1465,7 @@ impl WhereRead {
         }
     }
 
-    fn state(&self) -> Option<&StateRead> {
+    fn state(&self) -> Option<&StateLocus> {
         match self {
             Self::Model { state_key, .. } => Some(state_key),
             Self::Observed { .. } => None,
@@ -1596,6 +1599,7 @@ where
 /// Read `disposition.temporal`: select the row by its `kind`, then read the
 /// row's other members as one closed object, naming any failing member by
 /// its path.
+#[ix_trace_rs::string_edge]
 pub(super) fn decode(value: &serde_json::Value) -> Result<TemporalRecord, NativeRunReadError> {
     let serde_json::Value::Object(members) = value else {
         return Err(invalid("disposition.temporal", "expected an object"));

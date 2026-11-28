@@ -521,25 +521,6 @@ fn read_refusals(document: &Value) -> Vec<ModelRefusal> {
     read_records(PACKAGE, &admitted).expect_err("mutation must refuse")
 }
 
-fn assert_normalized_malformed_refusal(document: &Value, declaration: &str) {
-    let refusals = normalized_refusals(document, 21);
-    assert_eq!(
-        refusals.len(),
-        1,
-        "one normalized M07 refusal: {refusals:?}"
-    );
-    assert_eq!(refusals[0].code, Code::InvalidModelBinding);
-    match &refusals[0].cause {
-        ModelRefusalCause::IntakeMalformedDeclaration { node, .. } => {
-            assert!(node.contains(declaration), "{refusals:?}");
-        }
-        ModelRefusalCause::MalformedDeclaration => {
-            assert!(refusals[0].detail.contains(declaration), "{refusals:?}");
-        }
-        other => panic!("expected a malformed declaration, got {other:?}"),
-    }
-}
-
 /// The typed member path for the spec's spelling of it.
 fn member(path: &str) -> MemberPath {
     path.parse().expect("the row's member path is well-formed")
@@ -593,17 +574,16 @@ fn assert_unsupported_at(refusal: &ModelRefusal, node: &str, path: &str) {
     assert_eq!(actual_member, &member(path));
 }
 
-/// One typed `missing_declaration`/`missing-name` on `node` whose reader
-/// pointer is `path` and whose absent declaration is `reference`.
+/// One typed intake `missing_declaration`/`missing-name` on `node` whose
+/// reader pointer is `path` and whose absent declaration is `reference`.
 fn assert_missing_refusal(
     document: &Value,
     node: &str,
     path: &str,
     member_path: &str,
     reference: &str,
-    charges: usize,
 ) {
-    let refusals = normalized_refusals(document, charges);
+    let refusals = intake_refusals(document);
     assert_eq!(refusals.len(), 1, "one M08/M09 refusal: {refusals:?}");
     assert_eq!(refusals[0].code, Code::MissingDeclaration);
     assert_eq!(refusals[0].cause.as_str(), "missing-name");
@@ -624,7 +604,7 @@ fn assert_missing_refusal(
 }
 
 fn assert_process_duplicate_step_refusal(document: &Value) {
-    let refusals = normalized_refusals(document, 21);
+    let refusals = intake_refusals(document);
     assert_eq!(
         refusals.len(),
         1,
@@ -661,7 +641,7 @@ fn assert_process_non_event_refusal(document: &Value) {
 }
 
 fn assert_process_missing_event_refusal(document: &Value, reference: &str) {
-    let refusals = normalized_refusals(document, 21);
+    let refusals = intake_refusals(document);
     assert_eq!(refusals.len(), 1, "one process event refusal: {refusals:?}");
     assert_eq!(refusals[0].code, Code::MissingDeclaration);
     let ModelRefusalCause::IntakeMissingDeclaration {
@@ -1494,11 +1474,17 @@ fn tc235_m07_process_binder() {
 
     let mut document = k2();
     type_named_mut(&mut document, "Fulfilment")["identityFields"] = json!([]);
-    assert_normalized_malformed_refusal(&document, "Fulfilment");
+    let refusals = intake_refusals(&document);
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_malformed_at(
+        &refusals[0],
+        &id("Fulfilment"),
+        "TypeDefinition.identityFields",
+    );
 
     let mut document = k2();
     type_named_mut(&mut document, "Fulfilment")["steps"] = json!([]);
-    assert_normalized_malformed_refusal(&document, "Fulfilment");
+    assert_malformed_refusal(&document, "Fulfilment", "TypeDefinition.steps", 21);
 
     let mut document = k2();
     type_named_mut(&mut document, "Fulfilment")["steps"]
@@ -1516,7 +1502,12 @@ fn tc235_m07_process_binder() {
 
     let mut document = k2();
     type_named_mut(&mut document, "Fulfilment")["steps"][0]["consumes"] = json!([id("Money")]);
-    assert_normalized_malformed_refusal(&document, "Fulfilment");
+    assert_malformed_refusal(
+        &document,
+        "Fulfilment",
+        "TypeDefinition.steps[0].consumes[0]",
+        21,
+    );
 
     let mut document = k2();
     type_named_mut(&mut document, "Fulfilment")["steps"][1]["emits"] = json!([id("Order")]);
@@ -1612,7 +1603,6 @@ fn tc235_m08_persistence_interface_binder() {
         "/types/6/persists/0",
         "TypeDefinition.persists[0]",
         "Invoice",
-        21,
     );
 
     let mut document = k2();
@@ -1649,7 +1639,7 @@ fn tc235_m08_persistence_interface_binder() {
 
 /// M09: namespaces preserve their ordered payload, never become effective
 /// types, and reject field/operation members, namespace members, duplicate
-/// membership and Quire clauses with the typed intake result.
+/// membership, an absent member and Quire clauses with the typed refusal.
 #[test]
 fn tc235_m09_namespace_binder() {
     let mut document = k2();
@@ -1751,7 +1741,6 @@ fn tc235_m09_namespace_binder() {
         "/types/7/members/3",
         "TypeDefinition.members[3]",
         "Ghost",
-        21,
     );
 
     let mut document = k2();
@@ -1787,8 +1776,16 @@ fn foreign_identity_in_persists_and_members_is_not_a_missing_name() {
     }
 }
 
+/// The refusals of a document the semantic-IR reader refuses. Intake ends
+/// there (FR-056), so there is no package to normalize or charge.
+fn intake_refusals(document: &Value) -> Vec<ModelRefusal> {
+    read_k2(document).expect_err("the semantic-IR reader refuses the document")
+}
+
+/// The normalization refusals of a document intake reads, after exactly
+/// `expected_charges` `normalize.record` charges.
 fn normalized_refusals(document: &Value, expected_charges: usize) -> Vec<ModelRefusal> {
-    let package = read_k2(document).expect("intake retains the typed refusal for normalization");
+    let package = read_k2(document).expect("the semantic-IR reader admits the document");
     let (outcome, meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
     assert_record_charge_count(&meter, expected_charges);
     let NormalizeOutcome::Refused(refusals) = outcome else {
@@ -1865,14 +1862,17 @@ fn assert_malformed_at(refusal: &ModelRefusal, node: &str, path: &str) {
 /// `TypeDefinition.occurrenceField` is not asserted as a string there; the
 /// pointer `/types/3/occurrenceField` is the typed locus the engine reports.
 ///
-/// Mutation used (derived by reading `model/normalize.rs`, not executed), one
-/// per run: run 1, removing the event `identity_fields` refusal leaves no
-/// refusal, so the `Refused` let-else inside `normalized_refusals` panics
-/// before `refusals.len() == 1`; run 2 and run 5, removing the `timestamp` check
-/// flips the occurrence-field refusal to admission; run 3, removing the
-/// reader's missing-name mapping in `intake.rs` flips the code to
-/// `InvalidModelBinding`; run 4, removing the `declared_operations` loop
-/// for events flips the 22-charge refusal to admission.
+/// Runs 1 and 4 are normalization refusals. The semantic-IR reader refuses
+/// runs 2, 3 and 5, so each ends intake.
+///
+/// Mutation used (derived by reading `model/normalize.rs` and `intake.rs`, not
+/// executed), one per run: run 1, removing the event `identity_fields` refusal
+/// leaves no refusal, so the `Refused` let-else inside `normalized_refusals`
+/// panics before `refusals.len() == 1`; runs 2, 3 and 5, letting intake read
+/// past a reader refusal panics the `expect_err` inside `intake_refusals`;
+/// run 3, removing the reader's missing-name mapping in `intake.rs` flips the
+/// code to `InvalidModelBinding`; run 4, removing the `declared_operations`
+/// loop for events flips the 22-charge refusal to admission.
 #[test]
 fn tc235_m04_event_type_refusal_vectors() {
     let identity_document = mutate_k2(|document| {
@@ -1891,7 +1891,7 @@ fn tc235_m04_event_type_refusal_vectors() {
         type_named_mut(document, "OrderPlaced")["occurrenceField"] =
             json!(id("OrderPlaced/order_id"));
     });
-    let refusals = normalized_refusals(&wrong_timestamp_document, 21);
+    let refusals = intake_refusals(&wrong_timestamp_document);
     assert_eq!(refusals.len(), 1);
     assert_malformed_at(
         &refusals[0],
@@ -1902,7 +1902,7 @@ fn tc235_m04_event_type_refusal_vectors() {
     let absent_occurrence_document = mutate_k2(|document| {
         type_named_mut(document, "OrderPlaced")["occurrenceField"] = json!(id("OrderPlaced/at"));
     });
-    let refusals = normalized_refusals(&absent_occurrence_document, 21);
+    let refusals = intake_refusals(&absent_occurrence_document);
     assert_eq!(refusals.len(), 1);
     assert_eq!(refusals[0].code, Code::MissingDeclaration);
     assert_eq!(refusals[0].cause.as_str(), "missing-name");
@@ -1934,7 +1934,7 @@ fn tc235_m04_event_type_refusal_vectors() {
     let non_timestamp_document = mutate_k2(|document| {
         type_named_mut(document, "Instant")["target"] = json!("ix://filament/native/Integer");
     });
-    let refusals = normalized_refusals(&non_timestamp_document, 21);
+    let refusals = intake_refusals(&non_timestamp_document);
     assert_eq!(refusals.len(), 1);
     assert_malformed_at(
         &refusals[0],
@@ -1946,12 +1946,13 @@ fn tc235_m04_event_type_refusal_vectors() {
 /// M18: event subtypes preserve the inherited occurrence field and reject a
 /// conflicting occurrence field or an ancestor of another business meaning.
 ///
-/// Mutation used (derived by reading `model/normalize.rs`, not executed): run
-/// 2, removing the `child != parent` `DerivationConflict` branch leaves no
-/// refusal, so the `Refused` let-else inside `normalized_refusals` panics; run 3, removing the non-event-ancestor
+/// Run 3 is refused by the semantic-IR reader, so it ends intake.
+///
+/// Mutation used (derived by reading `model/normalize.rs` and `intake.rs`, not
+/// executed): run 2, removing the `child != parent` `DerivationConflict`
 /// branch leaves no refusal, so the `Refused` let-else inside
-/// `normalized_refusals` panics before the two ordered `assert_malformed_at`
-/// loci. Run 1 asserts the
+/// `normalized_refusals` panics; run 3, dropping either reader diagnostic from
+/// intake fails the two ordered `assert_malformed_at` loci. Run 1 asserts the
 /// inherited effective members, so dropping event supertype assembly fails
 /// the `effective_members` equality.
 #[trace("FSpec-TC-235", "FSpec-FR-208-AC-12")]
@@ -2073,7 +2074,7 @@ fn tc235_m18_event_type_specialization_vectors() {
             }),
         ));
     });
-    let refusals = normalized_refusals(&wrong_general_document, 23);
+    let refusals = intake_refusals(&wrong_general_document);
     assert_eq!(refusals.len(), 2);
     assert_malformed_at(
         &refusals[0],

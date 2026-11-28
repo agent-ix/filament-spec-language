@@ -4,6 +4,7 @@
 use super::*;
 use fsl_eval::automaton::{BoundedState, QualifiedBoundedMonitor, StateId};
 use fsl_semantics::check::Event;
+use ix_trace_rs::implements;
 
 /// Untrusted path and the exact pre-read location it claims is undefined.
 #[derive(Clone, Debug)]
@@ -20,6 +21,7 @@ pub struct ProbabilityUndefinedWitness {
 /// The threshold has no role: only the first undefined observation of an
 /// undecided claim can issue a reproduced-witness token. This entry admits
 /// untimed product forms whose checked predicates are replayed here.
+#[implements("FR-202-AC-47")]
 pub fn replay_probabilistic_undefined(
     package: &CheckedPackage,
     system: &ModelSystem<'_>,
@@ -28,9 +30,26 @@ pub fn replay_probabilistic_undefined(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    replay_probabilistic_undefined_with_work_scope(
+        package, system, item, witness, limits, cancel, None,
+    )
+}
+
+/// Replay an undefined path under the item's shared work allowance.
+#[implements("FR-203-AC-33")]
+#[allow(clippy::too_many_arguments)]
+pub fn replay_probabilistic_undefined_with_work_scope(
+    package: &CheckedPackage,
+    system: &ModelSystem<'_>,
+    item: &ObligationIdentity,
+    witness: &ProbabilityUndefinedWitness,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
     let evidence = &witness.path;
-    if evidence.subsystem.is_some() {
+    if evidence.subsystem.is_some() || evidence.instance.is_some() {
         return Err(ProbabilityWitnessError::Refused);
     }
     if !system
@@ -42,7 +61,7 @@ pub fn replay_probabilistic_undefined(
     }
     let claim = bind_claim(package.graph().probabilistic_model().claims(), item, cancel)?;
     if claim.bounded_measure() {
-        return super::measure::replay_undefined(system, claim, witness, limits, cancel);
+        return super::measure::replay_undefined(system, claim, witness, limits, cancel, work);
     }
     if !matches!(
         TimedSystem::new(system, &claim.subject.alias),
@@ -99,7 +118,12 @@ pub fn replay_probabilistic_undefined(
     };
     let mut control: Option<StateId> = None;
     let mut storage = 0;
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let deterministic = super::deterministic_scheduler_rows(&evidence.scheduler)?;
     let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let mut transition_count = 0;
@@ -127,7 +151,7 @@ pub fn replay_probabilistic_undefined(
             }
         }
         let (raw, state_key) = system
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         let pre_key = match monitor.as_ref() {
             Some(monitor) => {

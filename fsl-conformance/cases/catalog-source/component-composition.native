@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile q = "filament.value.complete/v1";
+import "catalog/producer" as P;
+import "catalog/consumer" as Q;
+function marker using q(): Boolean pure { true }
+compose Sys rule assume-guarantee { component Producer from P using M; component Consumer from Q using M; guarantee Producer::Sends; guarantee Consumer::Done; guarantee Producer::Counted; rely Consumer::Done on Producer::Counted; depends Consumer::Done on Producer::Sends; supplies fair weak each M::Producer::send; }

@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Integer, Value};
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample, Engine,
-    Engines, ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding,
+    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample,
+    DeadlineSupply, Engine, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
+    SubjectBinding,
 };
 use fsl_analyze::provider::{self, ProviderResults};
 use fsl_analyze::provider::{ExternalProvider, ProviderLimit, ProviderRequest, ProviderVerdict};
@@ -20,7 +21,8 @@ use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
 use fsl_replay::value_check::ValueTarget;
 use fsl_replay::{
-    Certification, IncompleteCause, InconclusiveCause, ProofBasis, TerminalValue, ToolFailure,
+    Certification, CertificationPolicy, IncompleteCause, InconclusiveCause, ProofBasis,
+    TerminalValue, ToolFailure,
 };
 use fsl_route::request::ExtentClassification;
 use fsl_route::routing::Disposition;
@@ -28,7 +30,7 @@ use fsl_route::{Candidate, Mode, ProviderOrigin};
 use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
 
-const EXTERNAL: &str = "fsl.canonical-test-provider";
+pub(crate) const EXTERNAL: &str = "fsl.canonical-test-provider";
 const UNBOUNDED: &str = "function q using v(a: Integer, b: Integer): Integer pure { a div b }";
 const FINITE_VIOLATED: &str =
     "function q using v(a: Int[0,3], b: Int[0,1]): Integer pure { a div b }";
@@ -43,7 +45,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(declaration: &str) -> Self {
-        let (package, source) = crate::value_validity::package_with_source(declaration);
+        let (package, source) = crate::value_validity_support::package_with_source(declaration);
         let claims = package
             .graph()
             .requirements()
@@ -123,7 +125,7 @@ impl ExternalProvider for RecordingProvider {
     }
 }
 
-fn engines(
+pub(crate) fn engines(
     verdict: ProviderVerdict,
     bounded: bool,
     origin: ProviderOrigin,
@@ -177,6 +179,22 @@ fn both_entries(
     extent: ExtentClassification,
     pre_cancelled: bool,
 ) -> (AnalyzeOutcome, ProviderResults) {
+    both_entries_under(
+        fixture,
+        engines,
+        extent,
+        pre_cancelled,
+        CertificationPolicy::AdmitAny,
+    )
+}
+
+fn both_entries_under(
+    fixture: &Fixture,
+    engines: &Engines,
+    extent: ExtentClassification,
+    pre_cancelled: bool,
+    certification: CertificationPolicy,
+) -> (AnalyzeOutcome, ProviderResults) {
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no domain packages are required");
     let snapshots = fsl_semantics::model::observation::DocumentProvision::default();
@@ -189,8 +207,9 @@ fn both_entries(
         },
         provision: SourceProvision::single(fixture.package.graph().source(), &fixture.source),
         items: vec![fixture.item(engines, extent)],
+        certification,
     };
-    let limits = AnalyzeLimits::unbounded();
+    let limits = AnalyzeLimits::published(DeadlineSupply::Unbounded);
     let analyze_cancel = Cancel::new();
     let provider_cancel = Cancel::new();
     if pre_cancelled {
@@ -214,6 +233,7 @@ fn both_entries(
         engines,
         &limits,
         &provider_cancel,
+        certification,
     );
     assert_eq!(analyzed.records.len(), 1);
     assert_eq!(analyzed.records, served.records);
@@ -631,5 +651,33 @@ fn process_failure_verdicts_reject_nonprocess_and_mismatched_causes() {
     ] {
         let (analyzed, _) = process_failure_result(verdict);
         assert_eq!(analyzed.records[0].value(), &TerminalValue::Failed);
+    }
+}
+
+/// FR-1052: the policy withholds a linked provider's `uncertified` proof and
+/// a process provider's `trusted` one at both library entries.
+#[trace("TC-3240", "FR-1052-AC-2", "FR-1052-AC-4", "FR-1052-AC-8")]
+#[test]
+fn a_required_certification_withholds_provider_proofs_at_both_entries() {
+    let fixture = Fixture::new(FINITE_HOLDING);
+    for (origin, certification) in [
+        (ProviderOrigin::Linked, Certification::Uncertified),
+        (ProviderOrigin::Process, Certification::Trusted),
+    ] {
+        let (engines, _) = engines(ProviderVerdict::Proved, true, origin, false);
+        let (analyzed, _) = both_entries_under(
+            &fixture,
+            &engines,
+            ExtentClassification::Bounded,
+            false,
+            CertificationPolicy::RequireCertified,
+        );
+        assert_eq!(
+            analyzed.records[0].value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::ProofNotCertified {
+                basis: Some(Box::new(ProofBasis::Inductive { depth: 0 })),
+                certification,
+            })
+        );
     }
 }

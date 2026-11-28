@@ -354,6 +354,7 @@ fn wire_label<T: Serialize>(value: &T) -> Result<String, Failure> {
 /// The word the text form of an outcome header names a stage by (FR-865
 /// "Stage words"). A label outside the table is returned unchanged, so a
 /// stage added to the document before it is added here still renders.
+#[ix_trace_rs::string_edge]
 pub fn stage_word(label: &str) -> String {
     match label {
         "S0" => "source",
@@ -402,6 +403,7 @@ fn packaged_result_lines(result: &serde_json::Value) -> Result<Vec<String>, Fail
     Ok(lines)
 }
 
+#[ix_trace_rs::string_edge]
 fn outcome_text(
     writer: &mut Writer<'_>,
     document: &OutcomeDocument,
@@ -655,11 +657,9 @@ fn native_fence_locus_prefix(locus: Option<&fsl_replay::OutcomeLocus>) -> String
         Some(fsl_replay::OutcomeLocus::ImportedLocated { file, span, .. }) => {
             format!("{}:{}:{}", file, span.start.line, span.start.column)
         }
-        Some(fsl_replay::OutcomeLocus::Region {
-            source,
-            start,
-            end,
-        }) => format!("{}:{}-{}", source_label(source), start, end),
+        Some(fsl_replay::OutcomeLocus::Region { source, start, end }) => {
+            format!("{}:{}-{}", source_label(source), start, end)
+        }
         Some(_) | None => String::from("<no-source>"),
     }
 }
@@ -711,6 +711,7 @@ fn witness_value_text(value: &serde_json::Value) -> String {
 /// The source spelling of each operand of the deciding comparison, in operand
 /// order; `None` for an operand whose spelling is not certain. Empty when the
 /// comparison's shape or the source map is unavailable.
+#[ix_trace_rs::string_edge]
 fn witness_operand_names(
     witness: &serde_json::Value,
     sources: &RenderSources,
@@ -1419,6 +1420,7 @@ where
 fn open_cause_label(cause: fsl_replay::OpenCause) -> &'static str {
     match cause {
         fsl_replay::OpenCause::MaxDepth => "max_depth",
+        fsl_replay::OpenCause::ConstraintBoundary => "constraint_boundary",
         fsl_replay::OpenCause::UndecidedSuccessor => "undecided_successor",
         fsl_replay::OpenCause::NotExpanded => "not_expanded",
     }
@@ -1794,10 +1796,7 @@ mod tests {
             document: document.clone(),
             path: path.to_owned(),
             clause: Some(clause.to_owned()),
-            body: fsl_foundation::source::SourceIdentity::new(
-                "docs",
-                format!("{path}#{clause}"),
-            ),
+            body: fsl_foundation::source::SourceIdentity::new("docs", format!("{path}#{clause}")),
             first_line,
             category,
             diagnostics,
@@ -1806,9 +1805,7 @@ mod tests {
     }
 
     #[cfg(feature = "quire-extraction")]
-    fn native_fence_document(
-        fences: Vec<fsl_replay::spine::NativeFenceResult>,
-    ) -> OutcomeDocument {
+    fn native_fence_document(fences: Vec<fsl_replay::spine::NativeFenceResult>) -> OutcomeDocument {
         OutcomeDocument::from_native_fences(&fsl_replay::spine::NativeFenceReport { fences })
     }
 
@@ -3031,7 +3028,15 @@ mod tests {
             0,
         )
         .expect("type key is valid");
-        let field = |ordinal| {
+        let record_type = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![filament_exact::PathSegment::Text(
+                "composite_type".to_owned(),
+            )],
+            0,
+        )
+        .expect("record key is valid");
+        let field = |name: &str| {
             filament_exact::NodeKey::new(
                 "paid-short",
                 vec![
@@ -3039,16 +3044,19 @@ mod tests {
                     filament_exact::PathSegment::Text("query".to_owned()),
                     filament_exact::PathSegment::Node(receiver.clone()),
                     filament_exact::PathSegment::Text("filament.op.record.project".to_owned()),
+                    filament_exact::PathSegment::Node(record_type.clone()),
+                    filament_exact::PathSegment::Text(name.to_owned()),
                     filament_exact::PathSegment::Text("false".to_owned()),
                     filament_exact::PathSegment::Text("query".to_owned()),
                     filament_exact::PathSegment::Node(int_type.clone()),
+                    filament_exact::PathSegment::Node(int_type.clone()),
                 ],
-                ordinal,
+                0,
             )
             .expect("field key is valid")
         };
-        let charged = field(0);
-        let total = field(1);
+        let charged = field("charged");
+        let total = field("total");
         let comparison = filament_exact::NodeKey::new(
             "paid-short",
             vec![

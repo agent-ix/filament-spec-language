@@ -6,7 +6,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, label, package_selection, request_members, Workspace, HANDOFF,
+    analyze, counter_request, label, package_selection, request_members, Run, Workspace, HANDOFF,
 };
 
 fn universal_parity(bound: u64, expected: &str) {
@@ -94,6 +94,107 @@ fn universal_parity(bound: u64, expected: &str) {
     } else {
         assert_eq!(package.item(0)["replay"]["reproduced"], true, "{document}");
     }
+    // Both routes add the model subject's deadlock-freedom item, which the
+    // Counter's undeclared terminal state at 3 refutes.
+    assert_eq!(package.exit, 10, "{document}");
+    assert_eq!(
+        package.item(1)["request"]["temporal"]["item_kind"],
+        "deadlock-freedom",
+        "{document}"
+    );
+    assert_eq!(package.item(1)["record"]["result"], "refuted", "{document}");
+    for member in ["request", "record", "counterexample", "replay"] {
+        assert_eq!(
+            package.item(1)[member],
+            source.item(1)[member],
+            "{member}: {document}"
+        );
+    }
+}
+
+/// The source route's run of `items` over the Counter unit with `body`, and
+/// the package route's run of them after the sources are removed.
+fn on_both_routes(name: &str, body: &str, items: Value) -> (Run, Run) {
+    let ws = Workspace::new(name);
+    let source = analyze(&counter_request(&ws, body, items.clone()));
+    let (members, _) = package_selection(&ws, &request_members(Some(items)));
+    ws.write("program.fsl", b"not a native unit");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("remove retained sources");
+    let package = analyze(
+        &ws.write(
+            "package-analyze.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
+    (source, package)
+}
+
+/// A subject whose model declares `terminal any` has no deadlock-freedom item
+/// on either route.
+#[test]
+fn a_hyper_subject_that_intends_every_terminal_state_adds_no_deadlock_item() {
+    let body = "terminal Halt using v on M any;\n\
+        hyper Equal using t0 over behaviours (c: M::Counter) \
+        forall trace a of M forall trace b of M \
+        { always holds(c.value @ a <= 3 and c.value @ b <= 3) }";
+    let (source, package) = on_both_routes(
+        "package-hyper-terminal-any",
+        body,
+        json!([{"claim": "Equal"}]),
+    );
+    for run in [source, package] {
+        let document = run.document();
+        assert_eq!(
+            document["items"].as_array().map(Vec::len),
+            Some(1),
+            "{document}"
+        );
+        assert_eq!(run.item(0)["record"]["result"], "proved", "{document}");
+        assert_eq!(run.exit, 0, "{document}");
+    }
+}
+
+/// FR-940-AC-17 and FR-181-AC-10: a package-selected HP-5 claim with an
+/// object parameter is unsupported, while the source route retains its result.
+#[trace("TC-3219", "FR-940-AC-17", "FR-181-AC-10")]
+#[test]
+fn a_single_existential_package_hyper_claim_with_object_parameter_is_unsupported() {
+    let body = "hyper CanReachThree using t0 over behaviours (c: M::Counter) \
+        exists trace b of M { eventually holds(c.value @ b = 3) }";
+    let (source, package) = on_both_routes(
+        "package-hyper-single-existential",
+        body,
+        json!([{"claim": "CanReachThree"}]),
+    );
+    let right = package.document();
+    assert_eq!(source.exit, 10, "{}", source.document());
+    assert_eq!(
+        source.item(0)["record"]["result"],
+        "proved",
+        "{}",
+        source.document()
+    );
+    assert_eq!(package.exit, 21, "{right}");
+    assert_eq!(
+        package.item(0)["record"]["result"],
+        "unsupported",
+        "{right}"
+    );
+    assert_eq!(
+        package.item(0)["record"]["diagnostic"]["code"],
+        "unsupported_construct",
+        "{right}"
+    );
+    assert_eq!(
+        package.item(0)["record"]["diagnostic"]["cause"],
+        "not-yet-implemented",
+        "{right}"
+    );
+    assert!(package.item(0)["axes"]["truth"].is_null(), "{right}");
+    assert!(!right.to_string().contains("\"instance\""), "{right}");
 }
 
 // Both evaluator ports read every pair of reachable Counter values. Equal
@@ -163,7 +264,7 @@ fn check_universal_atoms_and_certificate<'a>(
             .expect("source letters");
     let parameter = &clause.parameters()[0];
     let instance = package_system
-        .instances(&ValueType::Reference(parameter.population.object()))
+        .instances(&ValueType::Reference(parameter.object.clone()))
         .expect("instances")
         .into_iter()
         .next()
@@ -261,6 +362,7 @@ fn check_universal_atoms_and_certificate<'a>(
             max_depth: None,
             meter: UNLIMITED,
             reductions: fsl_route::reductions::Reductions::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -325,7 +427,7 @@ fn prepare_hp1_production_cli_fixture() {
         crate::hyper_world::Vault::Secure,
         false,
         &crate::hyper_world::STARTS,
-        crate::relation_claims::DETERMINISTIC,
+        crate::relation_claims_support::DETERMINISTIC,
     );
     let path = crate::analyze_cli_support::request_over(
         &ws,

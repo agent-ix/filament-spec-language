@@ -27,7 +27,7 @@ use filament_semantic_value::fairness::{
 use crate::bare::BarePackage;
 use crate::bare_slot::BareSelectionFailure;
 use crate::checked_v2::wire_graph;
-use crate::checked_views::{Activation, FormulaOperation, temporal_subject};
+use crate::checked_views::{temporal_subject, Activation, FormulaOperation};
 use crate::native_row::{self, NativeRowError};
 use crate::protocol_selection::SlotSelectionFailure;
 use crate::protocol_view::{group_member, text};
@@ -756,6 +756,7 @@ pub struct BareFrameOperation {
 impl<'p> BarePackage<'p> {
     /// The declaring type and operation selected by a protocol attempt's
     /// admitted `operation_anchor` node (FR-531/FR-940).
+    #[ix_trace_rs::string_edge]
     pub fn protocol_operation(
         &self,
         anchor_id: &CheckedNodeId,
@@ -915,6 +916,7 @@ impl BarePackage<'_> {
     ///
     /// [`BareSelectionFailure`]: a witness refusal, or `MalformedNode` for a
     /// clause node whose body, `self` parameter or anchor does not read.
+    #[ix_trace_rs::string_edge]
     pub fn state_clause_declarations(
         &self,
     ) -> Result<Vec<BareStateClauseDeclaration>, BareSelectionFailure> {
@@ -1001,11 +1003,8 @@ impl BarePackage<'_> {
                 StateClauseKind::Precondition => Observation::Pre,
                 StateClauseKind::Postcondition => Observation::Post,
             };
-            let [
-                CheckedTerm::Aggregate { members, .. },
-                CheckedTerm::Reference { target: anchor },
-                _,
-            ] = arguments.as_slice()
+            let [CheckedTerm::Aggregate { members, .. }, CheckedTerm::Reference { target: anchor }, _] =
+                arguments.as_slice()
             else {
                 return Err(malformed());
             };
@@ -1154,11 +1153,8 @@ impl<'p> BarePackage<'p> {
             StateClauseKind::Precondition => Observation::Pre,
             StateClauseKind::Postcondition => Observation::Post,
         };
-        let [
-            CheckedTerm::Aggregate { members, .. },
-            _anchor,
-            CheckedTerm::Reference { target: body },
-        ] = arguments.as_slice()
+        let [CheckedTerm::Aggregate { members, .. }, _anchor, CheckedTerm::Reference { target: body }] =
+            arguments.as_slice()
         else {
             return Err(malformed());
         };
@@ -1307,6 +1303,7 @@ impl<'p> BarePackage<'p> {
             .map(|node| &node.node_id)
     }
 
+    #[ix_trace_rs::string_edge]
     fn temporal_clause_semantic_node(
         &self,
         clause: &NodeKey,
@@ -1467,7 +1464,7 @@ impl<'p> BarePackage<'p> {
         Vec<crate::occurrence_source::OccurrenceSource>,
         crate::occurrence_source::OccurrenceSourceRefusal,
     > {
-        use crate::occurrence_source::{OccurrenceSourceRefusal, occurrence_source};
+        use crate::occurrence_source::{occurrence_source, OccurrenceSourceRefusal};
         use filament_contract_model::{CheckedOccurrence, CheckedOccurrenceRole};
         let package = self.package();
         let node = self
@@ -1842,8 +1839,12 @@ impl BarePackage<'_> {
     /// atom reads these names when no identity row selects the declaration
     /// (FR-931 "The lowering input"). Charges nothing.
     pub fn declared_composites(&self) -> Vec<DeclaredComposite> {
-        use crate::wire_form::{WireForm, WireTag, has_form};
+        use crate::wire_form::{has_form, WireForm, WireTag};
         use filament_contract_model::CheckedBindingNameKind;
+
+        let Ok(graph) = wire_graph(self.package()) else {
+            return Vec::new();
+        };
 
         let names = |node: &CheckedSemanticNodeV2| -> Vec<String> {
             let CheckedTerm::Aggregate { members, .. } = &node.body else {
@@ -1875,7 +1876,7 @@ impl BarePackage<'_> {
                     return None;
                 };
                 Some(DeclaredComposite {
-                    key: self.node_key(&node.node_id)?,
+                    key: graph.key(&node.node_id).ok()?,
                     shape,
                 })
             })

@@ -45,7 +45,7 @@ pub fn replay<R: PlanRules>(
     };
     let key = |state: &ModelSimState| {
         system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(key, _)| key)
             .map_err(|_| PlanSearchError::StateKey)
     };

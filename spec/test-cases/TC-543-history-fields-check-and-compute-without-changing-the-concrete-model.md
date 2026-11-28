@@ -32,6 +32,8 @@ Fixture: `Register` and `RegisterHistory` (FR-138).
 6. Key the history values over `{r, s}` with two fields (FR-138-AC-7).
 7. Check history rows typed as a decimal, an enum and an option of an enum, and
    rows typed `Int[0, 1]`, Boolean and `Option<Int[0, 1]>` (FR-138-AC-9).
+8. Through the package route, lower present Option initials with enum, integer
+   and decimal payloads; refuse a payload outside its declared value set.
 
 Tag the tests `#[trace("TC-543", "FR-138-AC-n")]`.
 
@@ -46,3 +48,6 @@ Tag the tests `#[trace("TC-543", "FR-138-AC-n")]`.
 - Step 5: `last` = 0, 0.
 - Step 6: the order `r.last`, `r.writes`, `s.last`, `s.writes`; a one-value difference changes the key.
 - Step 7: the decimal, enum and option-of-enum rows, with their initial literals, check and key in a product state by their canonical literals; a decimal or enum initial outside the declared value set refuses `ill_typed`/`type-mismatch` at the literal; the other three rows check.
+- Step 8: all three present Option initials are accepted as `option_value`
+  history values through the checked-package route; an out-of-set payload
+  refuses `ill_typed`/`type-mismatch` at the literal.

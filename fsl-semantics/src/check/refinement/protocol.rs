@@ -31,7 +31,7 @@ use crate::check::check::ScopedHistory;
 use crate::check::lowering::AdmittedModel;
 use crate::check::protocol_clause::{BoundAttempt, CheckedProtocol, ProtocolNodeId};
 use crate::check::protocol_obligation::CheckedActivation;
-use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
+use crate::check::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
 use crate::check::state_clause::ClauseDeclarations;
 use crate::family::CheckContext;
 use crate::model::domain_package::DomainPackageRef;
@@ -301,7 +301,7 @@ pub(crate) struct ProtocolRefinement<'f> {
     /// The profile the declaration selects, which a refusal names.
     pub(super) profile: String,
     /// Every refusal the declaration's other checks found.
-    pub(super) refusals: Vec<CheckRefusal>,
+    pub(super) refusals: Vec<SemanticCheckRefusal>,
     /// The span of the refinement's name, where a missing row is reported.
     pub(super) name_span: Span,
     /// What the rows of the declaration were typed with, which an
@@ -349,8 +349,8 @@ impl SelectedProtocol {
 
     /// `refusal`, that the clause has no node to record, at the refinement's
     /// first row that names the clause.
-    pub(crate) fn unkeyed(&self, refusal: CheckRefusal) -> CheckRefusal {
-        CheckRefusal {
+    pub(crate) fn unkeyed(&self, refusal: SemanticCheckRefusal) -> SemanticCheckRefusal {
+        SemanticCheckRefusal {
             location: refusal.location,
             cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                 refinement: self.refinement.clone(),
@@ -523,13 +523,28 @@ fn entries(clause: &ProtocolClause<'_>, concrete: &AdmittedModel) -> Vec<Entry> 
             row: RowClass::Template,
             need: Need::OrOperation(operation),
         });
-        entries.push(Entry {
-            class: StepClass::CompensationEnd(template.name.clone()),
-            keyword: Some(StepClassKeyword::Cend),
-            name: template.name.clone(),
-            row: RowClass::Template,
-            need: Need::Row,
-        });
+        // These apply no operation, so each needs a row of its own.
+        let name = || template.name.clone();
+        for (class, keyword) in [
+            (StepClass::CompensationEnd(name()), StepClassKeyword::Cend),
+            (StepClass::CompensationFail(name()), StepClassKeyword::Cfail),
+            (
+                StepClass::CompensationTimeout(name()),
+                StepClassKeyword::Ctimeout,
+            ),
+            (
+                StepClass::CompensationExpire(name()),
+                StepClassKeyword::Cexpire,
+            ),
+        ] {
+            entries.push(Entry {
+                class,
+                keyword: Some(keyword),
+                name: template.name.clone(),
+                row: RowClass::Template,
+                need: Need::Row,
+            });
+        }
     }
     for channel in &clause.checked.channels {
         let admits = |kind| match (kind, channel.delivery) {
@@ -642,12 +657,12 @@ impl ProtocolRefinement<'_> {
     }
 
     /// The refusals found so far.
-    pub(crate) fn refusals(&self) -> &[CheckRefusal] {
+    pub(crate) fn refusals(&self) -> &[SemanticCheckRefusal] {
         &self.refusals
     }
 
     /// The refusals found so far, by value.
-    pub(crate) fn into_refusals(self) -> Vec<CheckRefusal> {
+    pub(crate) fn into_refusals(self) -> Vec<SemanticCheckRefusal> {
         self.refusals
     }
 
@@ -667,7 +682,7 @@ impl ProtocolRefinement<'_> {
         declarations: &ClauseDeclarations<'a>,
         cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
     ) -> (
-        Result<(CheckedRefinement, SelectedProtocol), Vec<CheckRefusal>>,
+        Result<(CheckedRefinement, SelectedProtocol), Vec<SemanticCheckRefusal>>,
         u64,
     ) {
         let Self {
@@ -715,7 +730,7 @@ impl ProtocolRefinement<'_> {
             Ok(catalog) => catalog,
             Err(fault) => {
                 return (
-                    Err(vec![CheckRefusal {
+                    Err(vec![SemanticCheckRefusal {
                         location: Location::root(Origin::Expression),
                         cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             fault,

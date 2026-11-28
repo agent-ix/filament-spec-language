@@ -99,6 +99,8 @@
 //! prepared value borrows the package it was prepared from; the interpreter
 //! is that case.
 
+use std::collections::BTreeSet;
+
 use filament_eval::{
     CallFailure, Evaluation, ExecutionBackendChoice, PrepareLimitReached, PrepareSetting,
     SessionLimits, UnsupportedCause, UnsupportedEntry,
@@ -113,6 +115,115 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::AdmittedObservations;
 
 use crate::value::{CheckedPackageEvaluation, QualifiedName};
+
+pub mod coverage;
+
+/// One typed value-family operation listed by a backend's coverage (FR-560).
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CoverageOperation {
+    /// The typed operator.
+    pub operator: CoverageOperator,
+    /// The named value types of the operation's operands, in source order.
+    pub operand_types: Vec<CoverageValueType>,
+    /// The named result type.
+    pub result_type: CoverageValueType,
+}
+
+/// Value-family operation names the coverage set can distinguish (FR-560).
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum CoverageOperator {
+    /// Addition.
+    Add,
+    /// Subtraction.
+    Subtract,
+    /// Multiplication.
+    Multiply,
+    /// Negation.
+    Negate,
+    /// Integer division.
+    Divide,
+    /// Integer remainder.
+    Remainder,
+    /// Euclidean modulus.
+    Modulo,
+    /// Exact division.
+    ExactDivide,
+    /// Comparison.
+    Less,
+    /// Less-than or equal comparison.
+    LessOrEqual,
+    /// Greater-than comparison.
+    Greater,
+    /// Greater-than or equal comparison.
+    GreaterOrEqual,
+    /// Equality.
+    Equal,
+    /// Inequality.
+    NotEqual,
+    /// Boolean conjunction.
+    And,
+    /// Boolean disjunction.
+    Or,
+    /// Boolean implication.
+    Implies,
+    /// Boolean negation.
+    Not,
+    /// A future or otherwise unclassified operator.
+    Other(String),
+}
+
+/// The value-type categories a backend coverage can name (FR-560).
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum CoverageValueType {
+    /// Boolean values.
+    Boolean,
+    /// Integer values, bounded or unbounded.
+    Integer,
+    /// Rational values.
+    Rational,
+    /// Decimal values.
+    Decimal,
+    /// Text values.
+    Text,
+    /// Record values, distinct from sum/union values.
+    Record,
+    /// Tuple values, distinct from record and sum/union values.
+    Tuple,
+    /// Collection values.
+    Collection,
+    /// Object references, represented as opaque exact-value handles.
+    Reference,
+    /// Sum/union values, which are outside the FR-560 floor.
+    Union,
+    /// A composite whose checked declaration kind could not be classified.
+    Composite,
+    /// Timestamp values, outside the FR-560 floor.
+    Timestamp,
+    /// A future or otherwise unclassified checked value type.
+    Other(String),
+}
+
+/// The typed construct set a backend claims it translates (FR-560).
+///
+/// Forms use their ADR-012 names. Value types and operations use the typed
+/// vocabulary below; a union never aliases the record category.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BackendCoverage {
+    /// Expression forms the backend translates.
+    pub expression_forms: BTreeSet<String>,
+    /// Checked value types the backend represents.
+    pub value_types: BTreeSet<CoverageValueType>,
+    /// Operations the backend translates over the listed value types.
+    pub operations: BTreeSet<CoverageOperation>,
+}
+
+impl BackendCoverage {
+    /// Whether the coverage lists the expression form `name`.
+    #[must_use]
+    pub fn contains_form(&self, name: &str) -> bool {
+        self.expression_forms.contains(name)
+    }
+}
 
 /// FR-294: the translation work and generated code size one `prepare` may
 /// use, the FR-255 settings `prepare.compile_work_units` and

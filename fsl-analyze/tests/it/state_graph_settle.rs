@@ -15,22 +15,30 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, CancelCause};
 use filament_semantic_value::catalog::Category;
+use fsl_analyze::analyze::{
+    analyze_items, AlterEvidence, AnalyzeLimits, DeadlineSupply, Engines, PackageStateGraphSubject,
+};
 use fsl_analyze::model_check::{check_and_settle_state_graph, StateGraphItem, StateGraphRequest};
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::ModelSimState;
+use fsl_eval::simulation::model::PackageModelInput;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
     settle_state_graph, AppliedReduction, CertificateLocus, CertificateRule, Certification,
-    DisagreementCause, Execution, GraphReplayResult, GraphReplaySettlement, GraphWitness,
-    HyperIdentity, IncompleteCause, InconclusiveCause, ModelCheckLimit, ModelCheckLimits,
-    ModelPath, OpenCause, ProofBasis, ReachedLimit, ResultLabel, RunEnd, SettlementBasis,
-    StateGraphCertificate, StateGraphIdentity, StateGraphInstanceOutcome, StateGraphMethod,
-    StateGraphOutcome, StateGraphRecord, TerminalValue, Truth, Verdict, WitnessSource,
-    DEFAULT_WITNESS_SEED, EXPLICIT_STATE,
+    DisagreementCause, Execution, GraphEvidence, GraphReplayResult, GraphReplaySettlement,
+    GraphWitness, HyperIdentity, IncompleteCause, InconclusiveCause, ModelCheckLimit,
+    ModelCheckLimits, ModelPath, OpenCause, ProofBasis, ReachedLimit, ResultLabel, RunEnd,
+    SettlementBasis, StateGraphCertificate, StateGraphIdentity, StateGraphInstanceOutcome,
+    StateGraphMethod, StateGraphOutcome, StateGraphRecord, TerminalValue, Truth, Verdict,
+    WitnessPath, WitnessSource, DEFAULT_WITNESS_SEED, EXPLICIT_STATE,
 };
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use ix_trace_rs::trace;
 
+use crate::certificate_rejection_support::state_locus;
+use crate::component_certificate::assert_written_rejection;
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
     config_kernel_world, config_kernel_world_over, config_version, config_world, config_world_over,
@@ -39,6 +47,7 @@ use crate::graph_world::{
 };
 use crate::state_graph::{no_samples, reachable, run, AB};
 use crate::state_graph_certificate::{config, ranks_of, state_where, with_ranks, GUARDED};
+use crate::terminal_two_models::handoff_package;
 
 /// The method of a run under `limits` with no horizon and the default seed.
 fn method(limits: ModelCheckLimits) -> StateGraphMethod {
@@ -185,6 +194,7 @@ fn the_state_graph_pipeline_runs_and_settles_each_instance() {
         max_depth: None,
         limits: no_samples(),
         seed: None,
+        retained: None,
     };
     let settled = check_and_settle_state_graph(request, &Cancel::new(), |_| {
         Ok(GraphReplayResult {
@@ -224,6 +234,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
         max_depth: None,
         limits: no_samples(),
         seed: None,
+        retained: None,
     };
     let baseline = run(request());
     assert_eq!(baseline.items[0].len(), 2, "two actual native instances");
@@ -231,7 +242,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
     let error = check_and_settle_state_graph(request(), &Cancel::new(), |instance| {
         assert!(instance.over.is_some(), "a real population instance");
         calls.set(calls.get() + 1);
-        Err(crate::model_settle::allocation_refusal(7333))
+        Err(crate::model_settle_support::allocation_refusal(7333))
     })
     .unwrap_err();
     assert_eq!(
@@ -263,7 +274,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
 /// independently selected typed clock row.
 #[test]
 fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
-    let world = crate::graph_world::temporal_config_world_ordered();
+    let world = crate::graph_world::temporal_config_world();
     let claim = world.claim("ReachesTwo");
     let mut selections = crate::fill::tcb_01_event_position_selection(&world.package);
     let hyper = &world.package.graph().hyper_clauses()[0];
@@ -888,6 +899,7 @@ fn undefined_and_altered_count_certificates_never_settle_proved() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     let mut replays = 0;
     assert_rejected(
@@ -935,6 +947,7 @@ fn undefined_and_altered_count_certificates_never_settle_proved() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     assert_rejected(
         &settle(
@@ -1016,6 +1029,7 @@ fn a_bad_state_certificate_settles_certificate_rejected() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     let mut replays = 0;
     assert_rejected(
@@ -1330,6 +1344,90 @@ fn horizon_limit_undecided_and_empty_runs_settle_their_rows() {
     assert_eq!(replays, 1, "only the trap carries evidence");
 }
 
+/// FR-169-AC-19: a completed `NoDecision` with a `ConstraintBoundary` open
+/// cause settles `inconclusive`, `ConstraintReached` with the run's boundary
+/// states, ahead of a search horizon, and `UndecidedSuccessor` comes before
+/// it; no evidence is replayed.
+#[trace("TC-594", "FR-169-AC-19")]
+#[test]
+fn a_boundary_open_cause_settles_constraint_reached_after_an_undecided_one() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let reached = InconclusiveCause::ConstraintReached { boundary_states: 2 };
+    let mut replays = 0;
+    for (open, cause) in [
+        (vec![OpenCause::ConstraintBoundary], reached.clone()),
+        (
+            vec![OpenCause::MaxDepth, OpenCause::ConstraintBoundary],
+            reached,
+        ),
+        (
+            vec![OpenCause::ConstraintBoundary, OpenCause::UndecidedSuccessor],
+            InconclusiveCause::UndecidedSuccessor,
+        ),
+    ] {
+        let instance = StateGraphInstanceOutcome {
+            outcome: StateGraphOutcome::NoDecision {
+                end: RunEnd::Completed,
+                open: open.iter().copied().collect(),
+            },
+            boundary_states: 2,
+            ..result.items[0][0].clone()
+        };
+        let record = settle(
+            &world,
+            AB,
+            "ReachesTwo",
+            &instance,
+            no_samples(),
+            &mut replays,
+        );
+        assert_eq!(record.value, TerminalValue::Inconclusive(cause), "{open:?}");
+        assert_eq!(
+            (record.label, record.basis),
+            (ResultLabel::Inconclusive, SettlementBasis::Unsettled)
+        );
+    }
+    assert_eq!(replays, 0);
+}
+
+/// FR-255-AC-44: a one-byte retention allowance stops a state-graph run
+/// before it stores the first successor its expansion returns.
+#[trace("FR-255-AC-44")]
+#[test]
+fn a_one_byte_retention_allowance_stops_a_state_graph_before_its_first_successor() {
+    use fsl_foundation::Setting;
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let run_with = |bound: Option<u64>| {
+        let mut engines = fsl_analyze::analyze::EngineBounds::default();
+        if let Some(bound) = bound {
+            assert!(engines.set(Setting::AnalysisRetainedBytes, bound));
+        }
+        let retained = engines.item_budget(UNLIMITED, &Cancel::new());
+        let mut request = world.request(AB, vec![world.item("ReachesTwo")], no_samples());
+        request.retained = Some(&retained);
+        (run(request), retained)
+    };
+    let (stopped, retained) = run_with(Some(1));
+    assert_eq!(retained.consumed(Setting::AnalysisRetainedBytes), 0);
+    assert_eq!(
+        stopped.graph.end,
+        RunEnd::Stopped {
+            cause: IncompleteCause::ResourceExhausted,
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::AnalysisRetainedBytes,
+                value: 1,
+            }),
+        }
+    );
+    assert_eq!(stopped.graph.nodes.len(), 1, "only the one initial state");
+    assert!(stopped.graph.edges.is_empty());
+    let (again, _) = run_with(Some(1));
+    assert_eq!(stopped.graph.end, again.graph.end);
+    let (published, _) = run_with(None);
+    assert_eq!(published.graph.end, RunEnd::Completed);
+}
+
 /// FR-169-AC-1, AC-5: a `Witnessed` outcome whose replay settles
 /// `inconclusive` settles `inconclusive`, `ReplayParity`, never `proved`; a
 /// `Trapped` outcome whose replay a limit stops settles `incomplete`,
@@ -1447,7 +1545,10 @@ fn a_malformed_state_graph_certificate_settles_inconclusive() {
     let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
     let mut malformed = result.items[0][0].clone();
     let StateGraphOutcome::Witnessed { certificate, .. } = &mut malformed.outcome else {
-        panic!("the run returns a witnessed certificate: {:?}", malformed.outcome);
+        panic!(
+            "the run returns a witnessed certificate: {:?}",
+            malformed.outcome
+        );
     };
     let duplicate_state = certificate.closure[0].clone();
     certificate.closure[1] = duplicate_state.clone();
@@ -1482,7 +1583,10 @@ fn a_certificate_with_the_other_forms_list_settles_inconclusive() {
     let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
     let mut malformed = result.items[0][0].clone();
     let StateGraphOutcome::Witnessed { certificate, .. } = &mut malformed.outcome else {
-        panic!("the run returns a witnessed certificate: {:?}", malformed.outcome);
+        panic!(
+            "the run returns a witnessed certificate: {:?}",
+            malformed.outcome
+        );
     };
     let closure_state_zero = certificate.closure[0].clone();
     certificate.counts.push((0, 1, 0));
@@ -1517,17 +1621,26 @@ fn each_malformed_certificate_variant_settles_before_replay() {
     let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
     let original = &result.items[0][0];
     let StateGraphOutcome::Witnessed { certificate, .. } = &original.outcome else {
-        panic!("the run returns a witnessed certificate: {:?}", original.outcome);
+        panic!(
+            "the run returns a witnessed certificate: {:?}",
+            original.outcome
+        );
     };
     let mut variants = Vec::new();
 
     let mut swapped = certificate.clone();
     swapped.closure.swap(0, 1);
-    variants.push((swapped, CertificateLocus::ModelKey(certificate.closure[0].clone())));
+    variants.push((
+        swapped,
+        CertificateLocus::ModelKey(certificate.closure[0].clone()),
+    ));
 
     let mut invalid_key = certificate.clone();
     invalid_key.closure[0] = StateKey::from_canonical_bytes(b"not-a-state-key".to_vec());
-    variants.push((invalid_key.clone(), CertificateLocus::ModelKey(invalid_key.closure[0].clone())));
+    variants.push((
+        invalid_key.clone(),
+        CertificateLocus::ModelKey(invalid_key.closure[0].clone()),
+    ));
 
     let mut out_of_range = certificate.clone();
     let rank_index = u64::try_from(out_of_range.closure.len()).expect("closure length");
@@ -1537,17 +1650,36 @@ fn each_malformed_certificate_variant_settles_before_replay() {
     let mut descending = certificate.clone();
     descending.ranks.reverse();
     let offending = usize::try_from(descending.ranks[1].0).expect("rank index");
-    variants.push((descending, CertificateLocus::ModelKey(certificate.closure[offending].clone())));
+    variants.push((
+        descending,
+        CertificateLocus::ModelKey(certificate.closure[offending].clone()),
+    ));
 
     for (candidate, locus) in variants {
         let instance = with_certificate(original, candidate);
         let mut replays = 0;
-        let record = settle(&world, AB, "ReachesTwo", &instance, no_samples(), &mut replays);
+        let record = settle(
+            &world,
+            AB,
+            "ReachesTwo",
+            &instance,
+            no_samples(),
+            &mut replays,
+        );
         assert_eq!(replays, 0);
-        assert_eq!(record.value, TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
-            rule: CertificateRule::Malformed, at: locus,
-        }));
-        assert_eq!((record.label, record.basis), (ResultLabel::Inconclusive, SettlementBasis::Unsettled));
+        let (form, written) = written_locus(&locus);
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::Malformed,
+                at: locus,
+            })
+        );
+        assert_eq!(
+            (record.label, record.basis),
+            (ResultLabel::Inconclusive, SettlementBasis::Unsettled)
+        );
+        assert_written_rejection(record.value, "malformed", form, &written);
     }
 
     let sequenced = job_world(true, false);
@@ -1561,9 +1693,38 @@ fn each_malformed_certificate_variant_settles_before_replay() {
     bad_count.counts[0].1 = 3;
     let instance = with_certificate(original, bad_count);
     let mut replays = 0;
-    let record = settle(&sequenced, &["j"], "InOneWay", &instance, no_samples(), &mut replays);
+    let record = settle(
+        &sequenced,
+        &["j"],
+        "InOneWay",
+        &instance,
+        no_samples(),
+        &mut replays,
+    );
     assert_eq!(replays, 0);
-    assert_rejected(&record, CertificateRule::Malformed, certificate.closure[count_index].clone());
+    assert_rejected(
+        &record,
+        CertificateRule::Malformed,
+        certificate.closure[count_index].clone(),
+    );
+    assert_written_rejection(
+        record.value,
+        "malformed",
+        "StateLocus",
+        &state_locus(&certificate.closure[count_index]),
+    );
+}
+
+/// The FSpec FR-331 form of a state-graph rejection locus and its spelling.
+fn written_locus(locus: &CertificateLocus) -> (&'static str, serde_json::Value) {
+    match locus {
+        CertificateLocus::ModelKey(key) => ("StateLocus", state_locus(key)),
+        CertificateLocus::Entry { index } => (
+            "EntryLocus",
+            serde_json::json!({"entry": index.to_string()}),
+        ),
+        other => panic!("not a state-graph locus: {other:?}"),
+    }
 }
 
 /// FR-169-AC-15 (TC-644): each wrong-form list shape settles as malformed;
@@ -1575,27 +1736,54 @@ fn wrong_form_list_variants_settle_rejected_and_empty_lists_settle_proved() {
     let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
     let original = &result.items[0][0];
     let StateGraphOutcome::Witnessed { certificate, .. } = &original.outcome else {
-        panic!("the run returns a witnessed certificate: {:?}", original.outcome);
+        panic!(
+            "the run returns a witnessed certificate: {:?}",
+            original.outcome
+        );
     };
     let mut wrong_form = certificate.clone();
     wrong_form.counts.push((0, 1, 0));
     let mut out_of_range = certificate.clone();
     out_of_range.counts.push((9, 1, 0));
     for (candidate, locus) in [
-        (wrong_form, CertificateLocus::ModelKey(certificate.closure[0].clone())),
+        (
+            wrong_form,
+            CertificateLocus::ModelKey(certificate.closure[0].clone()),
+        ),
         (out_of_range, CertificateLocus::Entry { index: 9 }),
     ] {
         let instance = with_certificate(original, candidate);
         let mut replays = 0;
-        let record = settle(&world, AB, "ReachesTwo", &instance, no_samples(), &mut replays);
+        let record = settle(
+            &world,
+            AB,
+            "ReachesTwo",
+            &instance,
+            no_samples(),
+            &mut replays,
+        );
         assert_eq!(replays, 0);
-        assert_eq!(record.value, TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
-            rule: CertificateRule::Malformed, at: locus,
-        }));
-        assert_eq!((record.label, record.basis), (ResultLabel::Inconclusive, SettlementBasis::Unsettled));
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::Malformed,
+                at: locus,
+            })
+        );
+        assert_eq!(
+            (record.label, record.basis),
+            (ResultLabel::Inconclusive, SettlementBasis::Unsettled)
+        );
     }
     let mut replays = 0;
-    let record = settle(&world, AB, "ReachesTwo", original, no_samples(), &mut replays);
+    let record = settle(
+        &world,
+        AB,
+        "ReachesTwo",
+        original,
+        no_samples(),
+        &mut replays,
+    );
     assert_eq!(record.label, ResultLabel::Proved);
     assert!(matches!(
         record.value,
@@ -1615,12 +1803,30 @@ fn wrong_form_list_variants_settle_rejected_and_empty_lists_settle_proved() {
     wrong_form.ranks.push((0, 0));
     let instance = with_certificate(original, wrong_form);
     let mut replays = 0;
-    let record = settle(&sequenced, &["j"], "InOneWay", &instance, no_samples(), &mut replays);
+    let record = settle(
+        &sequenced,
+        &["j"],
+        "InOneWay",
+        &instance,
+        no_samples(),
+        &mut replays,
+    );
     assert_eq!(replays, 0);
-    assert_rejected(&record, CertificateRule::Malformed, certificate.closure[0].clone());
+    assert_rejected(
+        &record,
+        CertificateRule::Malformed,
+        certificate.closure[0].clone(),
+    );
 
     let mut replays = 0;
-    let record = settle(&sequenced, &["j"], "InOneWay", original, no_samples(), &mut replays);
+    let record = settle(
+        &sequenced,
+        &["j"],
+        "InOneWay",
+        original,
+        no_samples(),
+        &mut replays,
+    );
     assert_eq!(record.label, ResultLabel::Proved);
     assert!(matches!(
         record.value,
@@ -1799,4 +2005,99 @@ fn a_cancelled_request_settles_incomplete_before_any_replay() {
     );
     assert_eq!(record.execution, Execution::ResourceIncomplete);
     assert_eq!(replays, 0);
+}
+
+/// Replace the evidence of the instance at `key` with a witness whose path
+/// takes no step: it ends at the start, where `versionNumber` is not 2, so
+/// its replay disagrees with the record it was to support.
+fn alter(evidence: &mut GraphEvidence, key: &str) {
+    if evidence.over().iter().any(|instance| instance.key == key) {
+        *evidence = GraphEvidence::Witness {
+            paths: vec![(
+                WitnessPath::Path(ModelPath {
+                    initial: 0,
+                    steps: Vec::new(),
+                }),
+                WitnessSource::Explored,
+            )],
+            over: evidence.over().to_vec(),
+        };
+    }
+}
+
+fn alter_a(evidence: &mut GraphEvidence) {
+    alter(evidence, "a");
+}
+
+fn alter_b(evidence: &mut GraphEvidence) {
+    alter(evidence, "b");
+}
+
+/// FR-621-AC-24: `attemptUpdate` takes `versionNumber` from 0 to 1 to 2 and
+/// back, and is disabled at 3, so `ReachesTwo` is proved of an instance that
+/// starts at 0 and refuted of one that starts at 3. With one instance's
+/// evidence altered, a refutation of the other decides the item in either
+/// order, and beside a proof the disagreeing replay does.
+#[trace("TC-3219", "FR-621-AC-24")]
+#[test]
+fn a_confirmed_refutation_decides_over_a_disagreeing_replay_in_either_order() {
+    let item = |starts: (i64, i64), altered: AlterEvidence| {
+        let world = config_world(REACHES_TWO, &[starts]);
+        let handoff = handoff_package(&world.package, world.packages());
+        let bare = handoff.bare();
+        let input =
+            PackageModelInput::of(&bare, world.packages(), ModelNormalizationLimits::default())
+                .expect("the package read");
+        let occurrence = world
+            .claim("ReachesTwo")
+            .occurrence()
+            .expect("claim occurrence");
+        let item = PackageStateGraphSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(AB),
+            AnalyzeLimits::published(DeadlineSupply::Unbounded),
+            occurrence,
+        )
+        .expect("the package route rebuilds the claim")
+        .altering_evidence(altered)
+        .item(RequestIndex::new(0));
+        let record = analyze_items(
+            &Engines::fsl().expect("the linked engines admit"),
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .into_iter()
+        .next()
+        .expect("one record");
+        let report = record.state_graph.as_ref().expect("a state-graph record");
+        let decided = report.counterexample.as_ref().map(|counterexample| {
+            counterexample["instance"]["key"]["identity"]
+                .as_str()
+                .expect("a key")
+                .to_owned()
+        });
+        (report.record.value.clone(), decided)
+    };
+    for (altered, other) in [(alter_a as AlterEvidence, "b"), (alter_b, "a")] {
+        assert_eq!(
+            item((3, 3), altered),
+            (TerminalValue::Refuted, Some(other.to_owned()))
+        );
+    }
+    for (starts, altered) in [((3, 0), alter_a as AlterEvidence), ((0, 3), alter_b)] {
+        let (value, decided) = item(starts, altered);
+        assert!(
+            matches!(
+                value,
+                TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+                    DisagreementCause::Verdicts { .. }
+                ))
+            ),
+            "{starts:?}: {value:?}"
+        );
+        assert_eq!(decided, None);
+    }
 }

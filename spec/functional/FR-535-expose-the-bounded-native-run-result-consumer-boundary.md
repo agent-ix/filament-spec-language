@@ -4,7 +4,7 @@ title: "Expose the bounded native-run-result/2 consumer boundary"
 type: FR
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-267
-    type: references
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-109
     type: references
 ---

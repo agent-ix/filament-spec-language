@@ -442,7 +442,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     );
     assert!(!record.invariant, "Q1 is a postcondition, not an invariant");
     assert_eq!(record.operation.as_ref(), Some(&anchor.node_id));
-    assert_eq!(record.model_objects, [owner.node_id.clone()]);
+    assert_eq!(record.model_objects, std::slice::from_ref(&owner.node_id));
     assert!(record.populations.is_empty());
 
     // The claim occurrence, and the source region it points at.

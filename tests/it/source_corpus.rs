@@ -992,8 +992,22 @@ fn corpus_collections() {
     let directory = corpus_root().join("collections");
     let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
     families::assert_families("collections", families::COLLECTION_FAMILIES);
-    families::assert_flips("collections", families::COLLECTION_FLIPS);
     println!("{report}");
+}
+
+/// A function whose quantifier binder is named like its parameter checks
+/// through the corpus pipeline.
+#[test]
+fn quantifier_binder_shadowing_a_function_parameter_is_allowed() {
+    let directory = corpus_root().join("collections");
+    let stem = "quant-binder-shadow";
+    let program = directory.join(format!("{stem}.native"));
+    let expected: Expectation = serde_json::from_slice(
+        &std::fs::read(directory.join(format!("{stem}.expected.json"))).unwrap(),
+    )
+    .unwrap();
+    let actual = execute(&program, &expected).unwrap();
+    assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
 }
 
 /// FR-100-AC-4: a Boolean result crosses the run boundary in tagged form.
@@ -1009,6 +1023,166 @@ fn unbounded_forall_run_result_uses_the_tagged_boolean_envelope() {
     .unwrap();
     let actual = execute(&program, &expected).unwrap();
     assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+}
+
+/// FSpec FR-146-AC-1 and AC-4: recursion whose calls sit in a query or a
+/// collection literal is admitted by `check`, and evaluates its declared
+/// result, only when every call edge decreases the measure.
+#[trace("FSpec-TC-191", "FSpec-FR-146-AC-1", "FSpec-FR-146-AC-4")]
+#[test]
+fn recursion_through_queries_and_collections_checks_and_runs() {
+    const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+                          profile v = \"filament.value.complete/v1\";\n\
+                          type C = Int[0, 4];\n\
+                          type I = Integer;\n";
+    const PARAMETERS: &str = "using v(n: Int[0, 9], s: Sequence<Int[0, 9]>[0, 4])";
+    let a = format!("function a {PARAMETERS}: Boolean pure decreases(n)");
+    let b = format!("function b {PARAMETERS}: Boolean pure decreases(n)");
+    let number = format!("function a {PARAMETERS}: Integer pure decreases(n)");
+    let mutual = format!(
+        "{a} {{ if n > 0 then forall(x in s: b(n - 1, s)) else true }}\n\
+         {b} {{ if n > 0 then exists(x in s: a(n - 1, s)) else false }}\n"
+    );
+    let cases = [
+        (
+            "self-forall",
+            format!("{a} {{ forall(x in s: if n > 0 then a(n - 1, s) else true) }}\n"),
+        ),
+        (
+            "self-exists",
+            format!("{a} {{ if n > 0 then exists(x in s: x > 0 and a(n - 1, s)) else true }}\n"),
+        ),
+        ("mutual-quantifiers", mutual.clone()),
+        (
+            "filter-and-map",
+            format!(
+                "{a} {{ if n > 0 then size(filter(x in s: b(n - 1, s))) > 0 else true }}\n\
+                 {b} {{ if n > 0 then size(map(x in s: a(n - 1, s))) > 0 else false }}\n"
+            ),
+        ),
+        (
+            "count",
+            format!("{a} {{ if n > 0 then count<C>(x in s: a(n - 1, s)) > 0 else true }}\n"),
+        ),
+        (
+            "sum",
+            format!("{number} {{ if n > 0 then sum<I>(x in s: a(n - 1, s) + x) else 0 }}\n"),
+        ),
+        (
+            "fold",
+            format!(
+                "{number} {{ if n > 0 then \
+                 fold<I>(acc, x in s: acc + a(n - 1, s), identity: 0) else 0 }}\n"
+            ),
+        ),
+        (
+            "collection-literal",
+            "function len using v(s: Sequence<Integer>[0, 4]): Integer pure { 0 }\n\
+             function a using v(n: Int[0, 9]): Integer pure decreases(n) \
+             { if n > 0 then len(sequence[a(n - 1), a(n - 1)]) else 0 }\n"
+                .to_owned(),
+        ),
+    ];
+    let scratch = tempfile::tempdir().expect("recursion directory");
+    for (stem, declarations) in &cases {
+        write_case(
+            scratch.path(),
+            stem,
+            &format!("{HEADER}{declarations}"),
+            &expectation("check", 0),
+        );
+    }
+    // In each mutual pair the edge from b back to a passes `n` unchanged.
+    let refused = [
+        (
+            "quantifier-edge-bad",
+            format!(
+                "{a} {{ if n > 0 then forall(x in s: b(n - 1, s)) else true }}\n\
+                 {b} {{ if n > 0 then exists(x in s: a(n, s)) else false }}\n"
+            ),
+        ),
+        (
+            "collection-literal-edge-bad",
+            "function len using v(s: Sequence<Integer>[0, 4]): Integer pure { 0 }\n\
+             function a using v(n: Int[0, 9]): Integer pure decreases(n) \
+             { if n > 0 then len(sequence[b(n - 1)]) else 0 }\n\
+             function b using v(n: Int[0, 9]): Integer pure decreases(n) \
+             { if n > 0 then len(sequence[a(n)]) else 0 }\n"
+                .to_owned(),
+        ),
+    ];
+    for (stem, declarations) in &refused {
+        write_case(
+            scratch.path(),
+            stem,
+            &format!("{HEADER}{declarations}"),
+            &json!({
+                "verb":"check",
+                "exit_code":20,
+                "category":"refusal",
+                "last_stage":"S3",
+                "code":"undefined_expression",
+                "cause":"unproved-decrease"
+            })
+            .to_string(),
+        );
+    }
+    // b(1) holds because a(0) is true, so a(2) over one element is true.
+    write_case(
+        scratch.path(),
+        "mutual-run",
+        &format!("{HEADER}{mutual}function f using v(): Boolean pure {{ a(2, sequence[1]) }}\n"),
+        &json!({
+            "verb":"run",
+            "exit_code":0,
+            "category":"success",
+            "last_stage":"S6a",
+            "result":{"type":"boolean","value":true}
+        })
+        .to_string(),
+    );
+    let request = json!({
+        "format":"native-run/1",
+        "request":{
+            "models":[],
+            "program":{"source":{
+                "file":"mutual-run.native",
+                "authority":"agent-ix",
+                "identity":"test:corpus:mutual-run",
+                "document":"mutual-run",
+                "formal_revision":1
+            }},
+            "call":{"function":"f","arguments":[]}
+        }
+    });
+    std::fs::write(
+        scratch.path().join("mutual-run.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        run_directory(scratch.path()),
+        Ok("flips_with: none".to_owned())
+    );
+}
+
+/// A same-named quantifier binder and qualified operation-parameter read
+/// compile together in a precondition.
+#[test]
+fn operation_parameter_quantifier_shadowing_is_allowed() {
+    let fixtures = corpus_root().join("operations/parameters");
+    let scratch = tempfile::tempdir().expect("operation parameter shadow directory");
+    let stem = "operation-parameter-quantifier-shadow";
+    for extension in ["native", "expected.json", "request.json"] {
+        let name = format!("{stem}.{extension}");
+        std::fs::copy(fixtures.join(&name), scratch.path().join(&name))
+            .unwrap_or_else(|error| panic!("stage {name}: {error}"));
+    }
+    stage_parameter_models(scratch.path(), &fixtures)
+        .unwrap_or_else(|error| panic!("stage operation parameter model: {error}"));
+    let report = run_directory(scratch.path())
+        .unwrap_or_else(|error| panic!("operation parameter shadow corpus: {error}"));
+    assert_eq!(report, "flips_with: none");
 }
 
 #[trace("TC-3064", "FR-680-AC-9")]

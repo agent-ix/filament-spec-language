@@ -12,8 +12,8 @@ use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    Capability, CheckCause, CheckRefusal, CheckedGraph, CheckedNode, CheckedStateGraphClaim,
-    StateGraphCause, StateGraphForm,
+    Capability, CheckCause, CheckedGraph, CheckedNode, CheckedStateGraphClaim,
+    SemanticCheckRefusal, StateGraphCause, StateGraphForm,
 };
 use fsl_semantics::family::ClaimExtent;
 use ix_trace_rs::trace;
@@ -46,14 +46,14 @@ fn document() -> Vec<u8> {
 
 /// The checked graph of `body`'s claims, or every refusal with the source
 /// text range each names.
-fn check(body: &str) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>> {
+fn check(body: &str) -> Result<CheckedGraph, Vec<(SemanticCheckRefusal, Option<String>)>> {
     check_under(body, CheckingLimits::default())
 }
 
 fn check_under(
     body: &str,
     limits: CheckingLimits,
-) -> Result<CheckedGraph, Vec<(CheckRefusal, Option<String>)>> {
+) -> Result<CheckedGraph, Vec<(SemanticCheckRefusal, Option<String>)>> {
     let document = document();
     let (unit, _) = config_unit_with_body(&document, body);
     let declarations = admit_and_assemble_with_body(&document, body)
@@ -98,7 +98,14 @@ const UNIQUE: &str = "unique path InOneWay using v over (c: Config::ConfigVersio
 
 /// The one refusal of a unit that must not check, as its catalog code, cause
 /// tag and the source text it names.
-fn sole_refusal(body: &str) -> (Code, Option<&'static str>, Option<String>, CheckRefusal) {
+fn sole_refusal(
+    body: &str,
+) -> (
+    Code,
+    Option<&'static str>,
+    Option<String>,
+    SemanticCheckRefusal,
+) {
     let Err(mut refusals) = check(body) else {
         panic!("`{body}` must not check");
     };

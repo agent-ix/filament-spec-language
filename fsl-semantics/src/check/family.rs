@@ -9,7 +9,7 @@
 //! and definedness verdict is made inside it, by a `Typer`, so calling the
 //! contract's own `check` on an ill-typed declaration refuses. `check`
 //! calls [`check_declaration_body`] itself, inside the one `FamilyContract`
-//! entry point, and returns the crate's real, located [`CheckRefusal`]
+//! entry point, and returns the crate's real, located [`SemanticCheckRefusal`]
 //! through [`StageFailure::Refused`] when the body or measure
 //! does not type or is not statically defined; `PackageDeclarations::check`
 //! reaches that verdict only by calling the contract, not by a second,
@@ -45,7 +45,7 @@
 
 use filament_checked::node::{NodeKind, OrderedKind};
 use filament_semantic_value::checking::CheckMode;
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
@@ -56,10 +56,10 @@ use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprNode, Expression, FieldInitializer,
     FunctionDeclaration,
 };
-use fsl_foundation::Setting;
 #[cfg(test)]
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, Staged};
+use fsl_foundation::Setting;
 // The relocated function-application/-declaration checking code
 // below needs `check.rs`'s own `Typer`/`Signature`/`bind_parameters` (the
 // general typer this family delegates to for a body or a call's
@@ -68,12 +68,12 @@ use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, Staged};
 // are sibling submodules of `crate::check`, reached the same way this
 // module's own pre-existing `use crate::check::ValueFunctionFamily` already
 // crosses that boundary.
-use super::AdmittedImport;
-use super::check::{Signature, Signatures, Typer, bind_parameters};
+use super::check::{bind_parameters, Signature, Signatures, Typer};
 use super::facts::{CallSite, Definedness};
 use super::imports::ImportedNames;
 use super::ir::{CheckedBody, Node};
-use super::refusal::{CheckCause, CheckRefusal, KeyFault};
+use super::refusal::{CheckCause, KeyFault, SemanticCheckRefusal};
+use super::AdmittedImport;
 use super::{DeclarationRegions, DispatchTable, Scope};
 use crate::family::ClassifyFailure;
 use filament_exact::IeeeWidth;
@@ -462,7 +462,7 @@ fn encode_expression(
     out: &mut DeclarationMeter,
     root: &Expression,
     targets: &TargetTypes<'_>,
-) -> Result<(), CheckRefusal> {
+) -> Result<(), SemanticCheckRefusal> {
     let mut pending = vec![root.root()];
     while let Some(expr) = pending.pop() {
         // One poll per measured node: the measure pass's own work charge.
@@ -899,7 +899,7 @@ pub(crate) fn measure_declaration(
     declaration: &FunctionDeclaration,
     signature: &Signature,
     targets: &TargetTypes<'_>,
-) -> Result<DeclarationMetrics, CheckRefusal> {
+) -> Result<DeclarationMetrics, SemanticCheckRefusal> {
     let mut meter = DeclarationMeter::new();
     meter.write_str("value.function-declaration");
     meter.write_str(&declaration.name);
@@ -973,7 +973,7 @@ impl<'a> TargetTypes<'a> {
         self
     }
 
-    fn resolve(&self, target: &fsl_forms::TypeForm) -> Result<ValueType, CheckRefusal> {
+    fn resolve(&self, target: &fsl_forms::TypeForm) -> Result<ValueType, SemanticCheckRefusal> {
         super::type_form::resolve_type_form(
             &self.scope.in_source(self.source),
             target,
@@ -1163,7 +1163,7 @@ impl<'a> Application<'a> {
         arity: usize,
         hint: Option<&ValueType>,
         location: &CheckLocation,
-    ) -> Result<Self, CheckRefusal> {
+    ) -> Result<Self, SemanticCheckRefusal> {
         if let Some(intrinsic) = IeeeIntrinsic::named(name) {
             // A supplied library never replaces an intrinsic: one that
             // exports a declaration under the intrinsic's qualified
@@ -1177,7 +1177,7 @@ impl<'a> Application<'a> {
                             .is_some_and(|head| head == import.identity.as_str())
                 })
             }) {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::ReservedIntrinsicConflict(name.to_owned())),
                 });
@@ -1185,13 +1185,13 @@ impl<'a> Application<'a> {
             // FR-397-AC-25: a unit without a float form refuses the profile
             // before it types or counts the call's arguments.
             if typer.scope().ieee_profile.is_none() {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: location.clone(),
                     cause: Box::new(CheckCause::IeeeProfileNotAdmitted),
                 });
             }
             if arity != intrinsic.arity() {
-                return Err(CheckRefusal::ill_typed(
+                return Err(SemanticCheckRefusal::ill_typed(
                     location,
                     IllTypedCause::TypeMismatch,
                 ));
@@ -1208,7 +1208,7 @@ impl<'a> Application<'a> {
         }
         if let Some((function, signature)) = typer.signatures().callable(name) {
             if signature.parameters.len() != arity {
-                return Err(CheckRefusal::ill_typed(
+                return Err(SemanticCheckRefusal::ill_typed(
                     location,
                     IllTypedCause::TypeMismatch,
                 ));
@@ -1220,7 +1220,7 @@ impl<'a> Application<'a> {
         }
         let declared = match typer.type_named(name, location) {
             Ok(value_type) => Some(value_type),
-            Err(CheckRefusal { cause, .. })
+            Err(SemanticCheckRefusal { cause, .. })
                 if matches!(
                     cause.as_ref(),
                     CheckCause::MissingName(_) | CheckCause::MissingQualifiedName(_)
@@ -1238,13 +1238,13 @@ impl<'a> Application<'a> {
                     .composite(key.clone())
                     .map(|declaration| declaration.shape())
                 else {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         location,
                         IllTypedCause::OperatorIneligible,
                     ));
                 };
                 if positions.len() != arity {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         location,
                         IllTypedCause::TypeMismatch,
                     ));
@@ -1254,21 +1254,20 @@ impl<'a> Application<'a> {
                     positions,
                 })
             }
-            Some(_) => Err(CheckRefusal::ill_typed(
+            Some(_) => Err(SemanticCheckRefusal::ill_typed(
                 location,
                 IllTypedCause::OperatorIneligible,
             )),
-            None if typer.scope().declares_model_operation(name) => Err(CheckRefusal::ill_typed(
-                location,
-                IllTypedCause::OperatorIneligible,
-            )),
+            None if typer.scope().declares_model_operation(name) => Err(
+                SemanticCheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible),
+            ),
             // FR-230 "Clock-reading declarations": a call the timed-model
             // check did not expand is outside every place that admits it.
-            None if typer.scope().is_clock_reading(name) => Err(CheckRefusal {
+            None if typer.scope().is_clock_reading(name) => Err(SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::ClockReadingCall(name.to_owned())),
             }),
-            None => Err(CheckRefusal {
+            None => Err(SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(CheckCause::MissingName(name.to_owned())),
             }),
@@ -1287,14 +1286,15 @@ impl<'a> Application<'a> {
         member: &str,
         arity: usize,
         location: &CheckLocation,
-    ) -> Result<Self, CheckRefusal> {
+    ) -> Result<Self, SemanticCheckRefusal> {
         let callee = ImportedNames::of(&import.view)
             .resolve(member)
-            .map_err(|cause| CheckRefusal {
+            .map_err(|cause| SemanticCheckRefusal {
                 location: location.clone(),
                 cause: Box::new(cause),
             })?;
-        let ineligible = || CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
+        let ineligible =
+            || SemanticCheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
         let (function, signature) = import
             .graph
             .imported_function(&callee)
@@ -1309,7 +1309,7 @@ impl<'a> Application<'a> {
             return Err(ineligible());
         }
         if signature.parameters.len() != arity {
-            return Err(CheckRefusal::ill_typed(
+            return Err(SemanticCheckRefusal::ill_typed(
                 location,
                 IllTypedCause::TypeMismatch,
             ));
@@ -1389,7 +1389,7 @@ impl<'a> Application<'a> {
         arguments: Vec<super::ir::NodeId>,
         argument_types: Vec<ValueType>,
         location: &CheckLocation,
-    ) -> Result<Node, CheckRefusal> {
+    ) -> Result<Node, SemanticCheckRefusal> {
         match self {
             // FR-093: the call's identity is the key of the `expression`
             // node `check::lowering` builds for it once its callee is keyed.
@@ -1445,13 +1445,13 @@ impl<'a> Application<'a> {
                 // Every operand is a float of the first operand's type;
                 // the first one that is not refuses at its own position.
                 let Some(first @ ValueType::Float(float)) = argument_types.first() else {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         &location.child(0),
                         IllTypedCause::TypeMismatch,
                     ));
                 };
                 if let Some(index) = argument_types.iter().position(|each| each != first) {
-                    return Err(CheckRefusal::ill_typed(
+                    return Err(SemanticCheckRefusal::ill_typed(
                         &location.child(index),
                         IllTypedCause::TypeMismatch,
                     ));
@@ -1474,7 +1474,7 @@ impl<'a> Application<'a> {
                     }
                     (IeeeIntrinsic::BitIdentical, [a, b]) => NodeKind::IeeeBitIdentical(*a, *b),
                     _ => {
-                        return Err(CheckRefusal::ill_typed(
+                        return Err(SemanticCheckRefusal::ill_typed(
                             location,
                             IllTypedCause::TypeMismatch,
                         ));
@@ -1604,7 +1604,7 @@ pub(crate) fn check_declaration_body(
     input: &ValueDeclarations<'_>,
     form: &FunctionDeclaration,
     cx: &mut crate::family::CheckContext<'_, Scope>,
-) -> Result<CheckedDeclarationBody, CheckRefusal> {
+) -> Result<CheckedDeclarationBody, SemanticCheckRefusal> {
     let mut nodes = input.nodes_used;
     // The declaration's resolved parameter and result types; `form`'s own
     // are type forms.
@@ -1862,6 +1862,23 @@ impl<S> Default for OccurrenceMap<S> {
 }
 
 impl<S> OccurrenceMap<S> {
+    /// Take out the latest occurrence of `identity` under `role`, undoing
+    /// one [`Self::record`]; every other occurrence stays.
+    pub(crate) fn retract_last(&mut self, identity: &NodeKey, role: OccurrenceRole) {
+        let Some(roles) = self.spans.get_mut(identity) else {
+            return;
+        };
+        if let Some(spans) = roles.get_mut(&role) {
+            spans.0.pop();
+            if spans.0.is_empty() {
+                roles.remove(&role);
+            }
+        }
+        if roles.is_empty() {
+            self.spans.remove(identity);
+        }
+    }
+
     /// Record one occurrence of `identity` under `role`, at `span`. Ordinals
     /// are assigned by (identity, role) insertion order (ADR-013 O-07: "an
     /// ordinal disambiguating repeated occurrences of that role on the same
@@ -2191,12 +2208,12 @@ impl crate::family::FamilyContract for ValueFunctionFamily {
     /// a side channel.
     type Checked = CheckedDeclaration;
     /// The crate's own located refusal vocabulary: `check` can now
-    /// genuinely refuse (an ill-typed or undefined body), and `CheckRefusal`
+    /// genuinely refuse (an ill-typed or undefined body), and `SemanticCheckRefusal`
     /// already carries a closed cause and `catalog_code()` mapping
     /// (`check::CheckCause::code`/`cause`) -- ADR-012 §5.1 S4's "family
     /// `Cause` enum" for this family, not a shape invented to fill this
     /// associated type.
-    type Cause = CheckRefusal;
+    type Cause = SemanticCheckRefusal;
     /// See [`ValueDeclarations`]'s own doc.
     type Declarations<'a> = ValueDeclarations<'a>;
     /// A scalar operation application's `value-validity` claim (FR-057's
@@ -2215,7 +2232,7 @@ impl crate::family::FamilyContract for ValueFunctionFamily {
     fn check<'a>(
         form: &Self::Form,
         cx: &mut crate::family::CheckContext<'a, ValueDeclarations<'a>>,
-    ) -> crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal> {
+    ) -> crate::family::CheckOutcome<CheckedDeclaration, SemanticCheckRefusal> {
         // FR-062 "Explicit resource limits bound every stage entry, at any
         // depth": the declaration's input bytes and node count, then its work
         // charge, then the `Typer`'s package-wide node budget. No limit
@@ -2375,7 +2392,7 @@ impl crate::family::FamilyContract for ValueFunctionFamily {
         )
         .map_err(|failure| match failure {
             ClassifyFailure::Limit(exceeded) => located(exceeded),
-            ClassifyFailure::Fault(fault) => StageFailure::Refused(CheckRefusal {
+            ClassifyFailure::Fault(fault) => StageFailure::Refused(SemanticCheckRefusal {
                 location: declarations.location.clone(),
                 cause: Box::new(CheckCause::InternalFault(Box::new(
                     KeyFault::UnclassifiedExtent(fault),
@@ -2393,6 +2410,30 @@ mod tests {
     use fsl_forms::{BuiltinType, TypeForm};
 
     const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
+
+    /// FR-306-AC-5: a rebind undoes the records it added under a claim node,
+    /// the latest of each role, and no other occurrence of that node.
+    #[ix_trace_rs::trace("TC-804", "FR-306-AC-5")]
+    #[test]
+    fn retracting_the_latest_occurrence_of_a_role_keeps_the_others() {
+        let node = filament_exact::NodeKey::new(
+            "pkg",
+            vec![filament_exact::PathSegment::Text("claim".to_owned())],
+            0,
+        )
+        .expect("a structural key");
+        let mut map = OccurrenceMap::default();
+        map.record(node.clone(), OccurrenceRole::Anchor, "anchor");
+        map.record(node.clone(), OccurrenceRole::Declaration, "earlier");
+        map.record(node.clone(), OccurrenceRole::Declaration, "added");
+        map.record(node.clone(), OccurrenceRole::Claim, "added");
+
+        map.retract_last(&node, OccurrenceRole::Declaration);
+        map.retract_last(&node, OccurrenceRole::Claim);
+
+        let left: Vec<_> = map.iter().map(|(_, _, span)| *span).collect();
+        assert_eq!(left, ["anchor", "earlier"]);
+    }
 
     /// A `Convert` target that does not resolve is refused while measuring,
     /// with the checker's own missing-name refusal, not measured as spelling.
@@ -2695,7 +2736,7 @@ pub(crate) mod checking_tests {
     fn check_declaration_body(
         input: &ValueDeclarations<'_>,
         form: &FunctionDeclaration,
-    ) -> Result<CheckedDeclarationBody, CheckRefusal> {
+    ) -> Result<CheckedDeclarationBody, SemanticCheckRefusal> {
         let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
         let mut diagnostics = DiagnosticSink::default();
         let mut scopes = ScopeStack::default();
@@ -2717,7 +2758,7 @@ pub(crate) mod checking_tests {
         name: &str,
         arguments: &[Expression],
         location: &CheckLocation,
-    ) -> Result<CheckedBody, CheckRefusal> {
+    ) -> Result<CheckedBody, SemanticCheckRefusal> {
         let call = Expression::call(name.to_owned(), arguments.to_vec());
         typer.infer(&call, None, location)
     }
@@ -3159,7 +3200,7 @@ pub(crate) mod checking_tests {
     /// `fsl-eval/tests/it/collection_algebra.rs` and
     /// `collection_queries.rs` both compare `format!("{:?}", ..)` of two
     /// computed values where no `PartialEq` exists -- applies the same way
-    /// here: `CheckedDeclaration` and `StageFailure<CheckRefusal>` both
+    /// here: `CheckedDeclaration` and `StageFailure<SemanticCheckRefusal>` both
     /// derive `Debug`, and two independently constructed, differently
     /// shaped contexts producing the same `Debug` text is a real assertion
     /// a divergent implementation could fail.
@@ -3302,7 +3343,7 @@ pub(crate) mod checking_tests {
         meter: &mut Meter,
         diagnostics: &mut DiagnosticSink,
         scopes: &mut ScopeStack,
-    ) -> crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal> {
+    ) -> crate::family::CheckOutcome<CheckedDeclaration, SemanticCheckRefusal> {
         let scope = empty_scope();
         let location = root_location();
         let own_signature = declaration_signature("f");
@@ -3515,13 +3556,38 @@ pub(crate) mod checking_tests {
         );
         let test_only = "#[cfg(test)] mod t { static OK: u8 = 0; }";
         assert!(global_state_findings(test_only).is_empty());
+        assert!(declares_test_only_tests("#[cfg(test)] mod tests;"));
+        for production in ["mod tests;", "#[cfg(test)] mod other;"] {
+            assert!(!declares_test_only_tests(production), "{production}");
+        }
     }
 
+    /// The production `.rs` files under `directory`. A file or directory
+    /// named for tests holds the files of a `#[cfg(test)] mod tests;`, whose
+    /// own text does not carry the attribute, so it is left out by name. A
+    /// `tests` directory is left out only when its parent module declares it
+    /// that way; otherwise the walk panics.
     fn collect_sources(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).expect("directory reads") {
             let path = entry.expect("entry reads").path();
             if path.is_dir() {
-                collect_sources(&path, files);
+                if path.file_name().is_some_and(|name| name == "tests") {
+                    let flat = directory.with_extension("rs");
+                    let parent = if flat.is_file() {
+                        flat
+                    } else {
+                        directory.join("mod.rs")
+                    };
+                    let text = std::fs::read_to_string(&parent).expect("parent module reads");
+                    assert!(
+                        declares_test_only_tests(&text),
+                        "{} must declare `#[cfg(test)] mod tests;` for {}",
+                        parent.display(),
+                        path.display()
+                    );
+                } else {
+                    collect_sources(&path, files);
+                }
             } else if path.extension().is_some_and(|extension| extension == "rs")
                 && !path
                     .file_stem()
@@ -3533,19 +3599,35 @@ pub(crate) mod checking_tests {
         }
     }
 
+    fn is_cfg_test(attributes: &[syn::Attribute]) -> bool {
+        attributes.iter().any(|attribute| {
+            attribute.path().is_ident("cfg")
+                && attribute
+                    .parse_args::<syn::Ident>()
+                    .is_ok_and(|ident| ident == "test")
+        })
+    }
+
+    /// Whether the module `source` declares `mod tests` and every such
+    /// declaration is `#[cfg(test)]`.
+    fn declares_test_only_tests(source: &str) -> bool {
+        let file = syn::parse_file(source).expect("source parses");
+        let mut declarations = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Mod(module) if module.ident == "tests" => Some(module),
+                _ => None,
+            })
+            .peekable();
+        declarations.peek().is_some() && declarations.all(|module| is_cfg_test(&module.attrs))
+    }
+
     /// Every global- or thread-local-state construct in `source`'s non-test
     /// items, each described with its identifier.
     fn global_state_findings(source: &str) -> Vec<String> {
         use syn::visit::Visit;
         struct Scan(Vec<String>);
-        fn is_cfg_test(attributes: &[syn::Attribute]) -> bool {
-            attributes.iter().any(|attribute| {
-                attribute.path().is_ident("cfg")
-                    && attribute
-                        .parse_args::<syn::Ident>()
-                        .is_ok_and(|ident| ident == "test")
-            })
-        }
         fn banned_name(name: &str) -> bool {
             matches!(
                 name,
@@ -3846,7 +3928,7 @@ pub(crate) mod checking_tests {
             Limit(LimitKind),
         }
         fn classify(
-            outcome: crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal>,
+            outcome: crate::family::CheckOutcome<CheckedDeclaration, SemanticCheckRefusal>,
         ) -> Seen {
             match outcome {
                 Ok(staged) => {
@@ -4127,14 +4209,14 @@ pub(crate) mod checking_tests {
                 index,
             })
         };
-        let expected: Vec<CheckRefusal> = [0, 1, 2, 4, 5]
+        let expected: Vec<SemanticCheckRefusal> = [0, 1, 2, 4, 5]
             .into_iter()
             .map(|index| {
                 let loci = (0..names.len())
                     .filter(|other| names[*other] == names[index])
                     .map(at)
                     .collect();
-                CheckRefusal {
+                SemanticCheckRefusal {
                     location: at(index),
                     cause: Box::new(CheckCause::AmbiguousName {
                         name: names[index].to_owned(),
@@ -4157,15 +4239,15 @@ mod locus_tests {
         measure_resolved, root_location,
     };
     use super::*;
-    use crate::check::PackageDeclarations;
     use crate::check::refusal::{CheckingLimitKind, StageLimitCause};
+    use crate::check::PackageDeclarations;
     use crate::family::{CheckContext, DiagnosticSink, FamilyContract, ScopeStack, StageLimits};
     use filament_exact::{Meter, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
     use filament_semantic_value::location::ExpressionOwner as CheckOrigin;
     use fsl_forms::build_unit;
-    use fsl_foundation::SourceIdentity;
     use fsl_foundation::source::provenance::SourceRegion;
+    use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 
     const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -4223,7 +4305,7 @@ mod locus_tests {
         checking: CheckingLimits,
         stage: StageLimits,
         meter: &mut Meter,
-    ) -> crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal> {
+    ) -> crate::family::CheckOutcome<CheckedDeclaration, SemanticCheckRefusal> {
         let scope = empty_scope();
         let signatures = Signatures::default();
         let own_signature = declaration_signature("f");
@@ -4247,7 +4329,7 @@ mod locus_tests {
     }
 
     fn limit(
-        outcome: crate::family::CheckOutcome<CheckedDeclaration, CheckRefusal>,
+        outcome: crate::family::CheckOutcome<CheckedDeclaration, SemanticCheckRefusal>,
     ) -> LimitExceeded {
         match outcome {
             Err(StageFailure::Limit(exceeded)) => exceeded,
@@ -4350,14 +4432,13 @@ mod locus_tests {
         let end = usize::try_from(region.end()).unwrap();
         assert_eq!(&text[start..end], "1", "the node whose entry failed");
         let (unit, _) = sum_unit();
-        assert!(
-            unit.check(
+        assert!(unit
+            .check(
                 CheckMode::Linked,
                 CheckingLimits::new(5_000),
                 &crate::check::test_support::ZeroRewardEvaluator
             )
-            .is_ok()
-        );
+            .is_ok());
     }
 
     /// TC-727 step 3: the same sum, through package checking, under a work
@@ -4512,8 +4593,8 @@ mod locus_tests {
     /// span.
     #[trace("TC-427", "TC-378", "FR-096-AC-4", "FR-096-AC-5", "FR-096-AC-11")]
     #[test]
-    fn package_checking_locates_a_node_limit_at_its_node_and_a_declaration_limit_at_the_declaration()
-     {
+    fn package_checking_locates_a_node_limit_at_its_node_and_a_declaration_limit_at_the_declaration(
+    ) {
         let declaration = "function f using v(): Boolean pure { not not not true }";
         let (nodes, region) = package_limit(unit(), CheckingLimits::new(3));
         assert_eq!(nodes.kind, CheckingLimitKind::Nodes);

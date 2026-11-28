@@ -1428,7 +1428,7 @@ impl Ra {
                 slot_depth: None,
             }),
             written: Written::Applied(
-                component.restored(pre, ModelSimState::clone(post), None),
+                Box::new(component.restored(pre, ModelSimState::clone(post), None)),
                 next,
             ),
             race,
@@ -1492,7 +1492,7 @@ impl Ra {
                     slot_depth: Some(depth_of_slot(len, slot)),
                 }),
                 written: Written::Applied(
-                    component.restored(pre, ModelSimState::clone(post), kept),
+                    Box::new(component.restored(pre, ModelSimState::clone(post), kept)),
                     next,
                 ),
                 race: race.clone(),
@@ -1590,7 +1590,7 @@ impl Ra {
                 slot_depth: Some(depth_of_slot(len, slot)),
             }),
             written: Written::Applied(
-                component.restored(pre, ModelSimState::clone(post), kept),
+                Box::new(component.restored(pre, ModelSimState::clone(post), kept)),
                 next,
             ),
             race,
@@ -1687,11 +1687,11 @@ impl MemoryModel for Ra {
         post: ModelSimState,
     ) -> Vec<Chosen<RaComponent>> {
         if !component.threads.contains_key(thread) {
-            return Chosen::only(Written::Applied(post, component.clone()));
+            return Chosen::only(Written::Applied(Box::new(post), component.clone()));
         }
         let Some(shared) = access.shared else {
             return Chosen::only(Written::Applied(
-                component.restored(pre, post, None),
+                Box::new(component.restored(pre, post, None)),
                 component.clone(),
             ));
         };
@@ -1708,7 +1708,7 @@ impl MemoryModel for Ra {
             (AccessClass::Rmw, Some(read)) => self.read_modify_write(component, &delta, read),
             (AccessClass::Load | AccessClass::Rmw, None) => Vec::new(),
             (AccessClass::Local, _) => Chosen::only(Written::Applied(
-                component.restored(pre, post.clone(), None),
+                Box::new(component.restored(pre, post.clone(), None)),
                 component.clone(),
             )),
         }

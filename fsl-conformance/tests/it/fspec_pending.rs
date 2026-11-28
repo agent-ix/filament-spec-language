@@ -66,13 +66,6 @@ pub(crate) const PENDING: &[Pending] = &[
         ticket: "QSL-3032",
         pin: r#"expected Refused("duplicate_object"), actual Refused("invalid_runtime_input")"#,
     },
-    // G7
-    Pending {
-        runner: "state-core",
-        case: "invocation/deleted-self-post-context",
-        ticket: "QSL-3033",
-        pin: r#"expected Refused("wrong_snapshot"), actual Refused("invalid_runtime_input")"#,
-    },
     // G8
     Pending {
         runner: "state-core",

@@ -1,13 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218 "Observe-only boundaries" (TC-2989): an observe-only role or
 //! control that reads and recommends checks, and every side-effecting action
 //! behind the boundary refuses at the action itself.
 
 use ix_trace_rs::trace;
 
-use super::rules::{TRIED, located_refusals, protocol};
-use crate::check::{CheckCause, CheckRefusal};
+use super::rules::{located_refusals, protocol, TRIED};
+use crate::check::{CheckCause, SemanticCheckRefusal};
 
-fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
+fn catalog(refusal: &SemanticCheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
 }
 
@@ -278,11 +279,9 @@ fn a_side_effect_under_observe_only_refuses() {
         ],
         "the role boundary reports each performed action once in source order"
     );
-    assert!(
-        refusals[0]
-            .2
-            .starts_with("compensate Undo for Main::Applied")
-    );
+    assert!(refusals[0]
+        .2
+        .starts_with("compensate Undo for Main::Applied"));
 }
 
 /// FR-218-AC-47: a recommendation's result binder is never a decision fact.

@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model M = "catalog/relationships";
+function follow using v(o: Reference<M::Order>): Option<Reference<M::Order>> pure { o.next }
+invariant NoLoop using v on M::Order at current { not reaches(self, self, next) }

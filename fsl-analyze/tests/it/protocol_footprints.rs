@@ -7,6 +7,7 @@
 //! holds(k.v <= 3)` read for `k` bound to `c` reads (`c`, `v`), and read for
 //! `d`, the claim over `d.v`, reads (`d`, `v`).
 
+use crate::protocol_footprint_support::commuting_pairs;
 use std::collections::BTreeSet;
 
 use filament_exact::{ObjectReference, ValueType};
@@ -14,8 +15,8 @@ use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    visible, AnchorName, ClaimReads, MemoryModel, ParallelInstance, ProtocolLocation,
-    ProtocolState, ProtocolSystem, ProtocolTransition, ReachRefusal, Sc, StepKind, ThreadPath,
+    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolLocation, ProtocolState,
+    ProtocolSystem, ProtocolTransition, ReachRefusal, Sc, StepKind, ThreadPath,
 };
 use fsl_eval::simulation::{independent, Footprint, Limit, Location, TransitionSystem};
 use fsl_package::CheckedPackage;
@@ -639,80 +640,6 @@ fn an_attempt_reads_only_the_clauses_it_selects() {
     assert_eq!(post_only, BTreeSet::from([member(&c)]));
 }
 
-/// The states both orders of the steps `first` then `second` reach from
-/// `reached[at]`: every successor of `first`, then every successor of
-/// `second` from there.
-fn after_both<M: MemoryModel>(
-    reached: &[Reached<M>],
-    at: usize,
-    first: &ProtocolTransition,
-    second: &ProtocolTransition,
-) -> BTreeSet<usize> {
-    reached[at]
-        .steps
-        .iter()
-        .filter(|(step, _)| step == first)
-        .flat_map(|(_, next)| {
-            reached[*next]
-                .steps
-                .iter()
-                .filter(|(step, _)| step == second)
-                .map(|(_, last)| *last)
-        })
-        .collect()
-}
-
-/// ADR-027 FT-4 (ADR-021 POR-4): at every reachable state of `system`,
-/// every pair of enabled steps reported independent commutes: each stays
-/// enabled after the other, and both orders reach the same states. The
-/// number of independent pairs checked.
-pub(crate) fn assert_independent_steps_commute<M: MemoryModel>(
-    system: &ProtocolSystem<'_, M>,
-    reached: &[Reached<M>],
-) -> usize {
-    commuting_pairs(system, reached).len()
-}
-
-/// [`assert_independent_steps_commute`]'s check, with the kinds of each
-/// independent pair it checked.
-pub(crate) fn commuting_pairs<M: MemoryModel>(
-    system: &ProtocolSystem<'_, M>,
-    reached: &[Reached<M>],
-) -> Vec<(StepKind, StepKind)> {
-    let mut checked = Vec::new();
-    for (at, state) in reached.iter().enumerate() {
-        let mut identities: Vec<&ProtocolTransition> = Vec::new();
-        for (step, _) in &state.steps {
-            if !identities.contains(&step) {
-                identities.push(step);
-            }
-        }
-        // A footprint is read once per step, not once per pair it is in, and the
-        // state's access classification once for all of them.
-        let footprints = system
-            .footprints(&state.state, &identities)
-            .expect("footprints");
-        for (index, first) in identities.iter().enumerate() {
-            for (offset, second) in identities[index + 1..].iter().enumerate() {
-                let left = &footprints[index];
-                let right = &footprints[index + 1 + offset];
-                if !independent(left, right) {
-                    continue;
-                }
-                checked.push((first.kind(), second.kind()));
-                let forward = after_both(reached, at, first, second);
-                let backward = after_both(reached, at, second, first);
-                assert!(
-                    !forward.is_empty() && forward == backward,
-                    "from state {at}, {first:?} then {second:?} reach {forward:?}, \
-                     the other order {backward:?}"
-                );
-            }
-        }
-    }
-    checked
-}
-
 /// FR-216 and ADR-027 FT-4: over every protocol fixture of TC-661, every
 /// pair of steps the footprints report independent commutes. Replicated
 /// roles (an event `by` a role beside a branch that writes what an `until`
@@ -1128,6 +1055,38 @@ fn role_step(
         .collect();
     assert_eq!(found.len(), 1, "one {kind:?} from {at}");
     found.into_iter().next().expect("one step")
+}
+
+/// ADR-027 FT-3: a `retire` predicate reads the field on every object of the
+/// subject's universe, among them `d`, which no state holds yet, so a write
+/// of (`d`, `v`) by a transition on a later-created `d` is dependent with it.
+#[trace("TC-661")]
+#[test]
+fn a_predicate_read_includes_a_universe_key_no_state_holds() {
+    let body = roles::unit(
+        roles::ORIGIN,
+        &roles::role(1, "until(r.v >= 0)"),
+        "",
+        "sequence Main { event E by r as (e: Boolean) { true }; }",
+    );
+    let mut unit = Cells::new(&body, &["c"]);
+    unit.keys.push("d");
+    let subject = unit.subject("R");
+    let system = sc_system(&subject);
+    let reached = reachable(&system);
+    let (c, d) = (cell(&system, "c"), cell(&system, "d"));
+    let (_, spawned) = role_step(&system, &reached, 0, StepKind::Spawn, &c);
+    let (retire, _) = role_step(&system, &reached, spawned, StepKind::Retire, &c);
+    for expected in [field(&c, "v"), field(&d, "v")] {
+        assert!(retire.reads.contains(&expected), "{expected:?}");
+        assert!(retire.enabling.contains(&expected), "{expected:?}");
+    }
+    let writer = Footprint {
+        reads: BTreeSet::new(),
+        writes: BTreeSet::from([field(&d, "v")]),
+        enabling: BTreeSet::new(),
+    };
+    assert!(!independent(&retire, &writer));
 }
 
 /// FR-216-AC-6 (TC-661): a `retire` predicate `r.v >= 0` over the replicated

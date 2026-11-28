@@ -100,8 +100,9 @@ use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
 use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
 use fsl_semantics::check::{
-    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
+    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause,
     CorrespondenceConflict, KeyFault, Obligation, OperandText, PackageDeclarations,
+    SemanticCheckRefusal,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
@@ -110,6 +111,7 @@ use fsl_semantics::model::intake::{
     admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
 };
 use fsl_semantics::value::identity_limit;
+use ix_trace_rs::implements;
 
 use super::subject::StaticSubjectInput;
 use super::{
@@ -198,11 +200,11 @@ enum ProtocolFailure {
         region: Option<SourceRegion>,
     },
     Check {
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         region: Option<SourceRegion>,
     },
     CheckDiagnostics {
-        refusals: Vec<CheckRefusal>,
+        refusals: Vec<SemanticCheckRefusal>,
         regions: Vec<Option<SourceRegion>>,
     },
 }
@@ -844,11 +846,12 @@ impl ParsedUnitSource {
 /// Give an unproved range refusal the exact source spelling of its arithmetic
 /// node for the diagnostic message (FR-577).
 fn name_operand(
-    refusals: &mut [CheckRefusal],
+    refusals: &mut [SemanticCheckRefusal],
     region: Option<&SourceRegion>,
     sources: &[ParsedUnitSource],
 ) {
-    let (Some(CheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region) else {
+    let (Some(SemanticCheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region)
+    else {
         return;
     };
     let CheckCause::Unproved(Obligation::Range {
@@ -1216,6 +1219,7 @@ pub enum ObligationState {
     Pending,
 }
 
+#[implements("FR-514-AC-1")]
 fn type_report(graph: &fsl_semantics::check::CheckedGraph, source: &RawSourceRef) -> TypeReport {
     use fsl_semantics::check::Owner;
 
@@ -1850,6 +1854,7 @@ pub fn check_with_profile_catalog(
     clippy::too_many_arguments,
     reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
 )]
+#[implements("FR-508-AC-1")]
 pub fn check_with_profile_catalog_and_inputs(
     parsed: &ParsedUnitSource,
     inputs: ProfileCheckInputs<'_>,
@@ -2460,6 +2465,10 @@ pub(crate) struct ContinuationInputs<'a> {
 
 /// S3 continuation for the compiler: keep an attributable protocol refusal
 /// in the checked graph so S4 can still emit clean siblings.
+#[implements("FR-503-AC-3")]
+#[implements("FR-503-AC-4")]
+#[implements("FR-503-AC-5")]
+#[implements("FR-503-AC-6")]
 pub(crate) fn check_for_continuation(
     parsed: &ParsedUnitSource,
     inputs: ContinuationInputs<'_>,
@@ -3201,6 +3210,7 @@ fn is_nonprotocol_declaration_head(spelling: &[u8]) -> bool {
     )
 }
 
+#[implements("FR-503-AC-1")]
 fn forms_protocol_results(
     parsed: &fsl_cst::ParsedSource,
     refusals: &[fsl_forms::ProtocolFormsRefusal],
@@ -3246,6 +3256,9 @@ fn forms_protocol_results(
         .collect()
 }
 
+#[implements("FR-503-AC-4")]
+#[implements("FR-503-AC-5")]
+#[implements("FR-503-AC-6")]
 fn protocol_check_outcome(
     parsed: &ParsedUnitSource,
     graph: &fsl_semantics::check::CheckedGraph,
@@ -3464,6 +3477,7 @@ fn protocol_failure_from_parsed(parsed: &ParsedUnitSource) -> Option<CompileRefu
 
 /// The declarations delimited by S1 when one syntax diagnostic belongs to
 /// exactly one protocol. Returns `None` for a unit-level error.
+#[implements("FR-503-AC-2")]
 fn syntax_protocol_results(
     parsed: &fsl_cst::ParsedSource,
     diagnostic: Option<&fsl_cst::CompleteDiagnostic>,
@@ -4516,7 +4530,7 @@ impl<'a> Resolution<'a> {
             if let Some(import) = frame.unit.selections().imports.get(frame.next).cloned() {
                 let raw = frame.raw.clone();
                 match self
-                    .select_import(&raw, &import)
+                    .select_import(&raw, &root.package_name, &import)
                     .map_err(|refusal| unwind(&libraries, refusal))?
                 {
                     Selected::Reused(identity, library) => {
@@ -4631,11 +4645,13 @@ impl<'a> Resolution<'a> {
         }
     }
 
-    /// ADR-015 D-1's steps for one `import` of the unit `raw` names:
-    /// cycle, reuse, selection.
+    /// ADR-015 D-1's steps for one `import` of the unit `raw` names, in the
+    /// closure of the unit named `unit_name`: cycle, reuse, selection.
+    #[implements("FR-099-AC-10")]
     fn select_import(
         &mut self,
         raw: &RawSourceRef,
+        unit_name: &str,
         import: &ImportSelection,
     ) -> Result<Selected<'a>, Box<CompileRefusal>> {
         let at_identity = || region(raw, import.identity_span);
@@ -4665,7 +4681,13 @@ impl<'a> Resolution<'a> {
         let Ok(identity) = LibraryName::new(import.identity.as_str()) else {
             return Err(refuse(ImportRefusal::UnnamedImport, at_identity()));
         };
-        // 1. Cycle.
+        // 1. Cycle. The unit's own name heads every import path.
+        if identity.as_str() == unit_name {
+            let mut path = vec![identity.clone()];
+            path.extend_from_slice(&self.active);
+            path.push(identity);
+            return Err(refuse(ImportRefusal::Cycle { path }, at_identity()));
+        }
         if let Some(start) = self.active.iter().position(|active| *active == identity) {
             let mut path = self.active[start..].to_vec();
             path.push(identity);

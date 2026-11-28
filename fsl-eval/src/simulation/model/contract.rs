@@ -398,7 +398,7 @@ impl<'a> ModelSystem<'a> {
         if self
             .initial_base
             .iter()
-            .any(|initial| !initial.state.extents.is_empty())
+            .any(|initial| !initial.state().extents.is_empty())
         {
             return Err(DeclaredStatesRefusal::Relationship);
         }
@@ -628,7 +628,7 @@ impl<'a> ModelSystem<'a> {
     ///
     /// An [`ExpansionStop`] when an object is not one of this model's.
     pub fn objects_of(&self, state: &ModelSimState) -> Result<Vec<ObjectReference>, ExpansionStop> {
-        Ok(rows_of(self, &state.state)?
+        Ok(rows_of(self, state.state())?
             .into_iter()
             .map(|row| row.reference)
             .collect())

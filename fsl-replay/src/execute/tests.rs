@@ -17,7 +17,7 @@ use crate::proof_result::{InconclusiveCause, TerminalValue};
 use crate::request::StateEnvironment;
 use crate::result::{InputSettlement, WitnessSettlement};
 use crate::scalar::{ScalarOutcome, ValueIdentity};
-use crate::spine::{ComposedUnit, SpineLimits, SpineStage, compose};
+use crate::spine::{compose, ComposedUnit, SpineLimits, SpineStage};
 use crate::witness::{CanonicalAssignment, Witness, WitnessValue};
 
 #[path = "../../../tests/support/admitted_charge.rs"]
@@ -1527,11 +1527,10 @@ fn transitive_only_library_source_reaches_replay() {
             .push((AUTHORITY.to_owned(), identity.to_owned(), bytes.to_vec()));
     }
     assert_eq!(wire.dependencies.len(), 2);
-    assert!(
-        wire.byte_provision
-            .iter()
-            .any(|(_, identity, _)| identity == "test:c")
-    );
+    assert!(wire
+        .byte_provision
+        .iter()
+        .any(|(_, identity, _)| identity == "test:c"));
     let ReplayResult::Input(result) =
         replay(wire, ReplayLimits::default()).expect("transitive C reaches the executor")
     else {
@@ -1974,7 +1973,9 @@ fn every_received_kernel_cause_survives_both_replay_fault_adapters() {
 #[trace("TC-136", "FR-049-AC-2")]
 fn an_out_of_type_stored_value_refuses_where_the_equality_fault_once_reached_replay() {
     use filament_checked::key::DeclarationKey;
-    use filament_exact::{ChargePoint, FieldValue, Integer, IntegerInterval, Meter, Value, ValueType};
+    use filament_exact::{
+        ChargePoint, FieldValue, Integer, IntegerInterval, Meter, Value, ValueType,
+    };
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::declaration::{
         FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
@@ -1987,7 +1988,7 @@ fn an_out_of_type_stored_value_refuses_where_the_equality_fault_once_reached_rep
     use fsl_semantics::model::domain_package::{
         DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
     };
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     let owner_key = DeclarationKey::fixture("model.A");
     let domain = DomainPackage::new(
@@ -2139,11 +2140,11 @@ fn actual_empty_admitted_identity_fault_propagates_from_package_into_replay_fail
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
-        PopulationMember, admit_binding,
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
     };
     let object = DeclarationKey::fixture("model.A");
     let population = DeclarationKey::fixture("model.population");

@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type L = Text[0,8;nfc];
+function f using v(a: L,b: L): Boolean pure { a!=b or a<=b or a>b or a>=b }

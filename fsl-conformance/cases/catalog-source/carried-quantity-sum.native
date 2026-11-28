@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+unit m : Length = rational(1, 1);
+type Li = Quantity<m, Int[-5, 5]>;
+type Ld = Quantity<m, Decimal[-500, 500; 2, 2; nearest-even]>;
+type Lr = Quantity<m, Rational[-3, 7; 1, 12]>;
+function li using v(s: Sequence<Li>[0, 1]): Li pure { sum<Li>(x in s: x) }
+function ld using v(s: Sequence<Ld>[0, 1]): Ld pure { sum<Ld>(x in s: x) }
+function lr using v(s: Sequence<Lr>[0, 1]): Lr pure { sum<Lr>(x in s: x) }

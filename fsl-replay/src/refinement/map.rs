@@ -22,8 +22,11 @@ use std::collections::BTreeMap;
 
 use super::read::{FieldMapping, ObjectMapping, PopulationMapping, RefinementRead};
 use filament_checked::key::DeclarationKey;
-use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};
+use filament_exact::{
+    EffectiveId, FieldValue, ObjectReference, UnionMember, UnionValue, Value, ValueType,
+};
 use filament_semantic_value::catalog::CatalogCode;
+use filament_semantic_value::declaration::CompositeShape;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, RowReading, StateObservation};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
@@ -533,7 +536,7 @@ fn lift_field(
     let Some(value) = unwrap_optional(field, value) else {
         return Ok(None);
     };
-    lift_nested(
+    lift_nested_with_composites(
         &mut |reference, declared| {
             lift_reference(
                 refinement,
@@ -545,6 +548,8 @@ fn lift_field(
         },
         &field.value_type,
         value,
+        concrete_system,
+        abstract_system,
     )
     .map(Some)
 }
@@ -554,10 +559,11 @@ fn lift_field(
 /// map maps its elements, and a map its reference keys, the same way at
 /// every depth (FR-140, FR-630). `reference` lifts one reference. A value of
 /// a leaf type is unchanged; an option, collection or map value whose
-/// declared type has another shape is a fault. A reference nested in a
-/// record, tuple or union is not lifted (QSL-2959). `reference` is given the
-/// abstract object type the declared type names for the reference, when it
-/// names one.
+/// declared type has another shape is a fault. Record fields pair by name,
+/// tuple positions pair by index, and union payloads pair by active tag;
+/// each paired value recurses through the same rules. `reference` is given
+/// the abstract object type the declared type names for the reference, when
+/// it names one.
 type ReferenceLifter<'a> =
     dyn FnMut(&ObjectReference, Option<&EffectiveId>) -> Result<ObjectReference, Lifting> + 'a;
 
@@ -565,6 +571,32 @@ fn lift_nested(
     reference: &mut ReferenceLifter<'_>,
     declared: &ValueType,
     value: Value,
+) -> Result<Value, Lifting> {
+    lift_nested_inner(reference, declared, value, None)
+}
+
+fn lift_nested_with_composites(
+    reference: &mut ReferenceLifter<'_>,
+    declared: &ValueType,
+    value: Value,
+    concrete_system: &ModelSystem<'_>,
+    abstract_system: &ModelSystem<'_>,
+) -> Result<Value, Lifting> {
+    lift_nested_inner(
+        reference,
+        declared,
+        value,
+        Some((concrete_system, abstract_system)),
+    )
+}
+
+type CompositeSystems<'a> = (&'a ModelSystem<'a>, &'a ModelSystem<'a>);
+
+fn lift_nested_inner(
+    reference: &mut ReferenceLifter<'_>,
+    declared: &ValueType,
+    value: Value,
+    systems: Option<CompositeSystems<'_>>,
 ) -> Result<Value, Lifting> {
     match (value, declared) {
         (Value::Reference(found), declared) => {
@@ -577,7 +609,7 @@ fn lift_nested(
         (Value::Option(option), ValueType::Option(payload_type)) => {
             let payload = option
                 .payload()
-                .map(|payload| lift_nested(reference, payload_type, payload.clone()))
+                .map(|payload| lift_nested_inner(reference, payload_type, payload.clone(), systems))
                 .transpose()?;
             Ok(filament_exact::OptionValue::from_admitted(
                 (**payload_type).clone(),
@@ -588,7 +620,9 @@ fn lift_nested(
             let elements = collection
                 .elements()
                 .iter()
-                .map(|element| lift_nested(reference, declared.element(), element.clone()))
+                .map(|element| {
+                    lift_nested_inner(reference, declared.element(), element.clone(), systems)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(filament_exact::from_admitted(
                 (**declared).clone(),
@@ -601,13 +635,125 @@ fn lift_nested(
                 .iter()
                 .map(|(key, value)| {
                     Ok((
-                        lift_nested(reference, declared.key(), key.clone())?,
-                        lift_nested(reference, declared.values(), value.clone())?,
+                        lift_nested_inner(reference, declared.key(), key.clone(), systems)?,
+                        lift_nested_inner(reference, declared.values(), value.clone(), systems)?,
                     ))
                 })
                 .collect::<Result<Vec<_>, Lifting>>()?;
             filament_exact::from_admitted_map((**declared).clone(), entries)
                 .map_err(|_| Lifting::Fault)
+        }
+        (Value::Composite(value), ValueType::Composite(declared)) => {
+            let Some((concrete_system, abstract_system)) = systems else {
+                return Err(Lifting::Fault);
+            };
+            let actual_shape = concrete_system
+                .composite_shape(value.declaration())
+                .ok_or(Lifting::Fault)?;
+            let target_shape = abstract_system
+                .composite_shape(declared)
+                .ok_or(Lifting::Fault)?;
+            match (actual_shape, target_shape) {
+                (CompositeShape::Record(actual), CompositeShape::Record(target)) => {
+                    if actual.len() != target.len() || value.slots().len() != actual.len() {
+                        return Err(Lifting::Fault);
+                    }
+                    let mut slots = Vec::with_capacity(target.len());
+                    for field in target {
+                        let (index, _) = actual
+                            .iter()
+                            .enumerate()
+                            .find(|(_, source)| source.name() == field.name())
+                            .ok_or(Lifting::Fault)?;
+                        let slot = value.slots().get(index).ok_or(Lifting::Fault)?;
+                        slots.push(match slot {
+                            FieldValue::Present(value) => FieldValue::Present(lift_nested_inner(
+                                reference,
+                                field.value_type(),
+                                value.clone(),
+                                systems,
+                            )?),
+                            FieldValue::Absent
+                                if field.presence() == filament_exact::Presence::Optional =>
+                            {
+                                FieldValue::Absent
+                            }
+                            FieldValue::Null
+                                if field.presence() == filament_exact::Presence::Optional =>
+                            {
+                                FieldValue::Null
+                            }
+                            _ => return Err(Lifting::Fault),
+                        });
+                    }
+                    Ok(filament_exact::from_admitted_slots(
+                        declared.clone(),
+                        slots.into_boxed_slice(),
+                    ))
+                }
+                (CompositeShape::Tuple(actual), CompositeShape::Tuple(target)) => {
+                    if actual.len() != target.len() || value.slots().len() != actual.len() {
+                        return Err(Lifting::Fault);
+                    }
+                    let slots = value
+                        .slots()
+                        .iter()
+                        .zip(target)
+                        .map(|(slot, ty)| match slot {
+                            FieldValue::Present(value) => {
+                                lift_nested_inner(reference, ty, value.clone(), systems)
+                                    .map(FieldValue::Present)
+                            }
+                            FieldValue::Absent | FieldValue::Null => Err(Lifting::Fault),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(filament_exact::from_admitted_slots(
+                        declared.clone(),
+                        slots.into_boxed_slice(),
+                    ))
+                }
+                _ => Err(Lifting::Fault),
+            }
+        }
+        (Value::Union(value), ValueType::Composite(declared)) => {
+            let Some((concrete_system, abstract_system)) = systems else {
+                return Err(Lifting::Fault);
+            };
+            let CompositeShape::Union(actual) = concrete_system
+                .composite_shape(value.declaration())
+                .ok_or(Lifting::Fault)?
+            else {
+                return Err(Lifting::Fault);
+            };
+            let CompositeShape::Union(target) = abstract_system
+                .composite_shape(declared)
+                .ok_or(Lifting::Fault)?
+            else {
+                return Err(Lifting::Fault);
+            };
+            let identifier = value.member().identifier();
+            let source = actual
+                .iter()
+                .find(|member| member.identifier() == identifier)
+                .ok_or(Lifting::Fault)?;
+            let member = target
+                .iter()
+                .find(|member| member.identifier() == identifier)
+                .ok_or(Lifting::Fault)?;
+            if source.positions().len() != value.payload().len()
+                || member.positions().len() != source.positions().len()
+            {
+                return Err(Lifting::Fault);
+            }
+            let payload = value
+                .payload()
+                .iter()
+                .zip(member.positions())
+                .map(|(value, ty)| lift_nested_inner(reference, ty, value.clone(), systems))
+                .collect::<Result<Vec<_>, _>>()?;
+            let member = UnionMember::from_admitted(declared.clone(), identifier)
+                .map_err(|_| Lifting::Fault)?;
+            Ok(UnionValue::from_admitted(member, payload))
         }
         (Value::Option(_) | Value::Collection(_) | Value::Map(_), _) => Err(Lifting::Fault),
         (plain, _) => Ok(plain),

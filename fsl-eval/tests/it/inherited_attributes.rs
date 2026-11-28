@@ -14,8 +14,8 @@ use filament_eval::CallFailure;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    EffectiveId, FieldValue, IllTypedCause, Integer, Meter, ObjectId, ObjectReference, Outcome,
-    Presence, ScalarLimits, Value, ValueType,
+    EffectiveId, FieldValue, Integer, Meter, ObjectId, ObjectReference, Outcome, Presence,
+    ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::declaration::{
@@ -25,7 +25,9 @@ use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::Expression;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedExpression, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckCause, CheckedExpression, PackageDeclarations, SemanticCheckRefusal,
+};
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
@@ -112,7 +114,7 @@ fn check(
     package: &CheckedPackage,
     static_type: &str,
     field: &str,
-) -> Result<CheckedExpression, CheckRefusal> {
+) -> Result<CheckedExpression, SemanticCheckRefusal> {
     package.graph().check_expression(
         vec![("r".to_owned(), ValueType::Reference(effective(static_type)))],
         &attribute(field),
@@ -159,9 +161,13 @@ fn assert_missing_field_at_check(package: &CheckedPackage, static_type: &str, fi
         panic!("StateModel ownership for missing {field}: {cause:?}");
     };
     assert_eq!(owner.family(), FamilyKind::StateModel);
-    assert_eq!(
-        owner.cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    assert_eq!(owner.cause.code(), fsl_foundation::Code::IllTyped);
+    assert_eq!(owner.cause.cause(), Some("type-mismatch"));
+    assert!(
+        matches!(&owner.cause, CheckCause::UnknownField { field: absent, span: None, .. }
+            if &**absent == field),
+        "{:?}",
+        owner.cause
     );
 }
 

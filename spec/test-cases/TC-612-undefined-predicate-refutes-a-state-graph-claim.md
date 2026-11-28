@@ -18,13 +18,13 @@ Verify that a predicate of a state-graph claim that evaluates undefined at
 an explored node refutes the item with cause `UndefinedEvaluation`, in place
 of a witness, and that replay reproduces the undefined value at that node.
 
-Scope: FR-168-AC-5, FR-168-AC-11 to FR-168-AC-13, FR-169-AC-6, FR-170-AC-5,
-FR-170-AC-7.
+Scope: FR-168-AC-5, FR-168-AC-11 to FR-168-AC-13, FR-168-AC-16,
+FR-169-AC-6, FR-170-AC-5, FR-170-AC-7.
 
 ## Test Procedure
 
-Fixture: ADR-022 §7.1's subject and `possible 2 div (2 - c.versionNumber) = 2`
-for `c = a`.
+Fixture: ADR-022 §7.1's subject and `possible quotient(2 - c.versionNumber) = 2`
+for `c = a`, `quotient` being FR-168-AC-5's `Kernel`-checked function.
 
 1. Run the item through EN-1.
 2. Replay its evidence, then the same evidence with the stem's last step
@@ -32,7 +32,7 @@ for `c = a`.
    and the same cause.
 3. Settle the outcome with step 2's first replay result.
 4. Run `always possible PDiv using v over (c: Config::ConfigVersion) from
-   (c.versionNumber >= 1) { 2 div (2 - c.versionNumber) = 2 }` for `c = a`;
+   (c.versionNumber >= 1) { quotient(2 - c.versionNumber) = 2 }` for `c = a`;
    replay its `Undefined` evidence, then the same evidence with
    `where.predicate` naming the `from` predicate `c.versionNumber >= 1`
    and the same cause.
@@ -47,6 +47,10 @@ for `c = a`.
    `Half`, and replay its evidence through a request that selects `Half`
    and through one that selects no constraint; then with its stem's last
    step removed; then with its cause changed.
+8. Run FR-168-AC-16's counter with a refused `terminal when` beside a
+   false, an undefined and a true declaration; with an undefined
+   declaration beside a false and beside a true one; and replay undefined
+   evidence at `value = 3` on the refused and undefined unit.
 
 Tag the tests `#[trace("TC-612", "<AC id>")]`.
 
@@ -76,3 +80,9 @@ Tag the tests `#[trace("TC-612", "<AC id>")]`.
   `decisive-counterexample`, cause `UndefinedEvaluation`; both replays
   settle `reproduced-with-evaluated-witness`; `inconclusive`, `Verdicts`,
   twice.
+- Step 8: beside the refused declaration, with the false and with the
+  undefined one, `WitnessedUnchecked` and `NoDecision`, `value = 3` open
+  `UndecidedSuccessor`; the replay on the refused and undefined unit
+  `inconclusive`, `Verdicts`; the undefined declaration beside a false one
+  `Undefined` at `value = 3`, replayed and `refuted`; with a true one
+  `Witnessed` and `Holds`, no open node.

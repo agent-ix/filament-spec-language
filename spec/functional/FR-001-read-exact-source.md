@@ -262,7 +262,7 @@ names it with the same two labels (FSpec FR-004).
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-001-AC-1 | **RETIRED (source content check removed).** Admission carries only the authority and identity of the source. | Test (TC-011), retired |
+| FR-001-AC-1 | Admitting bytes `b` as authority `agent-ix`, identity `specs/a.quire` gives a `RawSourceRef` containing exactly those two labels; admitting different bytes `b'` under the same labels gives an equal reference. | Test (TC-424) |
 | FR-001-AC-2 | **RETIRED (verified intake removed).** There is no verified intake and no content-mismatch refusal. | Test (TC-011), retired |
 | FR-001-AC-3 | Invalid UTF-8 receives a source diagnostic. | Test (TC-011) |
 | FR-001-AC-4 | Input beyond the selected byte ceiling receives `stage_limit_exceeded` (FR-255) naming that ceiling and its setting `s1.input_bytes`, whether the ceiling is below or above the 1 MiB default. | Test (TC-011) |

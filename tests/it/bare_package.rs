@@ -1826,6 +1826,10 @@ fn two_joins_on_one_budget_are_charged_cumulatively() {
 
 /// FR-531-AC-24 (TC-1331): the view, the evidence constructors and the handoff
 /// writer refuse a native budget one short with their own typed denial.
+/// FR-255-AC-17/18/19 (TC-721): I2's native identity join accepts both bounds
+/// at their maximum, refuses zero storage at its first positive storage
+/// charge, and reports exact work/storage boundaries as typed limit evidence.
+#[trace("TC-721", "FR-255-AC-17", "FR-255-AC-18", "FR-255-AC-19")]
 #[trace("TC-1331", "FR-531-AC-24")]
 #[test]
 fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
@@ -1858,10 +1862,45 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
             .with_work(work)
             .with_storage(storage)
     };
+    let maximum = built
+        .try_read_under(&built.emission, limits(u64::MAX, u64::MAX))
+        .expect("u64::MAX native-join bounds admit the I2 read");
+    maximum
+        .evaluation_view()
+        .expect("u64::MAX native-join bounds admit the evaluation view");
     let exact = built
         .try_read_under(&built.emission, limits(view_need.work, view_need.storage))
         .expect("the reader admits");
     assert!(exact.evaluation_view().is_ok());
+    let zero_storage = built
+        .try_read_under(&built.emission, limits(u64::MAX, 0))
+        .expect("zero native-join storage does not block the I2 byte read");
+    match zero_storage.evaluation_view() {
+        Err(fsl_package::ViewFailure::Exhausted(denial)) => {
+            use filament_semantic_value::catalog::CatalogCoded;
+            let fsl_package::NativeJoinFailure::Rows(native) = &denial.native else {
+                panic!(
+                    "zero storage refuses during the identity row join: {:?}",
+                    denial.native
+                );
+            };
+            assert_eq!(native.code(), fsl_package::NativeRowErrorCode::StorageLimit);
+            let denied = native
+                .denied()
+                .expect("NativeRowError exposes its typed denied charge");
+            assert_eq!(
+                denied.kind,
+                filament_contract_model::NativeJoinChargeKind::Storage
+            );
+            assert!(denied.amount > 0, "the first storage charge is positive");
+            assert_eq!(denial.limit.setting().name(), "i2.native_join_storage");
+            assert_eq!(denial.limit.configured_bound(), 0);
+            assert_eq!(denial.limit.actual(), denied.amount);
+            assert_eq!(denial.limit.catalog_code().code(), "stage_limit_exceeded");
+        }
+        Err(other) => panic!("zero storage returned the wrong refusal: {other:?}"),
+        Ok(_) => panic!("zero storage admitted the first positive join charge"),
+    }
     for (work, storage, code) in [
         (view_need.work - 1, view_need.storage, Code::ExhaustedWork),
         (
@@ -1876,14 +1915,29 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
         match short.evaluation_view() {
             Err(fsl_package::ViewFailure::Exhausted(denial)) => {
                 use filament_semantic_value::catalog::CatalogCoded;
+                let fsl_package::NativeJoinFailure::Projection(native) = &denial.native else {
+                    panic!("{code:?} exposes the typed ExactTypeProjectionError");
+                };
+                assert_eq!(native.code, code);
                 assert!(
-                    matches!(&denial.native, fsl_package::NativeJoinFailure::Projection(native) if native.code == code)
+                    !format!("{native:?}").contains("cause"),
+                    "ExactTypeProjectionError has no separate public cause field"
                 );
                 let (bound, setting) = if code == Code::ExhaustedWork {
                     (work, "i2.work_units")
                 } else {
                     (storage, "i2.native_join_storage")
                 };
+                let denied = native
+                    .denied
+                    .expect("ExactTypeProjectionError has a typed denied charge");
+                let expected_kind = if code == Code::ExhaustedWork {
+                    filament_contract_model::NativeJoinChargeKind::Work
+                } else {
+                    filament_contract_model::NativeJoinChargeKind::Storage
+                };
+                assert_eq!(denied.kind, expected_kind);
+                assert!(denied.amount > 0);
                 assert_eq!(denial.limit.setting().name(), setting);
                 assert_eq!(denial.limit.configured_bound(), bound);
                 assert!(denial.limit.actual() > u128::from(bound));

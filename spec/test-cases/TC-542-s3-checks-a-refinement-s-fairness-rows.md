@@ -34,7 +34,9 @@ Tag the tests `#[trace("TC-542", "FR-137-AC-n")]`.
 ## Expected Results
 
 - Step 1: six `Weak Each` constraints in `F_C` and `[Weak Each inc]` in
-  `F_A`; `[Weak Whole inc]` with a different node identity; empty `F_A`.
+  `F_A`; `[Weak Whole inc]`, with a node key equal to the first check's
+  (equal `package` and `path`, ordinal 0 in both) and an `ensure` entry whose
+  `granularity` is `whole` where the first's is `each`; empty `F_A`.
 - Step 2: `missing_declaration`/`missing-name` naming `Spec`; the
   same naming `Impl`; `missing_declaration`/`missing-name`; `invalid_model_binding`/`conflicting-binding` naming both rows, for each duplicate pair.
 - Step 3: three `Scheduler` constraints (branch `A`, branch `B`, root);

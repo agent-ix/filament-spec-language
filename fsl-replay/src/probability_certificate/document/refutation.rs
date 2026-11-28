@@ -12,6 +12,15 @@
 //! qualitative set is read.
 
 use super::*;
+use ix_trace_rs::implements;
+
+type RandomizedSchedule = BTreeMap<ProbabilityProductKey, Vec<(usize, Rational)>>;
+
+pub(super) struct ScheduleEvidence<'a> {
+    pub(super) graph: &'a CheckerGraph,
+    pub(super) reference: Option<&'a ObjectReference>,
+    pub(super) rows: &'a [(ProbabilityProductKey, Vec<(crate::ProductAction, Rational)>)],
+}
 
 fn unbounded_eventually_predicate(
     formula: &fsl_semantics::check::CheckedTemporalFormula,
@@ -115,6 +124,7 @@ struct Subject {
 
 /// Whether value-bounds bytes wrap a base this role owns rather than FR-1043's
 /// finite-horizon measure base.
+#[ix_trace_rs::string_edge]
 pub(in crate::probability_certificate) fn owns(
     bytes: &[u8],
 ) -> Result<bool, ProbabilityDocumentError> {
@@ -144,10 +154,11 @@ pub(in crate::probability_certificate) fn admit(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<(), ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter(cancel);
     decode(bytes, limits, cancel, &mut meter).map(|_| ())
 }
 
+#[ix_trace_rs::string_edge]
 fn decode(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
@@ -308,6 +319,7 @@ fn subject(
                 } else {
                     super::super::reward::RewardProfile::CyclicMdp
                 },
+                None,
                 meter,
                 storage,
                 &control,
@@ -440,6 +452,7 @@ fn subject(
 
 /// Write a counterexample-role certificate whose base objective is derived
 /// from the checked subject. This grants no acceptance.
+#[implements("FR-203-AC-29")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn write(
     system: &ModelSystem<'_>,
@@ -450,8 +463,9 @@ pub(in crate::probability_certificate) fn write(
     ranking: Option<&[(ProbabilityProductKey, u64)]>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let subject = subject(
         system,
@@ -510,6 +524,7 @@ pub(in crate::probability_certificate) enum SubsystemRefutationCheck {
 /// counterexample-role certificate over it. `scheduler` is the
 /// counterexample's deterministic memoryless rows; it is empty under a
 /// workload.
+#[implements("FR-203-AC-32")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check(
     system: &ModelSystem<'_>,
@@ -519,8 +534,9 @@ pub(in crate::probability_certificate) fn check(
     scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<SubsystemRefutationCheck, ProbabilityDocumentError> {
-    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let decoded = decode(bytes, limits, cancel, &mut meter)?;
     if &decoded.identity != item {
@@ -1022,9 +1038,7 @@ pub(super) fn scheduled_choices(
 /// the admitted transition relation, not to the producer's action order.
 pub(super) fn randomized_scheduled_choices(
     system: &ModelSystem<'_>,
-    graph: &CheckerGraph,
-    reference: Option<&ObjectReference>,
-    rows: &[(ProbabilityProductKey, Vec<(crate::ProductAction, Rational)>)],
+    evidence: ScheduleEvidence<'_>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
@@ -1032,8 +1046,12 @@ pub(super) fn randomized_scheduled_choices(
     mut enabled: Option<
         &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
     >,
-) -> Result<Option<BTreeMap<ProbabilityProductKey, Vec<(usize, Rational)>>>, ProbabilityDocumentError>
-{
+) -> Result<Option<RandomizedSchedule>, ProbabilityDocumentError> {
+    let ScheduleEvidence {
+        graph,
+        reference,
+        rows,
+    } = evidence;
     let identity = fsl_foundation::IdentityLimits::default();
     let mut wanted = BTreeMap::new();
     for (key, distribution) in rows {

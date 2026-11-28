@@ -4,9 +4,13 @@
 //! adapter, which builds the product, solves it exactly, has the core's
 //! checker accept the certificate and only then settles `proved`.
 //!
-use filament_exact::{Cancel, CancelCause, Integer, Rational};
+use filament_exact::{Cancel, CancelCause, Integer, LimitKind, Rational};
 use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, Engines,
+};
+#[cfg(feature = "test-support")]
+use fsl_analyze::analyze::{
+    exact_work_checkpoints, reset_exact_work_checkpoints, ExactWorkCheckpoint, ExactWorkPhase,
 };
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::{Limits, TransitionSystem};
@@ -42,6 +46,11 @@ const CLAIMS: &str =
      probabilistic Unlikely using inf on M over (m: M::Msg) under every scheduler on origin \
      { probability >= 0.97 [ eventually holds(m.delivered) ] }\n";
 
+const WORK_PROOF: &str = "probabilistic WorkProof using ev on M over (c: M::Coin) \
+    under Even on origin { probability >= 0.5 [ always[0,0] holds(c.v = 0) ] }";
+const WORK_REFUTATION: &str = "probabilistic WorkRefutation using ev on M over (c: M::Coin) \
+    under Even on origin { probability >= 0.5 [ always[0,0] holds(c.v = 1) ] }";
+
 fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).unwrap()
 }
@@ -53,9 +62,541 @@ fn settle(
 ) -> fsl_analyze::analyze::AnalyzeRecord {
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), world.request(claim, limits));
-    let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+    let mut records = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    );
     assert_eq!(records.len(), 1);
     records.remove(0)
+}
+
+fn settle_with_work(
+    world: &World,
+    claim: &str,
+    work_units: u64,
+) -> fsl_analyze::analyze::AnalyzeRecord {
+    let mut request = world.request(claim, ModelCheckLimits::default());
+    request.subject.simulation.meter.work_units = work_units;
+    analyze_items(
+        &Engines::fsl().expect("the linked engines are admitted"),
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
+}
+
+#[cfg(feature = "test-support")]
+fn settle_with_work_and_checkpoints(
+    world: &World,
+    claim: &str,
+    work_units: u64,
+) -> (
+    fsl_analyze::analyze::AnalyzeRecord,
+    Vec<ExactWorkCheckpoint>,
+) {
+    reset_exact_work_checkpoints();
+    let record = settle_with_work(world, claim, work_units);
+    (record, exact_work_checkpoints())
+}
+
+#[cfg(feature = "test-support")]
+fn phase_span(checkpoints: &[ExactWorkCheckpoint], phase: ExactWorkPhase) -> (u64, u64) {
+    let start = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.phase == phase && !checkpoint.completed)
+        .unwrap_or_else(|| panic!("missing start checkpoint for {phase:?}"))
+        .consumed;
+    let end = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.phase == phase && checkpoint.completed)
+        .unwrap_or_else(|| panic!("missing completion checkpoint for {phase:?}"))
+        .consumed;
+    (start, end)
+}
+
+#[cfg(feature = "test-support")]
+fn assert_phase_work(
+    checkpoints: &[ExactWorkCheckpoint],
+    phase: ExactWorkPhase,
+    expected_start: u64,
+    expected_end: u64,
+) {
+    assert_eq!(
+        phase_span(checkpoints, phase),
+        (expected_start, expected_end)
+    );
+}
+
+#[cfg(feature = "test-support")]
+fn assert_phase_starts_without_completing(
+    checkpoints: &[ExactWorkCheckpoint],
+    phase: ExactWorkPhase,
+    expected_start: u64,
+) {
+    assert!(checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == phase && !checkpoint.completed && checkpoint.consumed == expected_start
+    }));
+    assert!(!checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == phase && checkpoint.completed));
+}
+
+#[cfg(feature = "test-support")]
+fn assert_work_limit(record: &fsl_analyze::analyze::AnalyzeRecord, bound: u64) {
+    assert!(matches!(
+        record.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::EvaluationMeter {
+                counter: LimitKind::WorkUnits
+            },
+            value,
+            ..
+        })) if *value == bound
+    ));
+}
+
+// Hand-counted fixed work totals from the deterministic Coin charge paths:
+// AC-29 P=14,364/Cprod=5,130; AC-30 Ccheck=4; AC-31 Wprod=7; AC-32 Wreplay=8;
+// AC-33 P=35,976/R=52/materialization=2/replay=7. Checkpoints verify these
+// totals; the tests use these constants, never totals measured from a run.
+#[cfg(feature = "test-support")]
+const COIN_PRODUCT_WORK: u64 = 14_364;
+#[cfg(feature = "test-support")]
+const COIN_CERTIFICATE_PRODUCTION_WORK: u64 = 5_130;
+#[cfg(feature = "test-support")]
+const COIN_CERTIFICATE_CHECK_WORK: u64 = 4;
+#[cfg(feature = "test-support")]
+const COIN_WITNESS_PRODUCTION_WORK: u64 = 7;
+#[cfg(feature = "test-support")]
+const COIN_WITNESS_REPLAY_WORK: u64 = 8;
+#[cfg(feature = "test-support")]
+const COIN_PROOF_ONLY_WORK: u64 = 35_976;
+#[cfg(feature = "test-support")]
+const COIN_UNDEFINED_REEXPLORATION_WORK: u64 = 52;
+#[cfg(feature = "test-support")]
+const COIN_UNDEFINED_MATERIALIZATION_WORK: u64 = 2;
+#[cfg(feature = "test-support")]
+const COIN_UNDEFINED_REPLAY_WORK: u64 = 7;
+#[cfg(feature = "test-support")]
+const LINK_PACKAGE_OWNER_REPLAY_WORK: u64 = 51;
+
+/// Product construction, certificate production and independent checking
+/// share the item's `accounting.work_units` allowance.
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-29")]
+#[test]
+fn product_and_certificate_production_share_the_item_remainder() {
+    let world = World::new(&prob_world::coin(WORK_PROOF));
+    let combined = COIN_PRODUCT_WORK + COIN_CERTIFICATE_PRODUCTION_WORK;
+    let isolated_bound = COIN_PRODUCT_WORK.max(COIN_CERTIFICATE_PRODUCTION_WORK);
+    let (_, sufficient_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkProof", combined);
+    assert_phase_work(
+        &sufficient_checkpoints,
+        ExactWorkPhase::Product,
+        0,
+        COIN_PRODUCT_WORK,
+    );
+    assert_phase_work(
+        &sufficient_checkpoints,
+        ExactWorkPhase::CertificateProduction,
+        COIN_PRODUCT_WORK,
+        combined,
+    );
+
+    let (short, short_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkProof", isolated_bound);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&short, isolated_bound);
+    assert!(short.exact_probabilistic.is_none());
+    assert!(short.probabilistic_counterexample.is_none());
+    assert_phase_starts_without_completing(
+        &short_checkpoints,
+        ExactWorkPhase::CertificateProduction,
+        COIN_PRODUCT_WORK,
+    );
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::CertificateCheck));
+
+    let (production_complete, production_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkProof", combined);
+    assert!(matches!(
+        production_complete
+            .terminal()
+            .map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&production_complete, combined);
+    assert_phase_work(
+        &production_checkpoints,
+        ExactWorkPhase::CertificateProduction,
+        COIN_PRODUCT_WORK,
+        combined,
+    );
+    assert_phase_starts_without_completing(
+        &production_checkpoints,
+        ExactWorkPhase::CertificateCheck,
+        combined,
+    );
+}
+
+/// Certificate checking is the first unpaid phase after product and production.
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-30")]
+#[test]
+fn certificate_checking_spends_only_the_item_work_remainder() {
+    let world = World::new(&prob_world::coin(WORK_PROOF));
+    let total = COIN_PRODUCT_WORK + COIN_CERTIFICATE_PRODUCTION_WORK + COIN_CERTIFICATE_CHECK_WORK;
+    let (complete_record, complete_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkProof", total);
+    assert_phase_work(
+        &complete_checkpoints,
+        ExactWorkPhase::Product,
+        0,
+        COIN_PRODUCT_WORK,
+    );
+    assert_phase_work(
+        &complete_checkpoints,
+        ExactWorkPhase::CertificateProduction,
+        COIN_PRODUCT_WORK,
+        COIN_PRODUCT_WORK + COIN_CERTIFICATE_PRODUCTION_WORK,
+    );
+    assert_phase_work(
+        &complete_checkpoints,
+        ExactWorkPhase::CertificateCheck,
+        COIN_PRODUCT_WORK + COIN_CERTIFICATE_PRODUCTION_WORK,
+        total,
+    );
+    assert!(matches!(
+        complete_record.terminal().unwrap().value(),
+        TerminalValue::Proved { .. }
+    ));
+    let (short, checkpoints) = settle_with_work_and_checkpoints(&world, "WorkProof", total - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&short, total - 1);
+    assert!(short.exact_probabilistic.is_none());
+    assert!(checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::CertificateProduction && checkpoint.completed
+    }));
+    assert_phase_starts_without_completing(
+        &checkpoints,
+        ExactWorkPhase::CertificateCheck,
+        COIN_PRODUCT_WORK + COIN_CERTIFICATE_PRODUCTION_WORK,
+    );
+
+    let sufficient = settle_with_work(&world, "WorkProof", total);
+    assert!(matches!(
+        sufficient.terminal().unwrap().value(),
+        TerminalValue::Proved { .. }
+    ));
+}
+
+/// Witness construction and independent replay use the same item work prefix.
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-31")]
+#[test]
+fn witness_production_spends_the_remainder_after_product_work() {
+    let world = World::new(&prob_world::coin(WORK_REFUTATION));
+    let product = COIN_PRODUCT_WORK;
+    let production = COIN_WITNESS_PRODUCTION_WORK;
+    let bound = product.max(production);
+
+    let (short, short_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkRefutation", bound);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&short, bound);
+    assert!(short.probabilistic_counterexample.is_none());
+    assert!(short.exact_probabilistic.is_none());
+    assert_phase_starts_without_completing(
+        &short_checkpoints,
+        ExactWorkPhase::WitnessProduction,
+        product,
+    );
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.phase == ExactWorkPhase::WitnessReplay));
+
+    let (production_complete, production_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkRefutation", product + production);
+    assert!(matches!(
+        production_complete
+            .terminal()
+            .map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&production_complete, product + production);
+    assert_phase_work(
+        &production_checkpoints,
+        ExactWorkPhase::WitnessProduction,
+        product,
+        product + production,
+    );
+    assert_phase_starts_without_completing(
+        &production_checkpoints,
+        ExactWorkPhase::WitnessReplay,
+        product + production,
+    );
+}
+
+/// Independent replay cannot accept a witness after the item allowance is spent.
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-32")]
+#[test]
+fn witness_replay_spends_the_remainder_after_production() {
+    let world = World::new(&prob_world::coin(WORK_REFUTATION));
+    let production_end = COIN_PRODUCT_WORK + COIN_WITNESS_PRODUCTION_WORK;
+    let replay_total = production_end + COIN_WITNESS_REPLAY_WORK;
+    let (_, sufficient_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkRefutation", replay_total);
+    assert_phase_work(
+        &sufficient_checkpoints,
+        ExactWorkPhase::Product,
+        0,
+        COIN_PRODUCT_WORK,
+    );
+    assert_phase_work(
+        &sufficient_checkpoints,
+        ExactWorkPhase::WitnessProduction,
+        COIN_PRODUCT_WORK,
+        production_end,
+    );
+    assert_phase_work(
+        &sufficient_checkpoints,
+        ExactWorkPhase::WitnessReplay,
+        production_end,
+        replay_total,
+    );
+    let (short, checkpoints) =
+        settle_with_work_and_checkpoints(&world, "WorkRefutation", replay_total - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&short, replay_total - 1);
+    assert!(short.probabilistic_counterexample.is_none());
+    assert!(checkpoints.iter().any(|checkpoint| {
+        checkpoint.phase == ExactWorkPhase::WitnessProduction && checkpoint.completed
+    }));
+    assert_phase_starts_without_completing(
+        &checkpoints,
+        ExactWorkPhase::WitnessReplay,
+        production_end,
+    );
+
+    let complete_record = settle_with_work(&world, "WorkRefutation", replay_total);
+    assert_eq!(
+        complete_record.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    assert!(complete_record.probabilistic_counterexample.is_some());
+
+    // The analyzer's source and package-owner branches call distinct replay
+    // entry points. Exercise package-owner replay separately with a checked
+    // Link witness; the exact Coin fixture above remains the phase oracle.
+    let package_claim = "probabilistic PackageRefuted using inf on M over (m: M::Msg) \
+        under Even on origin { probability >= 0.99 [ eventually holds(m.delivered) ] }";
+    let package_world = World::new(&prob_world::link(package_claim));
+    let package_record = settle(
+        &package_world,
+        "PackageRefuted",
+        ModelCheckLimits::default(),
+    );
+    assert_eq!(
+        package_record.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    let package_counterexample = package_record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("source route produces the Link counterexample");
+    use fsl_eval::simulation::model::{ModelSimulationRequest, PackageModelInput};
+    use fsl_package::{BarePackage, BareSupply};
+
+    let simulation = package_world.subject().simulation;
+    let emission =
+        fsl_package::emit_checked(&package_world.package, fsl_package::EmitLimits::fixture())
+            .expect("the checked Link package emits");
+    let package_limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        simulation.packages,
+        package_limits,
+    )
+    .expect("the emitted package admits");
+    let mut join_budget = package_limits.native_join_limits().budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut join_budget)
+        .expect("the emitted identities join");
+    let equality = emission
+        .equality_witness(&admitted, &mut join_budget)
+        .expect("the emitted equality witness joins");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut join_budget,
+        )
+        .expect("the package's owner supply joins");
+    let owner = PackageModelInput::of(&bare, simulation.packages, simulation.normalization)
+        .expect("the package owner admits");
+    let package_system = ModelSystem::new(ModelSimulationRequest {
+        input: owner.input(),
+        ..simulation.clone()
+    })
+    .expect("the owner-backed Link system admits");
+    let item = &package_counterexample.evidence().item;
+    let limits = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let replay_at = |work_units| {
+        let mut accounting = prob_world::UNLIMITED;
+        accounting.work_units = work_units;
+        let work = filament_exact::WorkScope::new(accounting);
+        let result = fsl_replay::replay_probabilistic_witness_from_package_with_work_scope(
+            &owner,
+            &package_system,
+            item,
+            package_counterexample.evidence(),
+            &limits,
+            &Cancel::new(),
+            Some(&work),
+        );
+        (result, work.consumed_work())
+    };
+    let (package_replay, package_work) = replay_at(LINK_PACKAGE_OWNER_REPLAY_WORK);
+    assert!(matches!(
+        package_replay,
+        Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    assert_eq!(package_work, LINK_PACKAGE_OWNER_REPLAY_WORK);
+    let (package_short, _) = replay_at(LINK_PACKAGE_OWNER_REPLAY_WORK - 1);
+    let Err(fsl_replay::ProbabilityWitnessError::Build(issue)) = package_short else {
+        panic!("the package-owner replay stops without returning a token");
+    };
+    let fsl_replay::ExactProbBuildIssue::Predicate(
+        fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete),
+    ) = *issue
+    else {
+        panic!("the package-owner replay preserves the work-limit fault");
+    };
+    assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(incomplete.limit, LINK_PACKAGE_OWNER_REPLAY_WORK - 1);
+    assert_eq!(incomplete.consumed, LINK_PACKAGE_OWNER_REPLAY_WORK - 1);
+}
+
+/// Undefined-path re-exploration continues after product construction has
+/// spent part of the item allowance.
+#[cfg(feature = "test-support")]
+#[trace("FR-203-AC-33", "FR-196-AC-5")]
+#[test]
+fn undefined_reexploration_spends_the_remaining_item_work() {
+    let claim = "probabilistic Dropped using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
+    let world = World::new(&prob_world::coin(claim));
+    let (_, checkpoints) = settle_with_work_and_checkpoints(&world, "Dropped", 1 << 24);
+    let proof_only = COIN_PROOF_ONLY_WORK;
+    let reexploration = COIN_UNDEFINED_REEXPLORATION_WORK;
+    let materialization = COIN_UNDEFINED_MATERIALIZATION_WORK;
+    let replay = COIN_UNDEFINED_REPLAY_WORK;
+    let reexplore_bound = proof_only + reexploration;
+    assert_phase_work(&checkpoints, ExactWorkPhase::ProofOnlyBuild, 0, proof_only);
+    assert_phase_work(
+        &checkpoints,
+        ExactWorkPhase::UndefinedReexploration,
+        proof_only,
+        reexplore_bound,
+    );
+    assert_phase_work(
+        &checkpoints,
+        ExactWorkPhase::UndefinedMaterialization,
+        reexplore_bound,
+        reexplore_bound + materialization,
+    );
+    assert_phase_work(
+        &checkpoints,
+        ExactWorkPhase::UndefinedReplay,
+        reexplore_bound + materialization,
+        reexplore_bound + materialization + replay,
+    );
+
+    let (short, short_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Dropped", reexplore_bound - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&short, reexplore_bound - 1);
+    assert!(short.probabilistic_counterexample.is_none());
+    assert!(short.exact_probabilistic.is_none());
+    assert_phase_starts_without_completing(
+        &short_checkpoints,
+        ExactWorkPhase::UndefinedReexploration,
+        proof_only,
+    );
+    assert!(!short_checkpoints
+        .iter()
+        .any(|checkpoint| { checkpoint.phase == ExactWorkPhase::UndefinedMaterialization }));
+
+    let (reexplored, reexplored_checkpoints) =
+        settle_with_work_and_checkpoints(&world, "Dropped", reexplore_bound);
+    assert!(matches!(
+        reexplored.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert_work_limit(&reexplored, reexplore_bound);
+    assert_phase_work(
+        &reexplored_checkpoints,
+        ExactWorkPhase::UndefinedReexploration,
+        proof_only,
+        reexplore_bound,
+    );
+    assert_phase_starts_without_completing(
+        &reexplored_checkpoints,
+        ExactWorkPhase::UndefinedMaterialization,
+        reexplore_bound,
+    );
+
+    let full = proof_only + reexploration + materialization + replay;
+    let complete_record = settle_with_work(&world, "Dropped", full);
+    assert_eq!(
+        complete_record.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    let undefined = complete_record
+        .probabilistic_counterexample
+        .as_ref()
+        .and_then(|counterexample| counterexample.undefined())
+        .expect("the complete item carries replayed undefined evidence");
+    assert_eq!(undefined.evaluation.site.position, 1);
 }
 
 /// Equality at the exact reachability threshold proves with the checked
@@ -128,8 +669,7 @@ fn a_reachability_bound_that_holds_settles_proved_with_the_checked_certificate()
     };
     assert_eq!(entry.extremum, Some(Extremum::Min));
     let binding = entry.binding.as_ref().expect("the claim's one instance");
-    assert_eq!(binding.key, "m");
-    assert!(binding.population.ends_with("/msgs"), "{binding:?}");
+    assert_eq!(binding.object().as_str(), "m");
     assert!(
         matches!(&entry.value, ExactOrBounds::Exact { value } if value.value() == &ratio(24, 25))
     );
@@ -148,6 +688,53 @@ fn a_reachability_bound_that_holds_settles_proved_with_the_checked_certificate()
         .values
         .iter()
         .any(|entry| entry.value == ratio(24, 25)));
+}
+
+/// A product `max_states` cut short whose explored prefix settles nothing
+/// stops at that budget on the measure and long-run routes too: only a lower
+/// proof settles a partial product (FSpec FR-411 "Evidence on a partial
+/// product"), and these forms have none here.
+#[trace("TC-638", "FR-203-AC-2")]
+#[test]
+fn a_partial_product_that_settles_nothing_stops_at_the_state_budget() {
+    let link = World::new(&prob_world::link(
+        "probabilistic Compared using ev on M over (m: M::Msg) under Even on origin \
+         { probability >= 0.5 [ steps from holds(true) until holds(m.delivered) within 2 <= 2 ] }\n\
+         probabilistic Mean using ev on M over (m: M::Msg) under Even on origin \
+         { mean of (fraction holds(m.delivered) over [0, 2]) >= 0.1 }\n",
+    ));
+    let service = World::new(&prob_world::service(
+        "probabilistic Weighted using inf on M over (s: M::Server) under Steady on origin \
+         { long_run_fraction holds(s.phase = 0) >= rational(1,2) }\n\
+         probabilistic Every using inf on M over (s: M::Server) under every scheduler on origin \
+         { long_run_fraction holds(s.phase = 0) >= rational(1,2) }",
+    ));
+    let mut wrong = Vec::new();
+    for (world, claim) in [
+        (&link, "Compared"),
+        (&link, "Mean"),
+        (&service, "Weighted"),
+        (&service, "Every"),
+    ] {
+        let record = settle(
+            world,
+            claim,
+            ModelCheckLimits {
+                limits: Limits::default().with_max_states(1),
+                ..ModelCheckLimits::default()
+            },
+        );
+        let stopped = TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::ExactProbMaxStates,
+            value: 1,
+            required: None,
+        });
+        if record.terminal().map(|terminal| terminal.value()) != Some(&stopped) {
+            wrong.push(format!("{claim}: {:?}", record.settlement));
+        }
+        assert!(record.exact_probabilistic.is_none(), "{claim}");
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[trace("TC-763", "FR-281-AC-6")]
@@ -172,7 +759,7 @@ fn a_state_budget_of_one_settles_incomplete() {
     assert!(record.exact_probabilistic.is_none());
 }
 
-#[trace("TC-763", "FR-201", "FR-203", "FR-282")]
+#[trace("TC-763", "FR-201", "FR-203-AC-2", "FR-282")]
 #[test]
 fn cancellation_at_the_checker_acceptance_boundary_settles_incomplete_without_evidence() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -182,7 +769,13 @@ fn cancellation_at_the_checker_acceptance_boundary_settles_incomplete_without_ev
             RequestIndex::new(0),
             world.request("Likely", ModelCheckLimits::default()),
         );
-        analyze_items(&engines, vec![item], cancel).remove(0)
+        analyze_items(
+            &engines,
+            vec![item],
+            cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0)
     };
     let live = Cancel::new();
     let _counting = live.count_charges();
@@ -222,7 +815,7 @@ fn cancellation_at_the_checker_acceptance_boundary_settles_incomplete_without_ev
     }
 }
 
-#[trace("TC-763", "FR-201", "FR-203", "FR-282")]
+#[trace("TC-763", "FR-201", "FR-203-AC-2", "FR-282")]
 #[test]
 fn cancelling_after_the_solver_finishes_is_observed_by_the_independent_checker() {
     use std::cell::Cell;
@@ -240,7 +833,13 @@ fn cancelling_after_the_solver_finishes_is_observed_by_the_independent_checker()
                 cancel.cancel(source);
             },
         );
-        let record = analyze_items(&engines, vec![item], &cancel).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         assert!(
             reached_checker.get(),
             "the solver must finish before cancellation"
@@ -285,7 +884,13 @@ fn a_rejected_certificate_never_settles_proved() {
                 .value = ratio(1, 1);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert!(record.exact_probabilistic.is_none());
     let terminal = record.terminal().expect("a terminal record");
     assert!(record.probabilistic_counterexample.is_none());
@@ -319,10 +924,9 @@ fn a_rejected_certificate_never_settles_proved() {
     let locus = CertificateLocus::ProbabilityProductState(expected.clone());
     let wire = serde_json::to_value(&locus).unwrap();
     // Encode the complete canonical octets independently of the locus serializer.
-    let expected_wire = serde_json::to_value(fsl_replay::CertificateLocus::ModelKey(
-        fsl_eval::simulation::StateKey::from_canonical_bytes(expected.as_bytes().to_vec()),
-    ))
-    .unwrap();
+    use base64::Engine as _;
+    let expected_wire =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(expected.as_bytes());
     assert_eq!(wire, serde_json::json!({"product_key": expected_wire}));
     let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal)).unwrap();
     assert_eq!(outcome["result"], "inconclusive");
@@ -354,7 +958,13 @@ fn a_malformed_probability_certificate_settles_a_typed_rejection() {
             certificate.values.remove(omitted);
         },
     );
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     assert_eq!(
         record.terminal().expect("a terminal record").value(),
         &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
@@ -523,7 +1133,13 @@ fn analyzer_document_budgets_preserve_stage_specific_stops_without_certification
         let item = exact_probabilistic_item_tampered(RequestIndex::new(0), request, move |_| {
             observed.store(true, Ordering::Relaxed);
         });
-        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         assert_eq!(
             reached_candidate.load(Ordering::Relaxed),
             !storage,
@@ -568,7 +1184,10 @@ fn the_bound_reference_is_part_of_the_product_key() {
         .expect("one instance")
         .expect("the claim has an over");
     let model = system
-        .state_key(&system.initial()[0])
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
         .expect("the owner encodes its initial state")
         .0;
     let bound =
@@ -789,6 +1408,42 @@ fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     ));
 }
 
+/// FR-202-AC-47: a claim with no `on each` has no failing instance, so an
+/// undefined witness that names one is refused.
+#[trace("TC-637", "FR-202-AC-47")]
+#[test]
+fn undefined_replay_refuses_a_witness_that_names_an_instance() {
+    use fsl_replay::{
+        replay_probabilistic_undefined, ProbabilityWitnessError, ProbabilityWitnessReplay,
+    };
+    let claims = "probabilistic Open using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
+    let world = World::new(&prob_world::coin(claims));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let witness = undefined_evidence(&world, "Open");
+    let limits = world.request("Open", ModelCheckLimits::default()).limits;
+    let replay = |witness: &fsl_replay::ProbabilityUndefinedWitness| {
+        replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &witness.path.item,
+            witness,
+            &limits,
+            &Cancel::new(),
+        )
+    };
+    assert!(matches!(
+        replay(&witness),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    let mut named = witness.clone();
+    named.path.instance = Some(named.path.binding.clone().expect("the claim binds `c`"));
+    assert!(matches!(
+        replay(&named),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+}
+
 #[trace(
     "TC-3153",
     "FR-202-AC-25",
@@ -890,7 +1545,13 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
                     fsl_replay::ProbabilisticSchedulerChoice::Deterministic(choice.clone());
             },
         );
-        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         assert_eq!(
             record.terminal().unwrap().value(),
             &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
@@ -971,6 +1632,7 @@ fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
             &Engines::fsl().unwrap(),
             vec![exact_probabilistic_item(RequestIndex::new(0), request)],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         )
         .remove(0);
         assert!(
@@ -1161,7 +1823,10 @@ fn rekey_undefined(
             None => monitor.unread_key(),
         }
         .unwrap();
-        let raw = system.state_key(state).unwrap().0;
+        let raw = system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0;
         let key = ProbabilityProductKey::for_formula_state(
             reference,
             &raw,
@@ -1301,8 +1966,15 @@ fn assert_same_horizon_zero_witness(
     assert_eq!(reproduced.item, expected.item);
     assert_eq!(reproduced.binding, expected.binding);
     assert_eq!(
-        system.state_key(&reproduced.initial).unwrap(),
-        system.state_key(&expected.initial).unwrap()
+        system
+            .state_key(
+                &reproduced.initial,
+                fsl_foundation::IdentityLimits::default()
+            )
+            .unwrap(),
+        system
+            .state_key(&expected.initial, fsl_foundation::IdentityLimits::default())
+            .unwrap()
     );
     assert_eq!(reproduced.initial_key, expected.initial_key);
     assert_eq!(reproduced.scheduler, expected.scheduler);
@@ -1340,7 +2012,13 @@ fn external_always_initial_key(world: &World, system: &ModelSystem<'_>) -> Proba
         QualifiedBoundedMonitor::for_observations(formula.formula(), &context, 100).unwrap();
     let control = monitor.start(true).unwrap();
     let monitor_key = monitor.key(control).unwrap();
-    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    let raw = system
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .unwrap()
+        .0;
     ProbabilityProductKey::for_formula_state(
         reference,
         &raw,
@@ -1469,7 +2147,13 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
     request.limits.max_rational_bits = 1024;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let TerminalValue::Proved {
         basis:
@@ -1489,8 +2173,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     let exact = ratio(9_999_999, 10_000_000)
@@ -1541,7 +2224,13 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let lower = terminal
         .exact_certificate_document()
@@ -1608,7 +2297,13 @@ fn settle_interval_claim<'a>(
     request.limits.max_rational_bits = 1024;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item_tampered(RequestIndex::new(0), request, tamper);
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 /// The first value strictly between the terminals, which no equation pins to
@@ -1705,7 +2400,13 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
     let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let terminal = record.terminal().expect("a terminal record");
     let mut lower: serde_json::Value =
         serde_json::from_slice(terminal.exact_certificate_document().expect("lower")).unwrap();
@@ -1823,7 +2524,13 @@ fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel
             request.limits.document.storage_bytes = bytes;
         }
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
-        analyze_items(&engines, vec![item], cancel).remove(0)
+        analyze_items(
+            &engines,
+            vec![item],
+            cancel,
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0)
     };
     let settled_or_stopped = |record: &fsl_analyze::analyze::AnalyzeRecord, what: &str| {
         assert!(

@@ -1,0 +1,27 @@
+language "ix:native" edition "1-draft";
+profile t = "filament.temporal.infinite-trace/v1";
+record Reading { ready: Boolean; }
+temporal T1 using t over (r: Reading) clock "steps" on origin {
+  holds(r.ready) and holds(r.ready) or not holds(r.ready)
+}
+temporal T2 using t over (r: Reading) clock "steps" on origin {
+  historically holds(r.ready)
+}
+temporal T3 using t over (r: Reading) clock "steps" on origin {
+  holds(r.ready) implies holds(r.ready)
+}
+temporal T4 using t over (r: Reading) clock "steps" on origin {
+  once holds(r.ready)
+}
+temporal T5 using t over (r: Reading) clock "steps" on origin {
+  holds(r.ready) release holds(r.ready)
+}
+temporal T6 using t over (r: Reading) clock "steps" on origin {
+  holds(r.ready) since holds(r.ready)
+}
+temporal T7 using t over (r: Reading) clock "steps" on origin {
+  holds(r.ready) triggered holds(r.ready)
+}
+temporal T8 using t over (r: Reading) clock "steps" on origin {
+  true and not false
+}

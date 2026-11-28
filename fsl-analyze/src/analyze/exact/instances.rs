@@ -8,18 +8,20 @@
 
 use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
-use fsl_replay::statistical::SubjectLimits;
+use fsl_replay::statistical::{OnEachRead, SubjectLimits};
 use fsl_replay::{
-    check_probability_certificate_document, on_each_has_instance, on_each_outcome,
-    replay_on_each_witness, ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome,
-    ProbabilisticCounterexample, ProbabilityDocumentLimits,
+    check_probability_certificate_document_as_with_work_scope, on_each_outcome_with_work_scope,
+    replay_on_each_witness_with_work_scope, ExactProbBuildIssue, ExactProbabilityCertificate,
+    OnEachOutcome, ProbabilisticCounterexample, ProbabilityDocumentLimits,
 };
+use ix_trace_rs::implements;
 
 use super::{
     broken, build_refusal, checked_report, document_failure, finish_replay, graph_failure, settled,
     EngineReport, ExactReport, ProductRefusal, ProductRequest, Refusal,
 };
 
+#[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
 pub(super) fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -29,6 +31,7 @@ pub(super) fn run(
     let simulation = request.subject.simulation.clone();
     let probabilistic = simulation.input.probabilistic;
     let limits = request.limits;
+    let work = filament_exact::WorkScope::new(simulation.meter);
     let meter = simulation.meter;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
@@ -48,13 +51,14 @@ pub(super) fn run(
         Err(failure) => return build_refusal(ProductRefusal::Admission(failure), subject),
     };
     let claims = probabilistic.claims();
-    let outcome = match on_each_outcome(
+    let outcome = match on_each_outcome_with_work_scope(
         &system,
         claims,
         &item,
         document_limits,
         limits.max_witness_paths,
         cancel,
+        Some(&work),
     ) {
         Ok(outcome) => outcome,
         Err(error) => return failure(error, &limits, subject),
@@ -62,13 +66,15 @@ pub(super) fn run(
     match outcome {
         OnEachOutcome::NoInstance => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
         OnEachOutcome::Holds { document } => {
-            let checked = check_probability_certificate_document(
+            let checked = check_probability_certificate_document_as_with_work_scope(
                 &system,
                 claims,
                 &item,
                 &document,
+                fsl_replay::CertificateRole::Claim,
                 document_limits,
                 cancel,
+                &work,
             );
             let certificate = match &checked {
                 Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(accepted)) => {
@@ -83,7 +89,7 @@ pub(super) fn run(
             if let Some(tamper) = tamper_witness {
                 tamper(&mut witness);
             }
-            let replayed = match replay_on_each_witness(
+            let replayed = match replay_on_each_witness_with_work_scope(
                 &system,
                 claims,
                 &item,
@@ -91,6 +97,7 @@ pub(super) fn run(
                 document_limits,
                 limits.max_witness_paths,
                 cancel,
+                Some(&work),
             ) {
                 Ok(replayed) => replayed,
                 Err(fsl_replay::ProbabilityDocumentError::Unsupported) => return super::not_yet(),
@@ -111,37 +118,19 @@ pub(super) fn run(
 
 /// An `on each` claim requested with statistical evidence: `no-instance`
 /// over an empty instance set, and otherwise `unsupported` at FR-875's
-/// profile boundary, which admits only exact evidence. No sample is drawn.
+/// profile boundary, which admits only exact evidence.
 pub(in crate::analyze) fn statistical(
-    subject: fsl_eval::model_subject::ModelSubject<'_>,
-    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
-    cancel: &Cancel,
+    read: OnEachRead,
+    subject: SubjectLimits<'_>,
 ) -> EngineReport {
-    let simulation = subject.simulation;
-    let probabilistic = simulation.input.probabilistic;
-    let meter = simulation.meter;
-    let subject_limits = SubjectLimits {
-        expansion: simulation.expansion,
-        meter: &meter,
-    };
-    let item = match fsl_replay::probabilistic_claim_identity(claim) {
-        Ok(item) => item,
-        Err(error) => return instance_failure(error.into(), subject_limits),
-    };
-    let admitted = ModelSystem::new_with_cancel(simulation, cancel);
-    if let Some(cause) = cancel.tripped() {
-        return settled(&ExactProbBuildIssue::Cancelled(cause), subject_limits);
-    }
-    let system = match admitted {
-        Ok(system) => system,
-        Err(failure) => {
-            return build_refusal(ProductRefusal::Admission(failure), subject_limits);
+    match read {
+        OnEachRead::NoInstance => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
+        OnEachRead::Unimplemented => super::not_yet(),
+        OnEachRead::Cancelled(cause) => settled(&ExactProbBuildIssue::Cancelled(cause), subject),
+        OnEachRead::Admission(failure) => {
+            build_refusal(ProductRefusal::Admission(*failure), subject)
         }
-    };
-    match on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
-        Ok(false) => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
-        Ok(true) => super::not_yet(),
-        Err(error) => instance_failure(error, subject_limits),
+        OnEachRead::Document(error) => instance_failure(error, subject),
     }
 }
 
@@ -173,6 +162,7 @@ fn instance_failure(
 /// exact route settles them (FR-741 Budgets), an undefined guard or target
 /// read as an item this route does not yet refute by undefined path, and the
 /// rest through the shared document failures.
+#[implements("FR-281-AC-11")]
 fn failure(
     error: fsl_replay::ProbabilityDocumentError,
     limits: &crate::exact_probabilistic::ExactProbLimits,

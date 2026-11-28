@@ -233,7 +233,7 @@ impl<C> Chosen<C> {
 #[derive(Clone, Debug)]
 pub enum Written<C> {
     /// The model state and component after the step.
-    Applied(ModelSimState, C),
+    Applied(Box<ModelSimState>, C),
     /// The model's gate disables this application (SE-1 e), such as a
     /// locked access whose thread's buffer is not empty.
     Disabled,
@@ -474,7 +474,7 @@ impl MemoryModel for Sc {
         _pre: &ModelSimState,
         post: ModelSimState,
     ) -> Vec<Chosen<ScComponent>> {
-        Chosen::only(Written::Applied(post, ScComponent))
+        Chosen::only(Written::Applied(Box::new(post), ScComponent))
     }
 
     /// None.

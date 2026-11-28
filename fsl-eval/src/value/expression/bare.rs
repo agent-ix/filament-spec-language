@@ -21,6 +21,7 @@ use fsl_package::{
     ClauseBinder, ProtocolSlotDescriptor, SourceOperationClause,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::implements;
 
 use super::evaluate::reader_source::ReaderNode;
 use super::evaluate::{Machine, World};
@@ -88,6 +89,7 @@ pub fn evaluate_bare_refinement_row(
 ///
 /// Returns the same typed selection, argument-admission, or evaluator failure
 /// used by the other bare-package evaluation entries.
+#[implements("FR-531-AC-40")]
 pub fn evaluate_bare_source_operation_clause(
     package: &BarePackage<'_>,
     anchor: &CheckedNodeId,
@@ -124,11 +126,7 @@ pub fn evaluate_bare_source_operation_clause(
     let world = package
         .world_with_source_objects()
         .map_err(|failure| BareSourceOperationEvaluationFailure::Call(refusal(package, failure)))?;
-    let cancel = meter.cancel().cloned().unwrap_or_default();
-    let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel).map_err(|stop| {
-        BareSourceOperationEvaluationFailure::Call(CallFailure::from(SuppliedFailure::Stop(stop)))
-    })?;
-    super::admit_arguments(&parameters, &arguments, objects, world.types(), &mut run)
+    super::admit_arguments_under_meter(&parameters, &arguments, objects, world.types(), meter)
         .map_err(BareSourceOperationEvaluationFailure::Call)?;
     Machine::from_bare_package(&world, objects, meter)
         .run(ReaderNode::root(&projection), selected.slots, arguments)

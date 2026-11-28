@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! End-to-end exact long-run candidates checked against an independent graph.
 
+use crate::long_run_support::limits;
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
@@ -17,16 +18,6 @@ use ix_trace_rs::trace;
 
 fn ratio(n: i64, d: i64) -> Rational {
     Rational::new(Integer::from(n), Integer::from(d)).unwrap()
-}
-pub(super) fn limits() -> ProbabilityDocumentLimits {
-    ProbabilityDocumentLimits {
-        bytes: 1_000_000,
-        storage_bytes: 16_000_000,
-        states: 128,
-        edges: 1024,
-        scalar_bits: 128,
-        accounting: fsl_replay::AccountingLimits::default().0,
-    }
 }
 fn claim(name: &str, predicate: &str, bound: &str) -> String {
     format!("probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) {bound} }}\n")
@@ -198,6 +189,7 @@ fn assert_long_run_dense_limit(name: &str) {
         &engines,
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0]
         .terminal()
@@ -241,6 +233,7 @@ pub(super) fn produce(world: &World, name: &str) -> Vec<u8> {
             world.request(name, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().unwrap();
     terminal
@@ -330,6 +323,7 @@ fn fair_long_run_holds_with_an_independently_checked_component_document() {
             world.request("FairLongRun", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().unwrap_or_else(|| {
         panic!(
@@ -384,6 +378,7 @@ fn long_run_zero_weight_component() {
             world.request("Zero", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0]
         .terminal()
@@ -630,29 +625,59 @@ fn reachable_undefined_predicate_retains_its_family_cause() {
     );
 }
 
+/// An event-position workload claim settles as its infinite-trace twin does
+/// ("Long-run claim profile admission"): `Service` is at phase 0 for 1 of an
+/// expected 151/50 positions per cycle, so both are refuted by the DTMC
+/// long-run certificate of value 50/151 and neither issues a proof document.
 #[trace("TC-1401", "FR-201-AC-30")]
+#[trace("TC-3190", "FR-201-AC-74")]
 #[test]
-fn finite_profile_claims_issue_no_long_run_document() {
-    {
-        let source = "probabilistic Unsupported using ev on M over (s: M::Server) under Steady on origin { long_run_fraction holds(s.phase = 0) >= rational(1,2) }";
-        let world = World::new(&prob_world::service(source));
+fn an_event_position_workload_claim_settles_as_its_infinite_trace_twin_does() {
+    for profile in ["ev", "inf"] {
+        let source = format!("probabilistic Below using {profile} on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds(s.phase = 0) >= rational(1,2) }}");
+        let world = World::new(&prob_world::service(&source));
         let records = analyze_items(
             &Engines::fsl().unwrap(),
             vec![exact_probabilistic_item(
                 RequestIndex::new(0),
-                world.request("Unsupported", ModelCheckLimits::default()),
+                world.request("Below", ModelCheckLimits::default()),
             )],
             &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
         );
-        let fsl_analyze::analyze::Settlement::Disposed(disposed) = &records[0].settlement else {
-            panic!("expected unsupported disposition: {:?}", records[0]);
-        };
+        let terminal = records[0]
+            .terminal()
+            .unwrap_or_else(|| panic!("{profile} settles: {:?}", records[0].settlement));
         assert_eq!(
-            disposed.kind,
-            fsl_analyze::analyze::DispositionKind::Unsupported
+            terminal.value(),
+            &fsl_replay::TerminalValue::Refuted,
+            "{profile}"
         );
-        assert!(records[0].terminal().is_none());
-        assert!(records[0].exact_probabilistic.is_none());
+        assert!(terminal.exact_certificate_document().is_none(), "{profile}");
+        assert!(records[0].exact_probabilistic.is_none(), "{profile}");
+        let witness = records[0]
+            .probabilistic_counterexample
+            .as_ref()
+            .expect("the refutation carries its replayed counterexample")
+            .evidence();
+        let document: serde_json::Value = serde_json::from_slice(
+            witness
+                .subsystem
+                .as_ref()
+                .expect("a subsystem certificate")
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(document["kind"], "long-run", "{profile}");
+        assert_eq!(
+            document["objective"]["profile"], "filament.probability-objective/dtmc-long-run/v1",
+            "{profile}"
+        );
+        assert_eq!(
+            document["components"][0]["value"],
+            serde_json::json!({"numerator": "50", "denominator": "151"}),
+            "{profile}"
+        );
     }
 }
 
@@ -671,6 +696,7 @@ fn every_scheduler_long_run_claims_settle_instead_of_unsupported() {
             world.request("Settles", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0]
         .terminal()
@@ -692,6 +718,7 @@ fn no_bound_instance_produces_no_document_or_fabricated_probability() {
             world.request("Empty", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let fsl_analyze::analyze::Settlement::Disposed(disposed) = &records[0].settlement else {
         panic!("expected unsupported disposition: {:?}", records[0]);
@@ -1127,7 +1154,10 @@ fn product_key(
     let binding = fsl_replay::claim_binding(&system, world.claim(name))
         .unwrap()
         .unwrap();
-    let raw = system.state_key(state).unwrap().0;
+    let raw = system
+        .state_key(state, fsl_foundation::IdentityLimits::default())
+        .unwrap()
+        .0;
     fsl_replay::ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
 }
 
@@ -1220,6 +1250,7 @@ fn refuted_by_analysis(world: &World, name: &str) -> bool {
             world.request(name, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     records[0].terminal().map(|t| t.value()) == Some(&fsl_replay::TerminalValue::Refuted)
 }

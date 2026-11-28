@@ -6,13 +6,16 @@ use fsl_eval::automaton::{
     AutomatonError, BoundedState, QualifiedBoundedError, QualifiedBoundedMonitor, StateId,
 };
 use fsl_semantics::check::Event;
+use ix_trace_rs::implements;
 
+#[implements("FR-203-AC-32")]
 pub(super) fn replay(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &ProbabilisticCounterexample,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let ProbForm::Probability {
         bound,
@@ -27,7 +30,7 @@ pub(super) fn replay(
     else {
         return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
     };
-    let fair_unbounded_eventual = claim.fairness.len() > 0
+    let fair_unbounded_eventual = !claim.fairness.is_empty()
         && claim.scheduler == fsl_semantics::check::ProbScheduler::Every
         && *horizon == 0
         && matches!(
@@ -90,7 +93,7 @@ pub(super) fn replay(
         .map_err(monitor_error)?;
     let key_of = |state: &ModelSimState, control: StateId, monitor: &QualifiedBoundedMonitor| {
         let (bytes, _) = system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         let monitor_key = monitor.key(control).map_err(monitor_error)?;
         ProbabilityProductKey::for_formula_state(
@@ -114,7 +117,12 @@ pub(super) fn replay(
     let mut visited_choices = BTreeSet::new();
     let mut transition_count = 0usize;
     let mut storage = 0u64;
-    let mut meter = filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut mass = rational(0);
     // A cylinder includes its semantic choice and draw, even when several
     // disjoint draws produce exactly the same model and monitor state.

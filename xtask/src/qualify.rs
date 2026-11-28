@@ -5,6 +5,7 @@
 //! backends the workspace links.
 
 use std::ffi::OsString;
+use std::path::Path;
 use std::path::PathBuf;
 
 use fsl_conformance::{lifecycle_matrix, run_case, MatrixCell};
@@ -60,8 +61,7 @@ impl PartReport {
 }
 
 /// The inputs of [`run`].
-#[derive(Debug)]
-pub struct QualifyInputs {
+pub struct QualifyInputs<'a> {
     /// The FSpec checkout the corpus schema is read from.
     pub fspec: PathBuf,
     /// The `qualify` command's operands.
@@ -70,6 +70,27 @@ pub struct QualifyInputs {
     /// part fail with it; the command line offers none.
     #[cfg(feature = "test-support")]
     pub matrix: Option<Vec<MatrixCell>>,
+    /// A test-only parity replacement; the CLI cannot select an oracle or
+    /// backend.
+    #[cfg(feature = "test-support")]
+    pub parity: Option<ParityTestOverride<'a>>,
+    /// A replacement generated-unit count for the `parity` part. A test that
+    /// asserts nothing about generated coverage sets a small one; the command
+    /// line offers none.
+    #[cfg(feature = "test-support")]
+    pub parity_count: Option<u64>,
+    /// Keep the test-support lifetime well-formed in normal builds.
+    #[cfg(not(feature = "test-support"))]
+    pub _marker: std::marker::PhantomData<&'a ()>,
+}
+
+/// Test-only substitution for the parity oracle and supplied backends.
+#[cfg(feature = "test-support")]
+pub struct ParityTestOverride<'a> {
+    /// The substituted reference evaluator.
+    pub reference: &'a dyn fsl_eval::execution::SuppliedBackend,
+    /// The non-interpreter backends to qualify.
+    pub backends: Vec<fsl_conformance::BackendEntry<'a>>,
 }
 
 /// The `lifecycle-matrix` part: every `Case` gives a document or item whose
@@ -99,31 +120,70 @@ fn lifecycle_matrix_part(cells: &[MatrixCell]) -> PartReport {
     }
 }
 
-/// The `parity` part (FR-563, FR-567).
-///
-/// Known gap: FR-563's runner (`run_parity`) is not in this repository yet.
-/// It arrives from the jit lane's branch and moves into `fsl-conformance`
-/// after this lands. Until then the part cannot run a backend, so it reports
-/// `no-backend`, which is true only while the workspace links none (it does
-/// not: `fsl-conformance` does not depend on `fsl-jit`). The code does not
-/// compute that from the linked backends, so the part must be replaced, not
-/// left in place, when a backend is linked. FR-567-AC-1's linked delegating
-/// backend, AC-3's `parity/jit` and AC-4's `reference-fault` case have no
-/// code path here and no test.
-fn parity_part() -> PartReport {
+/// The `parity` part (FR-563, FR-567) over the corpus already preflighted by
+/// this qualification run.
+pub(crate) fn parity_part(corpus: &Path) -> Result<PartReport> {
+    let report = crate::parity::report_with_corpus(corpus)?;
+    Ok(parity_report_part(report))
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn parity_part_with_reference(
+    reference: &dyn fsl_eval::execution::SuppliedBackend,
+    backends: &[fsl_conformance::BackendEntry<'_>],
+    inputs: &fsl_conformance::ParityInputs,
+) -> Result<PartReport> {
+    if backends.is_empty() {
+        return Ok(PartReport {
+            part: "parity",
+            result: PartResult::NoBackend,
+            failures: Vec::new(),
+        });
+    }
+    let report = fsl_conformance::run_parity_with_reference(
+        reference,
+        backends,
+        inputs,
+        &fsl_conformance::ParityLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .map_err(|refusal| crate::error::Error::QualificationRefusal(refusal.to_string()))?;
+    Ok(parity_report_part(report))
+}
+
+fn parity_report_part(report: fsl_conformance::ParityReport) -> PartReport {
+    let failures = report
+        .backends
+        .iter()
+        .flat_map(|backend| {
+            backend.findings.iter().map(move |finding| {
+                format!(
+                    "parity/{}: {:?}: unit={} entry={} arguments={:?} reference={:?} result={:?}",
+                    format!("{:?}", backend.backend).to_ascii_lowercase(),
+                    finding.kind,
+                    finding.unit,
+                    finding.entry,
+                    finding.arguments,
+                    finding.reference,
+                    finding.result,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
     PartReport {
         part: "parity",
-        result: PartResult::NoBackend,
-        failures: Vec::new(),
+        result: if report.exit_code() == 0 {
+            PartResult::Passed
+        } else {
+            PartResult::Failed
+        },
+        failures,
     }
 }
 
 /// The parts after `corpus`, in report order.
-pub(crate) fn lifecycle_and_parity_parts(replacement: Option<&[MatrixCell]>) -> Vec<PartReport> {
-    vec![
-        lifecycle_matrix_part(replacement.unwrap_or_else(|| lifecycle_matrix())),
-        parity_part(),
-    ]
+pub(crate) fn lifecycle_part(replacement: Option<&[MatrixCell]>) -> PartReport {
+    lifecycle_matrix_part(replacement.unwrap_or_else(|| lifecycle_matrix()))
 }
 
 /// Run the gate: the corpus against FSL, the lifecycle matrix and the parity
@@ -134,11 +194,41 @@ pub(crate) fn lifecycle_and_parity_parts(replacement: Option<&[MatrixCell]>) -> 
 ///
 /// [`crate::error::Error::QualificationRefusal`] for a refusal before any
 /// verdict.
-pub fn run(inputs: &QualifyInputs) -> Result<Outcome> {
+pub fn run(inputs: &QualifyInputs<'_>) -> Result<Outcome> {
+    execute(inputs).map(|execution| execution.outcome)
+}
+
+/// [`run`], keeping the operation bytes of the passed corpus vectors as
+/// [`qualification::execute`] does.
+///
+/// # Errors
+///
+/// As [`run`].
+pub fn execute(inputs: &QualifyInputs<'_>) -> Result<qualification::Execution> {
     #[cfg(feature = "test-support")]
     let replacement = inputs.matrix.as_deref();
     #[cfg(not(feature = "test-support"))]
     let replacement = None;
+    #[cfg(feature = "test-support")]
+    if inputs.parity.is_some() || inputs.parity_count.is_some() {
+        let run_parity = |corpus: &Path| {
+            let mut parity_inputs = fsl_conformance::ParityInputs::new(corpus);
+            if let Some(count) = inputs.parity_count {
+                parity_inputs.count = count;
+            }
+            match &inputs.parity {
+                Some(parity) => {
+                    parity_part_with_reference(parity.reference, &parity.backends, &parity_inputs)
+                }
+                None => crate::parity::report_with_inputs(&parity_inputs).map(parity_report_part),
+            }
+        };
+        return qualification::execute_with_parts_and_parity(
+            &inputs.fspec,
+            &inputs.operands,
+            replacement,
+            Some(&run_parity),
+        );
+    }
     qualification::execute_with_parts(&inputs.fspec, &inputs.operands, replacement)
-        .map(|execution| execution.outcome)
 }

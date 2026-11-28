@@ -29,8 +29,8 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 
 use crate::counter::{reference, subject, value, Letters, UNLIMITED};
-use crate::lasso_replay::{bounded_fixture, bounded_fixture_on};
-use crate::liveness::Fixture;
+use crate::lasso_support::{bounded_fixture, bounded_fixture_on};
+use crate::liveness_support::Fixture;
 
 /// The letters of a clause over the one counter `c`: its `holds` atom and,
 /// for a guarded `on each`, its `when` condition, each a predicate of the
@@ -84,7 +84,7 @@ struct Bounded {
 /// The same clause under the infinite-trace profile (FR-125).
 fn infinite(formula: &str, atom: fn(i64) -> Option<bool>) -> Bounded {
     Bounded {
-        fixture: crate::liveness::counter(crate::counter::document(false), "", formula),
+        fixture: crate::liveness_support::counter(crate::counter::document(false), "", formula),
         letters: Condition {
             atoms: Letters { atom },
             when: |_| Some(true),
@@ -227,7 +227,9 @@ impl Bounded {
                 .1;
         }
         {
-            let (bytes, _) = system.state_key(&state).expect("encodes");
+            let (bytes, _) = system
+                .state_key(&state, fsl_foundation::IdentityLimits::default())
+                .expect("encodes");
             fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
         }
     }
@@ -1119,7 +1121,7 @@ fn a_guarded_each_window_reached_two_ways_is_one_certificate_the_checker_accepts
          pre Jump using v on M::Counter::setTo { (self.value = 0 or self.value = 1) and n = 3 }\n\
          post Jumped using v on M::Counter::setTo { self.value = n }\n";
     let clause = Bounded {
-        fixture: crate::lasso_replay::bounded_fixture_over(
+        fixture: crate::lasso_support::bounded_fixture_over(
             crate::counter::document_with_ranged_parameter(),
             contract,
             "on each (q: M::Counter) when (q.value = 0)",

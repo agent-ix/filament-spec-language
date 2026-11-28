@@ -19,8 +19,11 @@
 //! reads the protocol's `over` input, its activation binder and its
 //! captures, and `finish` reads `Out(root)` and its own binder.
 //!
-//! Each slot is typed through the one clause checker (FR-104) over every
-//! binder of the protocol, then refused in this order: a read of model state
+//! Each slot is typed through the one clause checker (FR-104) over the
+//! binders readable there. Names of duplicate binders outside that readable
+//! set are hidden from resolution while their local-slot indices stay fixed;
+//! unique out-of-scope names remain resolvable for the precise S3 refusal.
+//! A slot is then refused in this order: a read of model state
 //! or of `over` in a slot that bars it (a `check`, a guard, a `visible`
 //! entry), `ill_typed`/`operator-ineligible`; a read of a binder that is not
 //! readable at the slot, `missing_declaration`/`missing-name` at every such
@@ -43,18 +46,18 @@ use fsl_forms::{
     ProtocolDeclarationForm, ProtocolMemberForm, ProtocolNodeKind, ReplicatedRoleForm, RoleForm,
     RoleLifetime, TerminalForm,
 };
-use fsl_foundation::{Span, diagnostic::Locus};
+use fsl_foundation::{diagnostic::Locus, Span};
 
 use super::check::{NamedScope, Scope};
 use super::ir::CheckedBody;
-use super::lowering::{ProtocolSite, protocol_location};
+use super::lowering::{protocol_location, ProtocolSite};
 use super::protocol_clause::{
-    BoundAttempt, CheckedProtocol, ProtocolNodeId, record_binder, written_owner,
+    record_binder, written_owner, BoundAttempt, CheckedProtocol, ProtocolNodeId,
 };
-use super::protocol_obligation::{Goal, model_state_reads, span_of, type_named_body, wraps};
+use super::protocol_obligation::{model_state_reads, span_of, type_named_body, wraps, Goal};
 use super::refusal::{
-    ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
-    SlotKind,
+    ArmFault, CheckCause, ObservationReason, ProtocolAnchorCause, RelatedEnd, SemanticCheckRefusal,
+    ShadowedDeclaration, SlotKind,
 };
 use super::state_clause::ClauseDeclarations;
 use super::type_form::resolve_form;
@@ -296,7 +299,7 @@ pub(crate) enum Slots {
     /// Every slot checked, with the package's running node total.
     Checked(Box<CheckedSlots>, u64),
     /// Refusals, in source order.
-    Refused(Vec<CheckRefusal>),
+    Refused(Vec<SemanticCheckRefusal>),
     /// A binder's declared type did not resolve: `protocol_clause::content`
     /// refuses it, so there is nothing to add.
     Unresolved,
@@ -338,13 +341,34 @@ enum Eligibility {
     Never,
 }
 
-fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
-    CheckRefusal {
+fn refusal(cause: ProtocolAnchorCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         // A protocol has no expression tree for a `Location` path to walk;
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span.
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
+    }
+}
+
+fn binder_span(protocol: &ProtocolDeclarationForm, binder: &Binder) -> Option<Span> {
+    match binder.origin {
+        BinderOrigin::Input => protocol
+            .binders
+            .iter()
+            .find(|form| form.kind == BinderKind::Input)
+            .map(|form| form.name.span),
+        BinderOrigin::Activation => protocol
+            .binders
+            .iter()
+            .find(|form| form.kind == BinderKind::ActivationParameter)
+            .map(|form| form.name.span),
+        BinderOrigin::Capture => protocol
+            .captures
+            .iter()
+            .find(|capture| capture.parameter.name.name == binder.name)
+            .map(|capture| capture.parameter.name.span),
+        BinderOrigin::Node(node) => record_binder(protocol, node).map(|form| form.name.span),
     }
 }
 
@@ -378,10 +402,9 @@ struct Checker<'c, 'a> {
     declarations: &'c ClauseDeclarations<'a>,
     binders: Vec<Binder>,
     bound: Vec<(String, ValueType)>,
-    by_name: BTreeMap<String, usize>,
     nodes: u64,
     readers: Vec<BTreeSet<usize>>,
-    refusals: Vec<(Span, CheckRefusal)>,
+    refusals: Vec<(Span, SemanticCheckRefusal)>,
     /// The number of `C0` binders: the `over` input, the activation binder
     /// and the protocol captures, the first entries of `binders`.
     roots: usize,
@@ -404,8 +427,44 @@ impl Checker<'_, '_> {
         self.refusals.push((cause.span(), refusal(cause)));
     }
 
-    /// `slot` typed over every binder and checked against the slot's rules,
-    /// in the order the module doc states; `None` when it refuses.
+    /// Hide duplicate protocol names that are outside this slot's readable
+    /// set without changing binder indices used by checked bodies. If none
+    /// of a duplicate group is readable, preserve one name so the later
+    /// out-of-scope check reports `missing-name` at the read.
+    fn scoped_bound(&self, readable: &BTreeSet<usize>) -> Vec<(String, ValueType)> {
+        let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (index, (name, _)) in self.bound.iter().enumerate() {
+            groups.entry(name).or_default().push(index);
+        }
+        let mut bound = self.bound.clone();
+        for indices in groups.values().filter(|indices| indices.len() > 1) {
+            let visible: Vec<usize> = indices
+                .iter()
+                .copied()
+                .filter(|index| readable.contains(index))
+                .collect();
+            if visible.len() > 1 {
+                // An active-scope collision is rejected by the binder check;
+                // retain both names here so typing cannot conceal it.
+                continue;
+            }
+            let retained = visible
+                .first()
+                .copied()
+                .or_else(|| indices.first().copied());
+            for index in indices
+                .iter()
+                .copied()
+                .filter(|index| Some(*index) != retained)
+            {
+                bound[index].0 = format!("\0inactive-protocol-binder-{index}");
+            }
+        }
+        bound
+    }
+
+    /// `slot` typed over its readable binder view and checked against the
+    /// slot's rules, in the order the module doc states; `None` when it refuses.
     fn slot(&mut self, slot: &Slot<'_>, cx: &mut CheckContext<'_, Scope>) -> Option<CheckedBody> {
         self.named_slot(slot, cx).map(|(body, _)| body)
     }
@@ -557,9 +616,16 @@ impl Checker<'_, '_> {
                 self.declarations.unit,
             )
         });
+        let scoped_bound = role_bound
+            .is_none()
+            .then(|| self.scoped_bound(slot.readable));
+        let bound = scoped_bound
+            .as_deref()
+            .or(role_bound.as_deref())
+            .unwrap_or(&self.bound);
         let typed = type_named_body(
             slot.form,
-            role_bound.as_deref().unwrap_or(&self.bound),
+            bound,
             slot.goal,
             &declarations,
             named,
@@ -567,9 +633,9 @@ impl Checker<'_, '_> {
             cx,
         );
         self.nodes = nodes;
-        let (body, slot_names, formed_units) = match typed {
+        let (body, mut slot_names, formed_units) = match typed {
             Ok(named) => named,
-            Err(CheckRefusal { location, cause }) => {
+            Err(SemanticCheckRefusal { location, cause }) => {
                 let span = span_of(slot.form, &location);
                 if wraps(&cause) && cause.cause().is_some() {
                     self.refuse(ProtocolAnchorCause::SlotClause {
@@ -601,7 +667,7 @@ impl Checker<'_, '_> {
                     };
                     self.refusals.push((
                         span,
-                        CheckRefusal {
+                        SemanticCheckRefusal {
                             location,
                             cause: Box::new(cause),
                         },
@@ -609,11 +675,17 @@ impl Checker<'_, '_> {
                 } else {
                     // A reached limit, a cancellation or a fault keeps its
                     // own cause.
-                    self.refusals.push((span, CheckRefusal { location, cause }));
+                    self.refusals
+                        .push((span, SemanticCheckRefusal { location, cause }));
                 }
                 return None;
             }
         };
+        if role_bound.is_none() {
+            for (name, binder) in slot_names.iter_mut().zip(&self.binders) {
+                *name = binder.name.clone();
+            }
+        }
         self.formed_units.append(formed_units);
         if slot.bars_model_state {
             let input = self.binders.iter().position(|binder| {
@@ -689,8 +761,12 @@ impl Checker<'_, '_> {
     }
 
     /// Whether the binder `name` is a decision fact of a role.
-    fn eligibility(&self, name: &str) -> Option<Eligibility> {
-        let binder = self.binders.get(*self.by_name.get(name)?)?;
+    fn eligibility(&self, name: &str, readable: &BTreeSet<usize>) -> Option<Eligibility> {
+        let binder = readable
+            .iter()
+            .rev()
+            .filter_map(|index| self.binders.get(*index))
+            .find(|binder| binder.name == name)?;
         Some(match binder.origin {
             BinderOrigin::Input => Eligibility::Input,
             BinderOrigin::Capture => Eligibility::Capture,
@@ -783,6 +859,7 @@ impl Checker<'_, '_> {
         owner: &str,
         visible: &[ExpressionForm],
         guards: &[&ExpressionForm],
+        readable: &BTreeSet<usize>,
     ) -> bool {
         let before = self.refusals.len();
         let listed: BTreeSet<(String, Option<String>)> = visible
@@ -791,7 +868,7 @@ impl Checker<'_, '_> {
             .collect();
         for entry in visible {
             for (binder, field, span) in binder_reads(entry) {
-                let reason = match self.eligibility(&binder) {
+                let reason = match self.eligibility(&binder, readable) {
                     Some(Eligibility::Role(role)) if role == owner => continue,
                     Some(Eligibility::Role(_)) => ObservationReason::OtherRole,
                     Some(Eligibility::Never) => ObservationReason::IneligibleKind,
@@ -802,7 +879,7 @@ impl Checker<'_, '_> {
         }
         for guard in guards {
             for (binder, field, span) in binder_reads(guard) {
-                let reason = match self.eligibility(&binder) {
+                let reason = match self.eligibility(&binder, readable) {
                     Some(Eligibility::Role(role)) if role == owner => {
                         if listed.contains(&(binder.clone(), field.clone())) {
                             continue;
@@ -1237,11 +1314,6 @@ pub(crate) fn check(
             .iter()
             .map(|binder| (binder.name.clone(), binder.value_type.clone()))
             .collect(),
-        by_name: binders
-            .iter()
-            .enumerate()
-            .map(|(index, binder)| (binder.name.clone(), index))
-            .collect(),
         readers: vec![BTreeSet::new(); binders.len()],
         binders,
         nodes: declarations.nodes_used,
@@ -1250,6 +1322,47 @@ pub(crate) fn check(
         role_binders,
         formed_units: filament_semantic_value::quantity::UnitTable::default(),
     };
+    // Flow may keep a sequence child's binder active at a later sibling,
+    // and finish reads the root's output. Reject those active collisions
+    // even when their declaration scopes are not lexical ancestors.
+    for (node, binder_index) in &node_binder {
+        let Some(current) = checker.binders.get(*binder_index) else {
+            continue;
+        };
+        let Some(current_span) = record_binder(protocol, *node).map(|form| form.name.span) else {
+            continue;
+        };
+        let declaration = protocol.declarations.get(*node);
+        let active = if declaration.is_some_and(|form| form.kind == ProtocolNodeKind::Finish) {
+            &flow.root_out
+        } else {
+            &flow.input(*node)
+        };
+        let conflict = active
+            .iter()
+            .filter_map(|index| checker.binders.get(*index).map(|binder| (*index, binder)))
+            .find(|(_, earlier)| earlier.name == current.name)
+            .and_then(|(index, earlier)| binder_span(protocol, earlier).map(|span| (index, span)));
+        if let Some((_index, shadowed)) = conflict {
+            checker.refuse(ProtocolAnchorCause::Shadow {
+                name: current.name.clone(),
+                shadowed: ShadowedDeclaration::Binder(shadowed),
+                span: current_span,
+            });
+        }
+    }
+    if !checker.refusals.is_empty() {
+        checker
+            .refusals
+            .sort_by_key(|(span, _)| (span.start, span.end));
+        return Slots::Refused(
+            checker
+                .refusals
+                .into_iter()
+                .map(|(_, refusal)| refusal)
+                .collect(),
+        );
+    }
     let mut slots = CheckedSlots::default();
 
     // Node bodies: an event node's constraint, a `check`'s condition and
@@ -1427,7 +1540,13 @@ pub(crate) fn check(
             continue;
         }
         let guards: Vec<&ExpressionForm> = choice.cases.iter().map(|case| &case.guard).collect();
-        if !checker.facts(node, &choice.owner.name, &choice.visible, &guards) {
+        if !checker.facts(
+            node,
+            &choice.owner.name,
+            &choice.visible,
+            &guards,
+            &readable,
+        ) {
             continue;
         }
         match partition(choice, &guards, &mut cx, regions) {
@@ -1548,7 +1667,13 @@ pub(crate) fn check(
         });
         if checker.refusals.len() != before
             || !visible_are_expressions
-            || !checker.facts(node, &repeat.owner.name, &repeat.visible, &[&repeat.guard])
+            || !checker.facts(
+                node,
+                &repeat.owner.name,
+                &repeat.visible,
+                &[&repeat.guard],
+                &readable,
+            )
         {
             continue;
         }
@@ -1751,7 +1876,7 @@ pub(crate) fn check(
                 ) else {
                     checker.refusals.push((
                         repeat.name.span,
-                        CheckRefusal {
+                        SemanticCheckRefusal {
                             location: Location::root(Origin::Expression),
                             cause: Box::new(CheckCause::InternalFault(Box::new(
                                 super::refusal::KeyFault::StageFault(
@@ -1918,8 +2043,8 @@ fn work_limit(
     consumed: u64,
     span: Span,
     regions: &crate::check::DeclarationRegions,
-) -> CheckRefusal {
-    CheckRefusal {
+) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(super::limit_cause(
             &fsl_foundation::diagnostic::LimitExceeded::new(
@@ -2066,13 +2191,13 @@ fn partition(
     guards: &[&ExpressionForm],
     cx: &mut CheckContext<'_, Scope>,
     regions: &crate::check::DeclarationRegions,
-) -> Result<Option<ProtocolAnchorCause>, CheckRefusal> {
+) -> Result<Option<ProtocolAnchorCause>, SemanticCheckRefusal> {
     let atoms = atoms(&choice.visible, guards);
     let guard_atom_indices = guards
         .iter()
         .map(|guard| atom_indices(guard, &atoms))
         .collect::<Vec<_>>();
-    let too_large = |limit: u64, consumed: u64| CheckRefusal {
+    let too_large = |limit: u64, consumed: u64| SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(super::limit_cause(
             &fsl_foundation::diagnostic::LimitExceeded::new(
@@ -2101,7 +2226,7 @@ fn partition(
             // connective (`atoms`), so each guard has a value.
             let Some(value) = evaluate(guard, &guard_atom_indices[index], &valuation, &mut scratch)
             else {
-                return Err(CheckRefusal {
+                return Err(SemanticCheckRefusal {
                     location: Location::root(Origin::Expression),
                     cause: Box::new(CheckCause::InternalFault(Box::new(
                         super::refusal::KeyFault::StageFault(

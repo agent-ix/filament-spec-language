@@ -24,7 +24,7 @@ use crate::statistical::{Decision, StatisticalVerdict};
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::Std001Code;
 use filament_exact::NodeKey;
-use filament_exact::{CancelCause, Integer, Rational};
+use filament_exact::{CancelCause, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_eval::simulation::{Permutation, SymmetryClass};
@@ -36,6 +36,7 @@ use fsl_foundation::RequestIndex;
 use fsl_semantics::check::HyperUnsupported;
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -63,6 +64,8 @@ pub(crate) const REPLAY_REFUSED_KIND: &str = "replay-refused";
 pub(crate) const PREMISE_UNPROVED_KIND: &str = "premise-unproved";
 /// The wire spelling of `provider-answer-unconfirmed`, a producer-only cause.
 pub(crate) const PROVIDER_ANSWER_UNCONFIRMED_KIND: &str = "provider-answer-unconfirmed";
+/// The wire spelling of `proof-not-certified`, a producer-only cause.
+pub(crate) const PROOF_NOT_CERTIFIED_KIND: &str = "proof-not-certified";
 /// The wire spelling of `transfer-not-preserving`, a planner-only cause.
 pub(crate) const TRANSFER_NOT_PRESERVING_KIND: &str = "transfer-not-preserving";
 /// The wire spelling of `kani-vacuous-proof`.
@@ -198,13 +201,19 @@ pub enum Extremum {
     Max,
 }
 
-/// A claim's bound object instance in a terminal exact entry.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ExactBinding {
-    /// The population declaration identity.
-    pub population: String,
-    /// The authored object key.
-    pub key: String,
+/// Spell an entry's binding as the FR-181 reference a counterexample's
+/// `binding` is written as (FR-741 "Binding"), or null.
+#[implements("FR-125-AC-9")]
+fn written_binding<S: serde::Serializer>(
+    reference: &Option<ObjectReference>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let Some(reference) = reference else {
+        return serializer.serialize_none();
+    };
+    fsl_eval::simulation::model::value_json(&filament_exact::Value::Reference(reference.clone()))
+        .ok_or_else(|| serde::ser::Error::custom("an object reference has no canonical form"))?
+        .serialize(serializer)
 }
 
 /// One value for an initial state and optional `over` binding.
@@ -212,11 +221,14 @@ pub struct ExactBinding {
 pub struct ExactEntry {
     /// The initial state's index in subject order.
     pub initial: u32,
-    /// The bound instance, absent when the claim has no `over` parameter.
-    pub binding: Option<ExactBinding>,
+    /// The `over` object as its FR-181 reference, absent when the claim has no
+    /// `over` parameter.
+    #[serde(serialize_with = "written_binding")]
+    pub binding: Option<ObjectReference>,
     /// The `on each` object the entry is read for (FR-741 "Binding"), null
     /// for an `on origin` claim.
-    pub instance: Option<ExactBinding>,
+    #[serde(serialize_with = "written_binding")]
+    pub instance: Option<ObjectReference>,
     /// The exact value or its certified interval.
     pub value: ExactOrBounds,
     /// The scheduler extremum, absent for a workload.
@@ -432,6 +444,27 @@ pub enum Certification {
     Trusted,
 }
 
+/// Which proofs a request admits as `proved` (FSL FR-1052), the one
+/// definition every route that can settle `proved` takes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CertificationPolicy {
+    /// Every certification settles `proved` (ADR-018 PC-1).
+    #[default]
+    AdmitAny,
+    /// Only a `certified` proof settles `proved`.
+    RequireCertified,
+}
+
+impl CertificationPolicy {
+    /// Whether a proof of `certification` may not settle `proved`.
+    pub const fn withholds(self, certification: Certification) -> bool {
+        match (self, certification) {
+            (Self::AdmitAny, _) | (Self::RequireCertified, Certification::Certified) => false,
+            (Self::RequireCertified, Certification::Uncertified | Certification::Trusted) => true,
+        }
+    }
+}
+
 impl Certification {
     /// The required FSpec FR-331 certification member's spelling.
     pub const fn as_str(self) -> &'static str {
@@ -541,6 +574,9 @@ pub enum IncompleteCause {
         /// The upper endpoint.
         upper: Box<ExactRational>,
     },
+    /// A statistical sample's reading over a dense idle tail is not decided
+    /// over every completion (FR-254; FSpec FR-420 "Undecided completions").
+    IdleTailUndecided(crate::statistical::IdleTailUndecided),
 }
 
 impl IncompleteCause {
@@ -551,6 +587,7 @@ impl IncompleteCause {
             Self::Cancelled { .. } => "cancelled",
             Self::ResourceExhausted | Self::LimitReached { .. } => "limit-reached",
             Self::PrecisionBudget { .. } => "precision-budget",
+            Self::IdleTailUndecided(_) => crate::statistical::IdleTailUndecided::CAUSE,
             Self::UnresolvedDynamics | Self::CertificateUnchecked => "bounded-search-incomplete",
         }
     }
@@ -684,7 +721,13 @@ pub enum UnavailabilityCause {
         /// The typed transition identity whose delay is free.
         identity: filament_semantic_value::model_transition::ModelTransition,
     },
-    /// A timed statistical sample reached a local time-lock (FR-254).
+    /// Two completions of a dense idle tail read differently (FR-254).
+    /// Wire cause `not-stochastic` with `idle_tail` and no `identity`.
+    NotStochasticIdleTail {
+        /// The canonical timed-state key at the idle tail's first position.
+        state: fsl_eval::simulation::StateKey,
+    },
+    /// A timed fraction or long-run sample reached a time-lock (FR-254).
     TimeLockedSample {
         /// The canonical timed-state key.
         state: fsl_eval::simulation::StateKey,
@@ -813,7 +856,7 @@ impl UnavailabilityCause {
                 .cause(),
             Self::NotMarkov(_) => "not-markov",
             Self::TotalAboveDrawRange { .. } => "total-above-draw-range",
-            Self::NotStochastic { .. } => "not-stochastic",
+            Self::NotStochastic { .. } | Self::NotStochasticIdleTail { .. } => "not-stochastic",
             Self::TimeLockedSample { .. } => "time-locked-sample",
             Self::ConfidenceBeyondPrecision => "confidence-beyond-precision",
             Self::WeakAccessShape { .. } => "weak-access-shape",
@@ -842,6 +885,7 @@ impl UnavailabilityCause {
             | Self::NotMarkov(_)
             | Self::TotalAboveDrawRange { .. }
             | Self::NotStochastic { .. }
+            | Self::NotStochasticIdleTail { .. }
             | Self::TimeLockedSample { .. }
             | Self::ConfidenceBeyondPrecision
             | Self::WeakAccessShape { .. }
@@ -1009,7 +1053,8 @@ pub enum InconclusiveCause {
     /// vacuous.
     NoAdmittedBehaviour,
     /// FR-235 (ADR-026 CT-2): EN-6 found a violating symbolic lasso, but no
-    /// concrete timed lasso through it was found.
+    /// concrete timed lasso through it was found; or a finite trap stem that
+    /// cannot show its final delay (FSpec FR-712).
     LassoNotConcretized,
     /// AMC-rtb's high-mode criterion failed; the test is sufficient and
     /// not necessary, so it decides nothing (ADR-026 RT-6).
@@ -1124,6 +1169,16 @@ pub enum InconclusiveCause {
         /// The `premises` index of the first `component-guarantee` entry the
         /// request does not hold or does not settle `proved`.
         premise: u64,
+    },
+    /// FSpec FR-331 `proof-not-certified{basis, certification}`: the request
+    /// requires certified proofs and no core check stands behind this one.
+    /// Only the certified-proof requirement constructs it (FSL FR-1052).
+    ProofNotCertified {
+        /// The basis of the proof; none for a planner result, which has no
+        /// basis object.
+        basis: Option<Box<ProofBasis>>,
+        /// Who stands behind the proof.
+        certification: Certification,
     },
     /// ADR-036 PA-20 (FSL FR-573): a protocol analysis that settled
     /// `inconclusive` for a cause other than its horizon, which settles
@@ -1290,6 +1345,7 @@ impl InconclusiveCause {
             Self::PremiseUnproved { .. } => PREMISE_UNPROVED_KIND,
             Self::TransferNotPreserving { .. } => TRANSFER_NOT_PRESERVING_KIND,
             Self::ProviderAnswerUnconfirmed { .. } => PROVIDER_ANSWER_UNCONFIRMED_KIND,
+            Self::ProofNotCertified { .. } => PROOF_NOT_CERTIFIED_KIND,
             Self::ProtocolAnalysis(cause) => cause.as_str(),
         }
     }
@@ -1330,6 +1386,7 @@ impl InconclusiveCause {
             | Self::PremiseUnproved { .. }
             | Self::TransferNotPreserving { .. }
             | Self::ProviderAnswerUnconfirmed { .. }
+            | Self::ProofNotCertified { .. }
             | Self::ProtocolAnalysis(_) => 0,
             Self::SymmetryBroken { population, cause } => {
                 let SymmetryBrokenCause::InitialStatesNotClosed { generator, .. } = cause;
@@ -1771,20 +1828,6 @@ impl TerminalRecord {
         )
     }
 
-    /// A proof established by a first-party engine after it fully explored
-    /// its finite closed decision product, without an independently checked
-    /// certificate.
-    pub fn proved_by_exhaustive_engine(request_index: RequestIndex, backend: BackendId) -> Self {
-        Self::with_backend(
-            request_index,
-            backend,
-            TerminalValue::Proved {
-                basis: ProofBasis::Exhaustive,
-                certification: Certification::Uncertified,
-            },
-        )
-    }
-
     /// FR-203: a `proved` record with basis `ExactValue` for an exact
     /// probability the EN-5 certificate checker accepted. The accepted check
     /// is the only evidence taken: its value is the record's value, and a
@@ -1796,9 +1839,11 @@ impl TerminalRecord {
         backend: BackendId,
         check: &crate::probability_certificate::ExactProbabilityCertificateCheck,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
-        if let crate::ExactProbabilityCertificateCheck::AcceptedVacuous(accepted) = check {
+        if let crate::ExactProbabilityCertificateCheck::AcceptedVacuous(accepted)
+        | crate::ExactProbabilityCertificateCheck::AcceptedInfinite(accepted) = check
+        {
             let mut record = Self::with_backend(
                 request_index,
                 backend,
@@ -1898,7 +1943,7 @@ impl TerminalRecord {
         counterpart: &crate::ExactProbabilityCertificateCheck,
         method: BoundsMethod,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
         let (Accepted(claim), Accepted(counterpart)) = (claim, counterpart) else {
@@ -1961,7 +2006,7 @@ impl TerminalRecord {
         upper: ExactBound,
         method: BoundsMethod,
         extremum: Option<Extremum>,
-        binding: Option<ExactBinding>,
+        binding: Option<ObjectReference>,
     ) -> Option<Self> {
         use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
         let Accepted(claim) = claim else {
@@ -2109,6 +2154,32 @@ impl TerminalRecord {
         record.protocol_analysis_key = key;
         record.protocol_analysis_root = root;
         record
+    }
+
+    /// Settle a proof that is not `certified` `inconclusive`,
+    /// `proof-not-certified`, for a request that requires certified proofs.
+    /// Every other record is unchanged.
+    #[implements(
+        "FR-1052-AC-1",
+        "FR-1052-AC-2",
+        "FR-1052-AC-3",
+        "FR-1052-AC-4",
+        "FR-1052-AC-5"
+    )]
+    pub fn require_certified(&mut self) {
+        let TerminalValue::Proved {
+            basis,
+            certification,
+        } = &self.value
+        else {
+            return;
+        };
+        if CertificationPolicy::RequireCertified.withholds(*certification) {
+            self.value = TerminalValue::Inconclusive(InconclusiveCause::ProofNotCertified {
+                basis: Some(Box::new(basis.clone())),
+                certification: *certification,
+            });
+        }
     }
 
     /// Build a tested record with the producing backend identity.

@@ -191,6 +191,7 @@ impl NodeIdentitySink for DisplayProjection<'_, '_> {
         self.ordinals.push(0);
         Ok(())
     }
+    #[ix_trace_rs::string_edge]
     fn name(&mut self, name: &'static str) -> Result<(), Self::Error> {
         self.package = name == "package";
         Ok(())

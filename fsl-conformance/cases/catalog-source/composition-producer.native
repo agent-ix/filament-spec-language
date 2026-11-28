@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.infinite-trace/v1";
+model M = "catalog/composition";
+temporal Sends using t over (p: M::Producer) clock "model-steps" on origin { fair weak each M::Producer::send; always eventually holds(p.sent) }
+temporal Counted using t over (p: M::Producer) clock "model-steps" on origin { always holds(p.sent_count >= 0) }

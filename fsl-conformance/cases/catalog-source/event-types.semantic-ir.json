@@ -1,0 +1,805 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {
+          "identityFields": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.value-type/v1",
+        "members": {
+          "target": "required"
+        },
+        "shape": "alias"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "value"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.record-value-type/v1",
+        "members": {
+          "identityFields": "optional"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.event-type/v1",
+        "members": {
+          "identityFields": "optional",
+          "occurrenceField": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "happened"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.state-machine/v1",
+        "members": {
+          "states": "required",
+          "transitions": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "lifecycle"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.process/v1",
+        "members": {
+          "identityFields": "required",
+          "steps": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "saga"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.persistence-interface/v1",
+        "members": {
+          "persists": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "store"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.namespace/v1",
+        "members": {
+          "members": "required",
+          "vocabulary": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "context"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/event-types",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1"
+  },
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/event-types/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [],
+      "displayName": "Order",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/Order/order_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "order_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Order/order_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Order/order_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/UUID"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/Order/total",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "total",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Order/total",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Order/total"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/event-types/Money"
+        }
+      ],
+      "identity": "ix://catalog/event-types/Order",
+      "identityFields": [
+        "ix://catalog/event-types/Order/order_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/Order",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/Order"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Instant",
+      "extensions": [],
+      "identity": "ix://catalog/event-types/Instant",
+      "kind": {
+        "module": "test/business",
+        "name": "value"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/Instant",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/Instant"
+          ]
+        }
+      },
+      "roles": [],
+      "target": "ix://filament/native/Timestamp",
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Money",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/Money/amount_minor",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "amount_minor",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Money/amount_minor",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Money/amount_minor"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/Money/currency",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "currency",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Money/currency",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Money/currency"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/String"
+        }
+      ],
+      "identity": "ix://catalog/event-types/Money",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/Money",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/Money"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "OrderPlaced",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/OrderPlaced/occurred_at",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "occurred_at",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderPlaced/occurred_at",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderPlaced/occurred_at"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/event-types/Instant"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/OrderPlaced/order_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "order_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderPlaced/order_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderPlaced/order_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/UUID"
+        }
+      ],
+      "identity": "ix://catalog/event-types/OrderPlaced",
+      "kind": {
+        "module": "test/business",
+        "name": "happened"
+      },
+      "occurrenceField": "ix://catalog/event-types/OrderPlaced/occurred_at",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/OrderPlaced",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/OrderPlaced"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "clauses": [
+        {
+          "clauseId": "NotYetPlaced",
+          "identity": "ix://catalog/event-types/OrderLifecycle/NotYetPlaced",
+          "language": "quire",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/NotYetPlaced",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/NotYetPlaced"
+              ]
+            }
+          },
+          "text": "not self.placed"
+        }
+      ],
+      "constraints": [],
+      "displayName": "OrderLifecycle",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/OrderLifecycle/placed",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "placed",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/placed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/placed"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Boolean"
+        }
+      ],
+      "identity": "ix://catalog/event-types/OrderLifecycle",
+      "kind": {
+        "module": "test/business",
+        "name": "lifecycle"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/event-types/OrderLifecycle/place",
+          "name": "place",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/place",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/place"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        },
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/event-types/OrderLifecycle/cancel",
+          "name": "cancel",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/cancel",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/cancel"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/OrderLifecycle",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/OrderLifecycle"
+          ]
+        }
+      },
+      "roles": [],
+      "states": [
+        {
+          "identity": "ix://catalog/event-types/OrderLifecycle/Draft",
+          "name": "Draft",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/Draft",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/Draft"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://catalog/event-types/OrderLifecycle/Placed",
+          "name": "Placed",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/Placed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/Placed"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://catalog/event-types/OrderLifecycle/Cancelled",
+          "name": "Cancelled",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/Cancelled",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/Cancelled"
+              ]
+            }
+          }
+        }
+      ],
+      "transitions": [
+        {
+          "emits": [
+            "ix://catalog/event-types/OrderPlaced"
+          ],
+          "from": "ix://catalog/event-types/OrderLifecycle/Draft",
+          "identity": "ix://catalog/event-types/OrderLifecycle/transition0",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/transition0",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/transition0"
+              ]
+            }
+          },
+          "to": "ix://catalog/event-types/OrderLifecycle/Placed",
+          "trigger": "ix://catalog/event-types/OrderLifecycle/place"
+        },
+        {
+          "emits": [],
+          "from": "ix://catalog/event-types/OrderLifecycle/Draft",
+          "identity": "ix://catalog/event-types/OrderLifecycle/transition1",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/transition1",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/transition1"
+              ]
+            }
+          },
+          "to": "ix://catalog/event-types/OrderLifecycle/Cancelled",
+          "trigger": "ix://catalog/event-types/OrderLifecycle/cancel"
+        },
+        {
+          "emits": [],
+          "from": "ix://catalog/event-types/OrderLifecycle/Placed",
+          "identity": "ix://catalog/event-types/OrderLifecycle/transition2",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderLifecycle/transition2",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderLifecycle/transition2"
+              ]
+            }
+          },
+          "to": "ix://catalog/event-types/OrderLifecycle/Cancelled",
+          "trigger": "ix://catalog/event-types/OrderLifecycle/cancel"
+        }
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Fulfilment",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/event-types/Fulfilment/correlation_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "correlation_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Fulfilment/correlation_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Fulfilment/correlation_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/UUID"
+        }
+      ],
+      "identity": "ix://catalog/event-types/Fulfilment",
+      "identityFields": [
+        "ix://catalog/event-types/Fulfilment/correlation_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "saga"
+      },
+      "operations": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/Fulfilment",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/Fulfilment"
+          ]
+        }
+      },
+      "roles": [],
+      "steps": [
+        {
+          "consumes": [
+            "ix://catalog/event-types/OrderPlaced"
+          ],
+          "emits": [],
+          "identity": "ix://catalog/event-types/Fulfilment/receive_order",
+          "name": "receive_order",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Fulfilment/receive_order",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Fulfilment/receive_order"
+              ]
+            }
+          },
+          "stepKind": "event"
+        },
+        {
+          "consumes": [],
+          "emits": [],
+          "identity": "ix://catalog/event-types/Fulfilment/reserve_stock",
+          "name": "reserve_stock",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Fulfilment/reserve_stock",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Fulfilment/reserve_stock"
+              ]
+            }
+          },
+          "stepKind": "command"
+        },
+        {
+          "consumes": [],
+          "emits": [],
+          "identity": "ix://catalog/event-types/Fulfilment/await_shipment",
+          "name": "await_shipment",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/Fulfilment/await_shipment",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/Fulfilment/await_shipment"
+              ]
+            }
+          },
+          "stepKind": "wait"
+        }
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "OrderStore",
+      "extensions": [],
+      "fields": [],
+      "identity": "ix://catalog/event-types/OrderStore",
+      "kind": {
+        "module": "test/business",
+        "name": "store"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/event-types/OrderStore/get",
+          "name": "get",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderStore/get",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderStore/get"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        },
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/event-types/OrderStore/save",
+          "name": "save",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderStore/save",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderStore/save"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/OrderStore",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/OrderStore"
+          ]
+        }
+      },
+      "persists": [
+        "ix://catalog/event-types/Order"
+      ],
+      "roles": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "OrderManagement",
+      "extensions": [],
+      "identity": "ix://catalog/event-types/OrderManagement",
+      "kind": {
+        "module": "test/business",
+        "name": "context"
+      },
+      "members": [
+        "ix://catalog/event-types/Order",
+        "ix://catalog/event-types/Money",
+        "ix://catalog/event-types/OrderPlaced"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/event-types/OrderManagement",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/event-types/OrderManagement"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject",
+      "vocabulary": [
+        {
+          "doc": "Commit a draft order",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/event-types/OrderManagement",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/event-types/OrderManagement"
+              ]
+            }
+          },
+          "term": "Place"
+        }
+      ]
+    }
+  ]
+}

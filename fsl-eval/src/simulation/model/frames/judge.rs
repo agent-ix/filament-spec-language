@@ -220,7 +220,7 @@ impl ModelSystem<'_> {
         let recorded = post
             .reached_by()
             .and_then(|effect| effect.result.as_deref());
-        let references: Vec<ObjectReference> = rows_of(self, &post.state)?
+        let references: Vec<ObjectReference> = rows_of(self, post.state())?
             .into_iter()
             .map(|row| row.reference)
             .collect();

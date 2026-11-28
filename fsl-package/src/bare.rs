@@ -25,6 +25,7 @@ use filament_exact::{
     EffectiveId, MemberId, MemberOwner, NodeKey, Origin, OriginalDeclarationKey, Role, UnitId,
 };
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 use crate::checked_v2::wire_graph;
@@ -35,13 +36,16 @@ mod model_tuple;
 mod model_union;
 mod observation;
 mod source_enum;
+#[cfg(test)]
+mod world_agreement_tests;
 use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceTupleJson, SourceUnionJson};
 use filament_exact::Presence;
 use source_enum::SourceEnumJson;
 
 /// The format of `identities.json` (FR-531 "The identity file").
-pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/7";
+pub const IDENTITIES_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::HandoffIdentities.as_str();
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
@@ -140,12 +144,30 @@ impl<'p> BarePackage<'p> {
     /// shares its one admitted artifact rather than copying subtrees.
     ///
     /// # Errors
-    /// Returns the original native join denial without a partially joined view.
+    /// [`crate::DependencyJoinRefusal::Name`] when an artifact's package name
+    /// is this package's or an attached library's, before anything is joined;
+    /// otherwise the original native join denial, without a partially joined
+    /// view.
+    #[implements("FR-531-AC-61")]
     pub fn with_dependency_artifacts(
         mut self,
         artifacts: &'p [crate::DependencyArtifact],
         budget: &mut NativeJoinBudget,
-    ) -> Result<Self, crate::NativeJoinFailure> {
+    ) -> Result<Self, crate::DependencyJoinRefusal> {
+        // A package's name keys its node ids, so two packages of one name
+        // would define the same keys.
+        let mut names: BTreeSet<&str> = std::iter::once(self.package)
+            .chain(self.dependency_views.iter().map(|view| view.package))
+            .map(CheckedPackageV2::name)
+            .collect();
+        if let Some(artifact) = artifacts
+            .iter()
+            .find(|artifact| !names.insert(artifact.package.name()))
+        {
+            return Err(crate::DependencyJoinRefusal::Name {
+                package: artifact.package.name().to_owned(),
+            });
+        }
         for artifact in artifacts {
             self.dependency_views
                 .push(Self::new(&artifact.package).with_supply(
@@ -200,6 +222,7 @@ impl<'p> BarePackage<'p> {
     /// A unit the package declares but `time_unit_scale` cannot read here has a
     /// real factor this route lacks, which a caller must not replace by a count.
     #[must_use]
+    #[ix_trace_rs::string_edge]
     pub fn declares_unit(&self, unit: &str) -> bool {
         self.package.resolved_graph().nodes.iter().any(|node| {
             node.node_tag.as_ref() == "scalar_type"
@@ -648,6 +671,7 @@ impl<'p> BarePackage<'p> {
     /// FR-395). The rows and value-validity facts are projected from the
     /// admitted package; this does not reconstruct them from source.
     #[must_use]
+    #[ix_trace_rs::string_edge]
     pub fn call_requirements(&self, function: &str) -> Vec<BareCallRequirement> {
         let mut owners = self
             .package
@@ -1813,6 +1837,12 @@ impl ReadIdentityRows {
         &self.source_object_operations
     }
 
+    /// The exact member identities, presence and checked value types aligned
+    /// with [`Self::source_objects`] and each object's members.
+    pub(crate) fn source_object_member_facts(&self) -> &[Vec<crate::SourceObjectMemberFacts>] {
+        &self.source_object_member_facts
+    }
+
     /// Original source-operation rows, with final anchor references.
     pub fn source_operations(&self) -> &[SelectedSourceOperationRow] {
         &self.source_operations
@@ -2063,7 +2093,7 @@ impl ReadIdentityRows {
                 source: filament_contract_model::NativeJoinLocusSource::Package,
                 form: "read-source-operation-rows",
             },
-            u128::from(work_bound),
+            work_bound,
         )?;
         let work_limit = u64::try_from(work_bound).unwrap_or(0);
         rows.selected_source_operations(package, work_limit)?;

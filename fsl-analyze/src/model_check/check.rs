@@ -72,6 +72,8 @@
 //! the clause reads. A clause with no instance is `Undecided(NoInstance)`
 //! before any state is explored (FR-125).
 
+use ix_trace_rs::implements;
+
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -86,30 +88,32 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    Atom, AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
-    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, SubjectKind, closure_shape,
-    invariant_atom, is_safety_translated, translate, translate_counted,
+    closure_shape, invariant_atom, is_safety_translated, translate, translate_counted, Atom,
+    AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
+    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, SubjectKind,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass, check_model_bounds,
+    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
+    activates_on_each, check_package_protocol_bounds, check_protocol_bounds, live_instance_bound,
     Capacities, DataRace, MemoryModel, PackageProtocolProgram, ProtocolFairnessError,
     ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, Sc, SubjectMemory,
-    UnboundCapacity, WeakAccessShape, activates_on_each, check_package_protocol_bounds,
-    check_protocol_bounds, live_instance_bound,
+    UnboundCapacity, WeakAccessShape,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
     InitialStateRefusal, Location, NotSimulated, Permutation, RequiresBound, SubjectSystem,
     SubjectTransition, SymmetryGroup, TransitionSystem, ZeroProgress, ZeroProgressError,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
+use fsl_foundation::budget::{Budget, BudgetStop};
+use fsl_foundation::Setting;
 use fsl_package::TemporalClockSelection;
 use fsl_replay::undefined_finding;
 use fsl_replay::{
@@ -130,6 +134,7 @@ use super::fair_walk::FairModel;
 use super::false_extension::false_extension_rejects;
 use super::initial::{admit_initial, Refused};
 use super::reduce::{self, InstanceGroup, TableForm};
+use crate::analyze::EngineBounds;
 use fsl_route::reductions::Reductions;
 
 pub(super) use fsl_eval::simulation::BOUND_POSITIONS;
@@ -461,6 +466,9 @@ struct Node<State, Transition> {
 /// reads, the counted distance (see [`Run::product`]).
 type ProductKey = (Vec<u8>, Vec<StateId>, usize, Vec<BoundedState>);
 
+/// FR-255 "Retained bytes": the fixed overhead of one stored EN-1 state.
+pub(super) const EN1_STATE_OVERHEAD_BYTES: u64 = 256;
+
 /// Why the run ended before its frontier emptied.
 enum Finish {
     Violated(Box<Violation>),
@@ -609,7 +617,13 @@ pub fn check_model(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-    check_model_with_stutter_closure(request, cancel, false)
+    let retained = published_budget(&request.subject, cancel);
+    check_model_with_stutter_closure(request, cancel, false, &retained)
+}
+
+/// The allowance of a run whose caller set no engine setting.
+fn published_budget(subject: &ModelSubject<'_>, cancel: &Cancel) -> Budget {
+    EngineBounds::default().item_budget(subject.simulation.meter, cancel)
 }
 
 /// Decide one model item, optionally adding the unfair self-loop at every
@@ -618,6 +632,7 @@ pub(crate) fn check_model_with_stutter_closure(
     request: ModelCheckRequest<'_>,
     cancel: &Cancel,
     stutter_closure: bool,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     if request.workers == 0 {
         return Err(ModelCheckRefusal::Workers);
@@ -638,16 +653,16 @@ pub(crate) fn check_model_with_stutter_closure(
                     }));
                 }
             }
-            return super::liveness::check(request, cancel, stutter_closure);
+            return super::liveness::check(request, cancel, stutter_closure, retained);
         }
     }
     if !request.reductions.is_empty() {
         return first_refuted_instance(request.limits, |cap, limits, listed| {
-            check_reduced(&request, cancel, cap, limits, listed)
+            check_reduced(&request, cancel, cap, limits, listed, retained)
         });
     }
     first_refuted_instance(request.limits, |cap, limits, listed| {
-        check_safety(&request, cancel, cap, limits, listed)
+        check_safety(&request, cancel, cap, limits, listed, retained)
     })
 }
 
@@ -661,6 +676,7 @@ pub(crate) fn check_model_with_stutter_closure(
 /// re-search that ends undecided (a limit, a horizon, a memory bound) settles
 /// the item with that typed outcome: the later instance is never reported as
 /// the first refuted one.
+#[implements("FR-161-AC-5")]
 fn first_refuted_instance(
     mut limits: ModelCheckLimits,
     mut search: impl FnMut(
@@ -689,7 +705,14 @@ fn first_refuted_instance(
             | ModelCheckOutcome::Undecided { .. }
             | ModelCheckOutcome::Stopped { .. } => None,
         };
-        if let (Some(position), ModelCheckOutcome::Violated { stats, .. }) = (position, &outcome) {
+        if let (
+            Some(position),
+            ModelCheckOutcome::Violated {
+                stats,
+                counterexample,
+            },
+        ) = (position, &outcome)
+        {
             if position > 0 {
                 limits.limits.max_states = limits
                     .limits
@@ -698,7 +721,8 @@ fn first_refuted_instance(
                 limits.limits.max_transitions = limits
                     .limits
                     .max_transitions
-                    .saturating_sub(usize::try_from(stats.product_edges).unwrap_or(usize::MAX));
+                    .saturating_sub(usize::try_from(stats.product_edges).unwrap_or(usize::MAX))
+                    .saturating_sub(counterexample.len());
                 cap = Some(position);
                 kept = Some(outcome);
                 continue;
@@ -794,12 +818,14 @@ fn restat(
 
 /// One search of a safety item over the first `cap` instances (all when
 /// `None`), within `limits`; `listed` receives the instances it ran over.
+#[implements("FR-126-AC-9")]
 fn check_safety(
     request: &ModelCheckRequest<'_>,
     cancel: &Cancel,
     cap: Option<usize>,
     limits: ModelCheckLimits,
     listed: &mut Vec<ModelInstance>,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let max_automaton_states = request.limits.max_automaton_states;
     // The form is refused before admission reads any snapshot.
@@ -881,6 +907,7 @@ fn check_safety(
         meter,
         max_candidates,
         cancel,
+        retained,
         nodes: Vec::new(),
         canonical: Vec::new(),
         known: BTreeMap::new(),
@@ -999,10 +1026,23 @@ pub fn check_protocol(
 ///
 /// As [`check_protocol`], and [`ModelCheckRefusal::UnknownConstraint`] when the
 /// package declares no `at current` state clause named `constraint`.
+#[implements("FR-225-AC-4")]
 pub fn check_protocol_constrained(
     request: ProtocolCheckRequest<'_>,
     constraint: Option<&str>,
     cancel: &Cancel,
+) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+    let retained = published_budget(&request.subject.model, cancel);
+    check_protocol_retaining(request, constraint, cancel, &retained)
+}
+
+/// [`check_protocol_constrained`] storing its states on the item's allowance
+/// `retained`.
+pub(crate) fn check_protocol_retaining(
+    request: ProtocolCheckRequest<'_>,
+    constraint: Option<&str>,
+    cancel: &Cancel,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     if request.workers == 0 {
         return Err(ModelCheckRefusal::Workers);
@@ -1012,7 +1052,7 @@ pub fn check_protocol_constrained(
     }
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
-            return check_protocol_liveness(request, constraint, cancel);
+            return check_protocol_liveness(request, constraint, cancel, retained);
         }
     }
     let max_automaton_states = request.limits.max_automaton_states;
@@ -1130,6 +1170,7 @@ pub fn check_protocol_constrained(
         meter,
         max_candidates,
         cancel,
+        retained,
         max_automaton_states,
         instance_bound,
         constraint,
@@ -1235,10 +1276,12 @@ fn new_protocol_system<'a, M: MemoryModel>(
 /// `ProtocolSystem<Tso>` bounded by `max_store_buffer` with flush fairness,
 /// or `ProtocolSystem<Ra>` bounded by `max_messages` with visibility fairness
 /// in its fairness set (FR-228).
+#[implements("FR-212-AC-1")]
 fn check_protocol_liveness(
     request: ProtocolCheckRequest<'_>,
     constraint: Option<&str>,
     cancel: &Cancel,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     let subject = &request.subject;
     let model = ModelSystem::new(subject.model.simulation.clone())
@@ -1326,6 +1369,7 @@ fn check_protocol_liveness(
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
                         constraint,
+                        retained,
                     },
                     cancel,
                 )
@@ -1353,6 +1397,7 @@ fn check_protocol_liveness(
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
                         constraint,
+                        retained,
                     },
                     cancel,
                 )
@@ -1375,6 +1420,7 @@ fn check_protocol_liveness(
                     ignore_memory_constraints: request.ignore_memory_constraints,
                     instance_bound,
                     constraint,
+                    retained,
                 },
                 cancel,
             )
@@ -1430,6 +1476,7 @@ struct ProtocolRun<'r> {
     meter: filament_exact::ScalarLimits,
     max_candidates: u64,
     cancel: &'r Cancel,
+    retained: &'r Budget,
     max_automaton_states: u64,
     /// The instance bound of an `activation on each` protocol.
     instance_bound: Option<InstanceBound>,
@@ -1492,6 +1539,7 @@ impl ProtocolRun<'_> {
             meter: self.meter,
             max_candidates: self.max_candidates,
             cancel: self.cancel,
+            retained: self.retained,
             nodes: Vec::new(),
             canonical: Vec::new(),
             known: BTreeMap::new(),
@@ -1610,12 +1658,14 @@ fn sum(left: RunStats, right: RunStats) -> RunStats {
 /// settles the item; otherwise boundary states settle `ConstraintReached`
 /// (before `BoundReached`), a horizon cut `BoundReached`, and a completed
 /// search `HoldsReduced` (ADR-021 RV-1, RV-4, RV-5).
+#[implements("FR-126-AC-26")]
 fn check_reduced(
     request: &ModelCheckRequest<'_>,
     cancel: &Cancel,
     cap: Option<usize>,
     limits: ModelCheckLimits,
     listed: &mut Vec<ModelInstance>,
+    retained: &Budget,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let reductions = &request.reductions;
     let max_automaton_states = request.limits.max_automaton_states;
@@ -1710,6 +1760,7 @@ fn check_reduced(
             meter,
             max_candidates,
             cancel,
+            retained,
             nodes: Vec::new(),
             canonical: Vec::new(),
             known: BTreeMap::new(),
@@ -1839,12 +1890,6 @@ fn check_reduced(
 /// The ample-set choice and the enforcing expansion of a partial-order run
 /// (FR-156, FR-155 "Read enforcement"), read by [`Run`] through [`Chooser`].
 trait Chooser<State, Transition> {
-    /// `state`'s expansion, holding every step to its footprint.
-    fn expand(
-        &self,
-        state: &State,
-    ) -> Result<Expansion<Transition, State, ModelFinding>, ExpansionStop>;
-
     /// Expand a BFS batch without sharing coordinator state. Implementors
     /// may parallelize their pure system expansion and return results in the
     /// supplied state order.
@@ -1864,6 +1909,11 @@ trait Chooser<State, Transition> {
         fresh: &dyn Fn(&Transition) -> bool,
     ) -> Result<Vec<Transition>, ExpansionStop>;
 }
+
+type IndexedExpansion<Transition, State> = (
+    usize,
+    Result<(Expansion<Transition, State, ModelFinding>, Cut), ExpansionStop>,
+);
 
 /// Map one bounded BFS batch on scoped threads, returning outcomes in input
 /// order even when a later state finishes first.
@@ -1941,39 +1991,40 @@ where
             let expand = &expand;
             #[cfg(test)]
             let hook = hook.clone();
-            #[cfg(test)]
-            let batch = batch;
             threads.push(scope.spawn(move || loop {
-                    let Some((position, state)) = queue
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .pop_front()
-                    else {
-                        break;
-                    };
-                    #[cfg(test)]
-                    if let (Some(hook), Some(batch)) = (&hook, batch) {
-                        let active = hook.active_workers.fetch_add(1, Ordering::Relaxed) + 1;
-                        hook.peak_workers.fetch_max(active, Ordering::Relaxed);
-                        if hook.delay_first_job && position == 0 {
-                            std::thread::sleep(std::time::Duration::from_millis(20));
-                        }
-                        let output = expand(&state);
-                        outputs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
-                            Some(output);
-                        hook.completed
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .entry(batch)
-                            .or_default()
-                            .push(position);
-                        hook.active_workers.fetch_sub(1, Ordering::Relaxed);
-                        continue;
+                let Some((position, state)) = queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pop_front()
+                else {
+                    break;
+                };
+                #[cfg(test)]
+                if let (Some(hook), Some(batch)) = (&hook, batch) {
+                    let active = hook.active_workers.fetch_add(1, Ordering::Relaxed) + 1;
+                    hook.peak_workers.fetch_max(active, Ordering::Relaxed);
+                    if hook.delay_first_job && position == 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
                     }
                     let output = expand(&state);
-                    outputs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
+                    outputs
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
                         Some(output);
-                }));
+                    hook.completed
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .entry(batch)
+                        .or_default()
+                        .push(position);
+                    hook.active_workers.fetch_sub(1, Ordering::Relaxed);
+                    continue;
+                }
+                let output = expand(&state);
+                outputs
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)[position] = Some(output);
+            }));
         }
         for thread in threads {
             if let Err(panic) = thread.join() {
@@ -1996,13 +2047,6 @@ struct ModelAmple<'r, 'a> {
 }
 
 impl Chooser<ModelSimState, ModelTransition> for ModelAmple<'_, '_> {
-    fn expand(
-        &self,
-        state: &ModelSimState,
-    ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
-        self.system.successors_enforced(state)
-    }
-
     fn expand_batch(
         &self,
         states: Vec<ModelSimState>,
@@ -2135,7 +2179,9 @@ pub(super) fn precheck(
         }
         Err(reduce::ClosureRefusal::Encoding(refusal)) => return Err(refusal.into()),
         Err(reduce::ClosureRefusal::Initial(_)) => {
-            return Err(fault("model-initial-admission-has-no-protocol-construction-fault"));
+            return Err(fault(
+                "model-initial-admission-has-no-protocol-construction-fault",
+            ));
         }
         Err(reduce::ClosureRefusal::Unordered) => {
             return Err(fault("a-permuted-collection-is-ordered"));
@@ -2367,6 +2413,8 @@ struct Run<'r, S: SubjectSystem> {
     meter: filament_exact::ScalarLimits,
     max_candidates: u64,
     cancel: &'r Cancel,
+    /// The item's allowance for the states this run stores.
+    retained: &'r Budget,
     nodes: Vec<Node<S::State, S::TransitionId>>,
     /// For each node, each instance's canonical bounded state after reading
     /// its position; empty unless the item has canonical translations.
@@ -2453,13 +2501,7 @@ where
     /// Expand a bounded BFS batch on scoped workers. The coordinator consumes
     /// these indexed outcomes in queue order, so expansion completion order
     /// cannot change a finding, refusal, or budget boundary.
-    fn expand_batch(
-        &self,
-        positions: &[usize],
-    ) -> Vec<(
-        usize,
-        Result<(Expansion<S::TransitionId, S::State, ModelFinding>, Cut), ExpansionStop>,
-    )>
+    fn expand_batch(&self, positions: &[usize]) -> Vec<IndexedExpansion<S::TransitionId, S::State>>
     where
         ModelFinding: Send,
     {
@@ -2811,6 +2853,7 @@ where
     }
 
     /// The breadth-first first phase.
+    #[implements("FR-126-AC-26")]
     fn explore(&mut self) -> Step<()> {
         self.poll()?;
         let start = self.monitor.initial().map_err(Self::automaton)?;
@@ -2839,7 +2882,7 @@ where
             }
             Refused::Construction(InitialStateRefusal::Encoding(refusal)) => refusal.into(),
             Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
-                self.expansion_stop(stop).into()
+                self.expansion_stop(stop)
             }
             Refused::Keying(halt) => halt,
         })?;
@@ -3518,6 +3561,7 @@ where
                 }
             }
         }
+        self.retain(&product, &node, &canonical)?;
         let at = self.nodes.len();
         self.nodes.push(node);
         self.canonical.push(canonical);
@@ -3534,6 +3578,44 @@ where
             }
         }
         Ok(())
+    }
+
+    /// Charge the bytes of a state about to be stored (FR-255 "Retained
+    /// bytes"): the fixed overhead of an EN-1 state, then the buffers the
+    /// stored node and its coalescing entry own.
+    #[implements("FR-255-AC-40")]
+    fn retain(
+        &self,
+        (key, monitor, _, canonical_key): &ProductKey,
+        node: &Node<S::State, S::TransitionId>,
+        canonical: &[BoundedState],
+    ) -> Step<()> {
+        let sequence = |len: usize, element: usize| widen(len).saturating_mul(widen(element));
+        let bytes = [
+            // The model state's key, held by the node and by the index.
+            sequence(key.len(), 2),
+            sequence(node.monitor.len() + monitor.len(), size_of::<StateId>()),
+            sequence(
+                canonical.len() + canonical_key.len(),
+                size_of::<BoundedState>(),
+            ),
+        ]
+        .into_iter()
+        .fold(EN1_STATE_OVERHEAD_BYTES, u64::saturating_add);
+        match self.retained.charge(Setting::AnalysisRetainedBytes, bytes) {
+            Ok(()) => Ok(()),
+            Err(BudgetStop::Limit(limit)) => Err(Self::stopped(
+                ModelCheckLimit::AnalysisRetainedBytes,
+                limit.configured_bound(),
+            )
+            .into()),
+            Err(BudgetStop::Cancelled(source)) => {
+                Err(Finish::Stopped(IncompleteCause::Cancelled { source }, None).into())
+            }
+            Err(BudgetStop::Accounting(_)) => {
+                Err(fault("a-byte-charge-is-no-kernel-charge").into())
+            }
+        }
     }
 
     /// Each instance's monitor state after reading `node`'s position from
@@ -4067,6 +4149,69 @@ where
     }
 }
 
+impl Run<'_, ModelSystem<'_>> {
+    /// The canonical path to node `at`: its breadth-first tree path,
+    /// concretised under symmetry (FR-161).
+    fn model_counterexample(
+        &self,
+        mut kind: CounterexampleKind,
+        at: usize,
+        over_binding: Option<ModelInstance>,
+    ) -> Step<TemporalCounterexample> {
+        if self.group.is_trivial() {
+            return self.counterexample(kind, at, over_binding);
+        }
+        let path = self.path(at);
+        let (initial_state, prefix) = self.concretise(&path, &mut kind)?;
+        self.finished(kind, at, over_binding, initial_state, prefix)
+    }
+
+    /// ADR-021 EI-6 (FR-161 "Start", "Steps"): the subject's initial state
+    /// and the concrete steps of the canonical tree path `path`, each edge
+    /// lifted by [`Lift`] and counted against what is left of
+    /// `max_transitions`. An undefined evaluation's site is concretised at
+    /// the path's end.
+    fn concretise(
+        &self,
+        path: &[usize],
+        kind: &mut CounterexampleKind,
+    ) -> Step<(usize, Vec<ModelStep>)> {
+        let first = &self.nodes[*path.first().ok_or_else(|| fault("a-path-has-a-root"))?];
+        let budget = self
+            .limits
+            .limits
+            .max_transitions
+            .saturating_sub(self.edges);
+        let lifted = (|| {
+            let (initial, mut lift) = Lift::start(
+                self.system,
+                Some(self.system),
+                &self.group,
+                &first.state,
+                budget,
+            )?;
+            for index in path.iter().skip(1) {
+                let node = &self.nodes[*index];
+                // The terminal stutter edge is no model step.
+                if let Some((_, Some(transition))) = &node.parent {
+                    lift.edge(transition, &node.state, &node.permutation)?;
+                }
+            }
+            lift.site(kind)?;
+            Ok((initial, lift.into_steps()))
+        })();
+        lifted.map_err(|stop| match stop {
+            LiftStop::Expansion(stop) => self.expansion_stop(stop),
+            LiftStop::Transitions => Self::stopped(
+                ModelCheckLimit::MaxTransitions,
+                widen(self.limits.limits.max_transitions),
+            )
+            .into(),
+            LiftStop::Refusal(refusal) => refusal.into(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod worker_determinism_tests {
     use super::*;
@@ -4342,68 +4487,5 @@ mod worker_determinism_tests {
             frontier_fingerprint(&sequential_frontier),
             0x4af4_e346_6be5_c4e7
         );
-    }
-}
-
-impl Run<'_, ModelSystem<'_>> {
-    /// The canonical path to node `at`: its breadth-first tree path,
-    /// concretised under symmetry (FR-161).
-    fn model_counterexample(
-        &self,
-        mut kind: CounterexampleKind,
-        at: usize,
-        over_binding: Option<ModelInstance>,
-    ) -> Step<TemporalCounterexample> {
-        if self.group.is_trivial() {
-            return self.counterexample(kind, at, over_binding);
-        }
-        let path = self.path(at);
-        let (initial_state, prefix) = self.concretise(&path, &mut kind)?;
-        self.finished(kind, at, over_binding, initial_state, prefix)
-    }
-
-    /// ADR-021 EI-6 (FR-161 "Start", "Steps"): the subject's initial state
-    /// and the concrete steps of the canonical tree path `path`, each edge
-    /// lifted by [`Lift`] and counted against what is left of
-    /// `max_transitions`. An undefined evaluation's site is concretised at
-    /// the path's end.
-    fn concretise(
-        &self,
-        path: &[usize],
-        kind: &mut CounterexampleKind,
-    ) -> Step<(usize, Vec<ModelStep>)> {
-        let first = &self.nodes[*path.first().ok_or_else(|| fault("a-path-has-a-root"))?];
-        let budget = self
-            .limits
-            .limits
-            .max_transitions
-            .saturating_sub(self.edges);
-        let lifted = (|| {
-            let (initial, mut lift) = Lift::start(
-                self.system,
-                Some(self.system),
-                &self.group,
-                &first.state,
-                budget,
-            )?;
-            for index in path.iter().skip(1) {
-                let node = &self.nodes[*index];
-                // The terminal stutter edge is no model step.
-                if let Some((_, Some(transition))) = &node.parent {
-                    lift.edge(transition, &node.state, &node.permutation)?;
-                }
-            }
-            lift.site(kind)?;
-            Ok((initial, lift.into_steps()))
-        })();
-        lifted.map_err(|stop| match stop {
-            LiftStop::Expansion(stop) => self.expansion_stop(stop),
-            LiftStop::Transitions => Self::stopped(
-                ModelCheckLimit::MaxTransitions,
-                widen(self.limits.limits.max_transitions),
-            )
-            .into(),
-            LiftStop::Refusal(refusal) => refusal.into(),
-        })
     }
 }

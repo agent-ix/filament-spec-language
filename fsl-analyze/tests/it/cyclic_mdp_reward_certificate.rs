@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Actual MDP reward subjects, infinity coverage and cumulative caller controls.
-use super::long_run_certificate::{limits, produce};
+use super::long_run_certificate::produce;
+use crate::long_run_support::limits;
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::{
@@ -38,6 +39,7 @@ fn native_mixed_infinity_is_unsupported_even_with_finite_initial_minimum() {
             world.request("Cost", fsl_replay::ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let Settlement::Disposed(disposal) = &records[0].settlement else {
         panic!("must not emit evidence: {records:?}");

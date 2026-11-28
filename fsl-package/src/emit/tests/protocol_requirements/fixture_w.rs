@@ -592,7 +592,7 @@ fn library() -> fsl_semantics::library::LibraryName {
     fsl_semantics::library::LibraryName::new("pkg").expect("fixture library name")
 }
 
-fn check_tc134(unit: &str) -> Result<(), Vec<fsl_semantics::check::CheckRefusal>> {
+fn check_tc134(unit: &str) -> Result<(), Vec<fsl_semantics::check::SemanticCheckRefusal>> {
     let domain = document();
     let packages =
         fsl_semantics::model::intake::package_input([domain.as_slice()]).expect("model intake");

@@ -684,11 +684,14 @@ There is no totality check.
 - CG's own unbound check (CG#84: "A claim whose model elements have no bound
   relation refuses") guards requests formed outside the driver, as FSpec
   FR-290's per-item `invalid-request` does (ADR-012 §7.2).
-- **Relation revision.** The relation is a v2 node (FSpec FR-451), so its
-  node ids enter the `package_id` (O-02), so rebinding changes the `package_id`. Every
-  generated contract carries the `package_id` it was generated from (O-25),
-  so it is never reinterpreted (FSpec FR-353-AC-5). There is no separate
-  revision field.
+- **Relation revision.** The relation is a v2 node (FSpec FR-451), so
+  rebinding changes the node's body and the checked package's value; the
+  package identity (O-02) does not depend on a binding. A rebinding must not
+  reinterpret a contract generated from the earlier package (FSpec
+  FR-353-AC-5). The two revisions are told apart by comparing checked-package
+  values: their relation nodes have an equal `node_id` (FSpec FR-451
+  `node_id`), and the two packages are unequal values, so they are not the
+  same package (FSpec FR-322). There is no separate revision field.
 
 #### AR-5 Capability dispatch and proof/replay
 
@@ -728,7 +731,7 @@ FSpec TC-268 verifies FSpec FR-353-AC-1 to AC-5. FSL's share:
 | AC-2 | Kani and Verus read the relation through FSpec AD-010 negotiation (CG#49, CG#84; not FSL) |
 | AC-3 | an item referencing an unbound element refuses naming every unbound element, while a sibling item with bound elements continues; an unknown occurrence key refuses (#198) |
 | AC-4 | a duplicate and a conflicting binding each refuse `conflicting-binding` naming both; a `parameters` map that omits a parameter and a malformed `RustPath` segment each refuse `malformed-declaration` (#198) |
-| AC-5 | rebinding one field changes the `package_id` (#198 feature slice) |
+| AC-5 | rebinding one field changes the relation node's body (#198 feature slice) |
 
 ### 5. Named interfaces for the dependent tickets
 

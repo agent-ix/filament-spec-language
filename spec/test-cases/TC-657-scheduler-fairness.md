@@ -12,7 +12,7 @@ relationships:
 
 Verify protocol fairness targets and classes, the derived scheduler constraints with their origin, the adversarial opt-out, and that safety verdicts do not change.
 
-Scope: FR-212-AC-1 to FR-212-AC-4.
+Scope: FR-212-AC-1 to FR-212-AC-5.
 
 ## Test Procedure
 
@@ -25,6 +25,11 @@ Use FR-212-AC-1's `Chatter` protocol.
 3. Check constraints naming `Chatter::Both::s`, `Chatter::Done` and
    `Missing`, and two `scheduling` members; read the root's and `left`'s classes over ADR-027 §7.
 4. Check `always holds(k.flag <= 1)` with and without the member.
+5. Read the explored steps in an operation constraint's class over a protocol
+   whose template fails an attempt. Over FR-212-AC-5's `on each` abstract
+   protocol, check one concrete step and read the abstract operation classes
+   it takes, the model check's label of a path that fails the attempt, and
+   replay's candidate graph of the step.
 
 Tag the tests `#[trace("TC-657", "FR-212-AC-n")]`.
 
@@ -38,3 +43,7 @@ Tag the tests `#[trace("TC-657", "FR-212-AC-n")]`.
   `ambiguous_declaration`/`ambiguous-name`; the classes of
   FR-212-AC-3.
 - Step 4: `proved` both times over equal state sets.
+- Step 5: the class holds `attempt` and `cattempt` steps only; the concrete
+  step takes the class of `add` and not the class of `inc`; the path label
+  leaves `inc` enabled and not taken, so a loop along the path is not fair; the
+  candidate graph applies `add` and never `inc`.

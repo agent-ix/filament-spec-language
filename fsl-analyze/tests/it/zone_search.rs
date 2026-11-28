@@ -2,9 +2,10 @@
 //! FR-239 (TC-694, TC-710) and FR-241's finite paths (TC-696): EN-6's
 //! symbolic zone search over the timed fixtures of `crate::timed_world`.
 
+use crate::zone_support::exact;
 use std::collections::BTreeSet;
 
-use filament_exact::{Cancel, Integer, Meter, Rational, Undefined};
+use filament_exact::{Cancel, Meter, Rational, Undefined};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::zone_check::{
     certificate_item, check_timed_model, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
@@ -156,10 +157,6 @@ fn rpc_model(
              {claim}"
         ),
     )
-}
-
-pub(crate) fn exact(numerator: i64, denominator: i64) -> Rational {
-    Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("a rational")
 }
 
 /// The subject every item here is over.

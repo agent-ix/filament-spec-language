@@ -18,6 +18,7 @@ mod hyper_product_identity;
 mod hyper_smt_encoding_limits;
 mod matrix_shape;
 mod monitor_row;
+mod parity;
 mod plugin_invariance;
 mod prove_row;
 #[path = "../../../tests/support/published_fspec.rs"]
@@ -31,4 +32,8 @@ mod tso_certificate;
 mod type_decision_cases;
 mod unsupported_entry_contract;
 #[path = "../../../fsl-replay/tests/it/vault_world.rs"]
+#[expect(
+    dead_code,
+    reason = "the shared vault fixture exposes helpers used by fsl-replay tests"
+)]
 mod vault_world;

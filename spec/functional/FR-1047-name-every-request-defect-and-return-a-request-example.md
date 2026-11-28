@@ -23,7 +23,11 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-1022
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-031
+    type: references
   - target: ix://agent-ix/filament-spec-language/FR-096
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-640
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-1039
     type: references
@@ -198,7 +202,8 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
   - `message` SHALL be `invalid request: missing required member ` followed
     by the one entry, or `invalid request: missing required members `
     followed by the entries joined by `, `, a group written as its pointers
-    joined by ` | `.
+    joined by ` | `, except for the request "A selected source with no run
+    member" states.
 - `details` is the authoritative list. Pointer segments are escaped as RFC
   6901 states (`~0`, `~1`) and nothing else, so a caller-chosen key holding
   `, ` or ` | ` makes `message` ambiguous but never `details`; a caller reads
@@ -208,6 +213,54 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
 - A request that also carries an unknown member, a member of the wrong JSON
   kind or a repeated member is refused for that defect as its owning
   requirement states; this requirement adds no ordering among those defects.
+
+### A selected source with no run member
+
+- When a run-reading request selects exactly one of `program` and
+  `package`, and its only missing entry is the `call` / `clause` / `items`
+  group, the entry SHALL refuse as "Missing members" states, with the same
+  code, stage and exit, `details` `{"missing": [["/request/call",
+  "/request/clause", "/request/items"]]}`, and `message` exactly
+  `a 1-draft program runs through the spine; the request selects no call`
+  (FR-100-AC-25), in place of the missing-members message. The entry reads
+  no program, package or other named file, so it does not read the declared
+  edition first.
+- A run-reader entry reads a request carrying `export` or `export_evidence`
+  as the run reading (Definitions), so neither member exempts it.
+- If a row of the table below applies to such a request at an entry the row
+  names, then the entry SHALL give that row's refusal or limit outcome in
+  place of this one, with its own code, stage, exit, message and `details`,
+  no `missing` list, and no named file read. This requirement adds no
+  ordering among the rows.
+
+  | Request | Entries | What comes first | Criterion |
+  | --- | --- | --- | --- |
+  | either source | each run and run-reader entry that takes the limit | the request size limit (FR-026) | FR-1047-AC-11 |
+  | either source | each run and run-reader entry | a member the typed request reader refuses while decoding (unknown, repeated, of the wrong JSON kind, or a value the decoder rejects); request-level `requirements` without `verification_plan`; a caller-supplied `clocks` override that FR-640 refuses | FR-1047-AC-11 |
+  | `program` | each run and run-reader entry | `sources` (FR-100-AC-23) | FR-1047-AC-12 |
+  | `package` | each run and run-reader entry | `sources` that FR-1039's caller source table refuses; `integer_division`, `libraries` or `refinement_internals` beside `package` (FR-1039); `clocks` beside `package` (FR-640) | FR-1047-AC-13 |
+  | `program` | the run entries, for a request without `program.extraction`; `prepare_run` and `prepare_run_with_overrides`, for every request | `refinement_internals` without `package`; an `integer_division` value, on the request or on a library, that FR-767 refuses; an extension entry that FR-660's decode rules refuse, or two extension entries with one `{authority, identity}` (`conflicting-definition`), the refusals of FR-660-AC-4; more selected files than the FR-026 file ceiling admits; a `program.source` `document` or `formal_revision` its constructor refuses (`invalid-identifier`) | FR-1047-AC-14 |
+  | `program` with `program.extraction`, in a build with `quire-extraction` | the run entries and `read_clause_run_request` | `extraction-clause-count` (FR-031) | FR-1047-AC-15 |
+
+- A provider that `run_with_providers` cannot register is FR-961's refusal.
+  This requirement neither states nor changes its order against a request
+  refusal, this one included.
+- Every other check comes after this refusal, so this refusal is given in its
+  place (FR-1047-AC-16). That includes every check that reads a named file,
+  the declared edition among them; FR-660's refusal of a capability id outside
+  its inventory (`unknown_required_feature`/`unknown-feature`), which is
+  checked at the catalog link, after the program read; over either source,
+  FR-100's refusal of a model in a format other than `semantic-ir/2.0.0` and
+  `native-model-unit/1`; over a `package` request, the checks of the
+  `package` selection's own members; `extraction-clause-count` at
+  `prepare_run` and `prepare_run_with_overrides`; and, at
+  `read_clause_run_request` and at a run entry over a request with
+  `program.extraction`, the checks of the row of the table that names
+  `refinement_internals` without `package`.
+- A run-reading request that carries none of `call`, `clause` and `items`,
+  and that also lacks another entry or selects both or neither of `program`
+  and `package`, is refused with the missing-members message and the full
+  list.
 
 ### A format the entry does not read
 
@@ -328,6 +381,13 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
 | FR-1047-AC-7 | For each of `request_example(F, None)` with `F` each of the five request formats, and `request_example("native-run/1", Some(Ordinary))` and `Some(Evidence)`: the result is `Ok`, parses as an object whose members are exactly `format` (equal to `F`) and `request`, is two-space indented in member order with no trailing newline, and equals a second call's bytes. Written to a file in an empty directory and handed to its entry (`run_with_providers` for `native-run/1` and `native-replay/1`; `monitor`, with an empty record stream, for `native-monitor/1`; `compile_outcome_with_overrides`; `analyze_with_providers_and_limits`; `export_with_limits_and_overrides` with the same selection), it is never refused at stage `envelope`, never refused by this requirement, and never refused for an unknown, repeated or wrong-kind member; the run, compile, analyze, monitor and export examples are refused only at stage `file`, naming a file the example names; the evidence example settles FR-1022's `unimplemented-meaning`; the replay example is refused at stage `request`, exit 20, with the missing file's read refusal naming `entry.fsl` (FR-862), and with an empty `entry.fsl` beside it is not refused `invalid-request` and not with a read refusal naming `entry.fsl` and is refused by FR-098's recompile or package admission, never as `invalid_package` for `/package/lock/sources` and never as `missing_import`. Removing any one member of its `request` makes the same entry refuse by this requirement with `details.missing` exactly that member's pointer, or the array of its group. | Test (TC-3170) |
 | FR-1047-AC-8 | `request_example("native-export/1", None)` returns `Err(RequestExampleError::UnknownFormat { .. })` whose `known` is `["native-run/1","native-compile/1","native-analyze/1","native-monitor/1","native-replay/1"]` and whose `Display` is exactly `unknown request format native-export/1; request formats are native-run/1, native-compile/1, native-analyze/1, native-monitor/1, native-replay/1`; `request_example("native-compile/1", Some(ExportSelection::Ordinary))` returns `SelectionNeedsRunFormat` with `Display` exactly `an export selection reads native-run/1, not native-compile/1`; both have `code()` `invalid-request`. | Test (TC-3170) |
 | FR-1047-AC-9 | `export_with_limits_and_overrides` with `ExportSelection::Ordinary` over `{"format":"native-run/1","request":3}` refuses `invalid-request`, stage `request`, exit 20, with message exactly `invalid clause request member /request: expected an object` and `details` `null`; no `missing` list is written, since a `request` that is not an object has no members to list. | Test (TC-3202) |
+| FR-1047-AC-10 | In an empty directory, `run_with_providers`, `prepare_run` and `read_clause_run_request`, each over a `native-run/1` request holding `models` `[]` and a complete `program` naming `p.fsl`, and each over one holding `models` `[]` and `package` `{"file":"p.json"}`, with no `call`, `clause`, `items` or other member, refuse `invalid-request`, stage `request`, exit 20, reading no named file, with message exactly `a 1-draft program runs through the spine; the request selects no call` and `details` exactly `{"missing":[["/request/call","/request/clause","/request/items"]]}`. The program request without `models` refuses with message exactly `invalid request: missing required members /request/models, /request/call \| /request/clause \| /request/items` and `details` exactly `{"missing":["/request/models",["/request/call","/request/clause","/request/items"]]}`. Over the package request with a valid non-empty `libraries` selection, each of the three entries refuses as FR-1039-AC-13 states, naming `libraries`, with no `details.missing`. | Test (TC-3170) |
+| FR-1047-AC-11 | Over each of AC-10's `program` and `package` requests: `prepare_run` with `request_bytes` one byte under the request's length settles `incomplete`, `resource_exhausted`, exit 22, naming `request_bytes`; `run_with_providers`, `prepare_run` and `read_clause_run_request`, with `request` also holding, one at a time, `"extra": 1`, `"extensions": 3` and `"requirements": {}`, each refuse `invalid-request`, stage `request`, exit 20; and `prepare_run_with_overrides` with a `clocks` override, over the request also holding `"clocks": {}`, refuses as FR-640-AC-14 states. None of these has `details.missing` or AC-10's message. | Test (TC-3170) |
+| FR-1047-AC-12 | In an empty directory, `run_with_providers`, `prepare_run` and `read_clause_run_request` over AC-10's `program` request with `"sources": []` added each refuse `invalid-request`, stage `request`, exit 20, naming `/request/sources`, with no `details.missing`. | Test (TC-3170) |
+| FR-1047-AC-13 | In an empty directory, `run_with_providers`, `prepare_run` and `read_clause_run_request` over AC-10's `package` request with one member added at a time each refuse `invalid-request`, stage `request`, exit 20, with no `details.missing`: `"integer_division": "floor"`, naming `integer_division`; `"refinement_internals": []`, naming `refinement_internals`; `"clocks": {"c": {"kind": "event_position", "sequence_authority": "a"}}`, naming `clocks`; and a `sources` array of two complete entries with one `{authority, identity}`, naming `/request/sources/1`. | Test (TC-3170) |
+| FR-1047-AC-14 | In an empty directory, `run_with_providers` and `prepare_run` over AC-10's `program` request changed one way at a time each give the following, and never AC-10's refusal: `"refinement_internals": []`, `invalid-request` naming `refinement_internals`; `"integer_division": "ceiling"`, `unknown_profile`/`unsupported-selection` naming `integer_division`; one complete `libraries` entry whose `integer_division` is `"ceiling"`, the same code naming `libraries[0].integer_division`; two complete `extensions` entries with one `{authority, identity}`, `invalid_package`/`conflicting-definition`; 64 complete `libraries` entries, `incomplete`, `resource_exhausted`, exit 22, naming the selected-file count; and `program.source.formal_revision` 0, `invalid-identifier`. | Test (TC-3170) |
+| FR-1047-AC-15 | In a build with `quire-extraction` and an empty directory, `run_with_providers` and `read_clause_run_request` over AC-10's `program` request, its `program` also holding a complete `extraction` record and `"clauses": []`, each refuse `extraction-clause-count`, stage `request`, exit 20, with no `details.missing`. | Test (TC-3170) |
+| FR-1047-AC-16 | In an empty directory, each of these refuses exactly as FR-1047-AC-10 states for its source: `read_clause_run_request` over AC-10's `program` request changed, one way at a time, by `"refinement_internals": []` and by `program.source.formal_revision` 0; `run_with_providers`, `prepare_run` and `read_clause_run_request` over AC-10's `program` request whose `models` holds one complete entry of format `native-rule-model/1`; `prepare_run` over AC-10's `package` request with that `models` entry; `prepare_run` over AC-10's `package` request with `"export_evidence": {}`; and, in a build with `quire-extraction`, `prepare_run` over AC-15's request, and `run_with_providers` over AC-15's request with exactly one complete `clauses` binding and `"refinement_internals": []`. | Test (TC-3170) |
 
 ## Dependencies
 
@@ -337,6 +397,8 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
   refusals inside `export` and `export_evidence`.
 - FR-096 and FR-1039: the `unknown_wire` refusals of document formats that
   are not request envelopes.
+- FR-031, FR-100, FR-640 and FR-1039: the member refusals that take
+  precedence over a missing `call` / `clause` / `items` group.
 - FR-661 and FSpec FR-562 (with FR-662 and FR-660): the argument documents
   the run entries also read.
 - FR-286: the outcome document whose diagnostic carries `message` and

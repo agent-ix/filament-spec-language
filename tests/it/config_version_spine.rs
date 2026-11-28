@@ -296,7 +296,8 @@ fn parent_order_decision_path(
                     && matches!(
                         semantic.node(key.clone()).map(|node| node.body()),
                         Some(BodyTerm::Application(ApplicationTerm {
-                            operator: Operator::Binary, ..
+                            operator: Operator::Binary,
+                            ..
                         }))
                     )
             })
@@ -413,7 +414,10 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         assert_eq!(anchor.name, "validate");
         let report = run_clause(decoded).expect("the decoded command request reports");
         let witness = report.witness.as_ref().expect("a comparison witness");
-        assert_eq!(witness.deciding_comparison.as_ref(), Some(&expected_path[1]));
+        assert_eq!(
+            witness.deciding_comparison.as_ref(),
+            Some(&expected_path[1])
+        );
         assert_eq!(
             witness.decision_path.as_deref(),
             Some(expected_path.as_slice())
@@ -688,7 +692,7 @@ fn clause_run_reader_honors_raised_observation_byte_limit() {
 
 /// FR-255: the smallest binding ceiling owns the refusal and its reported
 /// maximum when an observation exceeds its document budget.
-#[trace("TC-891", "FR-312-AC-3")]
+#[trace("TC-891", "FR-312-AC-3", "NFR-009-M-4")]
 #[test]
 fn clause_run_observation_limit_reports_its_own_bound() {
     let directory = tempfile::tempdir().unwrap();

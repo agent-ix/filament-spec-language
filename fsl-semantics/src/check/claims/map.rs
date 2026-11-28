@@ -14,12 +14,12 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, With};
 use fsl_foundation::source::provenance::OccurrenceKey;
 
 use super::RequirementRecord;
-use crate::check::Capability;
 use crate::check::key_order;
+use crate::check::Capability;
 
 /// Requirement records keyed by occurrence and capability, iterated in
 /// ascending occurrence order.
@@ -86,6 +86,18 @@ impl RequirementMap {
         let mut all = self.entries;
         all.extend(records);
         Ok(Self::ranked(all))
+    }
+
+    /// The map without the records of `occurrences`.
+    pub(crate) fn without(self, occurrences: &std::collections::HashSet<OccurrenceKey>) -> Self {
+        if occurrences.is_empty() {
+            return self;
+        }
+        Self::ranked(
+            self.entries
+                .into_iter()
+                .filter(|(occurrence, _)| !occurrences.contains(occurrence)),
+        )
     }
 
     /// The sole record at `key`, or `None` when absent or ambiguous by kind.

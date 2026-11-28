@@ -22,7 +22,10 @@ pub(crate) fn reachable_states(
     let mut states = Vec::new();
     let mut queue = system.initial();
     while let Some(state) = queue.pop() {
-        let key = system.state_key(&state).expect("state encodes").0;
+        let key = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("state encodes")
+            .0;
         if !seen.insert(key) {
             continue;
         }
@@ -679,7 +682,12 @@ mod generated {
         let group = group(subject);
         let states = super::reachable_states(&system, 64);
         let state = &states[pick % states.len()];
-        let key = |state: &ModelSimState| system.state_key(state).expect("encodes").0;
+        let key = |state: &ModelSimState| {
+            system
+                .state_key(state, fsl_foundation::IdentityLimits::default())
+                .expect("encodes")
+                .0
+        };
         let canon =
             |state: &ModelSimState| system.canonicalise(state, &group).expect("canonicalises").0;
         let n = subject.keys().len();
@@ -758,7 +766,12 @@ mod generated {
                 let world = subject.world();
                 let system = world.system();
                 let group = group(&subject);
-                let key = |s: &ModelSimState| system.state_key(s).expect("encodes").0;
+                let key = |s: &ModelSimState| {
+                    system
+                        .state_key(s, fsl_foundation::IdentityLimits::default())
+                        .expect("encodes")
+                        .0
+                };
                 for state in super::reachable_states(&system, 64) {
                     let once = system
                         .canonicalise(&state, &group)

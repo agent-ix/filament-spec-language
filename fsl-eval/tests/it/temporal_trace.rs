@@ -1146,12 +1146,12 @@ fn the_unrolling_follows_the_past_reach_and_reads_past_it_by_congruence() {
     assert_eq!(at(9), TemporalOutcome::Holds);
 }
 
-/// FR-125-AC-6: the letter of `always holds(6 / (2 - c.level) >= 0)` under
+/// FR-327-AC-15: the letter of `always holds(6 / (2 - c.level) >= 0)` under
 /// infinite-trace is defined at positions 0 and 1 and undefined at position
 /// 2, cause division by zero; `eventually[0,1] holds(6 / (2 - c.level) =
 /// 6)` under event-position, `on origin`, reads positions 0 and 1 only and
 /// is true.
-#[trace("TC-537", "FR-125-AC-6")]
+#[trace("TC-847", "FR-327-AC-15")]
 #[test]
 fn the_letter_is_read_up_to_its_first_undefined_position_and_a_bounded_origin_to_its_horizon() {
     let fx = counter(INFINITE, "always holds(6 / (2 - c.level) >= 0)");

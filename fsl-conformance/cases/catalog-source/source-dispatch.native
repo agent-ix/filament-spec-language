@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile P = "filament.model.complete/v1";
+object Order identity (total) {
+  total: Int[0, 9];
+  population orders;
+  operation measure(n: Integer): Integer;
+  operation bump(): Boolean modifies self.total;
+}
+body C using P on Order::measure(n) { n }
+invariant Sized using P on Order at current { self.measure(0) >= 0 }

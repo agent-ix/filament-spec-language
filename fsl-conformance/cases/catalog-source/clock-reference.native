@@ -1,0 +1,11 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.complete/v1";
+model Config = "catalog/timed";
+dimension Time;
+unit ms : Time = rational(1, 1);
+time Config dense unit ms;
+invariant Read using v on Config::ConfigVersion at current { present(self.optional) implies value(self.optional) = self.r }
+invariant Differ using v on Config::ConfigVersion at current { present(self.optional) implies value(self.optional) != self.r }
+invariant Size using v on Config::ConfigVersion at current { size(self.refs) <= 3 }
+urgent Pointed when { exists(c in Config::config_history : c.r = ref(c.x)) };

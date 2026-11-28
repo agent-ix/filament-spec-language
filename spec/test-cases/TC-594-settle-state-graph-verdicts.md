@@ -15,7 +15,8 @@ state-graph outcomes, the `Witness` proof basis and its sources, the
 settlement method and seed in the record, and that no evidence settles
 before it replays.
 
-Scope: FR-169-AC-1 to FR-169-AC-5 and FR-169-AC-16 to FR-169-AC-17.
+Scope: FR-169-AC-1 to FR-169-AC-5, FR-169-AC-16, FR-169-AC-17 and
+FR-169-AC-19.
 
 ## Test Procedure
 
@@ -35,6 +36,9 @@ Scope: FR-169-AC-1 to FR-169-AC-5 and FR-169-AC-16 to FR-169-AC-17.
 7. Settle the engine-produced symmetry and POR results and the unreduced
    symmetry result from FR-168-AC-14; settle the symmetry and POR `Trapped`
    counterexamples from FR-168-AC-15 after FR-170 replay.
+8. Settle completed `NoDecision` outcomes with open causes
+   `ConstraintBoundary`, with `MaxDepth` beside it and with
+   `UndecidedSuccessor` beside it; settle FR-167-AC-7's two runs.
 
 Tag the tests `#[trace("TC-594", "FR-169-AC-n")]`.
 
@@ -63,3 +67,6 @@ Tag the tests `#[trace("TC-594", "FR-169-AC-n")]`.
   `Trapped` counterexamples replay against the unreduced concrete closure and
   settle `Refuted`. The unreduced symmetry result settles
   `Proved{Exhaustive, Certified}` after its certificate is accepted.
+- Step 8: `ConstraintReached` with the boundary count, twice;
+  `UndecidedSuccessor`; no replay; `ConstraintReached` with 1 boundary
+  state for each run.

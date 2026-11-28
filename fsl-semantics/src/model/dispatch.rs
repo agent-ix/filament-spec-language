@@ -148,12 +148,12 @@ pub enum LinkCheckOutcome {
     /// Every dispatch charge was admitted; see the substantive
     /// [`DispatchLinkOutcome`].
     Completed(DispatchLinkOutcome),
-    /// A real defect (a dangling operation reference, or a family/dominance
-    /// walk reaching the caller's own configured `family_steps`/
-    /// `ancestor_steps` ceiling, ADR-011 §7.3) refused the check
-    /// outright.
+    /// A real defect (a dangling operation reference, or a dominance walk
+    /// reaching the caller's own configured `ancestor_steps` ceiling,
+    /// ADR-011 §7.3) refused the check outright.
     Refused(ModelRefusal),
-    /// A `ModelNormalizationLimitsV1` counter was exhausted mid-link.
+    /// A `ModelNormalizationLimitsV1` ceiling denied a charge mid-link: a
+    /// meter counter, or `family_steps` in the family walk.
     Incomplete(NormalizationIncomplete),
     /// The generalization closure was not [`GeneralizationClosure::Closed`].
     OpenClosure(UnclosedMethodSet),
@@ -168,9 +168,9 @@ pub enum LinkCheckOutcome {
 /// used as given. Each distinct edge, keyed by the redefining member whose
 /// `redefines` it is, is charged once, before the walk follows it, however
 /// many walks follow it. The count is of edges, never of chain depth.
-/// Following one edge more than the ceiling refuses
-/// [`ModelRefusalCause::FamilySteps`] naming `original` and the ceiling; the
-/// family is never truncated.
+/// Following one edge more than the ceiling yields the caller-budget cause
+/// used by the effective-precondition walk. Direct link outcomes project the
+/// same denied charge as a typed incomplete normalization record.
 pub(crate) struct FamilySteps<'a> {
     original: &'a DeclarationKey,
     limit: u64,
@@ -199,7 +199,7 @@ impl<'a> FamilySteps<'a> {
         Ok(())
     }
 
-    /// The refusal for a walk that cannot finish under the ceiling.
+    /// The refusal for the caller-budget path.
     pub(crate) fn exceeded(&self) -> ModelRefusal {
         ModelRefusal {
             code: Code::ResourceExhausted,
@@ -208,6 +208,17 @@ impl<'a> FamilySteps<'a> {
                 "dispatch family for {} exceeded the family_steps limit of {}",
                 self.original.node, self.limit
             ),
+        }
+    }
+
+    /// The typed incomplete record for a direct dispatch-link outcome.
+    pub(crate) fn incomplete(&self) -> NormalizationIncomplete {
+        NormalizationIncomplete {
+            limit_kind: NormalizationLimitKind::FamilySteps,
+            limit: self.limit,
+            consumed: u64::try_from(self.followed.len()).unwrap_or(u64::MAX),
+            next_charge: 1,
+            charge_point: NormalizationChargePoint::ModelFamilyEdge,
         }
     }
 }
@@ -311,6 +322,9 @@ pub(crate) fn link_dispatch_counted(
 
     let family = match build_family(index, original, steps) {
         Ok(family) => family,
+        Err(refusal) if matches!(&refusal.cause, ModelRefusalCause::FamilySteps { .. }) => {
+            return LinkCheckOutcome::Incomplete(steps.incomplete());
+        }
         Err(refusal) => return LinkCheckOutcome::Refused(refusal),
     };
     let mut candidates: Vec<DeclarationKey> = family

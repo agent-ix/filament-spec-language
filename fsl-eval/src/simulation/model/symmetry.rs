@@ -226,7 +226,7 @@ impl ModelSystem<'_> {
         state: &ModelSimState,
         permutation: &Permutation,
     ) -> Result<ModelSimState, ExpansionStop> {
-        Ok(state.without_effect(self.permute_state(&state.state, permutation)?))
+        Ok(state.without_effect(self.permute_state(state.state(), permutation)?))
     }
 
     /// The state-only projection of [`Self::permute`], for initial recipes
@@ -387,7 +387,7 @@ impl ModelSystem<'_> {
                     .map(|(_, _, _, enc)| enc.clone())
             };
             for class in &group.classes {
-                let objects = state.state.populations.get(&class.population);
+                let objects = state.state().populations.get(&class.population);
                 let mut sorted = Vec::with_capacity(class.keys.len());
                 for key in &class.keys {
                     let bytes = match objects.and_then(|objects| objects.get(key)) {
@@ -419,9 +419,7 @@ impl ModelSystem<'_> {
 mod tests {
     use filament_checked::key::DeclarationKey;
     use filament_exact::{Integer, Value};
-    use filament_semantic_value::relationship_extent::{
-        RelationshipExtent, RelationshipInstance,
-    };
+    use filament_semantic_value::relationship_extent::{RelationshipExtent, RelationshipInstance};
     use ix_trace_rs::trace;
     use quire_canonical::Limits;
     use serde_json::json;
@@ -461,7 +459,7 @@ mod tests {
         let class = &group.classes[0];
         let mut state = system.initial().into_iter().next().expect("initial state");
         let objects = state
-            .state
+            .state_mut()
             .populations
             .get_mut(&class.population)
             .expect("class population exists");
@@ -529,7 +527,10 @@ mod tests {
             .canonicalise(&state, &group)
             .expect("canonicalises")
             .0;
-        let canonical_key = system.state_key(&canonical_key).expect("canonical key").0;
+        let canonical_key = system
+            .state_key(&canonical_key, fsl_foundation::IdentityLimits::default())
+            .expect("canonical key")
+            .0;
         for images in permutations() {
             let permuted = permute(&system, &state, &group, images);
             let canonical_permuted = system
@@ -537,7 +538,10 @@ mod tests {
                 .expect("permuted state canonicalises")
                 .0;
             let shares_canonical_key = system
-                .state_key(&canonical_permuted)
+                .state_key(
+                    &canonical_permuted,
+                    fsl_foundation::IdentityLimits::default(),
+                )
                 .expect("permuted canonical key")
                 .0
                 == canonical_key;
@@ -566,8 +570,14 @@ mod tests {
                 .canonicalise(&once, &group)
                 .expect("canonical state canonicalises")
                 .0;
-            let keys_are_equal = system.state_key(&once).expect("canonical key").0
-                == system.state_key(&twice).expect("twice canonical key").0;
+            let keys_are_equal = system
+                .state_key(&once, fsl_foundation::IdentityLimits::default())
+                .expect("canonical key")
+                .0
+                == system
+                    .state_key(&twice, fsl_foundation::IdentityLimits::default())
+                    .expect("twice canonical key")
+                    .0;
             assert!(
                 keys_are_equal,
                 "canonicalising permutation {images:?} twice preserves its key",
@@ -584,27 +594,29 @@ mod tests {
         let system = world.system();
         let mut state = system.initial().into_iter().next().expect("initial state");
         let class = &group.classes[0];
-        let object = state
-            .state
+        let object_type = state
+            .state()
             .populations
             .get(&class.population)
             .and_then(|objects| objects.get("a"))
-            .expect("initial class object exists");
+            .expect("initial class object exists")
+            .type_identity
+            .clone();
         let relationship = DeclarationKey {
             package: "test/symmetry".to_owned(),
             node: "ix://test/symmetry/links".to_owned(),
         };
-        state.state.extents.push(RelationshipExtent {
+        state.state_mut().extents.push(RelationshipExtent {
             relationship,
             complete: true,
             instances: vec![RelationshipInstance {
                 source: system
                     .model
-                    .object_reference(&object.type_identity, "a")
+                    .object_reference(&object_type, "a")
                     .expect("source reference resolves"),
                 target: system
                     .model
-                    .object_reference(&object.type_identity, "b")
+                    .object_reference(&object_type, "b")
                     .expect("target reference resolves"),
                 positions: Default::default(),
             }],
@@ -612,23 +624,26 @@ mod tests {
 
         let permutation = Permutation::of(
             &class.population,
-            [("a".to_owned(), "b".to_owned()), ("b".to_owned(), "a".to_owned())],
+            [
+                ("a".to_owned(), "b".to_owned()),
+                ("b".to_owned(), "a".to_owned()),
+            ],
         );
         let universes = system.universes_of(&class.population);
         let renaming = permutation
             .maps()
-            .iter()
-            .map(|(_, mapping)| (universes.clone(), mapping.clone()))
+            .values()
+            .map(|mapping| (universes.clone(), mapping.clone()))
             .collect();
         let projected = super::super::encode::initial_model_key(
             &system.model,
-            &state.state,
+            state.state(),
             system.typing(),
             &Default::default(),
             &renaming,
         );
         let permuted = system
-            .permute_state(&state.state, &permutation)
+            .permute_state(state.state(), &permutation)
             .expect("permutation applies");
         let expected = super::super::encode::model_key(&system.model, &permuted, system.typing());
 

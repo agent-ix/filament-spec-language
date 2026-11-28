@@ -22,6 +22,7 @@ use fsl_analyze::model_check::{
     admit, generators, instance_groups, not_preserving, preserves, unoffered, ModelCheckRefusal,
     SubjectContext, TableForm,
 };
+use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{explore_model, ModelSimState, ModelSystem};
 use fsl_eval::simulation::{
     ConstraintValue, Expansion, ExpansionStop, Limits, OfferedReductions, Outcome, Permutation,
@@ -763,7 +764,10 @@ fn every_state(system: &ModelSystem<'_>) -> Vec<ModelSimState> {
     let mut seen = BTreeMap::new();
     let mut frontier = system.initial();
     while let Some(state) = frontier.pop() {
-        let key = system.state_key(&state).expect("encodes").0;
+        let key = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0;
         if seen.contains_key(&key) {
             continue;
         }
@@ -793,13 +797,28 @@ fn canonical_forms_coalesce_the_orbits_of_reachable_states() {
         let mut forms = BTreeSet::new();
         for state in &states {
             let (canonical, permutation) = system.canonicalise(state, &classes).expect("canonical");
-            let key = system.state_key(&canonical).expect("encodes").0;
+            let key = system
+                .state_key(&canonical, fsl_foundation::IdentityLimits::default())
+                .expect("encodes")
+                .0;
             let image = system.permute(state, &permutation).expect("permuted");
-            assert_eq!(system.state_key(&image).expect("encodes").0, key);
+            assert_eq!(
+                system
+                    .state_key(&image, fsl_foundation::IdentityLimits::default())
+                    .expect("encodes")
+                    .0,
+                key
+            );
             let (again, identity) = system
                 .canonicalise(&canonical, &classes)
                 .expect("canonical");
-            assert_eq!(system.state_key(&again).expect("encodes").0, key);
+            assert_eq!(
+                system
+                    .state_key(&again, fsl_foundation::IdentityLimits::default())
+                    .expect("encodes")
+                    .0,
+                key
+            );
             assert!(identity.is_identity());
             forms.insert(key);
         }
@@ -854,7 +873,12 @@ fn objects_with_equal_sort_keys_canonicalise_into_their_orbit() {
     let system = world.system();
     let states = system.initial();
     let full = group(&[&["a", "b", "c"]]);
-    let key = |state: &ModelSimState| system.state_key(state).expect("encodes").0;
+    let key = |state: &ModelSimState| {
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0
+    };
     // The starts run over the unlinked key, then the eight value triples.
     let first = &states[16]; // c unlinked, all at 0: a->b, b->a.
     let second = &states[0]; // a unlinked, all at 0: b->c, c->b.
@@ -917,16 +941,28 @@ fn canonicalisation_is_a_function_of_the_state_and_the_group() {
     let (once, first) = system.canonicalise(state, &full).expect("canonical");
     let (twice, second) = system.canonicalise(state, &full).expect("canonical");
     assert_eq!(
-        system.state_key(&once).expect("encodes").0,
-        system.state_key(&twice).expect("encodes").0
+        system
+            .state_key(&once, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0,
+        system
+            .state_key(&twice, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0
     );
     assert_eq!(first, second);
     let (same, identity) = system
         .canonicalise(state, &SymmetryGroup::default())
         .expect("canonical");
     assert_eq!(
-        system.state_key(&same).expect("encodes").0,
-        system.state_key(state).expect("encodes").0
+        system
+            .state_key(&same, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0,
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0
     );
     assert!(identity.is_identity());
 }
@@ -1048,7 +1084,11 @@ fn undefined_absent_and_initially_false_constraints_and_bounds() {
         .pop()
         .expect("a last state");
     assert_eq!(
-        world.system().state_key(&last).expect("encodes").1,
+        world
+            .system()
+            .state_key(&last, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .1,
         evaluation.site.state_key
     );
     // The deadlock-freedom item's refutation by the undefined constraint
@@ -1660,7 +1700,8 @@ fn an_undefined_evaluation_on_a_reduced_run_refutes_with_a_concrete_prefix() {
             }
         );
     }
-    let record = settle(&world, &reduced);
+    let (record, replay_calls) = world.settle_clause_with_replay_count(0, undefined(), &reduced);
+    assert_eq!(replay_calls, 1, "the settlement replay callback runs once");
     assert_eq!(record.value, TerminalValue::Refuted);
     assert_eq!(record.label, ResultLabel::Refuted);
     assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
@@ -1758,4 +1799,69 @@ fn reductions_but_the_constraint_enter_the_obligation_identity() {
         panic!("expected a reduction cause, got {outcome:?}");
     };
     assert_eq!(*stats, RunStats::default());
+}
+
+/// FR-151-AC-5: over universe `{a, b, c, d}` with a start holding `a` and `b`
+/// alone, `[[a, b], [c, d]]` admits; the `over` parameter gives one instance,
+/// `a`, with orbit `[a, b]`, and `c` and `d` are excluded keys in no orbit.
+#[trace("TC-3219", "FR-151-AC-5")]
+#[test]
+fn an_excluded_key_is_in_no_orbit() {
+    let two: Vec<_> = start([0, 0, 0]).into_iter().take(2).collect();
+    let world = World::new(
+        shape(true, 2),
+        CYCLE,
+        &[infinite("always holds(x.v <= 2)")],
+        &[two],
+        &["a", "b", "c", "d"],
+    );
+    let system = world.system();
+    let declared = symmetry(&[&["a", "b"], &["c", "d"]]);
+    let group = admit(&system, &declared.symmetry).expect("the declaration admits");
+    let over = world.clauses[0].over().1.clone();
+    let bindings = system.instances(&over).expect("the clause has instances");
+    let instances = instance_groups(Some(&bindings), &group);
+    let [instance] = instances.as_slice() else {
+        panic!("one instance: {}", instances.len());
+    };
+    assert_eq!(
+        instance
+            .representative
+            .as_ref()
+            .map(|binding| binding.key.as_str()),
+        Some("a")
+    );
+    assert_eq!(instance.orbit, keys(&["a", "b"]));
+    assert_eq!(
+        system.excluded_keys(&over).expect("excluded keys"),
+        ["c", "d"]
+    );
+}
+
+/// FR-151 "Instances": a key two populations list is one instance, of the
+/// first. A class of the second population naming it still gives its other
+/// admitted keys an instance, bound to one of them, never to the key that is
+/// no instance of that population.
+#[trace("TC-3219", "FR-151-AC-5")]
+#[test]
+fn a_class_whose_least_key_is_bound_elsewhere_keeps_its_other_instances() {
+    let bound = |population, key: &str| ModelInstance {
+        population,
+        key: key.to_owned(),
+    };
+    let bindings = [bound(counters(), "a"), bound(spares(), "b")];
+    let group = fsl_eval::simulation::SymmetryGroup {
+        classes: vec![class(&spares(), &["a", "b"])],
+    };
+    let listed: Vec<_> = instance_groups(Some(&bindings), &group)
+        .into_iter()
+        .map(|instance| (instance.representative, instance.orbit))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (Some(bindings[0].clone()), keys(&["a"])),
+            (Some(bindings[1].clone()), keys(&["b"])),
+        ]
+    );
 }

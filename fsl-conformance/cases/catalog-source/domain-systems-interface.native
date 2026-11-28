@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model S = "acme/systems";
+function keep using v(s: S::Sensor): S::Sensor pure { s }

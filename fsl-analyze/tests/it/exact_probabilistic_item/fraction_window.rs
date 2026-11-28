@@ -26,7 +26,39 @@ fn settle_under(world: &World, work_units: u64) -> fsl_analyze::analyze::Analyze
     let mut request = world.request("Up", ModelCheckLimits::default());
     request.subject.simulation.meter.work_units = work_units;
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
-    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
+}
+
+fn minimum_proving_work(world: &World) -> u64 {
+    let proves = |work| {
+        matches!(
+            settle_under(world, work)
+                .terminal()
+                .expect("the item settles under a finite work allowance")
+                .value(),
+            TerminalValue::Proved { .. }
+        )
+    };
+    let mut high = 1;
+    while !proves(high) {
+        high = high.checked_mul(2).expect("the fixture has finite work");
+    }
+    let mut low = 0;
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if proves(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    high
 }
 
 #[trace("TC-3152", "FR-1043-AC-5")]
@@ -48,11 +80,11 @@ fn a_ten_step_fraction_mean_on_two_states_proves_within_the_default_work_allowan
     );
 }
 
-#[trace("TC-638", "FR-203-AC-13")]
+#[trace("TC-638", "FR-203-AC-13", "FR-203-AC-29")]
 #[test]
 fn the_ten_step_fraction_mean_needs_exactly_the_measured_work_units() {
     let world = World::new(&mean(WINDOW));
-    let needed = 294_699;
+    let needed = minimum_proving_work(&world);
     assert!(matches!(
         settle_under(&world, needed).terminal().unwrap().value(),
         TerminalValue::Proved { .. }
@@ -120,4 +152,46 @@ fn the_edge_ceiling_is_reported_before_the_next_successors_key_is_encoded() {
         build_document(&world, 1, 31_115),
         Err(fsl_replay::ProbabilityDocumentError::KeyEncoding(_))
     ));
+}
+
+/// FR-1042-AC-31: a mean ceiling settled by bounds takes the `upper` document
+/// as the claim side. The exact mean is 10999/11000, below 0.99999.
+#[trace("TC-3212", "FR-1042-AC-31")]
+#[test]
+fn a_mean_ceiling_certified_by_bounds_takes_the_upper_document_as_the_claim() {
+    let model = prob_world::health(
+        "self.healthy = not fault",
+        "true: 1, false: 9999",
+        false,
+        &format!(
+            "probabilistic Up using ev on M over (n: M::Node) under every scheduler on origin \
+             {{ mean of (fraction holds(n.healthy) over [0, {WINDOW}]) <= 0.99999 }}\n"
+        ),
+    );
+    let world = World::new(&model);
+    let engines = Engines::fsl().unwrap();
+    let mut request = world.request("Up", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1;
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
+    let TerminalValue::Proved {
+        basis: ProofBasis::ValueBounds { lower, upper, .. },
+        ..
+    } = record.terminal().expect("a terminal record").value()
+    else {
+        panic!("{record:?}");
+    };
+    let exact = ratio(10_999, 11_000);
+    assert!(lower.value() <= &exact, "{lower:?}");
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
+        panic!("{upper:?}");
+    };
+    assert!(upper.value() >= &exact, "{upper:?}");
+    assert!(upper.value() <= &ratio(99_999, 100_000), "{upper:?}");
 }

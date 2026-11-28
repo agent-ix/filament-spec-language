@@ -14,27 +14,32 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(any(test, feature = "test-support"))]
+use std::cell::Cell;
+#[cfg(feature = "test-support")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
     CheckedAbstractionField, CheckedAbstractionFrame, CheckedAbstractionObject,
     CheckedAbstractionParameter, CheckedAbstractionPopulation, CheckedArtifactRef,
     CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
     CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
-    CheckedDependencyClockSelection, CheckedDependencySelection, CheckedDiagnosticsV2,
-    CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
+    CheckedDeclaredNodeId, CheckedDependencyClockSelection, CheckedDependencySelection,
+    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
     CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
     CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
     CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
     CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
     CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
-    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
-    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
-    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolCorrelationProvenance,
-    ProtocolCorrelationRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    CheckedPackageLockV2, CheckedPackageNodeRef, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolCorrelationProvenance, ProtocolCorrelationRow, ProtocolForm,
+    ScalarTypeForm, StateForm, ValueForm,
 };
-use serde::Deserialize;
 
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
@@ -58,7 +63,7 @@ use fsl_semantics::value::{
     native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
     ModelRole, NodeOwner, TemporalRole,
 };
-use ix_trace_rs::string_edge;
+use ix_trace_rs::{implements, string_edge};
 
 use super::{CheckedPackage, EmittedPackage};
 use crate::checked::EmitLimits;
@@ -66,6 +71,9 @@ use crate::checked_v2::{
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
     CheckedConstraintTarget, CheckedGuardPart, CheckedResetTarget, CheckedTimeInvariant,
     CheckedTimedModel, CheckedUrgency, ClockComparison, TimedNodeMetadata,
+};
+use crate::source_operation::{
+    declared_source_operations, source_identity_segment, source_node_for_declaration,
 };
 use crate::wire_form::{OperationSuffix, WireForm};
 
@@ -78,6 +86,313 @@ fn is_body_binding(name: &str) -> bool {
 
 /// The FR-322 graph schema version every node carries.
 const GRAPH_V2: &str = "filament.checked-semantic-graph/v2";
+
+#[cfg(test)]
+thread_local! {
+    static USE_REPEATED_OPERAND_REWRITE: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            USE_REPEATED_OPERAND_REWRITE.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let previous = USE_REPEATED_OPERAND_REWRITE.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    f()
+}
+
+#[cfg(feature = "test-support")]
+static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "test-support")]
+thread_local! {
+    static READ_INDEX_REWRITE_WORK_UNITS: Cell<usize> = const { Cell::new(0) };
+    static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
+    static USE_REPEATED_COMPILE_INDEX_REWRITES: Cell<bool> = const { Cell::new(false) };
+    static S4_PHASE_TIMES: Cell<S4PhaseTimes> = const { Cell::new(S4PhaseTimes::ZERO) };
+    static WRITE_INDEX_DIAGNOSTICS: Cell<WriteIndexDiagnostics> = const { Cell::new(WriteIndexDiagnostics::ZERO) };
+    static DOCUMENT_NODE_DIAGNOSTICS: Cell<DocumentNodeDiagnostics> = const { Cell::new(DocumentNodeDiagnostics::ZERO) };
+    static S4_RETAINED_COUNTS: Cell<S4RetainedCounts> = const { Cell::new(S4RetainedCounts::ZERO) };
+}
+
+/// S4 emitter subphase durations accumulated by the test-support build.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct S4PhaseTimes {
+    pub(crate) pre_lock_graph_temporal_us: u128,
+    pub(crate) lock_us: u128,
+    pub(crate) inspection_us: u128,
+    pub(crate) index_us: u128,
+    pub(crate) producer_temporal_claim_term_us: u128,
+    pub(crate) source_requirement_operand_us: u128,
+    pub(crate) final_encode_us: u128,
+    pub(crate) retained_post_encode_us: u128,
+    pub(crate) retained_summary_us: u128,
+    pub(crate) retained_disposition_us: u128,
+    pub(crate) retained_emission_assembly_us: u128,
+    pub(crate) retained_identity_selection_us: u128,
+}
+
+#[cfg(feature = "test-support")]
+impl S4PhaseTimes {
+    const ZERO: Self = Self {
+        pre_lock_graph_temporal_us: 0,
+        lock_us: 0,
+        inspection_us: 0,
+        index_us: 0,
+        producer_temporal_claim_term_us: 0,
+        source_requirement_operand_us: 0,
+        final_encode_us: 0,
+        retained_post_encode_us: 0,
+        retained_summary_us: 0,
+        retained_disposition_us: 0,
+        retained_emission_assembly_us: 0,
+        retained_identity_selection_us: 0,
+    };
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy)]
+enum S4Phase {
+    PreLockGraphTemporal,
+    Lock,
+    Inspection,
+    Index,
+    ProducerTemporalClaimTerm,
+    SourceRequirementOperand,
+    FinalEncode,
+    RetainedPostEncode,
+    RetainedSummary,
+    RetainedDisposition,
+    RetainedEmissionAssembly,
+    RetainedIdentitySelection,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct WriteIndexDiagnostics {
+    pub(crate) linear_work_units: usize,
+    pub(crate) repeated_scan_work_units: usize,
+    pub(crate) one_pass_id_slots: usize,
+    pub(crate) changed_ids: usize,
+    pub(crate) structural_key_lookups: usize,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DocumentNodeDiagnostics {
+    pub(crate) linear_work_units: usize,
+    pub(crate) repeated_scan_work_units: usize,
+    pub(crate) one_pass_id_slots: usize,
+    pub(crate) changed_ids: usize,
+    pub(crate) operand_row_lookups: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl DocumentNodeDiagnostics {
+    const ZERO: Self = Self {
+        linear_work_units: 0,
+        repeated_scan_work_units: 0,
+        one_pass_id_slots: 0,
+        changed_ids: 0,
+        operand_row_lookups: 0,
+    };
+}
+
+#[cfg(feature = "test-support")]
+impl WriteIndexDiagnostics {
+    const ZERO: Self = Self {
+        linear_work_units: 0,
+        repeated_scan_work_units: 0,
+        one_pass_id_slots: 0,
+        changed_ids: 0,
+        structural_key_lookups: 0,
+    };
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct S4RetainedCounts {
+    pub(crate) graph_node_count: usize,
+    pub(crate) exact_declaration_count: usize,
+    pub(crate) exact_field_count: usize,
+    pub(crate) keep_nodes: bool,
+    pub(crate) document_node_count: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl S4RetainedCounts {
+    const ZERO: Self = Self {
+        graph_node_count: 0,
+        exact_declaration_count: 0,
+        exact_field_count: 0,
+        keep_nodes: false,
+        document_node_count: 0,
+    };
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_s4_phase_times() {
+    S4_PHASE_TIMES.with(|times| times.set(S4PhaseTimes::ZERO));
+    S4_RETAINED_COUNTS.with(|counts| counts.set(S4RetainedCounts::ZERO));
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn s4_phase_times() -> S4PhaseTimes {
+    S4_PHASE_TIMES.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+fn record_s4_phase(phase: S4Phase, elapsed: std::time::Duration) {
+    S4_PHASE_TIMES.with(|held| {
+        let mut times = held.get();
+        let elapsed = elapsed.as_micros();
+        match phase {
+            S4Phase::PreLockGraphTemporal => {
+                times.pre_lock_graph_temporal_us =
+                    times.pre_lock_graph_temporal_us.saturating_add(elapsed)
+            }
+            S4Phase::Lock => times.lock_us = times.lock_us.saturating_add(elapsed),
+            S4Phase::Inspection => {
+                times.inspection_us = times.inspection_us.saturating_add(elapsed)
+            }
+            S4Phase::Index => times.index_us = times.index_us.saturating_add(elapsed),
+            S4Phase::ProducerTemporalClaimTerm => {
+                times.producer_temporal_claim_term_us = times
+                    .producer_temporal_claim_term_us
+                    .saturating_add(elapsed)
+            }
+            S4Phase::SourceRequirementOperand => {
+                times.source_requirement_operand_us =
+                    times.source_requirement_operand_us.saturating_add(elapsed)
+            }
+            S4Phase::FinalEncode => {
+                times.final_encode_us = times.final_encode_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedPostEncode => {
+                times.retained_post_encode_us =
+                    times.retained_post_encode_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedSummary => {
+                times.retained_summary_us = times.retained_summary_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedDisposition => {
+                times.retained_disposition_us =
+                    times.retained_disposition_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedEmissionAssembly => {
+                times.retained_emission_assembly_us =
+                    times.retained_emission_assembly_us.saturating_add(elapsed)
+            }
+            S4Phase::RetainedIdentitySelection => {
+                times.retained_identity_selection_us =
+                    times.retained_identity_selection_us.saturating_add(elapsed)
+            }
+        }
+        held.set(times);
+    });
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_write_index_diagnostics() {
+    WRITE_INDEX_DIAGNOSTICS.with(|diagnostics| diagnostics.set(WriteIndexDiagnostics::ZERO));
+    DOCUMENT_NODE_DIAGNOSTICS.with(|diagnostics| diagnostics.set(DocumentNodeDiagnostics::ZERO));
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn write_index_diagnostics() -> WriteIndexDiagnostics {
+    WRITE_INDEX_DIAGNOSTICS.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn document_node_diagnostics() -> DocumentNodeDiagnostics {
+    DOCUMENT_NODE_DIAGNOSTICS.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+fn record_write_index_diagnostics(additional: WriteIndexDiagnostics) {
+    WRITE_INDEX_DIAGNOSTICS.with(|held| {
+        let mut current = held.get();
+        current.linear_work_units = current
+            .linear_work_units
+            .saturating_add(additional.linear_work_units);
+        current.repeated_scan_work_units = current
+            .repeated_scan_work_units
+            .saturating_add(additional.repeated_scan_work_units);
+        current.one_pass_id_slots = current
+            .one_pass_id_slots
+            .saturating_add(additional.one_pass_id_slots);
+        current.changed_ids = current.changed_ids.saturating_add(additional.changed_ids);
+        current.structural_key_lookups = current
+            .structural_key_lookups
+            .saturating_add(additional.structural_key_lookups);
+        held.set(current);
+    });
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn s4_retained_counts() -> S4RetainedCounts {
+    S4_RETAINED_COUNTS.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_node_id_rewrite_slot_visits() {
+    NODE_ID_REWRITE_SLOT_VISITS.store(0, Ordering::Relaxed);
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn node_id_rewrite_slot_visits() -> usize {
+    NODE_ID_REWRITE_SLOT_VISITS.load(Ordering::Relaxed)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn reset_read_index_rewrite_work_units() {
+    READ_INDEX_REWRITE_WORK_UNITS.with(|work| work.set(0));
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn read_index_rewrite_work_units() -> usize {
+    READ_INDEX_REWRITE_WORK_UNITS.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+fn record_read_index_rewrite_work(units: usize) {
+    READ_INDEX_REWRITE_WORK_UNITS.with(|work| {
+        work.set(work.get().saturating_add(units));
+    });
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            USE_REPEATED_READ_INDEX_REWRITE.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let previous = USE_REPEATED_READ_INDEX_REWRITE.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    f()
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn with_repeated_compile_index_rewrites<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            USE_REPEATED_COMPILE_INDEX_REWRITES.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let previous = USE_REPEATED_COMPILE_INDEX_REWRITES.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    f()
+}
 
 /// The diagnostics catalog the package's (empty) diagnostics are qualified
 /// by, written at `diagnostics.catalog`: FSpec's `filament.native.diagnostics/v1`
@@ -1127,7 +1442,7 @@ pub enum ProtocolEmissionResult {
         /// The span of the declaration's name.
         declaration_span: fsl_foundation::Span,
         /// The first typed refusal attributed to this declaration.
-        refusal: fsl_semantics::check::CheckRefusal,
+        refusal: fsl_semantics::check::SemanticCheckRefusal,
     },
     /// The protocol could not finish within its shared checking budget.
     Incomplete {
@@ -1146,7 +1461,7 @@ pub enum ProtocolEmissionAggregate {
     /// At least one protocol was refused; no package is admitted.
     Refused {
         /// The first refused protocol's primary record.
-        primary: fsl_semantics::check::CheckRefusal,
+        primary: fsl_semantics::check::SemanticCheckRefusal,
     },
     /// No protocol was refused, but at least one is incomplete.
     Incomplete {
@@ -1181,7 +1496,9 @@ impl ProtocolEmission {
 
     /// One primary diagnostic for each refused protocol, in declaration
     /// order (FR-383 diagnostics rule).
-    pub fn diagnostics(&self) -> impl Iterator<Item = &fsl_semantics::check::CheckRefusal> + '_ {
+    pub fn diagnostics(
+        &self,
+    ) -> impl Iterator<Item = &fsl_semantics::check::SemanticCheckRefusal> + '_ {
         self.results.iter().filter_map(|result| match result {
             ProtocolEmissionResult::Emitted { .. } => None,
             ProtocolEmissionResult::Refused { refusal, .. } => Some(refusal),
@@ -1972,6 +2289,9 @@ type Recorded<'g> = Vec<(CheckedOccurrence, RecordedLocation<'g>)>;
 /// member never takes its enclosing declaration's region.
 enum RecordedLocation<'g> {
     Expression(&'g Location),
+    /// A source clause function's `declaration` occurrence (FR-569): where
+    /// `check` recorded it, and the region of the declaration it is at.
+    Declaration(&'g Location, SourceRegion),
     Parameter(Option<SourceRegion>),
     Captured(SourceRegion),
 }
@@ -2009,7 +2329,9 @@ impl Candidate<'_> {
             .ok()?;
         match &expression_occurrences[index].1 {
             RecordedLocation::Expression(location) => regions(location),
-            RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
+            RecordedLocation::Declaration(..)
+            | RecordedLocation::Parameter(_)
+            | RecordedLocation::Captured(_) => None,
         }
     }
 }
@@ -2117,6 +2439,7 @@ impl<'g> Candidate<'g> {
     /// `correspondence` node other than `component_composition`, and on a
     /// `value`/`enum_value` node; on eligible nodes it is present exactly
     /// when the node has a `declaration` occurrence.
+    #[ix_trace_rs::string_edge]
     fn declaration_matches_occurrences(&self) -> bool {
         // The `EnumValue` arm is not distinguished by any fixture today:
         // occurrence-recording never attaches a `Declaration`-role
@@ -2175,7 +2498,8 @@ impl<'g> Candidate<'g> {
                 )
             })
             .find_map(|(_, location)| match location {
-                RecordedLocation::Expression(location) => match &location.origin {
+                RecordedLocation::Expression(location)
+                | RecordedLocation::Declaration(location, _) => match &location.origin {
                     ExpressionOwner::Body { index, .. } => Some(*index),
                     _ => None,
                 },
@@ -2193,19 +2517,29 @@ impl<'g> Candidate<'g> {
     fn wire_node(
         &self,
         ids: &StructuralIds,
+        selected_models: &BTreeSet<&str>,
         function_modes: &dyn Fn(
             Option<usize>,
             &NodeKey,
         ) -> Option<filament_semantic_value::checking::CheckMode>,
     ) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
         let node = self.node;
+        let dependencies = match node.nominal_payload() {
+            Some(NominalPayload::DimensionEquivalence(equivalence)) => equivalence
+                .dimensions()
+                .iter()
+                .filter(|operand| operand.package() == node.key().package())
+                .map(|operand| node_id(ids, operand))
+                .collect(),
+            _ => self.dependencies.clone(),
+        };
         Ok(CheckedSemanticNodeV2 {
             node_id: self.id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: self.tag.as_wire().into(),
             semantic_form: node.semantic_form().into(),
             semantic_type: self.semantic_type.clone(),
-            dependencies: self.dependencies.clone(),
+            dependencies,
             occurrences: self
                 .occurrences
                 .iter()
@@ -2230,7 +2564,7 @@ impl<'g> Candidate<'g> {
             owner: node.owner().map(wire_owner),
             owner_model: node.owner_model().map(|key| node_id(ids, key)),
             check_mode: self.function_check_mode(function_modes)?,
-            body: checked_body(ids, node, self.tag)?,
+            body: checked_body(ids, node, self.tag, selected_models)?,
         })
     }
 }
@@ -2241,6 +2575,7 @@ fn checked_body(
     ids: &StructuralIds,
     node: &SemanticNode,
     tag: CheckedNodeTag,
+    selected_models: &BTreeSet<&str>,
 ) -> Result<CheckedTerm, EmitRefusal> {
     // A model-owned nominal node's values are read from the selected
     // document: its body is the empty aggregate (FR-322 "Model-owned
@@ -2249,7 +2584,7 @@ fn checked_body(
         node.nominal_payload(),
         matches!(node.owner(), Some(Owner::Model(_))),
     ) {
-        return nominal_term(ids, &node.key(), nominal);
+        return nominal_term(ids, &node.key(), nominal, selected_models);
     }
     let BodyTerm::Aggregate(aggregate) = node.body() else {
         return checked_term(ids, node.body());
@@ -2301,6 +2636,7 @@ fn nominal_term(
     ids: &StructuralIds,
     node: &NodeKey,
     payload: &NominalPayload,
+    selected_models: &BTreeSet<&str>,
 ) -> Result<CheckedTerm, EmitRefusal> {
     let body = match payload {
         NominalPayload::Enum(enumeration) => NominalBody::try_enum(
@@ -2329,25 +2665,34 @@ fn nominal_term(
             checked_rational(unit.offset()),
         ),
         NominalPayload::DimensionEquivalence(equivalence) => {
-            // A Local operand is a node of the importing package's own graph
-            // (FSpec FR-322-AC-299). A dimension of another package is a
-            // Package operand, which IR checks against a direct dependency
-            // selection; the emitter does not establish that selection here
-            // (QSL-1177 owns it), so it refuses rather than mint a foreign
-            // package into a Local id.
-            for operand in equivalence.dimensions() {
-                if operand.package() != node.package() {
-                    return Err(EmitRefusal::ForeignDimensionOperand {
+            // Foreign package operands are legal only when their package was
+            // selected by this checked graph. The IR reader authenticates the
+            // reference against the package's admitted model selections.
+            let [first, second] = equivalence.dimensions();
+            let [first, second] = [first, second].map(|operand| {
+                let id = node_id(ids, operand);
+                if operand.package() == node.package() {
+                    Ok(CheckedDimensionOperand::Local(id))
+                } else if selected_models.contains(operand.package()) {
+                    let declared = CheckedDeclaredNodeId::try_new(id).map_err(|_| {
+                        EmitRefusal::ForeignDimensionOperand {
+                            node: Box::new(node_id(ids, node)),
+                            operand: Box::new(node_id(ids, operand)),
+                        }
+                    })?;
+                    Ok(CheckedDimensionOperand::Package(CheckedPackageNodeRef {
+                        package: operand.package().into(),
+                        node: declared,
+                    }))
+                } else {
+                    Err(EmitRefusal::ForeignDimensionOperand {
                         node: Box::new(node_id(ids, node)),
                         operand: Box::new(node_id(ids, operand)),
-                    });
+                    })
                 }
-            }
+            });
             NominalBody::try_dimension_equivalence(
-                [
-                    CheckedDimensionOperand::Local(node_id(ids, &equivalence.dimensions()[0])),
-                    CheckedDimensionOperand::Local(node_id(ids, &equivalence.dimensions()[1])),
-                ],
+                [first?, second?],
                 checked_rational(equivalence.scale()),
             )
         }
@@ -2745,33 +3090,48 @@ fn application_operator(operator: Operator) -> ApplicationOperator {
     }
 }
 
+/// Contract IR FR-038-AC-644: the operation of an application, written from the typed
+/// form and read back through the IR's strict reader.
+#[implements("IR-FR-038-AC-644")]
 fn operation_term(
     ids: &StructuralIds,
     operation: &fsl_semantics::check::Operation,
 ) -> Result<filament_contract_model::CheckedApplicationOperation, EmitRefusal> {
-    use serde_json::json;
-    let laws = |laws: &[OperationLaw]| {
+    use filament_contract_model as ir;
+    let laws = |laws: &[OperationLaw]| -> Result<Vec<ir::CheckedOperationLaw>, EmitRefusal> {
         laws.iter()
             .map(|law| {
-                json!({
-                    "role": law.role.as_str(),
-                    "definition": law.definition,
+                Ok(ir::CheckedOperationLaw {
+                    role: ir::LawRole::from_wire(law.role.as_str()).ok_or_else(|| {
+                        encoding("an operation law role is outside the IR vocabulary")
+                    })?,
+                    definition: ir::CheckedArtifactRef {
+                        authority: law.definition.authority.as_str().into(),
+                        identity: law.definition.identity.as_str().into(),
+                    },
                 })
             })
-            .collect::<Vec<_>>()
+            .collect()
     };
     let mode = |mode: Option<&fsl_semantics::check::OperationMode>| {
-        mode.map(|mode| match mode {
-            fsl_semantics::check::OperationMode::Rounding(value) => {
-                json!({"kind":"rounding", "value":value.as_str()})
-            }
-            fsl_semantics::check::OperationMode::TextProfile(value) => {
-                json!({"kind":"text_profile", "value":value.as_str()})
-            }
-            fsl_semantics::check::OperationMode::Absence(value) => {
-                json!({"kind":"absence", "value":value.as_str()})
-            }
+        mode.map(|mode| {
+            let (kind, value) = match mode {
+                fsl_semantics::check::OperationMode::Rounding(value) => {
+                    ("rounding", value.as_str())
+                }
+                fsl_semantics::check::OperationMode::TextProfile(value) => {
+                    ("text_profile", value.as_str())
+                }
+                fsl_semantics::check::OperationMode::Absence(value) => ("absence", value.as_str()),
+            };
+            Ok::<_, EmitRefusal>(ir::CheckedOperationMode {
+                kind: ir::OperationModeKind::from_wire(kind).ok_or_else(|| {
+                    encoding("an operation mode kind is outside the IR vocabulary")
+                })?,
+                value: value.into(),
+            })
         })
+        .transpose()
     };
     let leaves = operation
         .leaves()
@@ -2782,151 +3142,220 @@ fn operation_term(
                 .iter()
                 .map(|segment| match segment {
                     fsl_semantics::check::LeafSegment::Field(name) => {
-                        format!("field:{}", name.as_str())
+                        format!("field:{}", name.as_str()).into()
                     }
                     fsl_semantics::check::LeafSegment::Position(position) => {
-                        format!("position:{position}")
+                        format!("position:{position}").into()
                     }
                     fsl_semantics::check::LeafSegment::Inner => "inner".into(),
                     fsl_semantics::check::LeafSegment::Member(name) => {
-                        format!("member:{}", name.as_str())
+                        format!("member:{}", name.as_str()).into()
                     }
                     fsl_semantics::check::LeafSegment::Recursion(depth) => {
-                        format!("recursion:{depth}")
+                        format!("recursion:{depth}").into()
                     }
                 })
-                .collect::<Vec<_>>();
-            json!({"path":path, "laws":laws(&leaf.laws), "mode":mode(leaf.mode.as_ref())})
+                .collect::<Vec<Box<str>>>();
+            Ok(ir::CheckedOperationLeaf {
+                path,
+                laws: laws(&leaf.laws)?,
+                mode: mode(leaf.mode.as_ref())?,
+            })
         })
-        .collect::<Vec<_>>();
-    let member = operation
-        .member()
-        .map(|value| member_value(ids, value))
-        .transpose()?;
-    filament_contract_model::CheckedApplicationOperation::deserialize(json!({
-        "identity": operation.identity(), "laws": laws(operation.laws()),
-        "mode": mode(operation.mode()), "member": member, "leaves": leaves,
-    }))
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+    let (member, execution_point) = match operation.member() {
+        Some(value) => {
+            let (member, point) = member_value(ids, value)?;
+            (Some(member), point)
+        }
+        None => (None, None),
+    };
+    ir::CheckedApplicationOperation::from_form(&ir::CheckedApplicationOperationForm {
+        identity: operation.identity().into(),
+        laws: laws(operation.laws())?,
+        mode: mode(operation.mode())?,
+        member,
+        execution_point,
+        leaves,
+    })
     .map_err(encoding)
 }
 
-fn member_value(ids: &StructuralIds, member: &Member) -> Result<serde_json::Value, EmitRefusal> {
-    use serde_json::json;
-    Ok(match member {
+/// The typed member of an operation, with the state clause's execution point
+/// that the wire writes inside the member (IR FR-038-AC-644; FR-105-AC-12 for
+/// the point).
+#[implements("IR-FR-038-AC-644", "FR-105-AC-12")]
+fn member_value(
+    ids: &StructuralIds,
+    member: &Member,
+) -> Result<
+    (
+        filament_contract_model::CheckedOperationMember,
+        Option<filament_contract_model::ExecutionPoint>,
+    ),
+    EmitRefusal,
+> {
+    use filament_contract_model as ir;
+    let integer = |value: u64| filament_exact::Integer::from(value);
+    let rational = |value: &filament_exact::Rational| ir::CheckedOperationRational {
+        numerator: value.numerator().clone(),
+        denominator: value.denominator().clone(),
+    };
+    let end = |closed: bool| {
+        if closed {
+            ir::CheckedIntervalEnd::Closed
+        } else {
+            ir::CheckedIntervalEnd::Open
+        }
+    };
+    let mut point = None;
+    let typed = match member {
         Member::Field {
             declaration,
             name,
             explicit_deref,
             population,
-        } => {
-            let mut member = json!({
-                "kind":"field",
-                "declaration":node_id(ids, declaration),
-                "name":name.as_str()
-            });
-            if let Some(population) = population {
-                member["population"] = json!(node_id(ids, population));
-            }
-            if let Some(explicit_deref) = explicit_deref {
-                let read_form = if *explicit_deref {
-                    "explicit_deref"
+        } => ir::CheckedOperationMember::Field {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+            read_form: explicit_deref.map(|explicit| {
+                if explicit {
+                    ir::CheckedFieldReadForm::ExplicitDeref
                 } else {
-                    "bare"
-                };
-                member["read_form"] = json!(read_form);
-            }
-            member
-        }
+                    ir::CheckedFieldReadForm::Bare
+                }
+            }),
+            population: population
+                .as_ref()
+                .map(|population| node_id(ids, population)),
+        },
         Member::Position {
             declaration,
             position,
-        } => json!({"kind":"position","declaration":node_id(ids, declaration),"position":position}),
-        Member::Element { declaration } => {
-            json!({"kind":"element","declaration":node_id(ids, declaration)})
-        }
+        } => ir::CheckedOperationMember::Position {
+            declaration: node_id(ids, declaration),
+            position: integer(*position),
+        },
+        Member::Element { declaration } => ir::CheckedOperationMember::Element {
+            declaration: node_id(ids, declaration),
+        },
         Member::RelationshipEnd {
             declaration,
             name,
             destination_type,
             population,
-        } => {
-            let mut record = json!({"kind":"relationship_end","declaration":node_id(ids, declaration),"name":name.as_str(),"destination_type":node_id(ids, destination_type)});
-            if let Some(population) = population {
-                record["population"] = json!(node_id(ids, population));
-            }
-            record
-        }
-        Member::Operation { declaration, name } => {
-            json!({"kind":"operation","declaration":node_id(ids, declaration),"name":name.as_str()})
-        }
-        Member::History { declaration, name } => {
-            json!({"kind":"history","declaration":node_id(ids, declaration),"name":name.as_str()})
-        }
-        Member::TypeArgument { declaration, alias } => {
-            let mut member =
-                json!({"kind":"type_argument","declaration":node_id(ids, declaration)});
-            if let Some(alias) = alias {
-                member["alias"] = json!({"package": alias.package, "node": alias.node});
-            }
-            member
-        }
-        Member::ProfileOperator { operator } => {
-            json!({"kind":"profile_operator","operator":operator.as_str()})
-        }
+        } => ir::CheckedOperationMember::RelationshipEnd {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+            destination_type: node_id(ids, destination_type),
+            population: population
+                .as_ref()
+                .map(|population| node_id(ids, population)),
+        },
+        Member::Operation { declaration, name } => ir::CheckedOperationMember::Operation {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+        },
+        Member::History { declaration, name } => ir::CheckedOperationMember::History {
+            declaration: node_id(ids, declaration),
+            name: name.as_str().into(),
+        },
+        Member::TypeArgument { declaration, alias } => ir::CheckedOperationMember::TypeArgument {
+            declaration: node_id(ids, declaration),
+            alias: alias.as_ref().map(|alias| ir::CheckedTypeArgumentAlias {
+                package: alias.package.as_str().into(),
+                node: alias.node.as_str().into(),
+            }),
+        },
+        Member::ProfileOperator { operator } => ir::CheckedOperationMember::ProfileOperator {
+            operator: Some(operator.as_str().into()),
+        },
         Member::StateClause {
             execution_point, ..
         } => {
             let clause = member
                 .state_clause_wire_kind()
+                .and_then(ir::StateClauseKind::from_wire)
                 .ok_or_else(|| encoding("a state clause member has no checked wire kind"))?;
-            let mut record = json!({"kind":"state_clause","clause":clause});
-            if let Some(point) = execution_point {
-                record["execution_point"] = json!(point.point());
-            }
-            record
+            point = execution_point.as_ref().map(|point| point.point().clone());
+            ir::CheckedOperationMember::StateClause { clause }
         }
-        Member::TemporalInterval { interval } => json!({
-            "kind":"temporal_interval",
-            "interval":interval.map(|interval| json!({
-                "lower":interval.lower().to_string(),
-                "upper": match interval.upper() {
-                    fsl_foundation::bound::TemporalUpper::Finite(value) => Some(value.to_string()),
+        Member::TemporalInterval { interval } => ir::CheckedOperationMember::TemporalInterval {
+            interval: interval.map(|interval| ir::CheckedOperationInterval::Integer {
+                lower: integer(interval.lower()),
+                upper: match interval.upper() {
+                    fsl_foundation::bound::TemporalUpper::Finite(value) => Some(integer(value)),
                     fsl_foundation::bound::TemporalUpper::Open => None,
                 },
-            })),
-        }),
-        Member::TimedInterval(timed) => {
-            let rational = |value: &filament_exact::Rational| {
-                json!({
-                    "numerator":value.numerator().to_string(),
-                    "denominator":value.denominator().to_string(),
-                })
-            };
-            json!({"kind":"temporal_interval","interval":{
-                "lower":rational(&timed.lower),
-                "lower_end":if timed.lower_closed {"closed"} else {"open"},
-                "upper":timed.upper.as_ref().map(rational),
-                "upper_end":if timed.upper_closed {"closed"} else {"open"},
-            }})
-        }
+            }),
+        },
+        Member::TimedInterval(timed) => ir::CheckedOperationMember::TemporalInterval {
+            interval: Some(ir::CheckedOperationInterval::Timed {
+                lower: rational(&timed.lower),
+                upper: timed.upper.as_ref().map(rational),
+                lower_end: end(timed.lower_closed),
+                upper_end: end(timed.upper_closed),
+            }),
+        },
         Member::Fairness {
             kind,
             granularity,
             target,
-        } => json!({
-            "kind":"fairness",
-            "fairness_kind":match kind { filament_semantic_value::fairness::FairnessKind::Weak => "weak", filament_semantic_value::fairness::FairnessKind::Strong => "strong" },
-            "granularity":match granularity { filament_semantic_value::fairness::FairnessGranularity::Whole => "whole", filament_semantic_value::fairness::FairnessGranularity::Each => "each" },
-            "target":match target {
-                fsl_semantics::value::FairnessTarget::Operation { declaration, name } => json!({"kind":"operation", "declaration":node_id(ids, declaration), "name":name.as_str()}),
-                fsl_semantics::value::FairnessTarget::ProtocolRoot { node } => json!({"kind":"protocol_root", "node":node_id(ids, node)}),
-                fsl_semantics::value::FairnessTarget::AttemptNode { node } => json!({"kind":"attempt_node", "node":node_id(ids, node)}),
-                fsl_semantics::value::FairnessTarget::ParallelBranch { parallel, branch } => json!({"kind":"parallel_branch", "parallel":node_id(ids, parallel), "branch":branch.as_str()}),
-                fsl_semantics::value::FairnessTarget::CompensationTemplate { node } => json!({"kind":"compensation_template", "node":node_id(ids, node)}),
-                fsl_semantics::value::FairnessTarget::HybridTransition { declaration, name } => json!({"kind":"hybrid_transition", "declaration":node_id(ids, declaration), "name":name.as_str()}),
-            }
-        }),
-    })
+        } => ir::CheckedOperationMember::Fairness {
+            fairness_kind: match kind {
+                filament_semantic_value::fairness::FairnessKind::Weak => {
+                    ir::CheckedFairnessKind::Weak
+                }
+                filament_semantic_value::fairness::FairnessKind::Strong => {
+                    ir::CheckedFairnessKind::Strong
+                }
+            },
+            granularity: match granularity {
+                filament_semantic_value::fairness::FairnessGranularity::Whole => {
+                    ir::CheckedFairnessGranularity::Whole
+                }
+                filament_semantic_value::fairness::FairnessGranularity::Each => {
+                    ir::CheckedFairnessGranularity::Each
+                }
+            },
+            target: match target {
+                fsl_semantics::value::FairnessTarget::Operation { declaration, name } => {
+                    ir::CheckedFairnessTarget::Operation {
+                        declaration: node_id(ids, declaration),
+                        name: name.as_str().into(),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::ProtocolRoot { node } => {
+                    ir::CheckedFairnessTarget::ProtocolRoot {
+                        node: node_id(ids, node),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::AttemptNode { node } => {
+                    ir::CheckedFairnessTarget::AttemptNode {
+                        node: node_id(ids, node),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::ParallelBranch { parallel, branch } => {
+                    ir::CheckedFairnessTarget::ParallelBranch {
+                        parallel: node_id(ids, parallel),
+                        branch: branch.as_str().into(),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::CompensationTemplate { node } => {
+                    ir::CheckedFairnessTarget::CompensationTemplate {
+                        node: node_id(ids, node),
+                    }
+                }
+                fsl_semantics::value::FairnessTarget::HybridTransition { declaration, name } => {
+                    ir::CheckedFairnessTarget::HybridTransition {
+                        declaration: node_id(ids, declaration),
+                        name: name.as_str().into(),
+                    }
+                }
+            },
+        },
+    };
+    Ok((typed, point))
 }
 
 /// FR-576: the `operation_bodies` rows of `graph`, sourced from the checked
@@ -3580,6 +4009,8 @@ fn recorded_occurrences(
         };
         let location = if graph.parameter_span(key.clone(), &origin).is_some() {
             RecordedLocation::Parameter(graph.occurrence_region(key.clone(), &origin))
+        } else if let Some(region) = graph.clause_declaration_region(&key, &origin) {
+            RecordedLocation::Declaration(location, region)
         } else {
             RecordedLocation::Expression(location)
         };
@@ -3591,6 +4022,7 @@ fn recorded_occurrences(
 /// Emit every authored related clause against its actual recorded control
 /// occurrence and final full node id (FSpec FR-831). Canonical positions
 /// were retained before lowering deduplicated the records.
+#[ix_trace_rs::string_edge]
 fn protocol_correlation_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -4250,6 +4682,7 @@ fn equality_fact_witness_rows(
 /// Turns the checked equality decision and its exact occurrence witness into
 /// FR-322's wire sidecar. The structural graph supplies operand type nodes;
 /// the producer rows supply the schedule and occurrence-specific decision.
+#[ix_trace_rs::string_edge]
 fn checked_equality_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -4644,10 +5077,12 @@ fn emitted_source_declaration_key(
 /// Rewrite source declaration keys in the typed literals of an emitted clock
 /// place. Those keys are producer-local S3 strings; the package names the
 /// same declarations from their SourceOwner identities.
+#[ix_trace_rs::string_edge]
 fn rewrite_source_keys_in_clock_place(
     node: &mut CheckedSemanticNodeV2,
     source_keys: &SourceDeclarationKeys,
 ) -> Result<(), EmitRefusal> {
+    #[ix_trace_rs::string_edge]
     fn rewrite_term(
         term: &mut CheckedTerm,
         source_keys: &SourceDeclarationKeys,
@@ -5198,6 +5633,7 @@ fn source_map(
             // region places the occurrence nowhere.
             let region = match location {
                 RecordedLocation::Expression(location) => regions(location),
+                RecordedLocation::Declaration(_, region) => Some(region.clone()),
                 RecordedLocation::Parameter(region) => region.clone(),
                 RecordedLocation::Captured(region) => Some(region.clone()),
             }
@@ -5373,6 +5809,85 @@ fn refinement_node(
     ))
 }
 
+/// FR-322 "Operand index segments": the `node` of a refinement's external
+/// `{package, node}` key is a document-held id of that dependency's graph, so
+/// each operand it holds is written as the index segment of the operand's node
+/// there. A key whose path holds no operand is already in that form.
+fn write_external_keys(
+    ids: &StructuralIds,
+    package: &CheckedPackage,
+    limits: EmitLimits,
+    body: &mut CheckedTerm,
+) -> Result<(), EmitRefusal> {
+    use filament_contract_model::{
+        CheckedNodePathSegment as Segment, RefinementAbstractClass, RefinementKey,
+    };
+    let CheckedTerm::Refinement {
+        abstract_key,
+        protocol,
+        class_catalog,
+        ..
+    } = body
+    else {
+        return Ok(());
+    };
+    let mut written = vec![abstract_key.as_mut()];
+    written.extend(protocol.as_deref_mut());
+    for class in class_catalog
+        .iter_mut()
+        .flat_map(|catalog| &mut catalog.r#abstract)
+    {
+        if let RefinementAbstractClass::Declared {
+            node, binder_types, ..
+        } = class
+        {
+            written.push(node);
+            written.extend(binder_types);
+        }
+    }
+    let mut keys = ids.key_reader();
+    let mut graphs = BTreeMap::new();
+    for key in written {
+        let RefinementKey::External(external) = key else {
+            continue;
+        };
+        if !holds_segment(&external.node, |segment| {
+            matches!(segment, Segment::Node(_))
+        }) {
+            continue;
+        }
+        let library = fsl_semantics::library::LibraryName::new(&*external.package)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        let graph = match graphs.entry(library) {
+            std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let dependency = package
+                    .dependencies()
+                    .get(vacant.key())
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                // The dependency's linked bytes, held to
+                // `limits.output_bytes`, give its graph order.
+                let emission = match emit_linked_dependency(package, vacant.key(), limits) {
+                    Some(linked) => linked?,
+                    None => emit_checked(dependency, limits)?,
+                };
+                let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+                    emission.package().bytes(),
+                )
+                .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+                vacant.insert(graph)
+            }
+        };
+        let structural = keys
+            .key(&external.node)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        external.node = graph
+            .wire_id(&structural)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    }
+    Ok(())
+}
+
 /// `origin`'s role as FR-322 spells it.
 fn occurrence_role(node: &NodeKey, origin: &Origin) -> Result<CheckedOccurrenceRole, EmitRefusal> {
     crate::checked_v2::occurrence_role(origin.role().as_str()).ok_or_else(|| {
@@ -5394,15 +5909,16 @@ fn dependency_selections(package: &CheckedPackage) -> Vec<CheckedDependencySelec
         .collect()
 }
 
-/// The caller-selected clocks used by this package's dependency closure, in
-/// ascending byte order of clock name.
+/// The caller-selected clocks used by this package's dependency closure, as
+/// it linked each library, in ascending byte order of clock name.
+#[implements("FR-640-AC-17")]
 fn dependency_clock_selections(
     package: &CheckedPackage,
 ) -> Option<Vec<CheckedDependencyClockSelection>> {
     let mut selections = BTreeMap::new();
-    let mut pending: Vec<_> = package.dependencies().values().map(AsRef::as_ref).collect();
-    while let Some(dependency) = pending.pop() {
-        if let Some(emission) = dependency.remembered_emission() {
+    let mut pending: Vec<_> = package.dependencies().iter().collect();
+    while let Some((identity, dependency)) = pending.pop() {
+        if let Some(emission) = package.dependency_emission(identity) {
             for binding in emission.temporal_rows().bindings() {
                 if !is_model_binding_name(&binding.clock_name) {
                     selections
@@ -5411,7 +5927,7 @@ fn dependency_clock_selections(
                 }
             }
         }
-        pending.extend(dependency.dependencies().values().map(AsRef::as_ref));
+        pending.extend(dependency.dependencies().iter());
     }
     (!selections.is_empty()).then(|| {
         selections
@@ -5443,9 +5959,10 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// (`CheckedGraph::region`, FR-096).
 ///
 /// A package emitted before (by this function or
-/// [`emit_checked_with_cancel`]) returns its remembered emission: a checked
-/// package does not change, so a dependency reached again, or a caller that
-/// emits what the lifecycle already emitted, does not emit it twice.
+/// [`emit_checked_with_cancel`]) returns its remembered emission, so a
+/// dependency reached again, or a caller that emits what the lifecycle already
+/// emitted, does not emit it twice. A successful abstraction binding changes
+/// the package and drops that emission ([`CheckedPackage::bind_abstraction`]).
 ///
 /// `limits` is the caller's ceiling on the package's canonical bytes
 /// (`emit.output_bytes`); a remembered emission longer than it is refused
@@ -5453,9 +5970,23 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     if let Some(emission) = package.remembered_emission() {
-        return remembered_within(emission, limits, package.graph());
+        return remembered_within(&emission, limits, package.graph());
     }
     emit_checked_with_cancel(package, &Cancel::new(), limits)
+}
+
+/// The emission of the library `identity` that `package` linked
+/// ([`CheckedPackage::dependency_emission`]), held to `limits` as
+/// [`emit_checked`] holds a remembered one; `None` when `identity` is not in
+/// the closure `package` linked.
+#[implements("FR-640-AC-17")]
+pub fn emit_linked_dependency(
+    package: &CheckedPackage,
+    identity: &fsl_semantics::library::LibraryName,
+    limits: EmitLimits,
+) -> Option<Result<Emission, EmitRefusal>> {
+    let (graph, emission) = package.linked_dependency(identity)?;
+    Some(remembered_within(emission, limits, graph))
 }
 
 /// A remembered `emission`, when its canonical bytes fit `limits`.
@@ -5918,7 +6449,7 @@ fn append_schedulability_claims(
         });
         let body = nominal
             .nominal_payload()
-            .map(|payload| nominal_term(ids, &nominal.key, payload))
+            .map(|payload| nominal_term(ids, &nominal.key, payload, &BTreeSet::new()))
             .transpose()?
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let node = CheckedSemanticNodeV2 {
@@ -6785,10 +7316,54 @@ fn append_model_roots<'a>(
     Ok(())
 }
 
+#[implements("FSpec-FR-322-AC-137")]
+#[ix_trace_rs::string_edge]
+fn move_model_roots_to_end(
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+) {
+    let root_ids: BTreeSet<_> = nodes
+        .iter()
+        .filter(|node| {
+            node.node_tag.as_ref() == CheckedNodeTag::Model.as_wire()
+                && node.semantic_form.as_ref() == "model_root"
+        })
+        .map(|node| node.node_id.clone())
+        .collect();
+    if root_ids.is_empty() {
+        return;
+    }
+
+    let mut other_nodes = Vec::with_capacity(nodes.len());
+    let mut roots = Vec::with_capacity(root_ids.len());
+    for node in nodes.drain(..) {
+        if root_ids.contains(&node.node_id) {
+            roots.push(node);
+        } else {
+            other_nodes.push(node);
+        }
+    }
+    other_nodes.extend(roots);
+    *nodes = other_nodes;
+
+    let mut other_entries = Vec::with_capacity(source_map.len());
+    let mut root_entries = Vec::with_capacity(root_ids.len());
+    for entry in source_map.drain(..) {
+        if root_ids.contains(&entry.node_id) {
+            root_entries.push(entry);
+        } else {
+            other_entries.push(entry);
+        }
+    }
+    other_entries.extend(root_entries);
+    *source_map = other_entries;
+}
+
 /// FR-322 / contract-ir model occurrence rule: each model-owned declaration
 /// node carries one generated occurrence at its selected model root region.
 /// Type references discovered while emitting a declaration do not create
 /// additional occurrences on that declaration node.
+#[ix_trace_rs::string_edge]
 fn normalize_model_declaration_occurrences(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -7040,10 +7615,10 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let (requirement_rows, path_condition_frames, renumbered) =
+    let (requirement_rows, path_condition_frames, renumbered, synthetics) =
         value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
-        value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+        value_validity_requirements::ordinals::relabel_term_data(&renumbered, &synthetics, data);
     }
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
@@ -7317,6 +7892,7 @@ impl<'g> Candidates<'g> {
     }
 }
 
+#[ix_trace_rs::string_edge]
 fn candidates_of<'g>(
     ids: &StructuralIds,
     foreign: &ForeignNodes,
@@ -7548,6 +8124,7 @@ pub(crate) fn emitted_document_nodes(
 /// `#[string_edge]`: the admitted timed nominal form selects the unit-node
 /// emission branch.
 #[string_edge]
+#[implements("FSpec-FR-322-AC-137")]
 #[allow(clippy::too_many_arguments)]
 fn emit_package_nodes(
     package: &CheckedPackage,
@@ -7559,6 +8136,8 @@ fn emit_package_nodes(
     limits: EmitLimits,
     keep_nodes: bool,
 ) -> Result<(Emission, Vec<CheckedSemanticNodeV2>), EmitRefusal> {
+    #[cfg(feature = "test-support")]
+    let s4_started = std::time::Instant::now();
     let ids_table = StructuralIds::default();
     let ids = &ids_table;
     let denied = || {
@@ -7610,6 +8189,11 @@ fn emit_package_nodes(
     let selected_models: BTreeSet<&str> = graph
         .model_roots()
         .map(|(selection, _)| selection.identity.as_str())
+        .collect();
+    let selected_dimension_packages: BTreeSet<&str> = graph
+        .model_selections()
+        .iter()
+        .map(|selection| selection.identity.as_str())
         .collect();
     let omitted = omissions(
         ids,
@@ -7714,18 +8298,23 @@ fn emit_package_nodes(
         .collect();
     let (mut source_map, mut sources) = source_map(&order, &regions)?;
     sources.extend(graph.sources().into_iter().map(source_artifact));
-    let wire_nodes = order
-        .iter()
-        .map(
-            |candidate| match denied().or_else(|| fault(&candidate.id)) {
-                Some(refusal) => Err(refusal),
-                None => candidate.wire_node(ids, &|index, key| match index {
-                    Some(index) => graph.function_check_mode(index),
-                    None => graph.probabilistic_model().reward_function_check_mode(key),
-                }),
-            },
-        )
-        .collect::<Result<Vec<_>, _>>()?;
+    let wire_nodes =
+        order
+            .iter()
+            .map(
+                |candidate| match denied().or_else(|| fault(&candidate.id)) {
+                    Some(refusal) => Err(refusal),
+                    None => {
+                        candidate.wire_node(ids, &selected_dimension_packages, &|index, key| {
+                            match index {
+                                Some(index) => graph.function_check_mode(index),
+                                None => graph.probabilistic_model().reward_function_check_mode(key),
+                            }
+                        })
+                    }
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
     let mut nodes = wire_nodes;
     for node in &mut nodes {
         rewrite_source_keys_in_clock_place(node, &source_keys)?;
@@ -7741,7 +8330,8 @@ fn emit_package_nodes(
             .refinement_declaration_region(refinement)
             .filter(|region| region.start() < region.end())
             .ok_or(EmitRefusal::UnlocatedRefinementDeclaration)?;
-        let (node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        let (mut node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        write_external_keys(ids, package, limits, &mut node.body)?;
         step_rows.extend(rows);
         let insertion = nodes.partition_point(|existing| existing.node_id < node.node_id);
         nodes.insert(insertion, node.clone());
@@ -8061,16 +8651,22 @@ fn emit_package_nodes(
     }
     append_model_roots(
         ids,
-        graph.model_roots().zip(
-            graph
-                .model_root_locations()
-                .iter()
-                .map(|location| regions(location)),
-        ),
+        graph
+            .model_roots()
+            .zip(graph.model_root_locations().iter().map(&regions)),
         &mut nodes,
         &mut source_map,
     )?;
-    model_correspondence::append(ids, graph, &regions, &mut nodes, &mut source_map)?;
+    // The meter charges the canonical rows that are written below.
+    let mut meter = OutputMeter::new(limits);
+    model_correspondence::append(
+        ids,
+        graph,
+        &regions,
+        &mut nodes,
+        &mut source_map,
+        &mut meter,
+    )?;
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
@@ -8091,8 +8687,6 @@ fn emit_package_nodes(
             .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
-    // The meter charges the canonical rows that are written below.
-    let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
         graph,
@@ -8103,6 +8697,9 @@ fn emit_package_nodes(
     )?;
     omitted.extend(value_validity.omitted.iter().cloned());
     omitted.sort_by(|left, right| left.node.cmp(&right.node));
+    // FSpec FR-322-AC-137: selected-model roots and their source-map entries
+    // follow every other emitted node and source-map entry.
+    move_model_roots_to_end(&mut nodes, &mut source_map);
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
@@ -8150,6 +8747,10 @@ fn emit_package_nodes(
     let (edition, definition_selections) =
         catalog_selections(graph.header_layers(), &laws, graph.extension_selections());
     let root = DefinitionRole::Root.identity();
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::PreLockGraphTemporal, s4_started.elapsed());
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let lock = CheckedPackageLockV2 {
         sources: sources.into_iter().collect(),
         edition: edition.clone(),
@@ -8160,7 +8761,17 @@ fn emit_package_nodes(
         refinement_internals: None,
         dependency_clock_selections: dependency_clock_selections(package),
     };
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::Lock, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::Inspection, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let emitted_node_ids = write_index_segments(
         ids,
         &mut nodes,
@@ -8169,11 +8780,15 @@ fn emit_package_nodes(
         &mut schedulability_claim_rows,
         &foreign,
     )?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::Index, phase_started.elapsed());
     // The source map is complete and is written verbatim into the package, so
     // its canonical bytes are a floor on the package's. Charge them, and each
     // typed row section below as it is built, rather than after the final
     // encode.
     meter.charge(&source_map)?;
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let WrittenTemporalRows {
@@ -8200,13 +8815,13 @@ fn emit_package_nodes(
         &source_map,
     )?;
     meter.charge(&claim_names)?;
-    let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
+    let mut equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
-    let equality_fact_witness_rows = equality_fact_witness_rows(
+    let mut equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
         &producer_node_ids,
         &nodes,
@@ -8223,17 +8838,28 @@ fn emit_package_nodes(
         &source_keys,
         &mut meter,
     )?;
-    if let Some(data) = &mut checked_term_data {
-        if value_validity.renumbering.renumbers() {
-            let mut row_ids = emitted_node_ids.clone();
-            row_ids.extend(
-                producer_node_ids
-                    .iter()
-                    .map(|(key, id)| (key.clone(), id.clone())),
-            );
+    if value_validity.renumbering.renumbers() {
+        let mut row_ids = emitted_node_ids.clone();
+        row_ids.extend(
+            producer_node_ids
+                .iter()
+                .map(|(key, id)| (key.clone(), id.clone())),
+        );
+        if let Some(data) = &mut checked_term_data {
             value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
+        value_validity.renumbering.relabel_equality_rows(
+            &row_ids,
+            &mut equality_producer_identity_rows,
+            &mut equality_fact_witness_rows,
+            &source_map,
+        );
     }
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::ProducerTemporalClaimTerm, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
         .map(|(key, mut row)| {
@@ -8316,6 +8942,7 @@ fn emit_package_nodes(
         &relation_rows,
         &omitted_causes,
     )?;
+    value_validity_requirements::renumber_records(&requirement_rows, &mut nodes, &mut source_map)?;
     meter.charge(&requirement_rows)?;
     let path_condition_frames =
         value_validity_requirements::frame_rows(ids, &producer_node_ids, &value_validity.frames)?;
@@ -8326,6 +8953,8 @@ fn emit_package_nodes(
     let operation_body_rows = operation_body_rows(graph, &emitted_node_ids, &nodes);
     let correlation_rows = protocol_correlation_rows(graph, &producer_node_ids, &source_map)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::SourceRequirementOperand, phase_started.elapsed());
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: GRAPH_V2.into(),
         nodes,
@@ -8361,6 +8990,8 @@ fn emit_package_nodes(
     drop((candidates, external, foreign));
     drop((declared_forms, source_keys));
     drop(ids_table);
+    #[cfg(feature = "test-support")]
+    let phase_started = std::time::Instant::now();
     let package = EmittedPackage::new(graph.package_name(), |name| {
         encode_checked_package_v2_with_path_condition_frames(
             name,
@@ -8391,7 +9022,21 @@ fn emit_package_nodes(
         )
         .map_err(EmitRefusal::from)
     })?;
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::FinalEncode, phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let retained_started = std::time::Instant::now();
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
     let retained_nodes = RetainedNodes::of(&semantic_graph);
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::RetainedSummary, retained_phase_started.elapsed());
+
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
+    #[cfg(feature = "test-support")]
+    let graph_node_count = semantic_graph.nodes.len();
     // The typed nodes outlive the bytes only for a caller that reads them,
     // or for the identity-row selection when the acquisition selected
     // exact rows; otherwise they are dropped here, before the package is
@@ -8407,6 +9052,24 @@ fn emit_package_nodes(
         drop(semantic_graph);
         Vec::new()
     };
+    #[cfg(feature = "test-support")]
+    record_s4_phase(
+        S4Phase::RetainedDisposition,
+        retained_phase_started.elapsed(),
+    );
+    #[cfg(feature = "test-support")]
+    S4_RETAINED_COUNTS.with(|counts| {
+        counts.set(S4RetainedCounts {
+            graph_node_count,
+            exact_declaration_count: selected_exact_declaration_rows.len(),
+            exact_field_count: selected_exact_field_rows.len(),
+            keep_nodes,
+            document_node_count: document.len(),
+        });
+    });
+
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
     let emission = Emission {
         package,
         artifact_identity: graph.source().clone(),
@@ -8443,8 +9106,22 @@ fn emit_package_nodes(
             profile_selections: lock.profile_selections,
             bindings: temporal_bindings,
         },
-    }
-    .with_identity_row_selection(&document);
+    };
+    #[cfg(feature = "test-support")]
+    record_s4_phase(
+        S4Phase::RetainedEmissionAssembly,
+        retained_phase_started.elapsed(),
+    );
+    #[cfg(feature = "test-support")]
+    let retained_phase_started = std::time::Instant::now();
+    let emission = emission.with_identity_row_selection(&document);
+    #[cfg(feature = "test-support")]
+    record_s4_phase(
+        S4Phase::RetainedIdentitySelection,
+        retained_phase_started.elapsed(),
+    );
+    #[cfg(feature = "test-support")]
+    record_s4_phase(S4Phase::RetainedPostEncode, retained_started.elapsed());
     Ok((emission, if keep_nodes { document } else { Vec::new() }))
 }
 
@@ -8768,6 +9445,7 @@ type SourceObjectRows = (
 /// FR-569 "Source-object identity rows": one row for each emitted source
 /// object node, joined to its checked declaration, effective body bindings,
 /// normalized supertypes and populations.
+#[ix_trace_rs::string_edge]
 fn source_object_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
@@ -8841,40 +9519,36 @@ fn source_object_rows(
         // order and the type itself last: a field's place in the view is its
         // owner's rank, then its declared position (FR-569 "Source-object
         // identity rows").
-        let owner_chain = {
-            let supertypes_of = |key: &_| object_records.get(key).map(|found| &found.supertypes);
-            let mut chain = Vec::new();
-            let mut stack = vec![(&object.key, 0_usize)];
-            while let Some((key, next)) = stack.pop() {
-                let supertypes = supertypes_of(key).map_or(&[][..], |found| found.as_slice());
-                match supertypes.get(next) {
-                    Some(parent) => {
-                        stack.push((key, next + 1));
-                        if !chain.contains(&parent)
-                            && !stack.iter().any(|(held, _)| *held == parent)
-                        {
-                            stack.push((parent, 0));
-                        }
-                    }
-                    None => {
-                        if !chain.contains(&key) {
-                            chain.push(key);
-                        }
-                    }
-                }
-            }
-            chain
-        };
+        let owner_chain = fsl_semantics::check::source_object_owner_chain(
+            |key| {
+                object_records
+                    .get(key)
+                    .map(|found| found.supertypes.as_slice())
+            },
+            &object.key,
+        );
         let mut placed: Vec<(
             (usize, usize),
             SelectedSourceObjectMember,
             SourceObjectMemberFacts,
         )> = Vec::with_capacity(source_members.len());
-        for ((name, target, optional), attribute) in source_members.into_iter().zip(attributes) {
+        let mut bound: Vec<&str> = Vec::with_capacity(source_members.len());
+        for (name, target, optional) in source_members {
+            // The body's binding names are exactly the view's field names,
+            // each once.
+            if bound.contains(&name) {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            bound.push(name);
+            // The body binds the view order; the scope lists an object's own
+            // fields before its supertypes', so each binding finds its
+            // attribute by name.
+            let attribute = attributes
+                .iter()
+                .find(|attribute| attribute.field().name() == name)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
             let field = attribute.field();
-            if name != field.name()
-                || optional != (field.presence() == filament_exact::Presence::Optional)
-            {
+            if optional != (field.presence() == filament_exact::Presence::Optional) {
                 return Err(EmitRefusal::SourceMapInvariant);
             }
             let field_owner = graph
@@ -9141,77 +9815,32 @@ fn source_object_rows(
     Ok((selected, member_facts, operations))
 }
 
-fn source_node_for_declaration<'a>(
-    graph: &'a CheckedGraph,
-    declaration: &filament_checked::key::DeclarationKey,
-) -> Option<&'a SemanticNode> {
-    graph.semantic_graph().nodes().find(|node| {
-        graph.resolve_declaration(node.key()) == Some(declaration)
-            && matches!(node.owner(), Some(Owner::Source(_)))
-            && node.node_tag() == NodeTag::Model
-            && node.semantic_form() == "object_type"
-    })
-}
-
 /// FR-390 source-operation identity rows, for checked anchors whose declared
 /// operation belongs to a source object type.
+#[implements("FR-390-AC-70")]
 fn source_operation_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
 ) -> Result<Vec<filament_contract_model::SelectedSourceOperationRow>, EmitRefusal> {
-    use fsl_semantics::model::domain_package::DomainPackageRecord;
-
     let mut rows = Vec::new();
-    for package in graph.source_packages() {
-        for record in &package.records {
-            let DomainPackageRecord::OperationMember(operation) = record else {
-                continue;
-            };
-            let Some(object_name) =
-                source_identity_segment(&operation.owner.package, &operation.owner.node)
-            else {
-                continue;
-            };
-            let Some(operation_name) = operation
-                .key
-                .node
-                .strip_prefix(&format!("{}/", operation.owner.node))
-                .filter(|name| !name.is_empty() && !name.contains('/'))
-            else {
-                continue;
-            };
-            let Some(anchor) = graph.source_operation_anchor(&operation.owner, operation_name)
-            else {
-                continue;
-            };
-            let structural_node = emitted
-                .get(&anchor)
-                .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
-            let owner = source_node_for_declaration(graph, &operation.owner)
-                .and_then(|node| match node.owner() {
-                    Some(Owner::Source(owner)) => Some(owner),
-                    _ => None,
-                })
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
-            rows.push(filament_contract_model::SelectedSourceOperationRow {
-                source_authority: owner.authority().into(),
-                source_identity: format!("{object_name}::{operation_name}").into(),
-                anchor_id: structural_node.clone(),
-                structural_node,
-            });
-        }
+    for operation in declared_source_operations(graph) {
+        let structural_node = emitted
+            .get(&operation.anchor)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let owner = operation
+            .owner(graph)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        rows.push(filament_contract_model::SelectedSourceOperationRow {
+            source_authority: owner.authority().into(),
+            source_identity: format!("{}::{}", operation.type_name, operation.operation_name)
+                .into(),
+            anchor_id: structural_node.clone(),
+            structural_node,
+        });
     }
     rows.sort_by(|left, right| left.anchor_id.cmp(&right.anchor_id));
     Ok(rows)
-}
-
-/// The final authored segment in a declaration key's exact `ix://` identity.
-/// This parses the admitted key shape; it does not use a formatter or display.
-fn source_identity_segment<'a>(package: &str, identity: &'a str) -> Option<&'a str> {
-    identity
-        .strip_prefix(&format!("ix://{package}/"))
-        .filter(|segment| !segment.is_empty() && !segment.contains('/'))
 }
 
 /// FR-092 "Source tuple identity rows": one row per emitted source-owned
@@ -9865,7 +10494,7 @@ fn write_time_nominal(
         match (nominal.form, nominal.nominal_payload()) {
             (TimeNominalForm::Dimension, Some(payload @ NominalPayload::Dimension(_)))
             | (TimeNominalForm::Unit, Some(payload @ NominalPayload::Unit(_))) => {
-                nominal_term(ids, &nominal.key, payload)?
+                nominal_term(ids, &nominal.key, payload, &BTreeSet::new())?
             }
             _ => {
                 return Err(EmitRefusal::TimedModelWriterInvariant(
@@ -9969,6 +10598,7 @@ fn validate_temporal_clock(
 /// Whether `node` is claim-bearing (FSpec FR-322 "Claim declaration names"):
 /// a `state`/`state_clause`, `relation`/`refinement`,
 /// `correspondence`/`component_composition` or `claim` node.
+#[ix_trace_rs::string_edge]
 fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
     let (tag, form) = (node.node_tag.as_ref(), node.semantic_form.as_ref());
     (tag == CheckedNodeTag::State.as_wire() && form == "state_clause")
@@ -9984,6 +10614,7 @@ fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
 /// declaration's region, sorted by node then occurrence. The rows are
 /// written from the checked unit's declarations, never derived from a
 /// region, a node path or the clause body.
+#[ix_trace_rs::string_edge]
 fn claim_name_rows(
     graph: &CheckedGraph,
     ids: &StructuralIds,
@@ -10238,6 +10869,7 @@ struct WrittenTemporalRows {
     refs: Vec<TemporalClauseRef>,
 }
 
+#[implements("FR-640-AC-15")]
 fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -10520,29 +11152,25 @@ fn temporal_binding_rows(
             let Some(profile) = awaited.profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let span = awaited.span;
             let key = (source.clone(), span.start, span.end, None);
-            let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::Await,
-                    source.clone(),
-                    span,
-                    declaration_name,
-                ));
+                if profile != TemporalProfile::Timed {
+                    let name = format!("await {}::{}", protocol.name, awaited.name);
+                    missing.push((MissingClockKind::Await, source.clone(), span, name));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, awaited.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = keys
                 .nodes
                 .get(&awaited.node)
@@ -10578,8 +11206,8 @@ fn temporal_binding_rows(
     // FSpec FR-322-AC-305: a `compensate` node reads a clock too, so it is
     // keyed by its own node identity, named by the template's clock text,
     // and shares the one array with the clause rows. Its profile is the one
-    // its `using` alias selects; a node of a profile that is not a
-    // clock-configured one writes no row.
+    // its `using` alias selects; a `timed` template's selection is checked and
+    // takes no row, and an infinite-trace template reads no clock.
     let compensation_nodes: HashMap<Vec<&str>, &CheckedNodeId> = nodes
         .iter()
         .filter(|node| is_compensation_node(node))
@@ -10601,12 +11229,7 @@ fn temporal_binding_rows(
             let Some(profile) = template.temporal_profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let path = [protocol.name.as_str(), "compensate", template.name.as_str()];
@@ -10617,17 +11240,23 @@ fn temporal_binding_rows(
             let span = template.span;
             let key = (source.clone(), span.start, span.end, None);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::CompensationTemplate,
-                    source.clone(),
-                    span,
-                    format!("compensate template `{}::{}`", protocol.name, template.name),
-                ));
+                if profile != TemporalProfile::Timed {
+                    missing.push((
+                        MissingClockKind::CompensationTemplate,
+                        source.clone(),
+                        span,
+                        format!("compensate template `{}::{}`", protocol.name, template.name),
+                    ));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, template.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = key_of_id
                 .get(&declaration)
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -10808,6 +11437,7 @@ fn environment_ids<'a>(
 ///
 /// Returns the canonical output-limit failure or an identity invariant refusal.
 /// Earlier nodes may already be rewritten on failure; discard that conversion.
+#[implements("FSpec-FR-322-AC-280", "FR-869-AC-10")]
 pub fn write_operand_slots(
     nodes: &mut [CheckedSemanticNodeV2],
     limits: EmitLimits,
@@ -10825,10 +11455,11 @@ pub fn write_operand_slots(
                 row.push(entry);
             }
         }
-        let mut changes = Vec::new();
+        let mut changes = BTreeMap::new();
         for id in reachable_ids(node) {
             let old = id.clone();
-            for segment in &mut id.path {
+            let mut new = old.clone();
+            for segment in &mut new.path {
                 let entry = match segment {
                     Segment::Index(index) => CheckedOperandEntry::Node(*index),
                     Segment::Dependency { package, node } => CheckedOperandEntry::Dependency(
@@ -10842,13 +11473,33 @@ pub fn write_operand_slots(
                 let slot = slots.get(&entry).ok_or(EmitRefusal::SourceMapInvariant)?;
                 *segment = Segment::Operand(*slot);
             }
-            if old != *id {
-                changes.push((old, id.clone()));
+            if old != new {
+                if changes
+                    .insert(old, new.clone())
+                    .is_some_and(|previous| previous != new)
+                {
+                    return Err(EmitRefusal::SourceMapInvariant);
+                }
             }
         }
-        for (old, new) in changes {
-            node.replace_node_id(&old, &new);
+        #[cfg(test)]
+        if USE_REPEATED_OPERAND_REWRITE.with(Cell::get) {
+            for (old, new) in changes {
+                node.replace_node_id(&old, &new);
+            }
+        } else {
+            node.map_node_ids(|id| {
+                #[cfg(feature = "test-support")]
+                NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
+                changes.get(id).cloned()
+            });
         }
+        #[cfg(not(test))]
+        node.map_node_ids(|id| {
+            #[cfg(feature = "test-support")]
+            NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
+            changes.get(id).cloned()
+        });
         rows.push(row);
     }
     Ok(rows)
@@ -10863,37 +11514,161 @@ fn operand_entries(
 }
 
 /// Retain document-held IDs for producer joins and subsequent rewrites.
+#[implements("FR-869-AC-11")]
 pub(crate) fn document_nodes(
     mut graph: CheckedSemanticGraphV2,
 ) -> Result<Vec<CheckedSemanticNodeV2>, EmitRefusal> {
     use filament_contract_model::{CheckedNodePathSegment as Segment, CheckedOperandEntry};
+    #[cfg(feature = "test-support")]
+    let mut diagnostics = DocumentNodeDiagnostics::default();
+    #[cfg(feature = "test-support")]
+    let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+    #[cfg(not(feature = "test-support"))]
+    let repeated_reference = false;
     for (node, row) in graph.nodes.iter_mut().zip(&graph.operand_rows) {
-        let mut changes = Vec::new();
-        for id in reachable_ids(node) {
-            let old = id.clone();
-            for segment in &mut id.path {
-                if let Segment::Operand(slot) = segment {
-                    let entry = usize::try_from(*slot)
-                        .ok()
-                        .and_then(|slot| row.get(slot))
-                        .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    *segment = match entry {
-                        CheckedOperandEntry::Node(index) => Segment::Index(*index),
-                        CheckedOperandEntry::Dependency(operand) => Segment::Dependency {
-                            package: operand.package.clone(),
-                            node: operand.node,
-                        },
-                    };
+        if repeated_reference {
+            let mut changes = Vec::new();
+            for id in reachable_ids(node) {
+                #[cfg(feature = "test-support")]
+                {
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
+                }
+                let old = id.clone();
+                for segment in &mut id.path {
+                    if let Segment::Operand(slot) = segment {
+                        #[cfg(feature = "test-support")]
+                        {
+                            diagnostics.operand_row_lookups =
+                                diagnostics.operand_row_lookups.saturating_add(1);
+                            diagnostics.linear_work_units =
+                                diagnostics.linear_work_units.saturating_add(1);
+                        }
+                        let entry = usize::try_from(*slot)
+                            .ok()
+                            .and_then(|slot| row.get(slot))
+                            .ok_or(EmitRefusal::SourceMapInvariant)?;
+                        *segment = match entry {
+                            CheckedOperandEntry::Node(index) => Segment::Index(*index),
+                            CheckedOperandEntry::Dependency(operand) => {
+                                Segment::Dependency {
+                                    package: operand.package.clone(),
+                                    node: operand.node,
+                                }
+                            }
+                        };
+                    }
+                }
+                if old != *id {
+                    changes.push((old, id.clone()));
                 }
             }
-            if old != *id {
-                changes.push((old, id.clone()));
+            let change_count = changes.len();
+            for (old, new) in changes {
+                node.replace_node_id(&old, &new);
+            }
+            #[cfg(feature = "test-support")]
+            {
+                let mut node_id_slots = 0_usize;
+                let mut node_path_units = 0_usize;
+                node.map_node_ids(|id| {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    node_path_units = node_path_units.saturating_add(id.path.len());
+                    None
+                });
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(one_pass_slot_work);
+                diagnostics.repeated_scan_work_units = diagnostics
+                    .repeated_scan_work_units
+                    .saturating_add(one_pass_slot_work.saturating_mul(change_count));
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(change_count);
+            }
+        } else {
+            #[cfg(feature = "test-support")]
+            let mut node_id_slots = 0_usize;
+            #[cfg(feature = "test-support")]
+            let mut changed_ids = 0_usize;
+            let mut invalid_operand = false;
+            node.map_node_ids(|id| {
+                #[cfg(feature = "test-support")]
+                {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
+                }
+                let mut replacement = id.clone();
+                for segment in &mut replacement.path {
+                    if let Segment::Operand(slot) = segment {
+                        #[cfg(feature = "test-support")]
+                        {
+                            diagnostics.operand_row_lookups =
+                                diagnostics.operand_row_lookups.saturating_add(1);
+                            diagnostics.linear_work_units =
+                                diagnostics.linear_work_units.saturating_add(1);
+                        }
+                        let Some(entry) = usize::try_from(*slot)
+                            .ok()
+                            .and_then(|slot| row.get(slot))
+                        else {
+                            invalid_operand = true;
+                            return None;
+                        };
+                        *segment = match entry {
+                            CheckedOperandEntry::Node(index) => Segment::Index(*index),
+                            CheckedOperandEntry::Dependency(operand) => {
+                                Segment::Dependency {
+                                    package: operand.package.clone(),
+                                    node: operand.node,
+                                }
+                            }
+                        };
+                    }
+                }
+                if replacement != *id {
+                    #[cfg(feature = "test-support")]
+                    {
+                        changed_ids = changed_ids.saturating_add(1);
+                    }
+                    Some(replacement)
+                } else {
+                    None
+                }
+            });
+            if invalid_operand {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changed_ids);
             }
         }
-        for (old, new) in changes {
-            node.replace_node_id(&old, &new);
-        }
     }
+    #[cfg(feature = "test-support")]
+    DOCUMENT_NODE_DIAGNOSTICS.with(|held| {
+        let mut current = held.get();
+        current.linear_work_units = current
+            .linear_work_units
+            .saturating_add(diagnostics.linear_work_units);
+        current.repeated_scan_work_units = current
+            .repeated_scan_work_units
+            .saturating_add(diagnostics.repeated_scan_work_units);
+        current.one_pass_id_slots = current
+            .one_pass_id_slots
+            .saturating_add(diagnostics.one_pass_id_slots);
+        current.changed_ids = current.changed_ids.saturating_add(diagnostics.changed_ids);
+        current.operand_row_lookups = current
+            .operand_row_lookups
+            .saturating_add(diagnostics.operand_row_lookups);
+        held.set(current);
+    });
     Ok(graph.nodes)
 }
 
@@ -10961,9 +11736,13 @@ impl ForeignNodes {
             return Ok(foreign);
         }
         for (identity, dependency) in package.dependencies() {
-            let emission = emit_checked(dependency, limits)?;
+            let emission = match emit_linked_dependency(package, identity, limits) {
+                Some(linked) => linked?,
+                None => emit_checked(dependency, limits)?,
+            };
             // The positions are read from the dependency's own bytes, which
-            // `emit_checked` has just held to `limits.output_bytes`; that
+            // the link-time emission (or fallback) has held to
+            // `limits.output_bytes`; that
             // ceiling bounds this parse. The parse itself is not charged to
             // any budget, and its JSON tree is dropped when the positions
             // are read.
@@ -11004,11 +11783,12 @@ impl ForeignNodes {
 ///
 /// Linear in the package: each node's key is rebuilt once, sharing the key
 /// of every operand allocation ([`StructuralKeys`]), and each id a node
-/// reaches ([`reachable_ids`]) is rewritten in place. No two ids are
-/// compared: comparing two ids that share a deep operand chain costs the
-/// chain's depth.
+/// reaches ([`reachable_ids`]) is rewritten in place. Other node-held IDs are
+/// substituted by one pass over the typed node. No two ids are compared:
+/// comparing two ids that share a deep operand chain costs the chain's depth.
 ///
 /// [`StructuralKeys`]: fsl_semantics::check::wire_id::StructuralKeys
+#[implements("FR-869-AC-11")]
 fn write_index_segments(
     ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
@@ -11063,30 +11843,134 @@ fn write_index_segments(
     // The memo holds every operand allocation it keyed, so rewriting ids in
     // place never reuses an address it has seen.
     let mut graph_wire: HashMap<NodeKey, CheckedNodeId> = HashMap::with_capacity(nodes.len());
+    #[cfg(feature = "test-support")]
+    let mut diagnostics = WriteIndexDiagnostics::default();
+    #[cfg(feature = "test-support")]
+    let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+    #[cfg(not(feature = "test-support"))]
+    let repeated_reference = false;
     for (node, key) in nodes.iter_mut().zip(&graph_keys) {
         let holder = node.node_id.clone();
-        let mut seen: HashSet<NodeKey> = HashSet::new();
-        let mut changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
-        for id in reachable_ids(node) {
-            if holds_segment(id, is_operand) {
-                let new = wire_of(&mut keys, &holder, id)?;
-                if seen.insert(keys.key(id).map_err(invariant)?) {
-                    changes.push((id.clone(), new.clone()));
+        if repeated_reference {
+            #[cfg(feature = "test-support")]
+            {
+                let mut seen: HashSet<NodeKey> = HashSet::new();
+                let mut changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
+                for id in reachable_ids(node) {
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
+                    if holds_segment(id, is_operand) {
+                        for operand in id.path.iter().filter_map(|segment| match segment {
+                            Segment::Node(operand) => Some(operand),
+                            _ => None,
+                        }) {
+                            diagnostics.structural_key_lookups =
+                                diagnostics.structural_key_lookups.saturating_add(2);
+                            diagnostics.linear_work_units = diagnostics
+                                .linear_work_units
+                                .saturating_add(2 + 2 * operand.path.len());
+                        }
+                        let new = wire_of(&mut keys, &holder, id)?;
+                        if seen.insert(keys.key(id).map_err(invariant)?) {
+                            changes.push((id.clone(), new.clone()));
+                        }
+                        *id = new;
+                    }
                 }
-                *id = new;
+                // IR's substitution reaches IDs nested in closed records,
+                // views, nominal bodies and refinement bodies.
+                for (old, new) in &changes {
+                    node.replace_node_id(old, new);
+                }
+                let mut node_id_slots = 0_usize;
+                let mut node_path_units = 0_usize;
+                node.map_node_ids(|id| {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    node_path_units = node_path_units.saturating_add(id.path.len());
+                    None
+                });
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                let one_pass_slot_work = node_id_slots.saturating_add(node_path_units);
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(one_pass_slot_work);
+                diagnostics.repeated_scan_work_units = diagnostics
+                    .repeated_scan_work_units
+                    .saturating_add(one_pass_slot_work.saturating_mul(changes.len()));
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changes.len());
             }
-        }
-        // IR's own substitution reaches the ids held where this emitter
-        // cannot (an operation's closed record and views, a nominal or
-        // refinement body). Every id it can reach already holds index
-        // segments, so it never matches a structural id deep in a chain.
-        for (old, new) in &changes {
-            node.replace_node_id(old, new);
+        } else {
+            #[cfg(feature = "test-support")]
+            let mut node_id_slots = 0_usize;
+            #[cfg(feature = "test-support")]
+            let mut changed_ids = 0_usize;
+            let mut refusal = None;
+            node.map_node_ids(|id| {
+                #[cfg(feature = "test-support")]
+                {
+                    node_id_slots = node_id_slots.saturating_add(1);
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(1 + id.path.len());
+                }
+                if !holds_segment(id, is_operand) {
+                    return None;
+                }
+                #[cfg(feature = "test-support")]
+                for operand in id.path.iter().filter_map(|segment| match segment {
+                    Segment::Node(operand) => Some(operand),
+                    _ => None,
+                }) {
+                    diagnostics.structural_key_lookups =
+                        diagnostics.structural_key_lookups.saturating_add(2);
+                    diagnostics.linear_work_units = diagnostics
+                        .linear_work_units
+                        .saturating_add(2 + 2 * operand.path.len());
+                }
+                match wire_of(&mut keys, &holder, id) {
+                    Ok(replacement) => {
+                        #[cfg(feature = "test-support")]
+                        {
+                            changed_ids = changed_ids.saturating_add(1);
+                        }
+                        Some(replacement)
+                    }
+                    Err(error) => {
+                        refusal = Some(error);
+                        None
+                    }
+                }
+            });
+            if let Some(error) = refusal {
+                return Err(error);
+            }
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.one_pass_id_slots =
+                    diagnostics.one_pass_id_slots.saturating_add(node_id_slots);
+                diagnostics.changed_ids = diagnostics.changed_ids.saturating_add(changed_ids);
+            }
         }
         graph_wire.insert(key.clone(), node.node_id.clone());
     }
     let mut sidecar = |id: &mut CheckedNodeId| -> Result<(), EmitRefusal> {
+        #[cfg(feature = "test-support")]
+        {
+            diagnostics.linear_work_units = diagnostics
+                .linear_work_units
+                .saturating_add(1 + id.path.len());
+        }
         if holds_segment(id, is_operand) {
+            #[cfg(feature = "test-support")]
+            {
+                diagnostics.structural_key_lookups =
+                    diagnostics.structural_key_lookups.saturating_add(2);
+                diagnostics.linear_work_units = diagnostics
+                    .linear_work_units
+                    .saturating_add(2 + 2 * id.path.len());
+            }
             let key = keys.key(id).map_err(invariant)?;
             *id = graph_wire
                 .get(&key)
@@ -11104,6 +11988,10 @@ fn write_index_segments(
     for row in schedulability_rows {
         sidecar(&mut row.declaration)?;
     }
+    #[cfg(feature = "test-support")]
+    drop(sidecar);
+    #[cfg(feature = "test-support")]
+    record_write_index_diagnostics(diagnostics);
     Ok(graph_wire)
 }
 
@@ -11111,6 +11999,7 @@ fn write_index_segments(
 /// every wire id each node reaches is replaced, in that node, by the
 /// structural id of the node it names, so the emitter's identity work
 /// compares structural keys.
+#[implements("FR-869-AC-10")]
 fn read_index_segments(
     ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
@@ -11122,29 +12011,57 @@ fn read_index_segments(
         fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .map_err(|_| EmitRefusal::SourceMapInvariant)?;
     let structural = |id: &CheckedNodeId| {
+        #[cfg(feature = "test-support")]
+        record_read_index_rewrite_work(1 + id.path.len());
         graph
             .key(id)
             .map(|key| node_id(ids, &key))
             .map_err(|_| EmitRefusal::SourceMapInvariant)
     };
     for node in nodes.iter_mut() {
-        let mut changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
-        for id in reachable_ids(node) {
-            if holds_segment(id, is_index) {
-                let new = structural(id)?;
-                if !changes.iter().any(|(old, _)| old == id) {
-                    changes.push((id.clone(), new.clone()));
+        #[cfg(feature = "test-support")]
+        if USE_REPEATED_READ_INDEX_REWRITE.with(Cell::get) {
+            let mut changes = Vec::new();
+            for id in reachable_ids(node) {
+                record_read_index_rewrite_work(1 + id.path.len());
+                if holds_segment(id, is_index) {
+                    changes.push((id.clone(), structural(id)?));
                 }
-                *id = new;
             }
+            for (old, new) in changes {
+                // `replace_node_id` scans the node's ID slots for each old
+                // ID. Count those visits with the same traversal the bulk
+                // rewrite uses, then account for the replacement scan.
+                node.map_node_ids(|_| {
+                    record_read_index_rewrite_work(1);
+                    None
+                });
+                node.replace_node_id(&old, &new);
+            }
+            continue;
         }
-        // As in `write_index_segments`: IR substitutes where this reader
-        // cannot reach.
-        for (old, new) in &changes {
-            node.replace_node_id(old, new);
+        let mut invalid_index = false;
+        node.map_node_ids(|id| {
+            #[cfg(feature = "test-support")]
+            record_read_index_rewrite_work(1 + id.path.len());
+            if invalid_index || !holds_segment(id, is_index) {
+                return None;
+            }
+            match structural(id) {
+                Ok(new) => Some(new),
+                Err(_) => {
+                    invalid_index = true;
+                    None
+                }
+            }
+        });
+        if invalid_index {
+            return Err(EmitRefusal::SourceMapInvariant);
         }
     }
     for entry in source_map.iter_mut() {
+        #[cfg(feature = "test-support")]
+        record_read_index_rewrite_work(1 + entry.node_id.path.len());
         if holds_segment(&entry.node_id, is_index) {
             entry.node_id = structural(&entry.node_id)?;
         }
@@ -11217,6 +12134,7 @@ pub use clock_selection::{
 };
 mod body_locations;
 mod identity_rows;
+mod location_paths;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
 pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};

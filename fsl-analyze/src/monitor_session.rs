@@ -44,7 +44,7 @@ use crate::monitor::{
 };
 
 /// The format member of a checkpoint.
-pub const STATE_FORMAT: &str = "filament.monitor-state/1";
+pub const STATE_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorState.as_str();
 
 /// The trace kind a session's observations form (FR-641).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1380,6 +1380,7 @@ impl<'a> MonitorSession<'a> {
     /// `monitor-state-mismatch` for a state that is not a closed
     /// `filament.monitor-state/1`, or whose package, clause selections, kind
     /// or binding differ from `package` and `request`.
+    #[ix_trace_rs::string_edge]
     pub fn resume(
         package: &'a CheckedPackage,
         state: &MonitorState,

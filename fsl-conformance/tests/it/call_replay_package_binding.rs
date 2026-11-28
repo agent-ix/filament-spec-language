@@ -147,7 +147,7 @@ fn package_id_binds_call_members_and_refuses_foreign_run_items() {
             run: first.package_id(),
         }
     );
-    let diagnostic = refusal.diagnostic(second_member.request_index().get() as usize);
+    let diagnostic = refusal.diagnostic(second_member.request_index().get());
     assert_eq!(diagnostic.code(), "invalid-request");
     assert_eq!(diagnostic.cause(), None);
     let record = refusal.record(second_member.request_index(), BackendId::new("acme"));

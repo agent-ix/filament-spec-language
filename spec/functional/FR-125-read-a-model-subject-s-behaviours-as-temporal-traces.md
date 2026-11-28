@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-361
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-395
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-337
     type: references
 ---
@@ -79,7 +81,22 @@ reports.
 - `invalid_runtime_input`/`conflicting-identity` for an item whose
   overlapping populations' initial member records give one key two types
   (Instancing).
-- `ModelSystem::instances` and `ModelSystem::excluded_keys` for a claim: its
+- `ModelSystem::claim_instances(over: &ValueType) -> Result<ClaimInstances,
+  NoClaimInstances>`, for the `over` type of a claim or its `on each`
+  activation type. `ClaimInstances` holds at least one instance, in the
+  canonical order (Instancing). `NoClaimInstances` is
+  `NotSimulated(NotSimulated)`, `NoInitialState` or `NoInstance`. The call
+  decides Instancing's outcomes in their order: `RequiresBound` as
+  `NotSimulated(RequiresBound)`, `NoInitialState`, the conflicting identity
+  as `NotSimulated(ConflictingIdentity)` naming the key and both types, then
+  `NoInstance`. `ModelSystem::new` SHALL admit member records that give one
+  universe and key two types when they stand in different populations or in
+  different initial states; this call, not admission, refuses them, so it can
+  report `RequiresBound` and `NoInitialState` first. Two such records in one
+  population of one initial state stay FR-106 check 6.3's admission refusal
+  (FR-120 "Initial states"). A claim with no `over` makes no call for it.
+- `ModelSystem::instances` and `ModelSystem::excluded_keys` for a claim, and
+  for the object type of a hyper object parameter: its
   instances in the canonical order, and the universe keys no initial record
   admits (Instancing).
 
@@ -166,7 +183,9 @@ bullets state how FSL applies them over FR-120's subject.
   universe and key and different types, in one population or in two, in one
   initial state or in two, SHALL refuse the item
   `invalid_runtime_input`/`conflicting-identity`, naming the key and both
-  types, before it forms any instance.
+  types, before it forms any instance. Two such records in one population of
+  one initial state are refused earlier, at admission (FR-106 check 6.3), so
+  the order below does not apply to them.
 - An instance whose admitted record does not conform to `T` (an `Animal` key
   holding a `Cat` under `over (x: Dog)`) is an instance. Where no overlapping
   population holds under the key an object whose most-specific type conforms
@@ -237,20 +256,39 @@ bullets state how FSL applies them over FR-120's subject.
      of an initial state admits a key of their universes, FSL SHALL report
      `NoInstance` for the item, and FR-127 settles it `inconclusive`, so an
      item that was never evaluated is never read as holding.
-- FSL SHALL instantiate a checked hyper clause (FR-172) at request time with
-  one instance per key of the universe of the one population each object
-  parameter `v: V::T` resolves to, the instances ranging over the product of
-  those universes. For each of those populations with no universe, FSL SHALL
-  return `NotSimulated::RequiresBound` naming it (FR-120), before
-  instantiating.
-- When any one of those populations has an empty universe, the hyper clause
-  has zero instances. FSL SHALL then report `NoInstance` for the item before
-  it explores any state, and FR-127 and FR-182 settle it `inconclusive`.
-- A hyper clause's parameter bound to a key SHALL read as an `over`
-  parameter does: as the reference of the object the state holds under the
+- FSL SHALL instantiate a checked hyper clause (FR-172) at request time, with
+  one instance per admitted key of each object parameter `v: V::T`, over the
+  subject of alias `V` (FSpec FR-395 "Object parameters"). The admitted keys,
+  the excluded keys, their order, key identity and the one type a key has
+  SHALL be those the bullets above state for `over (x: T)`: every population
+  of `V`'s model that overlaps `T` contributes, and only a key that a member
+  record of some initial state of that subject admits is an instance. The
+  clause's instances are the product of its parameters' instances, the first
+  parameter varying slowest.
+- A universe key of a hyper object parameter that no initial state admits,
+  including one only an operation creates, SHALL be an excluded key: no
+  instance binds it, no refutation names it as its instance, and a verdict
+  covers the instances only. `ModelSystem::excluded_keys` over `V`'s subject
+  SHALL return them for `T`. No verdict member carries them. An operation may
+  create an object under an excluded key, so the states and paths of evidence
+  and certificates hold that object as any other; this makes it no instance.
+- Every binding written for a hyper object parameter SHALL be the reference
+  (`UniverseId`, admitted type, key), as for an `over` parameter. FSL SHALL
+  NOT write the parameter's declared type in place of the admitted type.
+- A hyper clause SHALL decide its instancing outcomes in the order above,
+  across all of its parameters, before it explores any state: `RequiresBound`
+  for an overlapping population of any parameter with no universe; then
+  `NoInitialState` when the `initial` list of a parameter's subject is empty;
+  then `conflicting-identity`; then `NoInstance` when any one parameter has no
+  admitted key, a parameter whose type no population overlaps included. FR-127 and FR-182 settle `NoInitialState` and `NoInstance`
+  `inconclusive`. Every hyper form, the single-existential form (FR-181)
+  included, SHALL report these through its route as outcomes of the item,
+  never as a fault.
+- A hyper clause's parameter bound to a key SHALL read, and be guarded, as an
+  `over` parameter is: as the reference of the object the state holds under the
   key, with that object's own most-specific type, and as the `absent-key`
-  undefined value where the parameter's population holds under the key no
-  object whose most-specific type conforms to the parameter's type.
+  undefined value where no population that overlaps the parameter's type holds
+  under the key an object whose most-specific type conforms to it.
 - FSL SHALL give a state-graph or probabilistic clause or claim with no `over`
   parameter one instance, with no bound object. A `temporal` clause always
   names an `over` parameter (FSpec FR-370-AC-13): S1 SHALL refuse one written
@@ -347,19 +385,24 @@ formula guard and is read as an ordinary `holds` condition.
 | FR-125-AC-3 | On ADR-018 §6's lasso (empty prefix, loop `(0,0) (1,0) (2,0)`), `eventually[0,4] holds(a.versionNumber = 0)` at position 2 reads the states of positions 2 to 6 by wrapping and evaluates `true` (position 3 holds `(0,0)`); `once[0,3] holds(a.versionNumber = 2)` at position 1 reads positions 1 and 0, the rest before position 0 as false, and evaluates `false`; each visit charges one work unit. | Test (TC-520) |
 | FR-125-AC-4 | Over ADR-018 §6's subject, a clause with `over (c: Config::ConfigVersion)` yields one instance per object of `{a, b}`. A subject whose `initial` list is empty is `NoInitialState` before any state is explored. | Test (TC-520) |
 | FR-125-AC-5 | On the same lasso, `always eventually (holds(a.versionNumber = 0) and once[1,1] holds(a.versionNumber = 2))` has past reach 1 and is evaluated over `m = 2` loop copies, 6 positions: the conjunction is `false` at position 0, which has no previous position, and `true` at position 3, whose previous position holds version 2, and the formula evaluates `true`. The same conjunction read at position 9 by congruence is `true`. | Test (TC-520) |
-| FR-125-AC-6 | Over the `Counter` subject, the letter of `always holds(6 mod (2 - c.value) >= 0)` under infinite-trace is defined at positions 0 and 1 and undefined at position 2, cause `division-by-zero`. `eventually[0,1] holds(6 mod (2 - c.value) = 0 and c.value = 1)` under event-position false-extension, `on origin`, reads positions 0 and 1 only and evaluates `true`. | Test (TC-537) |
+| FR-125-AC-6 | Over the `Counter` subject, with `function q using v(x: Integer): Integer pure { 6 mod x }`, its body checked under `CheckMode::Kernel` (FR-495-AC-3) and called by the Linked clause (FR-952): the letter of `always holds(q(2 - c.value) >= 0)` under infinite-trace is defined at positions 0 and 1 and undefined at position 2, cause `division-by-zero`. `eventually[0,1] holds(q(2 - c.value) = 0 and c.value = 1)` under event-position false-extension, `on origin`, reads positions 0 and 1 only and evaluates `true`. | Test (TC-537) |
 | FR-125-AC-7 | Over ADR-018 §6's subject (universe `{a, b}`), the state-graph claims `ReachesTwo` and `ReachesThree` (`over (c: Config::ConfigVersion)`) each yield two instances, `a` then `b`; `possible Anything using v { true }` with no `over` yields one instance with no bound object. `ReachesTwo`, checked once, yields `a`, `b` over `{a, b}` and `a` over a subject whose universe is `{a}`, without being re-checked. A claim over a subtype-conforming population yields its objects; a universe-less population is `RequiresBound`; an empty universe yields zero instances and the item reports `NoInstance`, settled `inconclusive`, never proved. | Test (TC-520) |
 | FR-125-AC-8 | For a population `P` declaring member types `Lamp` and `Switch`, both subtypes of `Thing`, whose universe keys `l` and `s` are admitted by initial records of a `Lamp` and a `Switch`, `over (x: Lamp)` and `over (x: Thing)` each have exactly the instances `l` and `s`, one per key. A population none of whose member types conforms to `Lamp` or is conformed to by it yields no instance. A key of `P`'s universe that no initial record admits is an excluded key, not an instance, and `ModelSystem::excluded_keys` returns it. | Test (TC-520) |
 | FR-125-AC-9 | An instance of `over (x: Thing)` reads at a position whose object under its key is a `Switch` as the reference with type `Switch`, and at one whose object is a `Lamp` as the reference with type `Lamp`; for `over (x: Lamp)` a read at a position whose object is a `Switch`, or has no object, is `absent-key` undefined. The instance is identified by its key alone in the obligation identity and the FR-338 key context, with no population and no type; a refuted binding of `over (x: Thing)` at the key `s`, whose admitted record is a `Switch`, is the reference (`UniverseId`, `Switch`, `s`), with no population. | Test (TC-520) |
 | FR-125-AC-10 | With populations `P1` and `P2`, whose declaration identity texts order `P1` before `P2`, holding universes `[d, c]` and `[b, a]`, every key admitted, the instances of a claim both overlap are `d`, `c`, `b`, `a`, and `ModelSystem::instances` returns that order, not an ascending key order. With `P2`'s universe `[c, a]` instead, the instances are `d`, `c`, `a`: the key `c` listed by both is one instance, at its first occurrence. With `P1`'s universe `[d, u]` and `P2`'s `[u, a]`, where no initial record admits `u`, the instances are `d`, `a` and the excluded keys are `[u]`, listed once. | Test (TC-520) |
 | FR-125-AC-11 | For an instance of `over (x: Thing)` whose object is a `Switch` (not the population's first member type), `holds(x = r)` where `r` is the state's reference to that object, and `holds(contains(allInstances<Thing>(P), x))`, each evaluate `true`; for a `Lamp` object likewise. With the key `c` listed by `P1` and `P2` of `Thing`, `holds(contains(allInstances<Thing>(P2), x))` for the instance `c` evaluates `true`. | Test (TC-520) |
 | FR-125-AC-12 | A population `dogs` declaring `Dog` with universe `[d]`, and a population `animals` declaring `Animal` with universe `[k, t]`, where an initial state holds a `Dog` under `k` and a `Cat` under `t` in `animals` and a `Dog` under `d` in `dogs` (`Dog` and `Cat` subtypes of `Animal`), with `Animal` declaring `age: Int[0, 9]`, give `over (x: Dog)` the instances `k`, `t`, `d` (`animals` orders before `dogs`). S3 admits the clause with both overlapping populations, with no ambiguous-population refusal. `k` reads as the `Dog` reference. The unguarded `always holds(x.age >= 0)` refutes, `undefined-evaluation`, naming `t`; `always holds(true)` evaluates normally and is true at `t`, where its atom does not read `x`. With `G` the guard `present(lookup<Dog>(M::animals, x) absent empty) or present(lookup<Dog>(M::dogs, x) absent empty)`, `always holds(G implies x.age >= 0)` evaluates at every instance and position, `G` being false at `t` and true at `k` and `d`, and settles `proved`. `present(lookup<Dog>(M::animals, x) absent empty)` alone is false at `d`, so a property guarded by it holds vacuously there. A subject whose only population is `animals` holding only `Cat` objects still has instances for `over (x: Dog)` and is not `NoInstance`. | Test (TC-520) |
-| FR-125-AC-13 | Outcome order. A subject in which an overlapping population has no universe returns `RequiresBound` naming it, also when its `initial` list is empty. A subject with an empty `initial` list and bounded universes reports `NoInitialState`, never `NoInstance`. Two member records under the key `c`, one an `Animal` in `animals` and one a `Dog` in `dogs`, in one initial state or in two initial states, refuse the item `invalid_runtime_input`/`conflicting-identity` naming `c` and both types, before any instance is formed; agreeing types are admitted. A subject with an initial state, bounded universes and no admitted key reports `NoInstance`. Each outcome arrives before any state is explored. | Test (TC-520) |
+| FR-125-AC-13 | Outcome order. A subject in which an overlapping population has no universe returns `RequiresBound` naming it, also when its `initial` list is empty. A subject with an empty `initial` list and bounded universes reports `NoInitialState`, never `NoInstance`. Two member records under the key `c`, one an `Animal` in `animals` and one a `Dog` in `dogs`, in one initial state or in two initial states, refuse the item `invalid_runtime_input`/`conflicting-identity` naming `c` and both types, before any instance is formed. Same-type records for `c` in multiple populations are admitted only when the type owns no Clock and their admitted field values are identical; otherwise admission refuses `unknown_required_feature`/`unsupported-feature` with `population-qualified-object-identity`. A subject with an initial state, bounded universes and no admitted key reports `NoInstance`. Each outcome arrives before any state is explored. | Test (TC-520) |
 | FR-125-AC-14 | Over `P1` of `Counter` with universe `[c, d, z]`, initial records under `c` and `d` only, value 0 each, `inc` disabled, and an operation `make` that creates a `Counter` with value 1 under `z`, `over (x: Counter)` has the instances `c` and `d` and the excluded keys `[z]`, and `always holds(x.value = 0)` settles `proved`, although `z`'s object has value 1 at a reachable position. | Test (TC-520) |
-| FR-125-AC-15 | A state-graph claim `over (x: Thing)` (FR-169) over AC-10's populations has the instances, order and excluded keys a temporal claim has. A hyper clause (FR-172) whose parameter `v: V::Thing` resolves to `P` of AC-9 reads `v`, at each position, as the reference with the held object's most-specific type, and a parameter typed `V::Lamp` reads `absent-key` undefined where the key holds a `Switch`. | Test (TC-520) |
+| FR-125-AC-15 | A state-graph claim `over (x: Thing)` (FR-169) over AC-10's populations has the instances, order and excluded keys a temporal claim has. A hyper clause (FR-172) whose parameter `v: V::Thing` draws its keys from `P` of AC-9 reads `v`, at each position, as the reference with the held object's most-specific type, and a parameter typed `V::Lamp` reads `absent-key` undefined where the key holds a `Switch`. | Test (TC-520) |
 | FR-125-AC-16 | With a population `all` of member type `Entity` (a supertype of `Counter`) whose initial state holds a `Counter` under `c` (value 0, with `inc` enabled) and an `Entity` that is not a `Counter` under `e`, the unguarded claim `always holds(x.value <= 0)` over `Counter` refutes at both instances, `c` by a false evaluation after `inc` and `e` by an `absent-key` read. With `all = [c, e]` the reported instance is `c`, with no undefined cause; with `all = [e, c]` it is `e`, with cause `undefined-evaluation`. The item is `refuted` in both orders, and the two subjects give different request identities. | Test (TC-520) |
 | FR-125-AC-17 | On AC-12's `dogs` and `animals` subject, let `y` be an immutable `let` alias of `x`; let a helper `same(r)` return its reference argument unchanged, `isDog(r)` test the disjunction of `lookup<Dog>` in `animals` and `dogs` using `same(r)`, and `ageOK(r)` read `r.age >= 0`. The unit selects the model profile and each helper's `using` alias selects `filament.value.complete/v1`; because `same`, `isDog` and `ageOK` are reachable from the model-context temporal formula, S3 derives the StateModel family for their bodies per FR-361. An uncalled function with a bare field read on a `Reference` remains in its declared family and refuses as TC-1031 N16 specifies. `always holds(isDog(y) implies ageOK(y))` settles `proved`: at `t`, the guard is false and `ageOK` is not called; at `k` and `d`, the guard and property are true. At `t`, the reference is forwarded through `y`, `same` and `isDog` without `absent-key`; the unguarded `always holds(ageOK(y))` still refutes with `undefined-evaluation`/`absent-key` at `t`. | Test (TC-520), Test (TC-1031) |
-| FR-125-AC-18 | Compiled from source (FR-337-AC-6) and read through FSL's production letter seam, with no test letters: over the `Counter` subject under event-position false-extension, `eventually[0,1] holds(c.value = 3)` `on each (q: M::Counter) when (c.value = 1)` returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2`, and `when (c.value >= 2)` returns `Holds{Exhaustive}`; under infinite-trace, `always holds(c.value <= 1)` `on each (q: M::Counter) when (c.value >= 3)` returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`, which FR-128 replays to `reproduced-with-evaluated-witness`, and `always holds(true)` `on each (q: M::Counter) when (6 mod (2 - c.value) = 0)` returns `Violated` with `kind: UndefinedEvaluation` at position 2, cause `division-by-zero`, its site naming the activation. On AC-12's `dogs` and `animals` subject, `always holds(true)` `on each (y: M::Dog) when (x.age >= 1)` refutes `undefined-evaluation` naming `t`, the guard's read through `x` being `absent-key` there, and, with AC-12's `G` as the activation guard (`when (G)`), the seam's guard reading at the initial state is false for `t` and true for `k` and `d`, and `always holds(false)` `on each (y: M::Dog) when (G)` refutes naming `k`, the first instance where the clause activates, at position 0. The guard footprint of the `c.value >= 3` clause is the read of `Counter`'s `value` through `c`, so `inc`, which writes it, is visible to a partial-order run of that clause. | Test (TC-520) |
+| FR-125-AC-18 | Compiled from source (FR-337-AC-6) and read through FSL's production letter seam, with no test letters: over the `Counter` subject under event-position false-extension, `eventually[0,1] holds(c.value = 3)` `on each (q: M::Counter) when (c.value = 1)` returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2`, and `when (c.value >= 2)` returns `Holds{Exhaustive}`; under infinite-trace, `always holds(c.value <= 1)` `on each (q: M::Counter) when (c.value >= 3)` returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`, which FR-128 replays to `reproduced-with-evaluated-witness`, and `always holds(true)` `on each (q: M::Counter) when (q(2 - c.value) = 0)`, with the function `q using v(x: Integer): Integer pure { 6 mod x }` whose body is checked under `Kernel` (FR-495-AC-3; S3 refuses a possibly-zero `mod` written in a declared clause, FR-337-AC-7), returns `Violated` with `kind: UndefinedEvaluation` at position 2, cause `division-by-zero`, its site naming the activation. On AC-12's `dogs` and `animals` subject, `always holds(true)` `on each (y: M::Dog) when (x.age >= 1)` refutes `undefined-evaluation` naming `t`, the guard's read through `x` being `absent-key` there, and, with AC-12's `G` as the activation guard (`when (G)`), the seam's guard reading at the initial state is false for `t` and true for `k` and `d`, and `always holds(false)` `on each (y: M::Dog) when (G)` refutes naming `k`, the first instance where the clause activates, at position 0. The guard footprint of the `c.value >= 3` clause is the read of `Counter`'s `value` through `c`, so `inc`, which writes it, is visible to a partial-order run of that clause. | Test (TC-520) |
+| FR-125-AC-19 | Population set of a hyper parameter, under the infinite-trace profile. The model has no operation. `P1` (member type `Lamp`) has universe `[d, u]` and `P2` (member type `Switch`) universe `[u, a, d]`, both subtypes of `Thing`, `P1`'s identity text ordering first; the one initial state holds a `Lamp` under `d` in `P1` and a `Switch` under `a` in `P2`. `exists trace t of M` with `v: M::Thing` has the instances `d` then `a`, `d` once although both populations list it, and the excluded keys `[u]`. The body `always holds(present(lookup<M::Thing>(M::P1, v) absent empty) @ t)` gives `d` `Witnessed` and `a` `Trapped`, and the item settles `refuted` at the instance `a`, bound with type `Switch`. With the disjunction of that test and the same test over `P2` as the body, both instances are `Witnessed` and the item settles `proved`. | Test (TC-3219) |
+| FR-125-AC-20 | A key only an operation creates. Over AC-14's subject (`P1` of `Counter`, universe `[c, d, z]`, `make` creating a `Counter` with value 1 under `z`), the parameter `v: M::Counter` has the instances `c` and `d` and the excluded keys `[z]`. `forall trace a of M { always holds(v.value @ a = 0) }` settles `proved`, and `exists trace a of M { always holds((v.value = 0) @ a) }` gives the two instances `c` and `d`, each `Witnessed`, and settles `proved`. No instance binding names `z`; states of the evidence and certificates may hold the object `make` creates under it. | Test (TC-3219) |
+| FR-125-AC-21 | Hyper instancing outcomes, decided before any state is explored and never a fault. Each of these holds for a single-existential clause and for a two-universal clause: an overlapping population with no universe gives `RequiresBound` naming it; a subject with an empty `initial` list and bounded universes gives `NoInitialState`, never `NoInstance`; a subject with a non-empty `initial` list whose universe holds only keys no initial state admits gives `NoInstance`, which settles `inconclusive`, never `proved`; member records giving one key two types give `invalid_runtime_input`/`conflicting-identity`. A two-universal clause over two aliases, each subject with an initial state, in which one parameter has an admitted key and the other has none, gives `NoInstance`. Through `native-analyze/1` the single-existential `NoInstance` and `NoInitialState` items report the causes `no-instance` and `no-initial-state`. | Test (TC-3219) |
+| FR-125-AC-22 | Order of two parameters. The model has no operation, the universe of its one population of `Thing` is `[l, k]`, and the one initial state holds a `Thing` under each. For `(v: M::Thing, w: M::Thing)`, `forall trace a of M forall trace b of M { always holds((v = w) @ a) }` is violated at position 0 by the instances `(l, k)` and `(k, l)` only, and reports `v = l`, `w = k`: the instance order is `(l, l)`, `(l, k)`, `(k, l)`, `(k, k)`, the first parameter varying slowest. | Test (TC-3219) |
+| FR-125-AC-23 | `claim_instances` over FR-125-AC-13's populations. With records typed `Animal` and `Dog` under `c` and bounded universes, `ModelSystem::new` admits the subject and the call returns `NotSimulated(ConflictingIdentity)` naming `c` and both types; with those records and the universe of a third overlapping population removed, it returns `NotSimulated(RequiresBound)`. With a universe removed and an empty `initial` list it returns `NotSimulated(RequiresBound)`; with bounded universes and an empty list, `NoInitialState`; with an initial state and no admitted key, `NoInstance`; and over AC-8's populations, `Ok` holding `l` then `s`. | Test (TC-520) |
 
 ## Dependencies
 

@@ -134,7 +134,13 @@ fn bounded_always_health_replays_exact_rejecting_and_accepting_cylinders() {
             let system = ModelSystem::new(world.subject().simulation).unwrap();
             model_only.initial_key = ProbabilityProductKey::for_model_state(
                 model_only.binding.as_ref(),
-                &system.state_key(&model_only.initial).unwrap().0,
+                &system
+                    .state_key(
+                        &model_only.initial,
+                        fsl_foundation::IdentityLimits::default(),
+                    )
+                    .unwrap()
+                    .0,
             )
             .unwrap();
             no_token(&world, &model_only);
@@ -186,6 +192,7 @@ fn evidence(world: &World, claim: &str) -> ProbabilisticCounterexample {
             world.request(claim, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let record = records.first().unwrap();
     assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -242,8 +249,17 @@ fn cyclic_model_has_finite_debt_products_and_replays_both_bounds_and_workload() 
             assert_eq!(path.steps.len(), 2);
             let system = ModelSystem::new(world.subject().simulation).unwrap();
             assert_eq!(
-                system.state_key(&witness.initial).unwrap().0,
-                system.state_key(&path.steps[0].post).unwrap().0
+                system
+                    .state_key(&witness.initial, fsl_foundation::IdentityLimits::default())
+                    .unwrap()
+                    .0,
+                system
+                    .state_key(
+                        &path.steps[0].post,
+                        fsl_foundation::IdentityLimits::default()
+                    )
+                    .unwrap()
+                    .0
             );
             assert_ne!(witness.initial_key, path.steps[0].post_key);
             assert_eq!(witness.scheduler.len(), 2);
@@ -268,7 +284,10 @@ fn full_key_source_and_semantic_cylinder_mutations_never_reproduce() {
     let mut changed = original.clone();
     changed.initial_key = ProbabilityProductKey::for_model_state(
         original.binding.as_ref(),
-        &system.state_key(&original.initial).unwrap().0,
+        &system
+            .state_key(&original.initial, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0,
     )
     .unwrap();
     no_token(&world, &changed);
@@ -424,7 +443,10 @@ fn rekey(world: &World, name: &str, witness: &mut ProbabilisticCounterexample) {
     let key = |state, control, monitor: &QualifiedBoundedMonitor| {
         ProbabilityProductKey::for_formula_state(
             reference,
-            &system.state_key(state).unwrap().0,
+            &system
+                .state_key(state, fsl_foundation::IdentityLimits::default())
+                .unwrap()
+                .0,
             &monitor.key(control).unwrap(),
             ExactProbLimits::default().document,
             &Cancel::new(),
@@ -659,6 +681,7 @@ fn adapter_exhaustion_preserves_incomplete_without_accepted_evidence() {
                 &Engines::fsl().unwrap(),
                 vec![exact_probabilistic_item(RequestIndex::new(0), request)],
                 &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
             )
             .remove(0);
             assert!(record.terminal().is_some(), "{budget}: {record:?}");
@@ -751,6 +774,7 @@ fn interval_bounds_and_precision_budget_cannot_be_cast_into_bounded_refutations(
                 &Engines::fsl().unwrap(),
                 vec![exact_probabilistic_item(RequestIndex::new(0), request)],
                 &Cancel::new(),
+                fsl_replay::CertificationPolicy::AdmitAny,
             )
             .remove(0);
             if precision_budget {
@@ -791,6 +815,7 @@ fn one_admitted_over_binding_uses_the_actual_s3_parameter_node() {
         &Engines::fsl().unwrap(),
         vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     )
     .remove(0);
     assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
@@ -839,7 +864,10 @@ fn one_admitted_over_binding_uses_the_actual_s3_parameter_node() {
         let mut counterfeit = witness.clone();
         counterfeit.initial_key = ProbabilityProductKey::for_formula_state(
             witness.binding.as_ref(),
-            &system.state_key(&witness.initial).unwrap().0,
+            &system
+                .state_key(&witness.initial, fsl_foundation::IdentityLimits::default())
+                .unwrap()
+                .0,
             &monitor.key(root).unwrap(),
             ExactProbLimits::default().document,
             &Cancel::new(),
@@ -882,7 +910,13 @@ fn an_exact_engine_value_cannot_settle_refuted_after_bounded_replay_disagrees() 
                 }
             },
         );
-        let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
+        let record = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
         if duplicate {
             assert!(matches!(
                 record.terminal().unwrap().value(),
@@ -977,6 +1011,7 @@ fn proof_document(world: &World, claim: &str) -> Vec<u8> {
             world.request(claim, ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     let terminal = records[0].terminal().expect("a settled claim");
     assert!(

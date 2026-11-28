@@ -406,7 +406,7 @@ fn protocol_nodes_and_occurrences_survive_the_whole_i2_read() {
         .collect::<Vec<_>>();
     assert!(!expected.is_empty());
     for node in expected {
-        let key = fsl_foundation::node_wire::node_key_from_json(&node["node_id"]).unwrap();
+        let id = &node["node_id"];
         let typed = admitted
             .resolved_graph()
             .nodes
@@ -424,7 +424,7 @@ fn protocol_nodes_and_occurrences_survive_the_whole_i2_read() {
             "dependencies",
             "occurrences",
         ] {
-            assert_eq!(retained[field], node[field], "{key}: {field}");
+            assert_eq!(retained[field], node[field], "{id}: {field}");
         }
     }
     assert_eq!(

@@ -23,7 +23,7 @@ FR-312-AC-10, FR-491-AC-8.
 1. Run FR-108's healthy-parent clause request whose snapshot is `n` bytes
    with `clause.observation_limits.document_bytes` `n - 1`, then `n`.
 2. Run the same request without `observation_limits`, with
-   `RequestOverrides::observation` at `document_bytes` `n - 1`.
+   `RequestOverrides::limits` naming `observation.input_bytes` `n - 1`.
 3. Run step 1's request with that override as well.
 4. Evaluate a snapshot one byte over the ceiling through the replay facade.
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FSpec FR-190: decode a direct `model_based_test` request.
 
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 use fsl_foundation::Code;
@@ -274,9 +275,15 @@ pub(super) fn result_json(
             setting,
         } => serde_json::json!({
             "kind": "limit-reached",
-            "limit": limit.as_str(),
+            "limit": limit.limit_name(),
             "value": value,
             "setting": setting,
+        }),
+        ModelBasedTestCause::TraceStepLimit { value } => serde_json::json!({
+            "kind": "limit-reached",
+            "limit": "max_steps",
+            "value": value,
+            "setting": "simulation.max_steps",
         }),
         ModelBasedTestCause::ToolFailure { defect } => serde_json::json!({
             "kind": "tool-failure",
@@ -367,35 +374,40 @@ pub(super) fn result_json(
 }
 
 /// The run-level inputs shared with every other `run` route.
-pub(super) struct Context {
+pub(super) struct Context<'a> {
     pub(super) source: FormalSource,
     pub(super) integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     pub(super) library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
-    pub(super) limits: fsl_replay::spine::SpineLimits,
-    pub(super) observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+    pub(super) overrides: &'a super::RequestOverrides<'a>,
 }
 
-/// Candidate bound of each model expansion; the member is closed, so no
-/// request carries it.
-const MAX_CANDIDATES: u64 = 1_000_000;
-/// Work-unit budget of native evaluation.
-const WORK_UNITS: u64 = 10_000;
-/// Position limit of a sampled trace.
-const POSITION_LIMIT: u64 = 10_000;
-
+#[implements("FR-752-AC-16", "FR-752-AC-15")]
 pub(super) fn prepare(
     intake: &mut Intake<'_>,
     request: &wire::Request,
     member: &Value,
-    context: Context,
+    context: Context<'_>,
 ) -> Result<PreparedRun> {
     let Context {
         source,
         integer_division,
         library_integer_division,
-        limits,
-        observation_override,
+        overrides,
     } = context;
+    // The member is closed, so no request carries these: they run at the
+    // published defaults and the caller's values.
+    let published = fsl_analyze::analyze::AnalyzeLimits::published(
+        fsl_analyze::analyze::DeadlineSupply::Unbounded,
+    );
+    let effective = super::overrides::effective_limits(
+        super::overrides::RunRoute::ModelBasedTest,
+        super::overrides::RequestLimits {
+            accounting: published.accounting,
+            observation: None,
+        },
+        overrides,
+    )?;
+    let limits = effective.spine;
     let selection = decode(member)?;
     if request.package.is_some()
         || request.call.is_some()
@@ -592,13 +604,15 @@ pub(super) fn prepare(
     let sampler =
         fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
             .map_err(|error| invalid("model_based_test", format!("{error:?}")))?;
-    let observation = observation_override.unwrap_or_default();
     let request = fsl_eval::simulation::model::ModelBasedTestRequest {
         clause: Some(clause_identity),
         profile: sampler,
         seed: selection.seed,
         max_cases: selection.max_cases,
         max_trace_length: selection.max_trace_length,
+        max_steps: super::overrides::analyze_limits(published, overrides)
+            .simulation
+            .max_steps,
         max_value_bits: selection.max_value_bits.map(u64::from),
         subject: subject.as_ref().map(|(snapshots, initial, universes)| {
             fsl_eval::simulation::model::ModelBasedTestSubject {
@@ -608,15 +622,13 @@ pub(super) fn prepare(
                 universes: universes.clone(),
             }
         }),
-        expansion: fsl_eval::simulation::model::ExpansionLimits {
-            max_candidates: MAX_CANDIDATES,
-        },
-        accounting: fsl_replay::spine::default_accounting(WORK_UNITS),
+        expansion: super::overrides::analyze_limits(published, overrides).expansion,
+        accounting: effective.accounting.0,
         normalization: limits.model,
-        observation,
+        observation: effective.observation,
         emit: limits.package.emit(),
         exploration: fsl_eval::simulation::Limits::default(),
-        position_limit: POSITION_LIMIT,
+        position_limit: published.position_limit,
     };
     let record = fsl_eval::simulation::model::run_model_based_test(
         package,

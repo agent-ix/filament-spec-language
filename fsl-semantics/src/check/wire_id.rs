@@ -17,7 +17,7 @@
 //! Every walk uses an explicit stack, so the depth of an operand chain never
 //! consumes the call stack.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeList, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeList};
 use std::collections::{BTreeMap, HashMap, TryReserveError};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -27,6 +27,7 @@ use filament_contract_model::{
     NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
 };
 use filament_exact::{InvalidNodeKey, NodeKey, PathSegment};
+use serde::Deserialize;
 
 /// Why a node id could not be converted.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -690,10 +691,11 @@ fn key_with(
     unreachable!("the root frame returns its key")
 }
 
-/// The JSON node id `value` as a [`CheckedNodeId`], which reads raw JSON
-/// text rather than a [`serde_json::Value`].
+/// The JSON node id `value` as a [`CheckedNodeId`], read from the borrowed
+/// tree: writing it out as text first would recurse once per level of
+/// whatever it holds (ADR-030 D-1), and a flat node id does not.
 fn id_of_value(value: &serde_json::Value) -> Result<CheckedNodeId, String> {
-    serde_json::from_str(&value.to_string()).map_err(|error| error.to_string())
+    CheckedNodeId::deserialize(value).map_err(|error| error.to_string())
 }
 
 /// The index segments `id` holds anywhere in its path, in path order.
@@ -960,6 +962,17 @@ pub fn foreign_id_container(object: &serde_json::Map<String, serde_json::Value>)
                 == Some("dependency_reference")))
         && object.contains_key("package")
         && object.contains_key("node")
+}
+
+/// Whether `object` is an FSpec FR-412 certificate identity, `{node_id,
+/// model, ordinal}`. Its `node_id` is certificate identity JSON, the FR-201
+/// structural id with every operand nested (FSpec `CertificateNodeId`), and
+/// never a document-held id, so no id walk converts what it holds.
+pub fn certificate_identity(object: &serde_json::Map<String, serde_json::Value>) -> bool {
+    object.len() == 3
+        && object.contains_key("node_id")
+        && object.contains_key("model")
+        && object.contains_key("ordinal")
 }
 
 /// Why a component-guarantee slot key (FSpec FR-322 "Scope") has no
@@ -1463,8 +1476,8 @@ impl WireGraph {
             return Self::new(&ids).map_err(|error| error.to_string());
         }
         let rows: Vec<Vec<CheckedOperandEntry>> =
-            serde_json::from_value(envelope["semantic_graph"]["operand_rows"].clone())
-                .map_err(|error| error.to_string())?;
+            Deserialize::deserialize(&envelope["semantic_graph"]["operand_rows"])
+                .map_err(|error: serde_json::Error| error.to_string())?;
         Self::with_operand_rows(&ids, &rows).map_err(|error| error.to_string())
     }
 
@@ -1546,7 +1559,8 @@ impl WireGraph {
     /// it written in this document's held form: each nested operand id of a
     /// structural id becomes the index segment `{"node": i}` of this graph's
     /// node. A foreign `{package, node}` or `dependency_reference` container
-    /// is left as it is, as every other id walk leaves it.
+    /// is left as it is, as every other id walk leaves it, and so is a
+    /// [`certificate_identity`].
     ///
     /// # Errors
     ///
@@ -1565,7 +1579,10 @@ impl WireGraph {
         let mut value = value.clone();
         let mut pending = vec![(&mut value, holder)];
         while let Some((current, mut holder)) = pending.pop() {
-            if current.as_object().is_some_and(foreign_id_container) {
+            if current
+                .as_object()
+                .is_some_and(|object| foreign_id_container(object) || certificate_identity(object))
+            {
                 continue;
             }
             if holder.is_none() && !self.rows.is_empty() && current.get("node_tag").is_some() {

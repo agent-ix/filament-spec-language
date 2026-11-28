@@ -34,7 +34,6 @@
 //! verdict writes its `where` and `cause` as kinds only; FR-127's full
 //! encoding of them is remaining work on QSL-549.
 
-use base64::Engine as _;
 use filament_exact::{Cancel, LimitKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
@@ -44,6 +43,7 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::temporal::UndefinedCause;
+use ix_trace_rs::implements;
 use serde::{Serialize, Serializer};
 
 use crate::certificate::check::{
@@ -54,9 +54,9 @@ use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::counterexample::{UndefinedEvaluation, UndefinedLocus};
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits};
 use crate::refinement::{
-    check_initial, check_step, open_systems, ConcreteStep, EvalFailure, RefinementFailure,
-    RefinementPosition, RefinementSystems, StepRejection, StepVerdict, SubjectRefusal, Taken,
-    Undetermined,
+    check_initial, check_step_for_model, open_systems, ConcreteStep, EvalFailure,
+    RefinementFailure, RefinementPosition, RefinementSystems, StepRejection, StepVerdict,
+    SubjectRefusal, Taken, Undetermined,
 };
 
 /// One position of a simulation certificate: a product state EN-1 stored.
@@ -272,7 +272,35 @@ impl UndeterminedStep {
 }
 
 impl FailedStep {
+    /// The rejection verdict of what `check_step` gave an edge over the
+    /// concrete `transition`, `None` for the stutter step. No verdict is a
+    /// rejection for `Passes`, `Stopped` or `Fault`, nor for an unmatched step
+    /// that names no transition.
+    #[implements("FR-149-AC-3", "FR-245-AC-8")]
+    pub(crate) fn of(verdict: StepVerdict, transition: Option<&ModelTransition>) -> Option<Self> {
+        Some(match verdict {
+            StepVerdict::Fails(failure) => match *failure {
+                RefinementFailure::NoAbstractMatch { position } => Self::NoAbstractMatch {
+                    position,
+                    transition: transition?.clone(),
+                },
+                failure => Self::Fails(failure),
+            },
+            StepVerdict::Undefined(evaluation) => Self::Undefined(evaluation),
+            StepVerdict::Undetermined(undetermined) => {
+                Self::Undetermined(UndeterminedStep::new(undetermined))
+            }
+            StepVerdict::ProtocolContractUndetermined { .. } => {
+                Self::Undetermined(UndeterminedStep::new(Undetermined::UndecidedSuccessor))
+            }
+            StepVerdict::Passes { .. } | StepVerdict::Stopped(_) | StepVerdict::Fault(_) => {
+                return None;
+            }
+        })
+    }
+
     /// The verdict as the locus writes it (FR-149 "Wire form").
+    #[implements("FR-149-AC-8")]
     fn wire(&self) -> Result<serde_json::Value, String> {
         use serde_json::json;
         let decimal = |value: u64| value.to_string();
@@ -344,8 +372,7 @@ impl FailedStep {
                 "kind": "UndefinedEvaluation",
                 "where": {
                     "position": decimal(evaluation.site.position),
-                    "state_key": base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .encode(evaluation.site.state_key.as_bytes()),
+                    "state_key": crate::shared_wire::StateLocus::from(&evaluation.site.state_key),
                     "locus": locus_kind(&evaluation.site.locus)?,
                 },
                 "cause": undefined_cause_kind(&evaluation.cause),
@@ -378,20 +405,18 @@ impl Serialize for FailedStep {
     }
 }
 
-/// FSpec FR-364's encoding of a transition identity: the RFC 8785 identity
-/// document FSpec FR-181 defines.
+/// FSpec FR-364's encoding of a transition identity, written as FR-120 writes
+/// every transition.
+#[implements("FR-120-AC-40")]
 fn transition_wire(transition: &ModelTransition) -> Result<serde_json::Value, String> {
-    let bytes = transition
-        .canonical_bytes(quire_canonical::Limits::new(u64::MAX))
-        .map_err(|refusal| format!("a transition identity encodes: {refusal:?}"))?;
-    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+    crate::task_source_transition_wire(transition).map_err(|error| error.to_string())
 }
 
 /// The kind of expression an undefined evaluation names.
 fn locus_kind(locus: &UndefinedLocus) -> Result<&'static str, String> {
     Ok(match locus {
         UndefinedLocus::FractionValue => {
-            return Err("fraction-value belongs to probabilistic evidence".to_owned())
+            return Err("fraction-value belongs to probabilistic evidence".to_owned());
         }
         UndefinedLocus::Atom(_) => "atom",
         UndefinedLocus::Activation => "activation",
@@ -435,7 +460,9 @@ pub struct SimulationCertificateRequest<'a> {
 #[derive(Debug, thiserror::Error)]
 pub enum SimulationRefusal {
     /// The certificate names another refinement than the request's.
-    #[error("stale_dependency/content-mismatch: the certificate names refinement {certificate} but the request is for {request}")]
+    #[error(
+        "stale_dependency/content-mismatch: the certificate names refinement {certificate} but the request is for {request}"
+    )]
     Stale {
         /// The refinement the certificate names.
         certificate: String,
@@ -457,6 +484,7 @@ pub enum SimulationRefusal {
 /// [`SimulationRefusal`] when the certificate names another refinement, a
 /// subject does not open, a root is unbounded, or the concrete subject has no
 /// initial state. A refusal is never an acceptance.
+#[implements("FR-149-AC-1")]
 pub fn check_simulation_certificate(
     request: &SimulationCertificateRequest<'_>,
     certificate: &SimulationCertificate,
@@ -738,7 +766,10 @@ impl Run<'_, '_> {
         let mut computed = Vec::with_capacity(expansion.successors.len());
         for (transition, state) in expansion.successors {
             let order = Self::encoding(self.concrete.transition_key(&transition))?;
-            let (key, _) = Self::encoding(self.concrete.state_key(&state))?;
+            let (key, _) = Self::encoding(
+                self.concrete
+                    .state_key(&state, fsl_foundation::IdentityLimits::default()),
+            )?;
             computed.push((order, key, Some(transition), state));
         }
         computed.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
@@ -776,7 +807,7 @@ impl Run<'_, '_> {
             }
             self.edges = self.edges.saturating_add(1);
             let number = widen(number);
-            let verdict = check_step(
+            let verdict = check_step_for_model(
                 self.refinement,
                 self.concrete,
                 self.abstract_system,
@@ -798,36 +829,19 @@ impl Run<'_, '_> {
             };
             let (post, taken) = match verdict {
                 StepVerdict::Passes { post, taken } => (post, taken),
-                StepVerdict::Fails(failure) => match *failure {
-                    RefinementFailure::NoAbstractMatch { position } => {
-                        let Some(transition) = transition.clone() else {
-                            return Err(Self::fault("an-unmatched-abstract-step-has-a-transition"));
-                        };
-                        return Err(failed(FailedStep::NoAbstractMatch {
-                            position,
-                            transition,
-                        }));
-                    }
-                    failure => return Err(failed(FailedStep::Fails(failure))),
-                },
-                StepVerdict::Undefined(evaluation) => {
-                    return Err(failed(FailedStep::Undefined(evaluation)))
-                }
-                StepVerdict::Undetermined(undetermined) => {
-                    if let Some(counter) = Self::meter_counter(&undetermined) {
-                        return Err(self.meter_stop(counter));
-                    }
-                    return Err(failed(FailedStep::Undetermined(UndeterminedStep::new(
-                        undetermined,
-                    ))));
-                }
-                StepVerdict::ProtocolContractUndetermined { .. } => {
-                    return Err(failed(FailedStep::Undetermined(UndeterminedStep::new(
-                        Undetermined::UndecidedSuccessor,
-                    ))));
-                }
                 StepVerdict::Stopped(reached) => return Err(stopped(reached.limit, reached.value)),
                 StepVerdict::Fault(_) => return Err(Self::fault("refinement-step")),
+                failure => {
+                    if let StepVerdict::Undetermined(undetermined) = &failure {
+                        if let Some(counter) = Self::meter_counter(undetermined) {
+                            return Err(self.meter_stop(counter));
+                        }
+                    }
+                    let Some(verdict) = FailedStep::of(failure, transition.as_ref()) else {
+                        return Err(Self::fault("an-unmatched-abstract-step-has-a-transition"));
+                    };
+                    return Err(failed(verdict));
+                }
             };
             let differs = || Self::reject(CertificateRule::PostDiffers, at, Some(number), None);
             let slot = usize::try_from(edge.post).ok().and_then(|post_at| {
@@ -848,5 +862,34 @@ impl Run<'_, '_> {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod written_verdict_tests {
+    use super::FailedStep;
+    use filament_semantic_value::model_transition::ModelTransition;
+    use ix_trace_rs::trace;
+
+    /// FR-120-AC-40: a simulation certificate's verdict writes its transition's
+    /// `operation` as every writer does.
+    #[trace("TC-471", "FR-120-AC-40")]
+    #[test]
+    fn a_verdict_transition_writes_a_name_identity_as_the_name() {
+        let object = r#"{"node":"ix://a/b/C/d","package":"a/b"}"#;
+        for (identity, written) in [(r#""tick""#, "tick"), (object, object)] {
+            let verdict = FailedStep::NoAbstractMatch {
+                position: 0,
+                transition: ModelTransition::new(
+                    identity.to_owned(),
+                    None,
+                    Vec::new(),
+                    quire_canonical::Limits::new(u64::MAX),
+                )
+                .expect("a canonical transition"),
+            };
+            let wire = serde_json::to_value(&verdict).expect("a verdict spells");
+            assert_eq!(wire["transition"]["operation"], written, "{identity}");
+        }
     }
 }

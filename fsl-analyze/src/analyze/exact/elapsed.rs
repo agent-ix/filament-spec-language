@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::exact_probabilistic::{MeasurePhase, MonitorState, MonitorVerdict};
+use ix_trace_rs::implements;
 
 /// The transform's value at every state of an acyclic product: a decided
 /// measure's terminal reward `[M op c] - q`, otherwise the minimum over the
@@ -216,10 +217,11 @@ struct Refutation<'a> {
     cancel: &'a Cancel,
     subject: SubjectLimits<'a>,
     tamper_witness: Option<&'a dyn Fn(&mut ProbabilisticCounterexample)>,
+    work: &'a filament_exact::WorkScope,
 }
 
 fn refute(request: Refutation<'_>) -> EngineReport {
-    use crate::exact_probabilistic::{WitnessError, WitnessScope, produce_quantile_witness};
+    use crate::exact_probabilistic::{produce_quantile_witness, WitnessError, WitnessScope};
     let Refutation {
         system,
         claim,
@@ -233,6 +235,7 @@ fn refute(request: Refutation<'_>) -> EngineReport {
         cancel,
         subject,
         tamper_witness,
+        work,
     } = request;
     let Some(policy) = tight_policy(product, values) else {
         return not_yet();
@@ -308,9 +311,11 @@ fn refute(request: Refutation<'_>) -> EngineReport {
         cancel,
         subject,
         tamper_witness,
+        work,
     )
 }
 
+#[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
 pub(super) fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -336,6 +341,7 @@ pub(super) fn run(
     let Some(source_package) = simulation.source_package() else {
         return not_yet();
     };
+    let work = WorkScope::new(simulation.meter);
     let limits = request.limits;
     let meter = simulation.meter;
     let subject = SubjectLimits {
@@ -378,12 +384,13 @@ pub(super) fn run(
         claim,
         limits,
     };
-    let (built, _) = match build_retaining_monitor(product_request, cancel) {
+    let (built, _) = match build_retaining_monitor_in_scope(product_request, work.clone(), cancel) {
         Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match timed_product(built, &limits, subject) {
+        Ok(product) => product,
+        Err(report) => return *report,
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
@@ -426,6 +433,7 @@ pub(super) fn run(
             cancel,
             subject,
             tamper_witness,
+            work: &work,
         });
     }
     let values = values
@@ -488,13 +496,15 @@ pub(super) fn run(
     };
     let checked = (|| {
         let bytes = write_probability_certificate(&document, document_limits, cancel)?;
-        check_probability_certificate_document(
+        fsl_replay::check_probability_certificate_document_as_with_work_scope(
             &system,
             source_package.graph().probabilistic_model().claims(),
             &identity,
             &bytes,
+            fsl_replay::CertificateRole::Claim,
             document_limits,
             cancel,
+            &work,
         )
     })();
     let extremum = if at_least {

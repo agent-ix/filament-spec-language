@@ -4,6 +4,8 @@
 
 use std::collections::BTreeMap;
 
+type AdmittedInitial<P> = (Vec<u8>, usize, P);
+
 #[cfg(feature = "test-support")]
 thread_local! {
     static KEYED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -41,7 +43,7 @@ pub(super) fn admit_initial<T, P, E, I>(
     states: impl IntoIterator<Item = Result<T, I>>,
     max_states: usize,
     mut key: impl FnMut(usize, T) -> Result<(Vec<u8>, P), E>,
-) -> Result<Vec<(Vec<u8>, usize, P)>, Refused<E, I>> {
+) -> Result<Vec<AdmittedInitial<P>>, Refused<E, I>> {
     let mut distinct: BTreeMap<Vec<u8>, (usize, P)> = BTreeMap::new();
     for (index, state) in states.into_iter().enumerate() {
         let state = state.map_err(Refused::Construction)?;

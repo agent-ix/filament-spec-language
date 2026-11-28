@@ -521,7 +521,7 @@ fn conformance_emitted_application_nodes_match_fspec_positive_fixtures() {
 
 /// `total(s) = sum<F>(x in s: x)` over `Sequence<F>[0, 4]`, `F` a binary64
 /// nearest-even float, checked with the IEEE profile.
-fn float_sum() -> Result<CheckedPackage, Vec<CheckRefusal>> {
+fn float_sum() -> Result<CheckedPackage, Vec<SemanticCheckRefusal>> {
     let float = ValueType::Float(filament_exact::FloatType::new(
         filament_exact::IeeeWidth::Binary64,
         filament_exact::RoundingMode::NearestEven,

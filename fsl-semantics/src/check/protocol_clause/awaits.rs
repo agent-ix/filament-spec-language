@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An `await`'s own local checks (FSpec FR-466 "Per-operator checks" 2 and
 //! 6, FSpec FR-464 "Profiles and laws"): the awaited event is a `receive`,
 //! an `effect` or an `event`; `within` is a closed interval with
@@ -6,14 +7,14 @@
 //! role too, so it needs the same selection.
 
 use fsl_forms::{IntervalUpper, ProtocolDeclarationForm, ProtocolNodeKind};
-use fsl_foundation::Span;
 use fsl_foundation::selection::ProfileSelection;
+use fsl_foundation::Span;
 
 use super::refusal;
 use super::types::{CheckedAwait, ProtocolNodeId};
 use crate::check::profile::TemporalProfile;
 use crate::check::protocol_obligation::CheckedDeadline;
-use crate::check::refusal::{CheckRefusal, ProtocolAnchorCause};
+use crate::check::refusal::{ProtocolAnchorCause, SemanticCheckRefusal};
 
 /// The profile selections an `await` reads: the selected protocol
 /// profile's identity, which an awaited-form refusal names, and whether the
@@ -36,7 +37,7 @@ pub struct Selections<'a> {
 pub(super) fn check(
     protocol: &ProtocolDeclarationForm,
     selections: Selections<'_>,
-) -> Result<Vec<CheckedAwait>, Vec<(Span, CheckRefusal)>> {
+) -> Result<Vec<CheckedAwait>, Vec<(Span, SemanticCheckRefusal)>> {
     let mut checked = Vec::with_capacity(protocol.awaits.len());
     let mut refusals = Vec::new();
     for form in &protocol.awaits {
@@ -135,7 +136,7 @@ pub(super) fn check(
     }
 }
 
-fn window(node: &str, lower: u64, upper: Option<u64>, span: Span) -> (Span, CheckRefusal) {
+fn window(node: &str, lower: u64, upper: Option<u64>, span: Span) -> (Span, SemanticCheckRefusal) {
     (
         span,
         refusal(ProtocolAnchorCause::AwaitWindow {

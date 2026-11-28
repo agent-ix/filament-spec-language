@@ -13,18 +13,19 @@ use filament_exact::NodeKey;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
+use ix_trace_rs::implements;
 
 use super::state::AnchorInput;
-use super::{Binder, Binders, Lowering, fault};
+use super::{fault, Binder, Binders, Lowering};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::{LeafTerm, LiteralValue};
+use crate::check::node_key::{BindingValue, BodyTerm, LeafTerm, MemberTerm};
 use crate::check::refinement::{
     CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedHistoryRow,
     KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
     StepClass, StepTarget,
 };
-use crate::check::refusal::{CheckRefusal, KeyFault};
+use crate::check::refusal::{KeyFault, SemanticCheckRefusal};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::fairness::FairnessConstraint;
 
@@ -36,7 +37,7 @@ impl Lowering<'_> {
         &mut self,
         refinement: &CheckedRefinement,
         location: &Location,
-    ) -> Result<KeyedRefinementRows, CheckRefusal> {
+    ) -> Result<KeyedRefinementRows, SemanticCheckRefusal> {
         let catalog = refinement.class_catalog_keys();
         let mut rows = KeyedRefinementRows::default();
         for row in refinement.populations() {
@@ -159,7 +160,7 @@ impl Lowering<'_> {
     pub(crate) fn refinement_result_type(
         &mut self,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         self.located(location, |this| {
             this.type_node(&filament_exact::ValueType::Boolean, location)
         })
@@ -170,8 +171,8 @@ impl Lowering<'_> {
     fn located(
         &mut self,
         location: &Location,
-        node: impl FnOnce(&mut Self) -> Result<NodeKey, CheckRefusal>,
-    ) -> Result<NodeKey, CheckRefusal> {
+        node: impl FnOnce(&mut Self) -> Result<NodeKey, SemanticCheckRefusal>,
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let key = node(self)?;
         if !self.occurrences.has(key.clone()) {
             self.record(key.clone(), OccurrenceRole::Generated, location.clone());
@@ -179,35 +180,61 @@ impl Lowering<'_> {
         Ok(key)
     }
 
-    /// The `literal` node of a history field's initial value, typed at the
-    /// field's declared type (FSpec FR-322 "Refinement row expressions": a
-    /// local history-literal reference), and located at the refinement.
+    /// The lowered initial term of a history field, typed at its declared
+    /// type and located at the refinement. An initial that is not a present
+    /// option is an inline `literal` term; a present option is an
+    /// `option_value` node around its recursively lowered payload.
+    #[implements("FR-901-AC-1")]
     fn history_initial(
         &mut self,
         value: &Value,
         declared: &ValueType,
         location: &Location,
-    ) -> Result<LeafTerm, CheckRefusal> {
-        // An enum member is written inline: the refinement's history initial is a
-        // literal or a reference to a literal node, and a member's own node is an
-        // enum value, not a literal (FSpec FR-375 `histories`).
-        if let Value::Enum(member) = value {
+    ) -> Result<LeafTerm, SemanticCheckRefusal> {
+        let mut current_value = value;
+        let mut current_type = declared;
+        let mut option_types = Vec::new();
+        while let (Value::Option(option), ValueType::Option(payload_type)) =
+            (current_value, current_type)
+        {
+            let Some(payload) = option.payload() else {
+                break;
+            };
+            option_types.push(current_type);
+            current_value = payload;
+            current_type = payload_type;
+        }
+        // A `reference` initial is an option-typed history's present value,
+        // naming its `option_value` node; every other initial is the row's
+        // own `literal` term (FSpec FR-375 `histories`). Inside a present
+        // option an enum member is inline too, its node being an
+        // `enum_value`; any other payload is a node the `option_value` names.
+        let mut term = if option_types.is_empty() || matches!(current_value, Value::Enum(_)) {
+            let literal = Self::literal_value(location, current_value, None)?;
             let ty = self
-                .type_ref(declared, location)?
+                .type_ref(current_type, location)?
                 .admitted()
                 .cloned()
                 .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
-            return Ok(LeafTerm::literal(
-                ty,
-                LiteralValue::Enum(member.variant().case().to_owned()),
-            ));
+            LeafTerm::literal(ty, literal)
+        } else {
+            self.literal_at(location, current_value, current_type, None)?
+        };
+        for option_type in option_types.into_iter().rev() {
+            let semantic_type = self.type_ref(option_type, location)?;
+            term = self.value_node_at(
+                location,
+                "option_value",
+                semantic_type,
+                BodyTerm::aggregate(vec![MemberTerm::binding("value", BindingValue::Leaf(term))]),
+            )?;
         }
-        self.literal_at(location, value, declared, None)
+        Ok(term)
     }
 
     /// The lowered term of one row expression, over one `parameter` node per
     /// binder of its context.
-    fn row_term(&mut self, row: &CheckedRow) -> Result<LeafTerm, CheckRefusal> {
+    fn row_term(&mut self, row: &CheckedRow) -> Result<LeafTerm, SemanticCheckRefusal> {
         let location = Location::root(Origin::TypeDeclaration {
             name: row.site.clone(),
         });
@@ -237,7 +264,7 @@ impl Lowering<'_> {
     fn row_arguments(
         &mut self,
         arguments: &[Option<CheckedRow>],
-    ) -> Result<Vec<Option<LeafTerm>>, CheckRefusal> {
+    ) -> Result<Vec<Option<LeafTerm>>, SemanticCheckRefusal> {
         arguments
             .iter()
             .map(|argument| argument.as_ref().map(|row| self.row_term(row)).transpose())
@@ -249,7 +276,7 @@ impl Lowering<'_> {
         &mut self,
         operation: &DeclarationKey,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let (_, model) = self.model_owner(operation, location)?;
         let (declaring, name) = model
             .operation_anchor_declaration(operation)
@@ -264,7 +291,7 @@ impl Lowering<'_> {
         declaring: filament_exact::EffectiveId,
         name: &str,
         location: &Location,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeKey, SemanticCheckRefusal> {
         let scope = self.scope;
         let operation = scope
             .operations()
@@ -294,7 +321,7 @@ impl Lowering<'_> {
         &mut self,
         constraint: &FairnessConstraint,
         location: &Location,
-    ) -> Result<KeyedFairnessRow, CheckRefusal> {
+    ) -> Result<KeyedFairnessRow, SemanticCheckRefusal> {
         let operation = constraint.operation();
         Ok(KeyedFairnessRow {
             operation: self.anchor_by_name(
@@ -314,7 +341,7 @@ fn catalog_node(
     side: &[KeyedCatalogClass],
     class: &str,
     location: &Location,
-) -> Result<Option<NodeKey>, CheckRefusal> {
+) -> Result<Option<NodeKey>, SemanticCheckRefusal> {
     match side.iter().find(|entry| entry.class() == class) {
         Some(KeyedCatalogClass::Declared { node, .. }) => Ok(Some(node.clone())),
         Some(KeyedCatalogClass::Memory(_)) => Ok(None),
@@ -322,7 +349,7 @@ fn catalog_node(
     }
 }
 
-fn rows_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
+fn rows_fault(location: &Location, invariant: &'static str) -> SemanticCheckRefusal {
     fault(
         location,
         KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
@@ -330,4 +357,95 @@ fn rows_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
             invariant,
         )),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use filament_exact::{Integer, IntegerInterval, Meter, OptionValue};
+    use serde_json::json;
+
+    use super::*;
+    use crate::check::family::fixtures::{empty_scope, fixture_source};
+    use crate::check::family::OccurrenceMap;
+    use crate::check::lowering::generated_location;
+    use crate::check::lowering::tests::view::preimage;
+    use crate::check::node_key::SourceOwner;
+
+    /// A present option holding an absent one, of type
+    /// `Option<Option<Int[0, 1]>>`, is an `option_value` node whose member
+    /// refers to a `none` `literal` node of the inner option type: only a
+    /// row's outermost initial is inline. No source spelling writes this
+    /// value, so the test lowers it directly.
+    #[test]
+    fn an_absent_payload_inside_a_present_option_is_a_node_the_option_value_names() {
+        let scope = empty_scope();
+        let owner = SourceOwner::from(&fixture_source());
+        let mut occurrences = OccurrenceMap::default();
+        let mut meter = Meter::new(crate::check::family::SCALAR_LIMITS_UNLIMITED);
+        let mut lowering = Lowering::new_with_source_owners(
+            &scope,
+            &owner,
+            &std::collections::BTreeMap::new(),
+            &[],
+            &[],
+            scope.types().units().clone(),
+            None,
+            0,
+            &mut occurrences,
+            &mut meter,
+            "fixture",
+        );
+        let location = generated_location();
+        let int = ValueType::Int(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(1_i64)).expect("an interval"),
+        );
+        let inner = ValueType::Option(Arc::new(int.clone()));
+        let declared = ValueType::Option(Arc::new(inner.clone()));
+        let initial = OptionValue::present(inner.clone(), OptionValue::none(int))
+            .expect("a present option of an absent one");
+
+        let term = lowering
+            .history_initial(&initial, &declared, &location)
+            .expect("the initial lowers");
+
+        let declared_node = lowering
+            .type_node(&declared, &location)
+            .expect("the declared type keys");
+        let inner_node = lowering
+            .type_node(&inner, &location)
+            .expect("the inner type keys");
+        let graph = lowering.finish(&location).expect("lowering finishes").graph;
+        let node = |term: &LeafTerm| {
+            let LeafTerm::Reference { target } = term else {
+                panic!("a reference to a node, not {term:?}");
+            };
+            let key = target.admitted().expect("an admitted key").clone();
+            preimage(graph.node(key).expect("the referenced node"))
+        };
+        let outer = node(&term);
+        assert_eq!(outer["semantic_form"], "option_value", "{outer}");
+        assert_eq!(
+            outer["semantic_type"]["digest"],
+            json!(declared_node.to_string())
+        );
+        let member = &outer["body"]["members"][0];
+        assert_eq!(member["name"], "value", "{outer}");
+        assert_eq!(member["value"]["term"], "reference", "{outer}");
+        let payload = graph
+            .nodes()
+            .find(|candidate| {
+                member["value"]["target"]["digest"] == json!(candidate.key().to_string())
+            })
+            .map(preimage)
+            .expect("the member names a node of this graph");
+        assert_eq!(payload["semantic_form"], "literal", "{payload}");
+        assert_eq!(
+            payload["semantic_type"]["digest"],
+            json!(inner_node.to_string())
+        );
+        assert_eq!(payload["body"]["value_kind"], "none", "{payload}");
+        assert_eq!(payload["body"]["value"], serde_json::Value::Null);
+    }
 }

@@ -131,7 +131,7 @@ fn value_record_views_and_native_charges_equal_the_source() {
             serde_json::json!(record.requirements().kind().to_wire())
         );
     }
-    let source = crate::value_validity::package_of(
+    let source = crate::value_validity_support::package_of(
         "ordered enum Status { ZED, ALPHA, MID }\n\
          function Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }\n\
          function Other using v(x: Int[0, 9]): Integer pure { x + 1 }\n\

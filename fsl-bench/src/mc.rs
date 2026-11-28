@@ -279,6 +279,7 @@ pub fn run_state_graph(world: &World, symmetric: bool) -> Result<Work, AxisError
             max_depth: None,
             limits,
             seed: None,
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -604,7 +605,7 @@ pub fn run_encode(system: &ModelSystem<'_>) -> Result<Work, AxisError> {
         .first()
         .ok_or_else(|| fail("initial", "the subject has no initial state"))?;
     let (bytes, _) = system
-        .state_key(state)
+        .state_key(state, fsl_foundation::IdentityLimits::default())
         .map_err(|refusal| fail("state_key", refusal))?;
     Ok(Work {
         states: 1,

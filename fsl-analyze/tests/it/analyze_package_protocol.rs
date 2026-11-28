@@ -610,16 +610,18 @@ fn package_workflow_roles_replay_refuses_forged_actors() {
     }
     let unit = std::fs::read(ws.path("program.fsl")).expect("source bytes");
     let model = std::fs::read(ws.path("model.json")).expect("model bytes");
-    let wire = crate::model_settle::request(
+    let wire = crate::model_settle_support::request(
         compiled.checked(),
         &[],
         &model,
         documents.snapshots.iter(),
         &unit,
     );
-    let (node, occurrence) = crate::model_settle::protocol_anchor(compiled.checked(), "Flow");
-    let envelope =
-        |payload| crate::model_settle::envelope_at(payload, node.clone(), occurrence.clone());
+    let (node, occurrence) =
+        crate::model_settle_support::protocol_anchor(compiled.checked(), "Flow");
+    let envelope = |payload| {
+        crate::model_settle_support::envelope_at(payload, node.clone(), occurrence.clone())
+    };
     let letters = crate::counter::Letters { atom: |_| None };
     let legitimate = replay_protocol_trace(
         wire.clone(),
@@ -2256,15 +2258,15 @@ fn package_symbolic_capacity_replay_readmits_the_recorded_binding() {
         else {
             panic!("one-slot queue deadlocks");
         };
-        let mut wire = crate::model_settle::request(
+        let mut wire = crate::model_settle_support::request(
             checked,
             &[],
             &std::fs::read(ws.path("model.json")).expect("model"),
             documents.snapshots.iter(),
             &std::fs::read(ws.path("program.fsl")).expect("source"),
         );
-        let (node, occurrence) = crate::model_settle::protocol_anchor(checked, "Flow");
-        let envelope = crate::model_settle::envelope_at(*counterexample, node, occurrence);
+        let (node, occurrence) = crate::model_settle_support::protocol_anchor(checked, "Flow");
+        let envelope = crate::model_settle_support::envelope_at(*counterexample, node, occurrence);
         let mut subject = fsl_replay::ProtocolTraceSubject {
             model: fsl_replay::ModelTraceSubject {
                 timed: None,
@@ -2349,6 +2351,109 @@ fn package_symbolic_capacity_replay_readmits_the_recorded_binding() {
                 matches!(&*refusal, ModelTraceRefusal::Protocol(ProtocolRefusal::Capacity(actual))
                 if actual == &expected),
                 "{refusal:?}"
+            );
+        }
+    });
+}
+
+/// FR-217-AC-10: a protocol replay over a subject with an unbounded root
+/// refuses `requires-bound` before any step, from source and from package
+/// bytes. The payload is the bounded protocol's deadlock, whose steps stop
+/// before the finish binder that the second unit widens to `Integer`.
+#[trace("TC-662", "FR-217-AC-10")]
+#[test]
+fn protocol_replay_over_an_unbounded_root_requires_a_bound_on_both_routes() {
+    use fsl_eval::model_subject::CapacityBinding;
+    use fsl_eval::simulation::NotSimulated;
+    use fsl_replay::{ModelCheckOutcome, ModelTraceRefusal, ReplayRefusal};
+    let binding = vec![CapacityBinding {
+        name: "Bound".to_owned(),
+        value: 1,
+    }];
+    let bounded = Workspace::new("protocol-replay-bounded-root");
+    let path = symbolic_capacity_request(&bounded, Some(1), false);
+    let mut found = None;
+    with_capacity_subjects(&bounded, &path, |mut source, _, _, _| {
+        source.capacities = binding.clone();
+        let ModelCheckOutcome::Violated { counterexample, .. } =
+            capacity_outcome(source).expect("the bounded protocol checks")
+        else {
+            panic!("one-slot queue deadlocks");
+        };
+        found = Some(*counterexample);
+    });
+    let counterexample = found.expect("the bounded deadlock");
+
+    let ws = Workspace::new("protocol-replay-unbounded-root");
+    let path = symbolic_capacity_request(&ws, Some(1), false);
+    let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("source");
+    ws.write(
+        "program.fsl",
+        unit.replace(
+            "(closing: Boolean) { closing }",
+            "(closing: Integer) { closing = 0 }",
+        )
+        .as_bytes(),
+    );
+    with_capacity_subjects(&ws, &path, |source, _, checked, documents| {
+        let mut wire = crate::model_settle_support::request(
+            checked,
+            &[],
+            &std::fs::read(ws.path("model.json")).expect("model"),
+            documents.snapshots.iter(),
+            &std::fs::read(ws.path("program.fsl")).expect("source"),
+        );
+        let (node, occurrence) = crate::model_settle_support::protocol_anchor(checked, "Flow");
+        let envelope = crate::model_settle_support::envelope_at(counterexample, node, occurrence);
+        let subject = fsl_replay::ProtocolTraceSubject {
+            model: fsl_replay::ModelTraceSubject {
+                timed: None,
+                initial: source.model.simulation.initial.clone(),
+                universes: source.model.simulation.universes.clone(),
+                expansion: source.model.simulation.expansion,
+                stutter_closure: false,
+            },
+            protocol: source.protocol.clone(),
+            over: source.over.clone(),
+            roles: source.roles.clone(),
+            capacities: binding.clone(),
+            memory: source.memory.clone(),
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        };
+        let letters = crate::counter::Letters { atom: |_| None };
+        let from_source = fsl_replay::replay_protocol_trace(
+            wire.clone(),
+            &subject,
+            &envelope,
+            &letters,
+            fsl_replay::ReplayLimits::default(),
+        );
+        let directory = ws.path(crate::analyze_cli_support::HANDOFF);
+        let identities = std::fs::read(directory.join("identities.json")).expect("identity rows");
+        let equality = std::fs::read(directory.join("equality.json")).expect("equality rows");
+        wire.byte_provision.clear();
+        let from_package = fsl_replay::replay_protocol_trace_from_package(
+            wire,
+            fsl_replay::HandoffSupply {
+                dependencies: &[],
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &subject,
+            &envelope,
+            &letters,
+            fsl_replay::ReplayLimits::default(),
+        );
+        for (route, replayed) in [("source", from_source), ("package", from_package)] {
+            let Err(ReplayRefusal::ModelTrace(refusal)) = replayed else {
+                panic!("{route}: expected requires-bound, got {replayed:?}");
+            };
+            assert!(
+                matches!(&*refusal, ModelTraceRefusal::NotSimulated(cause)
+                    if matches!(**cause, NotSimulated::RequiresBound(_))),
+                "{route}: {refusal:?}"
             );
         }
     });
@@ -2944,7 +3049,7 @@ fn channel_related_premise(ws: &Workspace, related: bool) {
     let mut model: Value =
         serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("model document"))
             .expect("model JSON");
-    crate::related_by::add_owns_relationship(&mut model);
+    crate::related_by_support::add_owns_relationship(&mut model);
     std::fs::write(ws.path("model.json"), model.to_string()).expect("write the related model");
     let mut snapshot: Value = serde_json::from_slice(
         &std::fs::read(ws.path("snapshot-0.json")).expect("the initial snapshot"),
@@ -3305,6 +3410,18 @@ fn terminal_request(
     terminal: &str,
     blocked: bool,
 ) -> std::path::PathBuf {
+    terminal_request_over(ws, captures, terminal, blocked, "Cell")
+}
+
+/// [`terminal_request`] with the protocol over `M::<over>`: `Cell`, or the
+/// supertype `Base` that `Cell` then extends.
+fn terminal_request_over(
+    ws: &Workspace,
+    captures: &str,
+    terminal: &str,
+    blocked: bool,
+    over: &str,
+) -> std::path::PathBuf {
     let run = if blocked {
         format!(
             "sequence Main {{ {} }}",
@@ -3314,7 +3431,7 @@ fn terminal_request(
         "sequence Main {}".to_owned()
     };
     let body = format!(
-        "{}protocol Flow using pp over (k: M::Cell) on origin {{
+        "{}protocol Flow using pp over (k: M::{over}) on origin {{
             {captures}
             role w on M::Cell;
             {terminal}
@@ -3349,6 +3466,9 @@ fn terminal_request(
                 Some("value_type" | "object_type" | "population")
             )
         });
+    if over == "Base" {
+        add_base_supertype(&mut model);
+    }
     let model = serde_json::to_vec(&model).expect("the terminal model serializes");
     crate::analyze_cli_support::request_over(
         ws,
@@ -3953,4 +4073,114 @@ fn another_protocols_memory_does_not_change_the_package_subject() {
     let package = package_run(&ws, &path);
     assert_eq!(package.item(0), source.item(0), "{}", package.document());
     assert_eq!(package.exit, source.exit);
+}
+
+/// `Cell` extends a `Base` with no fields.
+fn add_base_supertype(model: &mut Value) {
+    const BASE: &str = "ix://test/fill/Base";
+    let types = model["types"].as_array_mut().expect("model types");
+    let cell = types
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://test/fill/Cell")
+        .expect("Cell is declared");
+    cell["supertypes"] = json!([BASE]);
+    let mut base = cell.clone();
+    base["identity"] = json!(BASE);
+    base["displayName"] = json!(BASE);
+    base["supertypes"] = json!([]);
+    base["fields"] = json!([]);
+    base["operations"] = json!([]);
+    base["origin"] = json!({"generated": {"generatorIdentity": BASE,
+        "generatorVersion": "1.0.0", "inputIdentities": [BASE]}});
+    types.push(base);
+}
+
+/// FR-125 "Instancing": on the source and the package route, a refuted
+/// protocol claim over `M::Base` names its `over` object with the admitted
+/// type `Cell`.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_protocol_over_subject_names_the_admitted_member_type_on_both_routes() {
+    let ws = Workspace::new("package-over-admitted-type");
+    let path = terminal_request_over(&ws, "", "", true, "Base");
+    let source = analyze(&path);
+    let (package_path, _) = package_request(&ws, &path);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package analysis");
+    let package = analyze(&package_path);
+    for run in [&source, &package] {
+        let item = run.item(0);
+        assert_eq!(label(&item), "refuted", "{}", run.document());
+        let over = &item["counterexample"]["subject"]["over"];
+        assert_eq!(over["type"], "reference", "{}", run.document());
+        assert_eq!(
+            over["object_type"]["original"],
+            json!({"node": "ix://test/fill/Cell", "package": "test/fill"}),
+            "{}",
+            run.document()
+        );
+        assert!(over.get("population").is_none(), "{over}");
+        assert_eq!(item["replay"]["reproduced"], true);
+    }
+}
+
+/// FR-125 "Instancing": on the source and the package constructor, a
+/// replicated role over `M::Base` spawns objects of the admitted type `Cell`.
+#[trace("TC-520")]
+#[test]
+fn a_replicated_role_object_names_the_admitted_member_type_on_both_routes() {
+    use fsl_eval::simulation::protocol::{Sc, StepKind};
+
+    let ws = Workspace::new("package-role-admitted-type");
+    let path = workflow_roles_request(&ws, 1, "workflow", false, "", "closing");
+    let unit = std::fs::read_to_string(ws.path("program.fsl"))
+        .expect("the role unit")
+        .replace("over (k: M::Cell)", "over (k: M::Base)")
+        .replace("each M::Cell from", "each M::Base from");
+    ws.write("program.fsl", unit.as_bytes());
+    let mut model: Value =
+        serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("the model"))
+            .expect("the model is JSON");
+    add_base_supertype(&mut model);
+    // A role takes a type its population names, so `cells` names `Base` too.
+    for population in model["populations"].as_array_mut().expect("populations") {
+        population["members"]
+            .as_array_mut()
+            .expect("members")
+            .push(json!("ix://test/fill/Base"));
+    }
+    ws.write("model.json", model.to_string().as_bytes());
+    package_protocol_graph(
+        &ws,
+        &path,
+        Sc,
+        &["Planning"],
+        false,
+        false,
+        |source, package| {
+            let one = std::num::NonZeroUsize::new(1).expect("one worker");
+            for system in [source, package] {
+                let reached = crate::fill::reachable_with_workers(system, one).0;
+                let spawned: Vec<String> = reached
+                    .iter()
+                    .flat_map(|state| &state.steps)
+                    .filter(|(step, _)| step.kind() == StepKind::Spawn)
+                    .map(|(step, _)| {
+                        let bytes =
+                            quire_canonical::to_vec(step, quire_canonical::Limits::new(u64::MAX))
+                                .expect("transition identity");
+                        String::from_utf8(bytes).expect("canonical JSON")
+                    })
+                    .collect();
+                assert!(!spawned.is_empty(), "a worker spawns");
+                for step in spawned {
+                    let step: Value = serde_json::from_str(&step).expect("canonical JSON");
+                    assert_eq!(
+                        step["object"]["object_type"]["original"],
+                        json!({"node": "ix://test/fill/Cell", "package": "test/fill"}),
+                        "{step}"
+                    );
+                }
+            }
+        },
+    );
 }

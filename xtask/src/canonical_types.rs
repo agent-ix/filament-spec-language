@@ -634,6 +634,7 @@ pub struct Report {
 
 /// FR-271 and FR-272 over `packages`; files under `workspace_root` are named
 /// relative to it.
+#[ix_trace_rs::string_edge]
 pub fn scan(workspace_root: &Path, packages: Vec<Package>) -> Result<Report> {
     let mut definitions = Vec::new();
     let mut reexports = Vec::new();
@@ -995,6 +996,31 @@ mod tests {
             }),
             "the gate must report no re-export finding for {ident} in fsl-replay/src/lib.rs",
         );
+    }
+
+    /// Whether a top-level `pub use <owner>::…` in `source` takes `name`
+    /// from that crate's root under its own name, alone or in a group.
+    fn reexports_from_root(source: &str, owner: &str, name: &str) -> bool {
+        let named =
+            |tree: &syn::UseTree| matches!(tree, syn::UseTree::Name(leaf) if leaf.ident == name);
+        syn::parse_file(source)
+            .expect("the source parses")
+            .items
+            .iter()
+            .any(|item| {
+                let syn::Item::Use(item) = item else {
+                    return false;
+                };
+                let syn::UseTree::Path(path) = &item.tree else {
+                    return false;
+                };
+                matches!(item.vis, syn::Visibility::Public(_))
+                    && path.ident == owner
+                    && match &*path.tree {
+                        syn::UseTree::Group(group) => group.items.iter().any(named),
+                        leaf => named(leaf),
+                    }
+            })
     }
 
     const TAGGED_METER: &str =
@@ -1576,9 +1602,7 @@ mod tests {
     #[trace("TC-748", "FR-273-AC-46")]
     fn replay_origin_reexport_names_exact_owner_path() {
         let source = include_str!("../../fsl-replay/src/lib.rs");
-        assert!(source.contains(
-            "pub use filament_exact::{Identifier, NodeKey, Origin, Role, ScalarLimits, Value};"
-        ));
+        assert!(reexports_from_root(source, "filament_exact", "Origin"));
         assert!(!source.contains("Origin as"));
         assert_no_reexport_finding("Origin");
     }
@@ -1601,5 +1625,65 @@ mod tests {
         assert!(source.contains("pub use filament_checked::key::DeclarationKey;"));
         assert!(!source.contains("DeclarationKey as"));
         assert_no_reexport_finding("DeclarationKey");
+    }
+
+    /// FR-273-AC-52 through AC-55 (TC-748): workspace namesakes use names
+    /// that distinguish their meaning from the canonical type.
+    #[trace(
+        "TC-748",
+        "FR-273-AC-52",
+        "FR-273-AC-53",
+        "FR-273-AC-54",
+        "FR-273-AC-55"
+    )]
+    #[test]
+    fn remaining_workspace_namesakes_use_meaning_specific_names() {
+        let namesakes = [
+            (
+                "Member",
+                "ClosedOrderMember",
+                "fsl-analyze/src/model_check/hyper/closed/reduction.rs",
+            ),
+            (
+                "Member",
+                "CompositionSourceMember",
+                "fsl-replay/src/planner/from_admitted.rs",
+            ),
+            ("ParsedSource", "FormsSource", "fsl-forms/src/cst.rs"),
+            (
+                "CheckRefusal",
+                "SemanticCheckRefusal",
+                "fsl-semantics/src/check/refusal.rs",
+            ),
+        ];
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask is a workspace member");
+        let findings = current_workspace_findings();
+        for (former_name, replacement, production_file) in namesakes {
+            let source = fs::read_to_string(workspace_root.join(production_file))
+                .expect("production source exists");
+            assert!(
+                source.contains(replacement),
+                "{production_file} defines the meaning-specific name {replacement}"
+            );
+            assert!(
+                !findings.iter().any(|found| {
+                    found.rule == Rule::Identifier
+                        && found.ident == former_name
+                        && Path::new(&found.other.file).ends_with(production_file)
+                }),
+                "{production_file} no longer defines the namesake {former_name}"
+            );
+        }
+        let semantic_refusal =
+            fs::read_to_string(workspace_root.join("fsl-semantics/src/check/refusal.rs"))
+                .expect("semantic refusal source exists");
+        assert!(
+            semantic_refusal.contains(
+                "/// filament:canonical\n#[derive(Clone, Debug, Eq, Hash, PartialEq, thiserror::Error)]\n#[error(\"",
+            ) && semantic_refusal.contains("pub struct SemanticCheckRefusal"),
+            "the meaning-specific semantic refusal type retains its canonical marker"
+        );
     }
 }

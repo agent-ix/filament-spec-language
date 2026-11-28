@@ -6,16 +6,7 @@ use super::*;
 use filament_semantic_value::checking::CheckMode;
 use fsl_semantics::model::intake::meaning;
 
-#[path = "../../../../fsl-semantics/tests/support/tc235_k2.rs"]
-#[allow(
-    dead_code,
-    reason = "this test uses only part of the shared K2 fixture"
-)]
-#[allow(
-    clippy::duplicate_mod,
-    reason = "a sibling test module also loads the K2 builder"
-)]
-mod fixture;
+use super::tc235_k2 as fixture;
 
 fn tuple_document(include_tuple: bool) -> Vec<u8> {
     if !include_tuple {

@@ -85,6 +85,7 @@ mod divergence;
 mod wire;
 pub use wire::{ZoneCertificateReferenceError, ZoneCertificateWireError};
 mod product;
+mod state_graph;
 pub use task_check::{
     explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial,
     QuotientStop, QuotientVertex, TaskProductQuotient,
@@ -117,9 +118,10 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use super::closure::CertificateRejection;
-use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome};
+use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome, FailedStep};
 use super::zone::{LuBounds, Zone, ZoneError};
 use super::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::node_occurrence;
@@ -129,6 +131,15 @@ use crate::refinement::{
     check_initial, check_step, open_systems, CandidateStep, ConcreteStep, RefinementPosition,
     StepVerdict, SubjectRefusal, Taken,
 };
+use crate::timed::{clock_constraints, follow_carries};
+
+type CandidateRow = (
+    usize,
+    Option<GuardedStep>,
+    Option<Vec<u8>>,
+    Option<CandidateStep>,
+);
+type GuardCovers = Option<Vec<Vec<PlaceConstraint>>>;
 
 /// FR-244's certificate of a zone search's proof of the item `obligation`
 /// names (ADR-013 O-09).
@@ -851,6 +862,7 @@ fn malformed_verdict(member: CertificateMember) -> ZoneCertificateVerdict {
 fn at_edge(edge: usize) -> CertificateLocus {
     CertificateLocus::ZoneEdge {
         edge: u64::try_from(edge).unwrap_or(u64::MAX),
+        verdict: None,
     }
 }
 
@@ -887,6 +899,7 @@ struct Refined<'c, 'a> {
 /// `item` or the recompiled one, the subject does not admit, its timed
 /// reading does not build, the item is not supported, or a reading has no
 /// value.
+#[implements("FR-245-AC-1")]
 pub fn check_zone_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -965,6 +978,7 @@ fn package_state_graph_identity(
 
 /// FR-245: check a refinement certificate whose concrete subject admits
 /// arbitrary free delays and has no concrete clock placements (FR-900-AC-5).
+#[implements("FR-900-AC-5")]
 pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
@@ -987,14 +1001,19 @@ pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
 /// A state-graph decision reached after all structural, initial and
 /// successor-coverage checks have completed successfully.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StateGraphCertificateDecision {
+pub enum StateGraphCertificateDecision {
+    /// The claim's form holds of the timed states.
     Holds,
+    /// The claim's form is false of the timed states.
     Violated,
 }
 
-/// Preserve the state-graph decision separately from rejection codes shared
-/// by graph-coverage checks. An invalid or unfinished certificate has no decision.
-pub(crate) fn check_state_graph_certificate<O: Clone + Eq>(
+/// [`check_zone_certificate`] for a state-graph item, returning the form's
+/// decision beside the verdict. A rejection's rule does not give the decision,
+/// since the graph-coverage checks share those rules: an invalid or unfinished
+/// certificate has no decision.
+#[implements("FSpec-FR-712-AC-1", "FSpec-FR-712-AC-2", "FSpec-FR-712-AC-3")]
+pub fn check_state_graph_certificate<O: Clone + Eq>(
     request: ZoneCertificateRequest<'_>,
     item: &O,
     item_of: impl Fn(&O) -> CertificateItem<'_>,
@@ -1656,25 +1675,18 @@ impl<O> Checker<'_, '_, O> {
         if self.time_lock {
             self.divergence_part()?;
         }
-        if self.state_graph.is_some() {
-            let result = self.state_graph();
-            match &result {
-                Ok(()) => *decision = Some(StateGraphCertificateDecision::Holds),
-                Err(Halt::Verdict(ZoneCertificateVerdict::Rejected(rejection)))
-                    if matches!(
-                        rejection.rule,
-                        CertificateRule::InitialMissing
-                            | CertificateRule::SuccessorMissing
-                            | CertificateRule::CountBroken
-                    ) =>
-                {
-                    *decision = Some(StateGraphCertificateDecision::Violated);
-                }
-                _ => {}
+        if self.state_graph.is_none() {
+            return self.admitted();
+        }
+        match self.state_graph()? {
+            None => {
+                *decision = Some(StateGraphCertificateDecision::Holds);
+                Ok(())
             }
-            result
-        } else {
-            self.admitted()
+            Some(violation) => {
+                *decision = Some(StateGraphCertificateDecision::Violated);
+                Err(Halt::Verdict(ZoneCertificateVerdict::Rejected(violation)))
+            }
         }
     }
 
@@ -1789,6 +1801,14 @@ impl<O> Checker<'_, '_, O> {
     }
 
     /// The `Malformed` members, in member order.
+    #[implements(
+        "FR-245-AC-2",
+        "FR-245-AC-7",
+        "FR-245-AC-8",
+        "FR-245-AC-9",
+        "FR-245-AC-12",
+        "FSpec-FR-418-AC-10"
+    )]
     fn members(&self) -> Step<(), O> {
         let certificate = self.certificate;
         if certificate.scale <= Integer::zero() {
@@ -2003,7 +2023,7 @@ impl<O> Checker<'_, '_, O> {
                     });
                     let extra = node.zone.dim().saturating_sub(base);
                     self.auxiliary_timed.is_none_or(|timed| {
-                        timed.places().is_empty() || extra % timed.places().len() == 0
+                        timed.places().is_empty() || extra.is_multiple_of(timed.places().len())
                     })
                 }
                 _ => node.zone.dim() == self.dim(),
@@ -2203,7 +2223,7 @@ impl<O> Checker<'_, '_, O> {
     fn state_key(&self, state: &ModelSimState) -> Step<fsl_eval::simulation::StateKey, O> {
         self.timed
             .system()
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(_, state_key)| state_key)
             .or_else(undecided)
     }
@@ -2658,12 +2678,7 @@ impl<O> Checker<'_, '_, O> {
         let yielded_taken = (*taken).clone();
         // The rows: a guarded step or a stutter, and the key of the post
         // candidate each leads to (`None` when the verdict names none).
-        let mut rows: Vec<(
-            usize,
-            Option<GuardedStep>,
-            Option<Vec<u8>>,
-            Option<CandidateStep>,
-        )> = Vec::new();
+        let mut rows: Vec<CandidateRow> = Vec::new();
         match *taken {
             Taken::Abstract(transitions) => {
                 for (block, candidate) in pre.abstract_states.iter().enumerate() {
@@ -2724,11 +2739,14 @@ impl<O> Checker<'_, '_, O> {
                     rows.push((block, None, Some(key), None));
                 }
             }
-            Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
+            Taken::Protocol(_)
+            | Taken::ProtocolTraces(_)
+            | Taken::ProtocolPathRefs(_)
+            | Taken::Failing => {}
         }
         // Rows over one physical clock block with the same guard share its
         // truth value. Keep every row ordinal while splitting once.
-        let mut groups: Vec<(Vec<usize>, Option<Vec<Vec<PlaceConstraint>>>)> = Vec::new();
+        let mut groups: Vec<(Vec<usize>, GuardCovers)> = Vec::new();
         for (ordinal, (block, step, _, _)) in rows.iter().enumerate() {
             let covers = match step {
                 None => None,
@@ -2801,12 +2819,7 @@ impl<O> Checker<'_, '_, O> {
         }
         let mut pieces = Vec::new();
         for (piece, mask) in patterns {
-            let holding: Vec<&(
-                usize,
-                Option<GuardedStep>,
-                Option<Vec<u8>>,
-                Option<CandidateStep>,
-            )> = rows
+            let holding: Vec<&CandidateRow> = rows
                 .iter()
                 .zip(&mask)
                 .filter_map(|(row, held)| (*held).then_some(row))
@@ -3097,6 +3110,7 @@ impl<O> Checker<'_, '_, O> {
     /// `Taken::Failing` (`PostDiffers` otherwise); out of the locked region,
     /// the edge stays in it with no `taken` (`PostDiffers`). The first
     /// rejection out of a node is kept for the node's turn.
+    #[implements("FR-245-AC-8", "FR-245-AC-12")]
     fn refine_edge(
         &mut self,
         node: usize,
@@ -3119,10 +3133,10 @@ impl<O> Checker<'_, '_, O> {
         let target = &certificate.nodes[edge.to];
         let taken = part.taken.get(index).and_then(Option::as_ref);
         let entry = target.locked && target.automaton_state == reserved;
-        let rule = if source.automaton_state == reserved {
+        let failure = if source.automaton_state == reserved {
             // The locked region, on concrete steps only.
             (taken.is_some() || target.automaton_state != reserved)
-                .then_some(CertificateRule::PostDiffers)
+                .then_some((CertificateRule::PostDiffers, None))
         } else {
             let Some(pre) = self.known.get(source.automaton_state).cloned().flatten() else {
                 // A node entered by a rejected edge has no position; that
@@ -3171,29 +3185,38 @@ impl<O> Checker<'_, '_, O> {
                     if holds {
                         self.know(target.automaton_state, expected_position.clone());
                     }
-                    (!holds).then_some(CertificateRule::PostDiffers)
+                    (!holds).then_some((CertificateRule::PostDiffers, None))
                 }
                 failed => {
                     self.unsound(&failed)?;
                     if !entry {
-                        Some(CertificateRule::StepFails)
+                        let verdict =
+                            FailedStep::of(failed, Some(step.transition())).ok_or_else(|| {
+                                Halt::Refusal(ZoneCertificateRefusal::Fault(
+                                    CheckerFault::RefinementStep,
+                                ))
+                            })?;
+                        Some((CertificateRule::StepFails, Some(Box::new(verdict))))
                     } else if taken == Some(&Taken::Failing) {
                         None
                     } else {
                         // The failing edge into the entry lists
                         // `Taken::Failing` (FR-245-AC-12): `None` or any
                         // other `taken` differs.
-                        Some(CertificateRule::PostDiffers)
+                        Some((CertificateRule::PostDiffers, None))
                     }
                 }
             }
         };
-        if let Some(rule) = rule {
+        if let Some((rule, verdict)) = failure {
             self.refinement_failures
                 .entry(node)
                 .or_insert(CertificateRejection {
                     rule,
-                    at: at_edge(index),
+                    at: CertificateLocus::ZoneEdge {
+                        edge: u64::try_from(index).unwrap_or(u64::MAX),
+                        verdict,
+                    },
                 });
         }
         Ok(())
@@ -4078,105 +4101,6 @@ impl<O> Checker<'_, '_, O> {
         Ok(bounded.is_some_and(|bounded| bounded.iter().any(|place| !reset.contains(place))))
     }
 
-    /// Re-derive FR-712's state-graph decision over the reachable timed
-    /// zones. Delays do not create distinct paths; the certified nodes
-    /// already represent their time-closed zones.
-    fn state_graph(&self) -> Step<(), O> {
-        let Some(state_graph) = &self.state_graph else {
-            return malformed(CertificateMember::Nodes);
-        };
-        let claim = state_graph.claim;
-        match (claim.over(), state_graph.over) {
-            (None, None) => {}
-            (Some(parameter), Some(reference)) => {
-                let instances = self
-                    .timed
-                    .system()
-                    .instances(&ValueType::Reference(parameter.object.clone()))
-                    .map_err(|_| Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
-                let bound = instances.iter().any(|instance| {
-                    self.timed
-                        .system()
-                        .bound_reference(parameter.object.clone(), instance)
-                        .is_ok_and(|candidate| candidate == *reference)
-                });
-                if !bound {
-                    return Err(Halt::Refusal(ZoneCertificateRefusal::Undecided));
-                }
-            }
-            _ => return Err(Halt::Refusal(ZoneCertificateRefusal::Undecided)),
-        }
-        let (target, from) = match claim.form() {
-            StateGraphForm::Possible { target } => (target, None),
-            StateGraphForm::AlwaysPossible { from, target } => (target, Some(from)),
-            StateGraphForm::UniquePath { from, to } => (to, Some(from)),
-        };
-        let target_values = self.predicate_values(
-            target,
-            fsl_semantics::check::PredicateRole::Target,
-            state_graph.over,
-        )?;
-        let ef = self.ef_nodes(&target_values);
-        match claim.form() {
-            StateGraphForm::Possible { .. } => {
-                if self.certificate.initials.iter().all(|&node| ef[node]) {
-                    Ok(())
-                } else {
-                    reject(
-                        CertificateRule::InitialMissing,
-                        CertificateLocus::CertificateMember(CertificateMember::Initials),
-                    )
-                }
-            }
-            StateGraphForm::AlwaysPossible { .. } => {
-                let Some(part) = &self.certificate.state_graph else {
-                    return malformed(CertificateMember::Nodes);
-                };
-                let expected = ef
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(node, member)| member.then_some(node))
-                    .collect::<Vec<_>>();
-                if part.ef_nodes != expected {
-                    return reject(CertificateRule::RankBroken, at_node(0));
-                }
-                let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
-                let from_values = self.predicate_values(
-                    from,
-                    fsl_semantics::check::PredicateRole::From,
-                    state_graph.over,
-                )?;
-                if self
-                    .states
-                    .iter()
-                    .enumerate()
-                    .all(|(node, state)| state.is_none() || !from_values[node] || ef[node])
-                {
-                    Ok(())
-                } else {
-                    reject(CertificateRule::SuccessorMissing, at_node(0))
-                }
-            }
-            StateGraphForm::UniquePath { .. } => {
-                let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
-                let from_values = self.predicate_values(
-                    from,
-                    fsl_semantics::check::PredicateRole::From,
-                    state_graph.over,
-                )?;
-                for (node, state) in self.states.iter().enumerate() {
-                    if state.is_some()
-                        && from_values[node]
-                        && self.transition_path_count(node, &target_values)? != 1
-                    {
-                        return reject(CertificateRule::CountBroken, at_node(node));
-                    }
-                }
-                Ok(())
-            }
-        }
-    }
-
     fn predicate_values(
         &self,
         predicate: &fsl_semantics::check::CheckedStatePredicate,
@@ -4216,38 +4140,6 @@ impl<O> Checker<'_, '_, O> {
                 }
             })
             .collect()
-    }
-
-    fn ef_nodes(&self, target: &[bool]) -> Vec<bool> {
-        let mut ef = target.to_vec();
-        loop {
-            let mut changed = false;
-            for (index, edge) in self.certificate.edges.iter().enumerate() {
-                if self.covers[index].is_some()
-                    && self.states[edge.from].is_some()
-                    && self.states[edge.to].is_some()
-                    && ef[edge.to]
-                    && !ef[edge.from]
-                {
-                    ef[edge.from] = true;
-                    changed = true;
-                }
-            }
-            if !changed {
-                return ef;
-            }
-        }
-    }
-
-    fn transition_path_count(&self, start: usize, target: &[bool]) -> Step<u8, O> {
-        transition_sequence_count(
-            start,
-            target,
-            &self.certificate.edges,
-            &self.covers,
-            self.max_edges,
-            || self.poll(),
-        )
     }
 
     /// `admitted`: a path of valid edges from an initial node to a
@@ -4615,9 +4507,11 @@ fn scaled(value: &Rational, scale: &Integer) -> Option<Integer> {
 
 /// The LU bounds the checker computes from the model and, for a TT-2
 /// claim, its automaton's `constants` for the horizon clock: per clock,
-/// the largest constant a guard, invariant or reset compares it with from
-/// below and from above, scaled; `None` when the scale makes any constant
+/// the largest constant a guard, invariant or reset compares it with, in its
+/// field or in one a collection write carries it into, from below and from
+/// above, scaled; `None` when the scale makes any constant
 /// not an integer.
+#[implements("FR-245-AC-2")]
 #[allow(
     clippy::type_complexity,
     reason = "one list of lower and one of upper bounds"
@@ -4647,25 +4541,12 @@ fn computed_bounds(
             upper[clock].push(bound.clone());
         }
     };
-    for guard in model.guards() {
-        for part in guard.parts() {
-            for constraint in part.clocks() {
-                record(
-                    constraint.clock().index(),
-                    constraint.op(),
-                    constraint.bound(),
-                );
-            }
-        }
-    }
-    for invariant in model.invariants() {
-        for constraint in invariant.bounds() {
-            record(
-                constraint.clock().index(),
-                constraint.op(),
-                constraint.bound(),
-            );
-        }
+    for constraint in clock_constraints(timed) {
+        record(
+            constraint.clock().index(),
+            constraint.op(),
+            constraint.bound(),
+        );
     }
     for resets in model.resets() {
         for reset in resets.resets() {
@@ -4688,13 +4569,21 @@ fn computed_bounds(
             None => Some(None),
         }
     };
-    let mut lows = Vec::new();
-    let mut highs = Vec::new();
-    for place in timed.places() {
-        let clock = place.clock().index();
-        lows.push(max(lower.get(clock)?)?);
-        highs.push(max(upper.get(clock)?)?);
-    }
+    let of_places = |fields: &[Vec<Rational>]| -> Option<Vec<Option<Integer>>> {
+        let mut largest: Vec<Option<&Rational>> =
+            fields.iter().map(|values| values.iter().max()).collect();
+        follow_carries(timed, &mut largest);
+        timed
+            .places()
+            .iter()
+            .map(|place| match largest.get(place.clock().index())? {
+                Some(value) => scaled(value, scale).map(Some),
+                None => Some(None),
+            })
+            .collect()
+    };
+    let mut lows = of_places(&lower)?;
+    let mut highs = of_places(&upper)?;
     if let Some(constants) = constants {
         // The horizon clock is compared with every interval end, from both
         // sides.
@@ -4709,169 +4598,6 @@ fn computed_bounds(
 /// component numbering, at their integers' magnitudes. It bounds the certificate's in-memory reading,
 /// not an encoding: FR-418's byte encoding of the certificate does not
 /// exist yet (spec gap STD-493).
-/// Determinize the certificate's transition graph up to the checker's
-/// existing edge-work budget. Each scanned certificate edge and each
-/// generated automaton transition consumes one unit before it is expanded.
-fn transition_sequence_count<O>(
-    start: usize,
-    target: &[bool],
-    edges: &[CertEdge],
-    active: &[Option<usize>],
-    max_work: u64,
-    mut poll: impl FnMut() -> Step<(), O>,
-) -> Step<u8, O> {
-    let mut subsets = vec![vec![start]];
-    let mut subset_indices = BTreeMap::from([(vec![start], 0_usize)]);
-    let mut transitions = vec![Vec::<(ModelTransition, usize)>::new()];
-    let mut accepting = vec![false];
-    let mut work = 0_u64;
-    let mut at = 0;
-    while at < subsets.len() {
-        for &node in &subsets[at] {
-            accepting[at] |= target.get(node).copied().unwrap_or(false);
-        }
-        let mut symbols = BTreeMap::<ModelTransition, BTreeSet<usize>>::new();
-        for (edge_index, edge) in edges.iter().enumerate() {
-            sequence_work(&mut work, max_work, &mut poll)?;
-            if active.get(edge_index).is_none_or(Option::is_none) {
-                continue;
-            }
-            if subsets[at].binary_search(&edge.from).is_err() {
-                continue;
-            }
-            if let Some(symbol) = &edge.transition {
-                symbols.entry(symbol.clone()).or_default().insert(edge.to);
-            }
-        }
-        for (symbol, destinations) in symbols {
-            sequence_work(&mut work, max_work, &mut poll)?;
-            let next = destinations.into_iter().collect::<Vec<_>>();
-            let next_state = if let Some(existing) = subset_indices.get(&next).copied() {
-                existing
-            } else {
-                let index = subsets.len();
-                subsets.push(next.clone());
-                transitions.push(Vec::new());
-                accepting.push(false);
-                subset_indices.insert(next, index);
-                index
-            };
-            transitions[at].push((symbol, next_state));
-        }
-        at += 1;
-    }
-    count_accepted_words(&transitions, &accepting, max_work, &mut work, &mut poll)
-}
-
-fn sequence_work<O>(
-    work: &mut u64,
-    limit: u64,
-    poll: &mut impl FnMut() -> Step<(), O>,
-) -> Step<(), O> {
-    poll()?;
-    let next = work.saturating_add(1);
-    if next > limit {
-        return Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-            IncompleteCause::LimitReached {
-                limit: ModelCheckLimit::CertificateMaxEdges,
-                value: limit,
-                required: None,
-            },
-        )));
-    }
-    *work = next;
-    Ok(())
-}
-
-fn count_accepted_words<O>(
-    transitions: &[Vec<(ModelTransition, usize)>],
-    accepting: &[bool],
-    max_work: u64,
-    work: &mut u64,
-    poll: &mut impl FnMut() -> Step<(), O>,
-) -> Step<u8, O> {
-    let mut reverse = vec![Vec::new(); transitions.len()];
-    for (from, outgoing) in transitions.iter().enumerate() {
-        for (_, to) in outgoing {
-            sequence_work(work, max_work, poll)?;
-            reverse[*to].push(from);
-        }
-    }
-    let mut can_accept = accepting.to_vec();
-    let mut queue = std::collections::VecDeque::new();
-    for (node, accepts_empty) in accepting.iter().copied().enumerate() {
-        if accepts_empty {
-            queue.push_back(node);
-        }
-    }
-    while let Some(node) = queue.pop_front() {
-        for &from in &reverse[node] {
-            sequence_work(work, max_work, poll)?;
-            if !can_accept[from] {
-                can_accept[from] = true;
-                queue.push_back(from);
-            }
-        }
-    }
-    if !can_accept.first().copied().unwrap_or(false) {
-        return Ok(0);
-    }
-
-    let mut indegree = vec![0_usize; transitions.len()];
-    for (from, outgoing) in transitions.iter().enumerate() {
-        if !can_accept[from] {
-            continue;
-        }
-        for (_, to) in outgoing {
-            sequence_work(work, max_work, poll)?;
-            if can_accept[*to] {
-                indegree[*to] = indegree[*to].saturating_add(1);
-            }
-        }
-    }
-
-    let mut ready = std::collections::VecDeque::new();
-    for (node, degree) in indegree.iter().copied().enumerate() {
-        if can_accept[node] && degree == 0 {
-            ready.push_back(node);
-        }
-    }
-    let mut topological = Vec::new();
-    while let Some(node) = ready.pop_front() {
-        topological.push(node);
-        for (_, next) in &transitions[node] {
-            sequence_work(work, max_work, poll)?;
-            if can_accept[*next] {
-                indegree[*next] -= 1;
-                if indegree[*next] == 0 {
-                    ready.push_back(*next);
-                }
-            }
-        }
-    }
-    if topological.len() != can_accept.iter().filter(|accepting| **accepting).count() {
-        // A reachable cycle with an accepting suffix spells arbitrarily many
-        // distinct transition sequences, so uniqueness is already refuted.
-        return Ok(2);
-    }
-
-    let mut counts = vec![0_u8; transitions.len()];
-    for node in topological.into_iter().rev() {
-        let mut total = u8::from(accepting[node]);
-        for (_, next) in &transitions[node] {
-            sequence_work(work, max_work, poll)?;
-            if can_accept[*next] {
-                total = total.saturating_add(counts[*next]).min(2);
-                if total == 2 {
-                    break;
-                }
-            }
-        }
-        counts[node] = total;
-    }
-    Ok(counts[0])
-}
-
 fn certificate_bytes<O>(certificate: &ZoneCertificate<O>) -> u64 {
     let integer = |value: &Integer| value.magnitude_bits() / 8 + 1;
     let mut bytes = integer(&certificate.scale);
@@ -5025,114 +4751,4 @@ fn numbering_ok(components: &Components, nodes: usize) -> bool {
         }
     }
     true
-}
-
-#[cfg(test)]
-mod state_graph_sequence_tests {
-    use super::*;
-
-    #[test]
-    fn split_zone_edges_with_one_transition_count_as_one_sequence() {
-        let transition = ModelTransition::new(
-            r#"{"name":"go"}"#.to_owned(),
-            None,
-            Vec::new(),
-            quire_canonical::Limits::new(u64::MAX),
-        )
-        .expect("canonical transition");
-        let edge = |to| CertEdge {
-            from: 0,
-            transition: Some(transition.clone()),
-            task_transition: None,
-            part: Some(to - 1),
-            horizon: None,
-            to,
-            silent: None,
-        };
-        let count = transition_sequence_count::<()>(
-            0,
-            &[false, true, true],
-            &[edge(1), edge(2)],
-            &[Some(0), Some(1)],
-            u64::MAX,
-            || Ok(()),
-        );
-        assert!(matches!(count, Ok(1)));
-    }
-
-    #[test]
-    fn branching_subsets_stop_at_the_certificate_edge_work_budget() {
-        let transition = |name: &str| {
-            ModelTransition::new(
-                format!(r#"{{"name":"{name}"}}"#),
-                None,
-                Vec::new(),
-                quire_canonical::Limits::new(u64::MAX),
-            )
-            .expect("canonical transition")
-        };
-        let zero = transition("zero");
-        let one = transition("one");
-        // The NFA tracks the last `depth` bits and has 2^depth reachable
-        // subsets, while the checker is allowed only 256 work units.
-        let depth = 14_usize;
-        let mut edges = vec![
-            CertEdge {
-                from: 0,
-                transition: Some(zero.clone()),
-                task_transition: None,
-                part: None,
-                horizon: None,
-                to: 0,
-                silent: None,
-            },
-            CertEdge {
-                from: 0,
-                transition: Some(one.clone()),
-                task_transition: None,
-                part: None,
-                horizon: None,
-                to: 0,
-                silent: None,
-            },
-            CertEdge {
-                from: 0,
-                transition: Some(one.clone()),
-                task_transition: None,
-                part: None,
-                horizon: None,
-                to: 1,
-                silent: None,
-            },
-        ];
-        for state in 1..depth {
-            for symbol in [&zero, &one] {
-                edges.push(CertEdge {
-                    from: state,
-                    transition: Some(symbol.clone()),
-                    task_transition: None,
-                    part: None,
-                    horizon: None,
-                    to: state + 1,
-                    silent: None,
-                });
-            }
-        }
-        let active = vec![Some(0); edges.len()];
-        let mut target = vec![false; depth + 1];
-        target[depth] = true;
-        let limit = 256;
-        let result = transition_sequence_count::<()>(0, &target, &edges, &active, limit, || Ok(()));
-
-        assert!(matches!(
-            result,
-            Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-                IncompleteCause::LimitReached {
-                    limit: ModelCheckLimit::CertificateMaxEdges,
-                    value: 256,
-                    required: None,
-                }
-            )))
-        ));
-    }
 }

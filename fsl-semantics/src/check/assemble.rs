@@ -46,26 +46,27 @@ use fsl_forms::{
 use fsl_foundation::diagnostic::LimitExceeded;
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_foundation::{Code, IdentityLimits, Setting, SettingLimits, Span};
+use ix_trace_rs::implements;
 
 use super::check::{
     EnumBinding, ModelRecords, PackageDeclarations, ResolvedSignature, VariantTypeDeclaration,
 };
 use super::check::{UntypedKind, UntypedMember};
 use super::layer::LayerAdmission;
-use super::lowering::{AdmittedModel, model_declaration_key, strongly_connected};
+use super::lowering::{model_declaration_key, strongly_connected, AdmittedModel};
 use super::model_gate::{self, ModelGateRefusal};
-use super::model_spelling::{ModelName, ModelSpellings, PackageNames, Spelled, package_names};
+use super::model_spelling::{package_names, ModelName, ModelSpellings, PackageNames, Spelled};
 use super::node_key::{NodeKeyRefusal, NodeTag, SourceOwner};
 use super::operation_body::OperationBodyDeclaration;
 use super::operation_clause::OperationClauseDeclaration;
 use super::refusal::{AliasKind, TimedConstruct};
 use super::state_clause::{
-    AttemptDeclaration, ClauseOperation, StateClauseDeclaration, population_of,
+    population_of, AttemptDeclaration, ClauseOperation, StateClauseDeclaration,
 };
 use super::state_graph_claim::StateGraphDeclaration;
 use super::terminal::{TerminalClauseDeclaration, TerminalClauseKind};
 use super::type_form::{
-    TypeFormError, TypeFormFault, TypeNames, native_scalar_named, parse_rounding_mode, resolve_form,
+    native_scalar_named, parse_rounding_mode, resolve_form, TypeFormError, TypeFormFault, TypeNames,
 };
 use super::type_invariant::{TypeInvariantDeclaration, TypeSlot};
 use crate::library::{ImportView, LibraryName};
@@ -81,15 +82,15 @@ pub use equivalence::{
     DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
 };
 
-use super::CheckedGraph;
 use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
+use super::CheckedGraph;
 use crate::model::domain_package::{
-    AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord, MapTypeRecord,
-    Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord, RelationshipEnd,
-    ScalarValueDomain, SequenceTypeRecord, ValueTypeRef, unaliased,
+    unaliased, AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord,
+    MapTypeRecord, Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord,
+    RelationshipEnd, ScalarValueDomain, SequenceTypeRecord, ValueTypeRef,
 };
 use crate::model::intake::{
-    SelectedModel, SelectedModels, SelectedModelsParts, member_identity_name, type_identity_segment,
+    member_identity_name, type_identity_segment, SelectedModel, SelectedModels, SelectedModelsParts,
 };
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use crate::value::enumeration::{
@@ -97,7 +98,7 @@ use crate::value::enumeration::{
 };
 use crate::value::environment_stage::stage_limit;
 use crate::value::layer::{HeaderLayer, LayerForm};
-use crate::value::semantic_node::{NominalRefusal, OwnerSelection, identity_limit};
+use crate::value::semantic_node::{identity_limit, NominalRefusal, OwnerSelection};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, DeclarationCause, EnvironmentFailure, FieldDeclaration,
@@ -3509,7 +3510,7 @@ fn resolve_source_object_members(
     object_types: &mut [ObjectTypeDeclaration],
     operations: &mut OperationTable,
     errors: &mut Vec<AssemblyError>,
-) {
+) -> BTreeMap<DeclarationKey, Span> {
     let SourceObjectTypeContext {
         unit,
         names,
@@ -3518,6 +3519,7 @@ fn resolve_source_object_members(
     } = context;
     let mut normalized_fields = BTreeMap::new();
     let mut normalized_operations = BTreeMap::new();
+    let mut operation_spans = BTreeMap::new();
     let reference_models = models
         .iter()
         .filter(|model| !model.alias.is_empty())
@@ -3646,10 +3648,9 @@ fn resolve_source_object_members(
                         .map(|value_type| source_member_type(&value_type)),
                     None => None,
                 };
-                normalized_operations.insert(
-                    source_member_declaration_key(owner, &operation.name.name),
-                    (normalized_parameters, normalized_result),
-                );
+                let member = source_member_declaration_key(owner, &operation.name.name);
+                operation_spans.insert(member.clone(), operation.span);
+                normalized_operations.insert(member, (normalized_parameters, normalized_result));
             }
             let effect = existing_operations
                 .iter()
@@ -3696,10 +3697,12 @@ fn resolve_source_object_members(
             );
         }
     }
+    operation_spans
 }
 
 /// A source member separates exactly one outer collection into multiplicity.
-fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
+#[implements("FR-569-AC-15")]
+pub(super) fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
     let (element, multiplicity) = match value_type {
         ValueType::Collection(collection) => {
             let (ordered, unique) = match collection.kind() {
@@ -4617,6 +4620,8 @@ impl PackageDeclarations {
         )
     }
 
+    #[implements("FR-104-AC-15")]
+    #[implements("FR-276-AC-2")]
     fn assemble_with_execution_points_and_cancel_and_owners(
         package_name: String,
         unit: ParsedUnit,
@@ -5563,8 +5568,9 @@ impl PackageDeclarations {
                 }
             }
         }
+        let mut source_operation_spans = BTreeMap::new();
         if errors.is_empty() {
-            resolve_source_object_members(
+            source_operation_spans = resolve_source_object_members(
                 SourceObjectTypeContext {
                     unit: &unit,
                     names: &names,
@@ -6090,7 +6096,7 @@ impl PackageDeclarations {
         // condition's expression tree.
         let mut declared_site_spans = BTreeMap::new();
         for (index, clause) in unit.temporal_clauses.iter().enumerate() {
-            use super::lowering::{TemporalSite, temporal_site};
+            use super::lowering::{temporal_site, TemporalSite};
             let form = &clause.form;
             let temporal_owner = package.source_owners.get(&form.name.name).cloned();
             let mut temporal_sites = vec![TemporalSite::Claim, TemporalSite::Over];
@@ -6194,7 +6200,7 @@ impl PackageDeclarations {
             let super::hyper_clause::HyperDeclaration::Behaviours(form) = declaration else {
                 continue;
             };
-            use super::hyper_clause::lowering::{Site, hyper_site};
+            use super::hyper_clause::lowering::{hyper_site, Site};
             declared_type_spans.insert(hyper_site(behaviours, Site::Claim), form.name.span);
             declared_type_spans.insert(hyper_site(behaviours, Site::Body), form.span);
             for (id, node) in form.body.iter() {
@@ -6232,7 +6238,7 @@ impl PackageDeclarations {
         // each mode's clause and each transition's clause; a hybrid claim's
         // nodes at its declared name and its `over` parameter's name.
         for (model, declaration) in package.hybrids.iter().enumerate() {
-            use super::lowering::{HybridSite, hybrid_site};
+            use super::lowering::{hybrid_site, HybridSite};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Model(model)), form.name.span);
             for (mode, written) in form.modes.iter().enumerate() {
@@ -6247,7 +6253,7 @@ impl PackageDeclarations {
             }
         }
         for (claim, declaration) in package.hybrid_claims.iter().enumerate() {
-            use super::lowering::{HybridSite, hybrid_site};
+            use super::lowering::{hybrid_site, HybridSite};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Claim(claim)), form.name.span);
             declared_type_spans.insert(hybrid_site(HybridSite::Over(claim)), form.over.name.span);
@@ -6257,7 +6263,7 @@ impl PackageDeclarations {
         // tree; the constant `true` an omitted `from` stands for is located
         // at the claim.
         for (index, declaration) in package.state_graph_claims.iter().enumerate() {
-            use super::state_graph_claim::{Site, state_graph_site};
+            use super::state_graph_claim::{state_graph_site, Site};
             let form = &declaration.form;
             declared_type_spans.insert(state_graph_site(index, Site::Claim), form.name.span);
             if let Some(over) = &form.over {
@@ -6285,6 +6291,7 @@ impl PackageDeclarations {
             }
         }
         package.declared_site_spans = declared_site_spans;
+        package.source_operation_spans = source_operation_spans;
         // FR-381: a template's operation anchor occurrence is recorded at
         // the template's name.
         declared_type_spans.extend(unit.protocols.iter().flat_map(|protocol| {

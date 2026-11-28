@@ -5,7 +5,8 @@
 
 use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::accounting::{
-    NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationLimitKind,
 };
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, FieldMemberRecord, Multiplicity,
@@ -2225,7 +2226,9 @@ fn n01_charges_the_exact_ground_truth_sequence_in_order() {
         other => panic!("expected Completed, got {other:?}"),
     }
 
-    use NormalizationChargePoint::{NormalizeCycleCheck, NormalizeDeclaration, NormalizeFact, NormalizeRecord};
+    use NormalizationChargePoint::{
+        NormalizeCycleCheck, NormalizeDeclaration, NormalizeFact, NormalizeRecord,
+    };
     let expected = vec![
         NormalizeRecord,
         NormalizeRecord,
@@ -2599,7 +2602,10 @@ fn n06_conflict_check_charges_exactly_sigma_c_minus_1_times_f_o() {
             assert_eq!(incomplete.limit, 51);
             assert_eq!(incomplete.consumed, 51);
             assert_eq!(incomplete.next_charge, 14);
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeConflictCheck
+            );
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -2736,31 +2742,35 @@ fn n06_wide_ancestry_with_a_single_uncontested_redefiner_completes() {
 
 /// The `edges.len() < 2` guard above only ever fixed the *uncontested*
 /// wide-ancestry case. `Owner` (`O`) still declares `n_parents` direct
-/// generalizations, one of them to `Base` (`G000`), but now `G000` itself
-/// also declares a second field, `G000.w`, that redefines `G000.x` — a
-/// genuine two-redefiner contest (`c = 2`: `O.z` and `G000.w`) whose
+/// generalizations, including `Base` (`G000`) and `G001`; `G001` itself
+/// generalizes `G000` and declares `G001.w` redefining `G000.x` — a valid
+/// two-redefiner contest (`c = 2`: `O.z` and `G001.w`) whose
 /// dominance resolution, before this fix, still built `G000`'s own
 /// [`crate::model::conformance::ancestor_closure`] and exceeded
 /// `MAX_CONFORMANCE_DEPTH` on `O`'s breadth alone, exactly as the
-/// uncontested case did. `O` is a proper descendant of `G000` (one of its
-/// `n_parents` direct generalizations), so `O` dominates `G000` and `O.z`
-/// wins outright.
+/// uncontested case did. `O` is a proper descendant of both redefining
+/// owners, so `O` dominates `G001` and `O.z` wins outright.
 fn fixture_wide_ancestry_contested_redefiners(n_parents: usize) -> DomainPackage {
     let mut records = vec![
         object_type("model.G000", vec![]),
         field_member("model.G000.x", "model.G000", "model.G000"),
-        field_member_redefining(
-            "model.G000.w",
-            "model.G000",
-            "model.G000",
-            Some("model.G000.x"),
-            vec![],
-        ),
     ];
     let parent_ids: Vec<String> = (1..n_parents).map(|i| format!("model.G{i:03}")).collect();
     for id in &parent_ids {
-        records.push(object_type(id, vec![]));
+        let supertypes = if id == "model.G001" {
+            vec!["model.G000"]
+        } else {
+            vec![]
+        };
+        records.push(object_type(id, supertypes));
     }
+    records.push(field_member_redefining(
+        "model.G001.w",
+        "model.G001",
+        "model.G000",
+        Some("model.G000.x"),
+        vec![],
+    ));
     let mut owner_supertypes: Vec<&str> = vec!["model.G000"];
     owner_supertypes.extend(parent_ids.iter().map(String::as_str));
     records.push(object_type("model.O", owner_supertypes));
@@ -2789,7 +2799,7 @@ fn fixture_wide_ancestry_contested_redefiners(n_parents: usize) -> DomainPackage
 /// the original `conformance-depth` refusal at both widths — confirmed by
 /// hand: reintroducing that walk locally makes this test fail at both 128
 /// and 200, restoring the fix returns it to green.
-#[trace("FSpec-TC-195", "FSpec-TC-196", "FSpec-FR-151-AC-2")]
+#[trace("FSpec-TC-195", "FSpec-TC-196")]
 #[test]
 fn n06_wide_ancestry_with_two_contesting_redefiners_completes() {
     for n_parents in [128usize, 200usize] {
@@ -2814,10 +2824,10 @@ fn n06_wide_ancestry_with_two_contesting_redefiners_completes() {
         if n_parents == 128 {
             assert_eq!(
                 view.declarations().len(),
-                134,
-                "129 type declarations (G000..G127, O) plus 5 member \
-                 declarations (G000.x and G000.w at G000's own view; O's own \
-                 inherited x and w plus its direct z)"
+                135,
+                "129 type declarations (G000..G127, O) plus 6 member \
+                 declarations (G000.x; G001's inherited x and own w; and \
+                 O's inherited x and w plus its direct z)"
             );
         }
 
@@ -2835,12 +2845,12 @@ fn n06_wide_ancestry_with_two_contesting_redefiners_completes() {
         let winner = find_member(&view, &owner_o, "model.O.z");
         assert!(
             winner.visible,
-            "O properly dominates G000, so O.z must win over G000.w"
+            "O properly dominates G001, so O.z must win over G001.w"
         );
-        let loser = find_member(&view, &owner_o, "model.G000.w");
+        let loser = find_member(&view, &owner_o, "model.G001.w");
         assert!(
             !loser.visible,
-            "G000.w loses to the more-derived O.z at O's own effective view"
+            "G001.w loses to the more-derived O.z at O's own effective view"
         );
     }
 }
@@ -3007,11 +3017,20 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
         let (limited, limited_meter) = normalize_with_meter(&domain_package, limits);
         match limited {
             NormalizeOutcome::Incomplete(incomplete) => {
-                assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
+                assert_eq!(
+                    incomplete.limit_kind,
+                    NormalizationLimitKind::DerivationFacts
+                );
                 assert_eq!(incomplete.consumed, fact_limit);
                 assert_eq!(incomplete.next_charge, fact_limit + 1);
-                assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
-                assert_eq!(limited_meter.consumed(NormalizationLimitKind::WorkUnits), expected_work);
+                assert_eq!(
+                    incomplete.charge_point,
+                    NormalizationChargePoint::NormalizeFact
+                );
+                assert_eq!(
+                    limited_meter.consumed(NormalizationLimitKind::WorkUnits),
+                    expected_work
+                );
             }
             other => panic!("expected operation fact cap {fact_limit} to deny, got {other:?}"),
         }
@@ -3143,7 +3162,10 @@ fn operation_redefinition_group_with_two_or_more_redefiners_is_charged_a_conflic
                 incomplete.next_charge, 4,
                 "(c-1) * (f(B)+f(B)) = 1 * (2+2) = 4"
             );
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeConflictCheck
+            );
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -3491,7 +3513,10 @@ fn conflict_check_charges_interleave_field_and_operation_groups_by_target_key() 
                 "model.A.a sorts before model.A.z, so the operation group's \
                  charge (12) is denied before the field group's (4)"
             );
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeConflictCheck
+            );
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -4906,7 +4931,10 @@ fn a_subsetting_field_derives_one_phase_4_subset_fact() {
         7,
         "four qualify, two inherit and one subset fact"
     );
-    assert_eq!(count(NormalizationChargePoint::NormalizeRedefinitionCheck), 0);
+    assert_eq!(
+        count(NormalizationChargePoint::NormalizeRedefinitionCheck),
+        0
+    );
     assert_eq!(count(NormalizationChargePoint::NormalizeConflictCheck), 0);
     assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 17);
 
@@ -4929,8 +4957,14 @@ fn a_subsetting_field_derives_one_phase_4_subset_fact() {
     limits.derivation_facts = 6;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
-            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
+            assert_eq!(
+                incomplete.limit_kind,
+                NormalizationLimitKind::DerivationFacts
+            );
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeFact
+            );
             assert_eq!(incomplete.next_charge, 7);
         }
         other => panic!("expected the subset fact to be denied, got {other:?}"),

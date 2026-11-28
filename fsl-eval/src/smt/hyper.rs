@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Not;
 
-use filament_exact::{Integer, Meter, ValueType};
+use filament_exact::{Integer, Meter};
 use filament_semantic_value::location::ExpressionOwner as Origin;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::{
@@ -47,7 +47,7 @@ pub struct HyperScriptRequest<'r, 'a> {
     /// package.
     pub subjects: &'r [ModelSubject<'a>],
     /// One `(parameter, key)` pair per object parameter, in parameter order,
-    /// each key in the parameter's universe.
+    /// each key an instance of its parameter.
     pub instance: &'r [(String, String)],
     /// The budget `μ_U` is evaluated against.
     pub meter: &'r mut Meter,
@@ -244,7 +244,7 @@ pub fn encode_hyper_script(
         let listed = systems
             .get(slot)
             .ok_or_else(|| fault("a system for each alias"))?
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .hyper_bindable(&parameter.object)
             .map_err(|_| fault("an instance the identity checks list"))?;
         let bound = listed
             .into_iter()

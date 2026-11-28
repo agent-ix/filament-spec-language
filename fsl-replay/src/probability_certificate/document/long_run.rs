@@ -2,6 +2,7 @@
 //! Independent gain–bias checking of the closed DTMC long-run profiles.
 
 use super::*;
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 use std::cell::RefCell;
 
@@ -467,6 +468,7 @@ fn read_rows(
     Ok(values)
 }
 
+#[ix_trace_rs::string_edge]
 fn parse_long_run_policy_choice(
     bytes: &str,
     cx: &mut Context<'_>,
@@ -754,6 +756,8 @@ struct Subject {
     bound: Bound,
     weight: Option<ProbabilityRewardObjective>,
     weights: BTreeMap<ProbabilityProductKey, Rational>,
+    /// Per-action expected reward magnitudes for the every-scheduler objective.
+    action_weights: BTreeMap<ProbabilityProductKey, Vec<Rational>>,
 }
 
 struct Context<'a> {
@@ -774,7 +778,7 @@ impl<'a> Context<'a> {
         Self {
             limits,
             cancel,
-            meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+            meter: limits.accounting_meter(cancel),
             storage: 0,
             identity: fsl_foundation::IdentityLimits::default(),
             refutation: false,
@@ -876,6 +880,7 @@ impl<'a> Context<'a> {
     }
 }
 
+#[implements("FR-199-AC-6")]
 fn subject(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -904,18 +909,13 @@ fn subject(
     ) || !matches!(
         TimedSystem::new(system, &claim.subject.alias),
         Err(TimedSubjectRefusal::NoTimedModel { .. })
-    )
-    {
+    ) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|b| &b.reference);
     // `None` is `under every scheduler`: the graph keeps every action as a choice.
     let workload = claim_workload(system, claim)?;
-    if workload.is_none() && weight.is_some() {
-        // Per-action weights are the MDP weighted profile's, not this one's.
-        return Err(ProbabilityDocumentError::Unsupported);
-    }
     let optimization = LongRunOptimization::of(&claim.scheduler, bound);
     let fairness = if claim.fairness.is_empty() {
         Vec::new()
@@ -954,7 +954,11 @@ fn subject(
         }
         None => None,
     };
+    if workload.is_none() && objective.is_some() && !claim.fairness.is_empty() {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
     let mut weights = BTreeMap::new();
+    let mut action_weights = BTreeMap::new();
     let mut remaining_weight_edges = limits.edges;
     let cx = RefCell::new(cx);
     let stopped = RefCell::new(None);
@@ -1050,64 +1054,119 @@ fn subject(
         &mut |key, state| {
             let evaluated = (|| {
                 if let Some(objective) = &objective {
-                    let workload = workload.ok_or(ProbabilityDocumentError::Unsupported)?;
                     let mut context = cx.borrow_mut();
-                    let steps = context
-                        .model(|budget| {
-                            system.weighted_steps_with_budget(
-                                state, workload, identity, budget, cancel,
-                            )
-                        })?
-                        .map_err(|stop| {
-                            ProbabilityDocumentError::Build(Box::new(match stop {
-                                fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
-                                    crate::ExactProbBuildIssue::NotMarkov(cause)
-                                }
-                                fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
-                                    crate::ExactProbBuildIssue::UndecidedSuccessor
-                                }
-                            }))
-                        })?;
-                    let mut total = rational(0);
-                    for step in steps {
-                        context.work(1)?;
-                        if matches!(
-                            step.transition,
-                            fsl_eval::simulation::model::TransitionId::Stutter
-                        ) {
-                            continue;
-                        }
-                        #[cfg(feature = "test-support")]
-                        context.phase(LongRunProbabilityPhase::Weight)?;
-                        let magnitude = {
-                            let context = &mut **context;
-                            super::super::reward::magnitude(
-                                &step.rewards,
-                                objective,
-                                limits,
-                                cancel,
-                                &mut context.storage,
-                                &mut remaining_weight_edges,
-                                &mut context.meter,
-                            )?
-                        };
-                        if step.probability == rational(0) {
-                            continue;
-                        }
-                        let term =
-                            context.arithmetic(filament_exact::RationalArithmetic::Multiply(
-                                &step.probability,
-                                &magnitude,
+                    if let Some(workload) = workload {
+                        let steps = context
+                            .model(|budget| {
+                                system.weighted_steps_with_budget(
+                                    state, workload, identity, budget, cancel,
+                                )
+                            })?
+                            .map_err(|stop| {
+                                ProbabilityDocumentError::Build(Box::new(match stop {
+                                    fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
+                                        crate::ExactProbBuildIssue::NotMarkov(cause)
+                                    }
+                                    fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(
+                                        _,
+                                    ) => crate::ExactProbBuildIssue::UndecidedSuccessor,
+                                }))
+                            })?;
+                        let mut total = rational(0);
+                        for step in steps {
+                            context.work(1)?;
+                            if matches!(
+                                step.transition,
+                                fsl_eval::simulation::model::TransitionId::Stutter
+                            ) {
+                                continue;
+                            }
+                            #[cfg(feature = "test-support")]
+                            context.phase(LongRunProbabilityPhase::Weight)?;
+                            let magnitude = {
+                                let context = &mut **context;
+                                super::super::reward::magnitude(
+                                    &step.rewards,
+                                    objective,
+                                    limits,
+                                    cancel,
+                                    &mut context.storage,
+                                    &mut remaining_weight_edges,
+                                    &mut context.meter,
+                                )?
+                            };
+                            if step.probability == rational(0) {
+                                continue;
+                            }
+                            let term = context.arithmetic(
+                                filament_exact::RationalArithmetic::Multiply(
+                                    &step.probability,
+                                    &magnitude,
+                                ),
+                            )?;
+                            total = context.arithmetic(filament_exact::RationalArithmetic::Add(
+                                &total, &term,
                             ))?;
-                        total = context
-                            .arithmetic(filament_exact::RationalArithmetic::Add(&total, &term))?;
+                        }
+                        context.reserve(key.as_bytes().len().saturating_add(
+                            std::mem::size_of::<(ProbabilityProductKey, Rational)>(),
+                        ))?;
+                        weights.insert(key.clone(), total);
+                    } else {
+                        let actions = context.model(|budget| {
+                            system.actions_with_budget(state, identity, budget, cancel)
+                        })?;
+                        let actions = actions.map_err(|_| {
+                            ProbabilityDocumentError::Build(Box::new(
+                                crate::ExactProbBuildIssue::UndecidedSuccessor,
+                            ))
+                        })?;
+                        let mut action_values = Vec::with_capacity(actions.len());
+                        for action in actions {
+                            let mut total = rational(0);
+                            for draw in action.draws {
+                                context.work(1)?;
+                                #[cfg(feature = "test-support")]
+                                context.phase(LongRunProbabilityPhase::Weight)?;
+                                let magnitude = {
+                                    let context = &mut **context;
+                                    super::super::reward::magnitude(
+                                        &draw.rewards,
+                                        objective,
+                                        limits,
+                                        cancel,
+                                        &mut context.storage,
+                                        &mut remaining_weight_edges,
+                                        &mut context.meter,
+                                    )?
+                                };
+                                let term = context.arithmetic(
+                                    filament_exact::RationalArithmetic::Multiply(
+                                        &draw.probability,
+                                        &magnitude,
+                                    ),
+                                )?;
+                                total = context.arithmetic(
+                                    filament_exact::RationalArithmetic::Add(&total, &term),
+                                )?;
+                            }
+                            action_values.push(total);
+                        }
+                        context.reserve(
+                            key.as_bytes()
+                                .len()
+                                .saturating_add(std::mem::size_of::<(
+                                    ProbabilityProductKey,
+                                    Vec<Rational>,
+                                )>())
+                                .saturating_add(
+                                    action_values
+                                        .len()
+                                        .saturating_mul(std::mem::size_of::<Rational>()),
+                                ),
+                        )?;
+                        action_weights.insert(key.clone(), action_values);
                     }
-                    context.reserve(key.as_bytes().len().saturating_add(std::mem::size_of::<(
-                        ProbabilityProductKey,
-                        Rational,
-                    )>(
-                    )))?;
-                    weights.insert(key.clone(), total);
                 }
                 #[cfg(feature = "test-support")]
                 cx.borrow_mut().phase(LongRunProbabilityPhase::Predicate)?;
@@ -1186,6 +1245,7 @@ fn subject(
         bound: bound.clone(),
         weight: objective,
         weights,
+        action_weights,
     })
 }
 
@@ -1200,7 +1260,26 @@ pub fn long_run_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<LongRunProbabilityDocument, ProbabilityDocumentError> {
+    long_run_probability_certificate_document_with_work_scope(
+        system, claims, item, values, components, limits, cancel, None,
+    )
+}
+
+/// Build long-run candidate transport under the item's shared work allowance.
+#[implements("FR-203-AC-29")]
+#[allow(clippy::too_many_arguments)]
+pub fn long_run_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    values: Vec<ExactProbabilityValue>,
+    components: Vec<LongRunProbabilityComponent>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<LongRunProbabilityDocument, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     let subject = subject(system, claims, item, &mut cx)?;
     if subject.weight.is_some() {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -1237,7 +1316,26 @@ pub fn weighted_long_run_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<WeightedLongRunProbabilityDocument, ProbabilityDocumentError> {
+    weighted_long_run_probability_certificate_document_with_work_scope(
+        system, claims, item, values, components, limits, cancel, None,
+    )
+}
+
+/// Build weighted long-run candidate transport under the shared work allowance.
+#[implements("FR-203-AC-29")]
+#[allow(clippy::too_many_arguments)]
+pub fn weighted_long_run_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    values: Vec<ExactProbabilityValue>,
+    components: Vec<LongRunProbabilityComponent>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<WeightedLongRunProbabilityDocument, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     let subject = subject(system, claims, item, &mut cx)?;
     let weight = subject
         .weight
@@ -1272,6 +1370,8 @@ fn malformed(member: &'static str) -> ExactProbabilityCertificateCheck {
     })
 }
 
+#[implements("FR-203-AC-30")]
+#[implements("FR-201-AC-2")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1279,8 +1379,10 @@ pub(super) fn check(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     check_with_context(system, claims, item, bytes, &mut cx)
 }
 
@@ -1291,6 +1393,8 @@ pub(super) fn check(
 /// Under `every scheduler` the chain is the one `scheduler` induces (FR-412
 /// "Long-run certificate wire shape and witnesses"); under a workload it must
 /// be empty.
+#[implements("FR-203-AC-32")]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check_refutation(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1299,8 +1403,10 @@ pub(in crate::probability_certificate) fn check_refutation(
     scheduler: &[(ProbabilityProductKey, LongRunPolicyChoice)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<LongRunRefutation, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     cx.refutation = true;
     check_scheduled(system, claims, item, bytes, scheduler, &mut cx)
 }
@@ -1396,9 +1502,11 @@ fn induced_graph(
         .collect::<Vec<_>>();
     let Some(chosen) = super::refutation::randomized_scheduled_choices(
         system,
-        &graph,
-        reference,
-        &distributions,
+        super::refutation::ScheduleEvidence {
+            graph: &graph,
+            reference,
+            rows: &distributions,
+        },
         cx.limits,
         cx.cancel,
         &mut cx.meter,
@@ -1668,8 +1776,8 @@ fn check_scheduled(
         // A workload has no scheduler to rebuild a chain from.
         return Ok(LongRunRefutation::SchedulerRefused);
     }
-    let graph = subject.graph;
-    if !document.predicate_states.iter().eq(graph
+    if !document.predicate_states.iter().eq(subject
+        .graph
         .states
         .iter()
         .filter(|(_, state)| state.terminal == Some(true))
@@ -1680,11 +1788,12 @@ fn check_scheduled(
     if !workload && !cx.refutation {
         return check_mdp(
             system,
-            &graph,
+            &subject.graph,
             &document,
             &subject.bound,
             subject.reference.as_ref(),
             &subject.constraints,
+            subject.weight.as_ref().map(|_| &subject.action_weights),
             cx,
         )
         .map(|mut check| {
@@ -1697,6 +1806,17 @@ fn check_scheduled(
     if !workload && !policy_matches_scheduler(&document, scheduler) {
         return Ok(checked(malformed("policy")));
     }
+    let scheduler_weights = if !workload && subject.weight.is_some() && cx.refutation {
+        Some(scheduler_weights(
+            &subject.graph,
+            &subject.action_weights,
+            scheduler,
+            cx,
+        )?)
+    } else {
+        None
+    };
+    let graph = subject.graph;
     cx.scheduled = !workload;
     let graph = if workload {
         graph
@@ -1723,19 +1843,79 @@ fn check_scheduled(
         }
         induced.graph
     };
-    check_graph(
-        &graph,
-        &document,
-        &subject.bound,
-        subject.weight.as_ref().map(|_| &subject.weights),
-        cx,
-    )
-    .map(|mut check| {
+    let weights = scheduler_weights
+        .as_ref()
+        .or_else(|| subject.weight.as_ref().map(|_| &subject.weights));
+    check_graph(&graph, &document, &subject.bound, weights, cx).map(|mut check| {
         if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
             accepted.document = Some(bytes.into());
         }
         checked(check)
     })
+}
+
+fn scheduler_weights(
+    graph: &CheckerGraph,
+    action_weights: &BTreeMap<ProbabilityProductKey, Vec<Rational>>,
+    scheduler: &[(ProbabilityProductKey, LongRunPolicyChoice)],
+    cx: &mut Context<'_>,
+) -> Result<BTreeMap<ProbabilityProductKey, Rational>, ProbabilityDocumentError> {
+    let actions_by_state = graph
+        .actions_by_state
+        .as_ref()
+        .ok_or(ProbabilityDocumentError::Malformed)?;
+    let scheduled = scheduler
+        .iter()
+        .map(|(key, policy)| (key, policy))
+        .collect::<BTreeMap<_, _>>();
+    let mut weights = BTreeMap::new();
+    for key in graph.states.keys() {
+        cx.work(1)?;
+        let offered = actions_by_state.get(key).map(Vec::as_slice).unwrap_or(&[]);
+        let Some(policy) = scheduled.get(&key).copied() else {
+            // The counterexample scheduler only names states reachable from
+            // the initial state. `induced_graph` prunes all other states, so
+            // their reward values are unused by the chain checker.
+            weights.insert(key.clone(), rational(0));
+            continue;
+        };
+        let values = action_weights
+            .get(key)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        let mut total = rational(0);
+        let distribution: Vec<(&crate::ProductAction, Rational)> = match policy {
+            LongRunPolicyChoice::Deterministic(action) => {
+                vec![(action, rational(1))]
+            }
+            LongRunPolicyChoice::Randomized(distribution) => distribution
+                .iter()
+                .map(|(action, probability)| (action, probability.clone()))
+                .collect(),
+        };
+        for (action, probability) in distribution {
+            let value = match action {
+                crate::ProductAction::TerminalStutter if offered.is_empty() => rational(0),
+                crate::ProductAction::Identity(schedule) => {
+                    let index = offered
+                        .iter()
+                        .position(|offered| offered.as_ref() == Some(schedule))
+                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                    values
+                        .get(index)
+                        .cloned()
+                        .ok_or(ProbabilityDocumentError::Malformed)?
+                }
+                _ => return Err(ProbabilityDocumentError::Malformed),
+            };
+            let term = cx.arithmetic(filament_exact::RationalArithmetic::Multiply(
+                &probability,
+                &value,
+            ))?;
+            total = cx.arithmetic(filament_exact::RationalArithmetic::Add(&total, &term))?;
+        }
+        weights.insert(key.clone(), total);
+    }
+    Ok(weights)
 }
 
 fn check_graph(
@@ -2127,6 +2307,7 @@ fn maximal_end_components(
 /// over the components. The checker rebuilds the components, every action and
 /// its schedule itself, and reads the supplied policy rows only as hints it
 /// verifies.
+#[implements("FR-199-AC-6")]
 fn check_mdp(
     system: &ModelSystem<'_>,
     graph: &CheckerGraph,
@@ -2134,6 +2315,7 @@ fn check_mdp(
     bound: &Bound,
     reference: Option<&ObjectReference>,
     constraints: &[filament_semantic_value::fairness::FairnessConstraint],
+    action_weights: Option<&BTreeMap<ProbabilityProductKey, Vec<Rational>>>,
     cx: &mut Context<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let minimum = document.optimization == LongRunOptimization::Minimum;
@@ -2211,10 +2393,113 @@ fn check_mdp(
             })
             .collect::<Result<Vec<_>, _>>()?
     };
+    let mut zero_weight_component = vec![false; mecs.len()];
+    if let Some(weights) = action_weights {
+        for key in &keys {
+            let expected = graph.states[*key].choices.len();
+            if weights
+                .get(*key)
+                .is_none_or(|per_action| per_action.len() != expected)
+            {
+                return Ok(malformed("weight"));
+            }
+            cx.work(1)?;
+        }
+        for (index, component) in mecs.iter().enumerate() {
+            let mut has_positive_internal_weight = false;
+            for &state in component {
+                let per_action = weights
+                    .get(keys[state])
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                for (action, successors) in actions[state].iter().enumerate() {
+                    cx.work(1)?;
+                    if successors
+                        .iter()
+                        .all(|(next, _)| mecs[index].contains(next))
+                        && per_action
+                            .get(action)
+                            .is_some_and(|weight| weight > &rational(0))
+                    {
+                        has_positive_internal_weight = true;
+                    }
+                }
+            }
+            zero_weight_component[index] = !has_positive_internal_weight;
+        }
+    }
     let mut mec_of = vec![None; keys.len()];
     for (index, mec) in mecs.iter().enumerate() {
         for &state in mec {
             mec_of[state] = Some(index);
+        }
+    }
+    // A supplied policy can leave a zero-weight recurrent alternative
+    // transient. Check every zero-weight action that stays inside a zero-only
+    // end component, whether or not the policy selected it.
+    let mut zero_weight_recurrent_actions = actions
+        .iter()
+        .map(|per_state| vec![false; per_state.len()])
+        .collect::<Vec<_>>();
+    if constraints.is_empty() {
+        if let Some(weights) = action_weights {
+            for (mec_index, mec) in mecs.iter().enumerate() {
+                let local_of = mec
+                    .iter()
+                    .enumerate()
+                    .map(|(local, state)| (*state, local))
+                    .collect::<BTreeMap<_, _>>();
+                let mut zero_shape = vec![Vec::new(); mec.len()];
+                for (local, &state) in mec.iter().enumerate() {
+                    let per_action = weights
+                        .get(keys[state])
+                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                    for (action, successors) in actions[state].iter().enumerate() {
+                        cx.work(1)?;
+                        let stays = successors
+                            .iter()
+                            .all(|(next, _)| mec_of[*next] == Some(mec_index));
+                        let zero_weight = per_action.get(action).is_some_and(Rational::is_zero)
+                            || graph.states[keys[state]].choices.is_empty()
+                                && per_action.get(action).is_none();
+                        if stays && zero_weight {
+                            zero_shape[local].push(
+                                successors
+                                    .iter()
+                                    .map(|(next, _)| {
+                                        local_of
+                                            .get(next)
+                                            .copied()
+                                            .ok_or(ProbabilityDocumentError::Malformed)
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            );
+                        }
+                    }
+                }
+                let zero_mecs = maximal_end_components(&zero_shape, cx)?;
+                for zero_mec in zero_mecs {
+                    for &local in &zero_mec {
+                        let state = mec[local];
+                        let per_action = weights
+                            .get(keys[state])
+                            .ok_or(ProbabilityDocumentError::Malformed)?;
+                        for (action, successors) in actions[state].iter().enumerate() {
+                            cx.work(1)?;
+                            let stays = successors.iter().all(|(next, _)| {
+                                local_of
+                                    .get(next)
+                                    .is_some_and(|next| zero_mec.contains(next))
+                            });
+                            let zero_weight = per_action.get(action).is_some_and(Rational::is_zero)
+                                || graph.states[keys[state]].choices.is_empty()
+                                    && per_action.get(action).is_none();
+                            if stays && zero_weight {
+                                zero_weight_recurrent_actions[state][action] = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     // One entry per component; a missing or an extra one is malformed.
@@ -2325,6 +2610,61 @@ fn check_mdp(
                 return Ok(malformed("policy"));
             }
         }
+        let policy_zero_weight_states = if let Some(weights) = action_weights {
+            let local_of = mecs[mec]
+                .iter()
+                .enumerate()
+                .map(|(local, state)| (*state, local))
+                .collect::<BTreeMap<_, _>>();
+            let mut policy_edges = vec![Vec::new(); mecs[mec].len()];
+            let mut policy_reverse = vec![Vec::new(); mecs[mec].len()];
+            let mut state_zero_weight = vec![false; mecs[mec].len()];
+            for (local, &state) in mecs[mec].iter().enumerate() {
+                let selected = policy
+                    .get(&state)
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                let per_action = weights
+                    .get(keys[state])
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                state_zero_weight[local] = selected.iter().all(|action| {
+                    per_action
+                        .get(*action)
+                        .is_none_or(|weight| weight.is_zero())
+                });
+                for action in selected {
+                    for (next, _) in actions[state]
+                        .get(*action)
+                        .ok_or(ProbabilityDocumentError::Malformed)?
+                    {
+                        let next = *local_of
+                            .get(next)
+                            .ok_or(ProbabilityDocumentError::Malformed)?;
+                        policy_edges[local].push(next);
+                        policy_reverse[next].push(local);
+                    }
+                }
+            }
+            let (_, classes, bottom) =
+                super::super::bottom_components(&policy_edges, &policy_reverse, &mut |_| {
+                    cx.work(1)
+                })?;
+            let mut zero_weight_states = vec![false; mecs[mec].len()];
+            for (class, is_bottom) in bottom.iter().enumerate() {
+                if *is_bottom && classes[class].iter().all(|state| state_zero_weight[*state]) {
+                    for &state in &classes[class] {
+                        zero_weight_states[state] = true;
+                    }
+                }
+            }
+            zero_weight_states
+        } else {
+            vec![false; mecs[mec].len()]
+        };
+        let local_of = mecs[mec]
+            .iter()
+            .enumerate()
+            .map(|(local, state)| (*state, local))
+            .collect::<BTreeMap<_, _>>();
         if component.gain != component.value || first.value != rational(0) {
             return Ok(rejected(
                 ProbabilityCertificateRule::InequalityFails,
@@ -2346,7 +2686,7 @@ fn check_mdp(
             } else {
                 rational(0)
             };
-            let reward = cx.arithmetic(filament_exact::RationalArithmetic::Subtract(
+            let centered = cx.arithmetic(filament_exact::RationalArithmetic::Subtract(
                 &indicator,
                 &component.value,
             ))?;
@@ -2357,7 +2697,31 @@ fn check_mdp(
                 {
                     continue;
                 }
-                let mut sum = reward.clone();
+                let selected_policy_action = policy
+                    .get(&state)
+                    .is_some_and(|selected| selected.contains(&index));
+                let policy_zero_weight = local_of
+                    .get(&state)
+                    .is_some_and(|local| policy_zero_weight_states[*local]);
+                let action_weight = if zero_weight_component[mec]
+                    || policy_zero_weight && selected_policy_action
+                    || zero_weight_recurrent_actions[state][index]
+                {
+                    rational(1)
+                } else if let Some(weights) = action_weights {
+                    match weights.get(keys[state]).and_then(|rows| rows.get(index)) {
+                        Some(weight) => weight.clone(),
+                        None if graph.states[keys[state]].choices.is_empty() => rational(0),
+                        None => return Err(ProbabilityDocumentError::Malformed),
+                    }
+                } else {
+                    rational(1)
+                };
+                let reward = cx.arithmetic(filament_exact::RationalArithmetic::Multiply(
+                    &action_weight,
+                    &centered,
+                ))?;
+                let mut sum = reward;
                 for (next, probability) in successors {
                     cx.work(1)?;
                     let next = bias(*next).ok_or(ProbabilityDocumentError::Malformed)?;

@@ -14,12 +14,14 @@
 //! implementation.
 
 pub use filament_contract_model::CertificateMember;
+use ix_trace_rs::implements;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use fsl_eval::simulation::StateKey;
 
 use crate::certificate::closure::ProductStateRef;
 use crate::certificate::simulation::FailedStep;
+use crate::shared_wire::{state_key_from_text, StateLocus};
 
 /// FR-314's part of an SMT proof obligation.
 ///
@@ -118,14 +120,21 @@ pub enum CertificateRule {
     /// A task-product certificate edge the checker's recomputation does not
     /// produce (FSpec FR-418).
     ExtraEdge,
+    /// A rule of a hybrid solver's certificate (FSpec FR-652 "Rule
+    /// names"), written with that spelling.
+    #[serde(untagged)]
+    Hybrid(crate::hybrid_replay::HybridCertificateRule),
 }
 
 /// FR-338 and FR-314: where a certificate rejection occurred.
 ///
-/// A product-state locus serializes as [`ProductStateRef`]'s object. Query
-/// loci serialize with FSpec FR-331's query-part spelling. A proof-step
+/// A product-state locus, a hyper product state locus and a hyper transition
+/// tuple serialize in FSpec FR-331's forms, each model state key in them, and
+/// a model state locus itself, as its State object `{key}`. Query loci
+/// serialize with FSpec FR-331's query-part spelling. A proof-step
 /// locus serializes as an object containing its part and its canonical decimal
-/// `u64` index string.
+/// `u64` index string. A zone node, edge or component locus writes its index
+/// as an integer, FR-331's `Count`.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CertificateLocus {
@@ -147,20 +156,6 @@ pub enum CertificateLocus {
     },
     /// The product state of a closure certificate at which a rule failed.
     ProductState(ProductStateRef),
-    /// The source and target of a backward product edge.
-    ProductEdge {
-        /// Source of the edge.
-        source: ProductStateRef,
-        /// Target of the edge.
-        target: ProductStateRef,
-    },
-    /// The source and target of a hyper product edge.
-    HyperProductEdge {
-        /// Source of the edge.
-        source: StateKey,
-        /// Target of the edge.
-        target: StateKey,
-    },
     /// The query whose encoding or certificate shape failed.
     Query {
         /// The query's proof obligation part.
@@ -204,19 +199,39 @@ pub enum CertificateLocus {
         /// The node's position.
         node: u64,
     },
-    /// A zone certificate edge, by its position in `edges` (FR-245).
+    /// A zone certificate edge, by its position in `edges` (FR-245): FSpec
+    /// FR-331's zone edge, or its zone edge step under `StepFails`.
     ZoneEdge {
         /// The edge's position.
         edge: u64,
+        /// What `check_step` returned, for `StepFails`.
+        verdict: Option<Box<FailedStep>>,
     },
     /// A zone certificate component, by its index (FR-245).
     ZoneComponent {
         /// The component's index.
         component: u64,
     },
+    /// A hybrid certificate member, by its RFC 6901 pointer rooted at
+    /// `/certificate` (FR-751), written as that string.
+    CertificatePointer(String),
+}
+
+/// Writes each state key in `tuple`'s `states` as FSpec FR-331's State locus,
+/// `{"key": <base64url key octets>}`.
+fn write_state_loci(tuple: &mut serde_json::Value) {
+    let states = tuple
+        .get_mut("states")
+        .and_then(serde_json::Value::as_array_mut);
+    for state in states.into_iter().flatten() {
+        if let Some(key) = state.as_str().and_then(state_key_from_text) {
+            *state = serde_json::json!(StateLocus::from(key));
+        }
+    }
 }
 
 impl Serialize for CertificateLocus {
+    #[implements("FR-169-AC-14", "FR-245-AC-7", "FR-338-AC-12")]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::ProbabilityProductState(state) => {
@@ -234,45 +249,34 @@ impl Serialize for CertificateLocus {
                 object.serialize_field("part", part.as_str())?;
                 object.end()
             }
-            Self::ProductState(state) => state.serialize(serializer),
-            Self::ProductEdge { source, target } => {
-                let mut object = serializer.serialize_struct("ProductEdge", 2)?;
-                object.serialize_field("source", source)?;
-                object.serialize_field("target", target)?;
-                object.end()
-            }
-            Self::HyperProductEdge { source, target } => {
-                let source = crate::certificate::product::product_key_wire(source)
-                    .map_err(serde::ser::Error::custom)?;
-                let target = crate::certificate::product::product_key_wire(target)
-                    .map_err(serde::ser::Error::custom)?;
-                let mut object = serializer.serialize_struct("HyperProductEdge", 2)?;
-                object.serialize_field("source", &source)?;
-                object.serialize_field("target", &target)?;
-                object.end()
-            }
-            Self::HyperProductState(state) => product::product_key_wire(state)
-                .map_err(serde::ser::Error::custom)?
-                .serialize(serializer),
-            Self::HyperState(state) => {
+            Self::ProductState(state) => {
                 use base64::Engine as _;
+                let engine = &base64::engine::general_purpose::URL_SAFE_NO_PAD;
+                let mut object = serializer.serialize_struct("CertificateLocus", 2)?;
+                let model_state = StateLocus::from(&state.model_state);
+                object.serialize_field("model_state", &model_state)?;
+                let automaton_state = engine.encode(state.automaton_state.as_bytes());
+                object.serialize_field("automaton_state", &automaton_state)?;
+                object.end()
+            }
+            Self::HyperProductState(state) => {
+                let mut written =
+                    product::product_key_wire(state).map_err(serde::ser::Error::custom)?;
+                write_state_loci(&mut written);
+                let witnesses = written
+                    .get_mut("witness_set")
+                    .and_then(serde_json::Value::as_array_mut);
+                witnesses.into_iter().flatten().for_each(write_state_loci);
+                written.serialize(serializer)
+            }
+            Self::HyperState(state) => {
                 let mut object = serializer.serialize_struct("HyperState", 1)?;
-                let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state.as_bytes());
-                object.serialize_field("states", &[key])?;
+                object.serialize_field("states", &[StateLocus::from(state)])?;
                 object.end()
             }
             Self::HyperTransitionTuple(tuple) => tuple.serialize(serializer),
-            Self::ModelState(state) => {
-                use base64::Engine as _;
-                base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(state.as_bytes())
-                    .serialize(serializer)
-            }
-            Self::ModelKey(state) => {
-                use base64::Engine as _;
-                base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(state.as_bytes())
-                    .serialize(serializer)
+            Self::ModelState(state) | Self::ModelKey(state) => {
+                StateLocus::from(state).serialize(serializer)
             }
             Self::Entry { index } => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
@@ -294,6 +298,7 @@ impl Serialize for CertificateLocus {
                 object.end()
             }
             Self::Query { part } => part.serialize(serializer),
+            Self::CertificatePointer(pointer) => serializer.serialize_str(pointer),
             Self::CertificateMember(member) => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
                 object.serialize_field("member", member.as_str())?;
@@ -306,17 +311,21 @@ impl Serialize for CertificateLocus {
             }
             Self::ZoneNode { node } => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
-                object.serialize_field("node", &node.to_string())?;
+                object.serialize_field("node", node)?;
                 object.end()
             }
-            Self::ZoneEdge { edge } => {
-                let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
-                object.serialize_field("edge", &edge.to_string())?;
+            Self::ZoneEdge { edge, verdict } => {
+                let fields = 1 + usize::from(verdict.is_some());
+                let mut object = serializer.serialize_struct("CertificateLocus", fields)?;
+                object.serialize_field("edge", edge)?;
+                if let Some(verdict) = verdict {
+                    object.serialize_field("verdict", verdict.as_ref())?;
+                }
                 object.end()
             }
             Self::ZoneComponent { component } => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
-                object.serialize_field("component", &component.to_string())?;
+                object.serialize_field("component", component)?;
                 object.end()
             }
             Self::ProofStep { part, index } => {

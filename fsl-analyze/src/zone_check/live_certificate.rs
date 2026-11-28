@@ -80,7 +80,7 @@ impl Run<'_, '_, '_> {
                 let (_, state_key) = self
                     .timed
                     .system()
-                    .state_key(&vertex.state)
+                    .state_key(&vertex.state, fsl_foundation::IdentityLimits::default())
                     .map_err(|_| Halt::Refusal(ZoneCheckRefusal::Fault("state-key")))?;
                 nodes.push(CertNode {
                     state_key,

@@ -260,48 +260,83 @@ fn contract_package(name: &str, body: &str, items: Json, engines: Vec<Engine>) -
     )
 }
 
-/// Trace: FSL FR-940-AC-6, FSpec FR-825-AC-6.
-/// The package route reads each admitted operation-contract record rather
-/// than refusing the family for lack of a package form.
-#[trace("TC-2410", "FR-940-AC-6")]
+/// Both routes of one `operation-contract` item naming the claim `name`, with
+/// a provider that advertises the capability. The package route resolves the
+/// claim from its admitted requirement record and writes the one item.
+fn contract_item_on_both_routes(name: &str, backend: Option<&str>) -> (Outcome, Outcome) {
+    let mut selection = json!({"claim": name, "kind": "operation-contract"});
+    if let Some(backend) = backend {
+        selection["backend"] = json!(backend);
+    }
+    let (source, package) = both_contract(
+        &format!("pkg-contract-{name}-{}", backend.unwrap_or("default")),
+        &json!([selection]),
+        &ProviderVerdict::Proved,
+    );
+    let right = package.run.document();
+    assert_eq!(right["items"].as_array().map(Vec::len), Some(1), "{right}");
+    let item = &right["items"][0];
+    assert_eq!(item["claim_name"], name, "{item}");
+    assert!(
+        !right
+            .to_string()
+            .contains("operation-contract requirement record"),
+        "{right}"
+    );
+    (source, package)
+}
+
+/// FR-968-AC-2, FSpec FR-290-AC-14: over a package, an unnamed `pre` or `post`
+/// item with a contract provider registered settles `ambiguous-backend`
+/// between `contract-checker` and the provider, and one naming
+/// `contract-checker` over the unbounded Counter population settles
+/// `requires-bound`. Each record and exit equals the source route's.
+#[trace("TC-2725", "FR-968-AC-2")]
+#[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+#[trace("FR-940-AC-28", "FSpec-FR-825-AC-3")]
 #[test]
 fn contract_package_reads_operation_contract_requirement_records() {
     for name in ["CanInc", "Inc"] {
-        for backend in [None, Some("contract-checker"), Some(SMT)] {
-            let mut selection = json!({"claim": name, "kind": "operation-contract"});
-            if let Some(backend) = backend {
-                selection["backend"] = json!(backend);
-            }
-            // The package route reads the claim's operation-contract record and
-            // settles the item as the source route does, with no "no package
-            // form" refusal. A provider-backed item is the one divergence: the
-            // source route settles it `proved`; the package route answers
-            // `unsupported-requested-capability` for kind `operation-contract`
-            // and sends the provider nothing.
-            let (source, package) = both_contract(
-                &format!("pkg-contract-{name}-{}", backend.unwrap_or("default")),
-                &json!([selection]),
-                &ProviderVerdict::Proved,
-            );
+        for (backend, cause) in [
+            (None, "ambiguous-backend"),
+            (Some("contract-checker"), "requires-bound"),
+        ] {
+            let (source, package) = contract_item_on_both_routes(name, backend);
             let (left, right) = (source.run.document(), package.run.document());
-            assert_eq!(right["items"].as_array().map(Vec::len), Some(1), "{right}");
             let item = &right["items"][0];
-            assert_eq!(item["claim_name"], name, "{item}");
-            assert!(
-                !right.to_string().contains("operation-contract requirement record"),
-                "{right}"
-            );
-            if backend == Some(SMT) {
-                let diagnostic = &item["record"]["diagnostic"];
-                assert_eq!(diagnostic["cause"], "unsupported-requested-capability", "{item}");
-                assert_eq!(diagnostic["detail"]["kind"], "operation-contract", "{item}");
-                assert_eq!(left["items"][0]["record"]["result"], "proved", "{left}");
-                assert!(package.requests.is_empty(), "{right}");
-            } else {
-                assert_eq!(item["record"], left["items"][0]["record"], "{item}");
-                assert_eq!(package.run.exit, source.run.exit, "{right}");
+            if backend.is_none() {
+                assert_eq!(
+                    item["request"]["candidates"]["backends"],
+                    json!(["contract-checker", SMT]),
+                    "{item}"
+                );
             }
+            assert_eq!(item["record"]["diagnostic"]["cause"], cause, "{item}");
+            assert_eq!(item["record"], left["items"][0]["record"], "{item}");
+            assert_eq!(package.run.exit, source.run.exit, "{right}");
+            assert!(package.requests.is_empty(), "{right}");
         }
+    }
+}
+
+/// A known gap (QSL-2934), so it carries no criterion tag: over a package, an
+/// item naming a contract provider settles `unsupported-requested-capability`
+/// and the provider is sent nothing, while the source route settles it
+/// `proved`. FR-940-AC-37 asks for parity.
+#[test]
+fn contract_package_does_not_yet_send_a_named_item_to_its_provider() {
+    for name in ["CanInc", "Inc"] {
+        let (source, package) = contract_item_on_both_routes(name, Some(SMT));
+        let (left, right) = (source.run.document(), package.run.document());
+        let item = &right["items"][0];
+        let diagnostic = &item["record"]["diagnostic"];
+        assert_eq!(
+            diagnostic["cause"], "unsupported-requested-capability",
+            "{item}"
+        );
+        assert_eq!(diagnostic["detail"]["kind"], "operation-contract", "{item}");
+        assert_eq!(left["items"][0]["record"]["result"], "proved", "{left}");
+        assert!(package.requests.is_empty(), "{right}");
     }
 }
 
@@ -436,12 +471,17 @@ fn unbounded_operation_contract_item_is_written_requires_bound() {
         json!([{"claim": "Keeps", "kind": "operation-contract"}]),
     );
     let source = analyze_with_providers(&path, vec![]);
-    let items = json!([{"claim": "Keeps", "kind": "operation-contract"}]);
-    let (members, _) = package_selection(&ws, &request_members(Some(items)));
+    // The package request is the source request with its program selected as a
+    // package, so both name the same model, snapshot and items.
+    let document: Json =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("request JSON");
+    let (members, _) = package_selection(&ws, &document["request"]);
     let package = analyze_with_providers(
         &ws.write(
             "analyze-package.json",
-            json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes(),
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
         ),
         vec![],
     );
@@ -502,7 +542,10 @@ fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_i
             Reason::AssignmentNotClaimParameter,
             "assignment-not-claim-parameter",
         ),
-        (Reason::ClaimParameterUnassigned, "claim-parameter-unassigned"),
+        (
+            Reason::ClaimParameterUnassigned,
+            "claim-parameter-unassigned",
+        ),
         (
             Reason::ParameterValueKindMismatch,
             "parameter-value-kind-mismatch",
@@ -551,7 +594,10 @@ fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_i
                 ("wrong cause", mutate(&|d| d[0]["cause"] = json!("other"))),
                 ("empty array", mutate(&|d| *d = json!([]))),
             ] {
-                assert!(!compiled.is_valid(&mutated), "{spelling}: {what}: {mutated}");
+                assert!(
+                    !compiled.is_valid(&mutated),
+                    "{spelling}: {what}: {mutated}"
+                );
             }
         }
         assert_eq!(reason.as_str(), spelling);
@@ -613,7 +659,13 @@ fn coexisting_defects_select_the_declared_priority_and_unknown_spellings_name_no
         assert_eq!(Reason::select([low, high]), Some(expected));
     }
     assert_eq!(Reason::select([]), None);
-    for text in ["", "node-id-unresolved ", "Node-Id-Unresolved", "boom", "other"] {
+    for text in [
+        "",
+        "node-id-unresolved ",
+        "Node-Id-Unresolved",
+        "boom",
+        "other",
+    ] {
         assert_eq!(Reason::from_spelling(text), None, "{text:?}");
     }
 }

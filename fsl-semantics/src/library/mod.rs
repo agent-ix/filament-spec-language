@@ -99,6 +99,9 @@ pub struct LibraryPackage {
     /// Exported qualified declarations: each name spelled with `::` and the
     /// structural node id of the declaration it names.
     pub exports: Vec<(String, NodeKey)>,
+    /// The effective declaration preimages of the package's FR-081 model
+    /// correspondence. Empty for a package that carries none.
+    pub model_correspondence: Vec<EffectiveDeclarationPreimage>,
 }
 
 /// A dependency path of library identities, importer first.
@@ -328,7 +331,8 @@ impl std::fmt::Debug for ImportView {
 }
 
 impl ImportView {
-    /// The import view of `package`: its exports, after validating them.
+    /// The import view of `package`: its exports, after validating them, and
+    /// its model correspondence rows as the package carries them.
     ///
     /// # Errors
     ///
@@ -337,22 +341,13 @@ impl ImportView {
     pub fn of(package: &LibraryPackage) -> Result<Self, LibraryRefusal> {
         Ok(Self {
             exports: verify_package(package)?,
-            model_correspondence: Vec::new(),
+            model_correspondence: package.model_correspondence.clone(),
         })
     }
 
-    /// Add the strict reader's typed FR-081 model correspondence to this
-    /// package view. The rows reuse the model normalizer's exact preimage
-    /// type, so their identities are computed by `EffectiveDeclarationPreimage::identity`.
-    #[must_use]
-    pub fn with_model_correspondence(mut self, rows: Vec<EffectiveDeclarationPreimage>) -> Self {
-        self.model_correspondence = rows;
-        self
-    }
-
-    /// Every admitted effective declaration preimage carried by the
-    /// checked-package/v2 `model_correspondence` nodes, in structural identity
-    /// order. An ordinary in-memory library package has no correspondence.
+    /// The effective declaration preimages of the viewed package, in its
+    /// order. The checked-package/v2 reader supplies every admitted
+    /// `model_correspondence` row, in structural identity order.
     pub fn model_correspondence(&self) -> &[EffectiveDeclarationPreimage] {
         &self.model_correspondence
     }

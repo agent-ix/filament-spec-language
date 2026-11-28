@@ -1,0 +1,195 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {
+          "identityFields": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/guarantee",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1"
+  },
+  "populations": [
+    {
+      "displayName": "ix://catalog/guarantee/counters",
+      "extent": "closed",
+      "identity": "ix://catalog/guarantee/counters",
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/guarantee/Counter"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/guarantee/counters",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/guarantee/counters"
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/guarantee/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [],
+      "displayName": "Counter",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/guarantee/Counter/counter_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "counter_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/guarantee/Counter/counter_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/guarantee/Counter/counter_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/guarantee/Counter/value",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "value",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/guarantee/Counter/value",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/guarantee/Counter/value"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/guarantee/Counter",
+      "identityFields": [
+        "ix://catalog/guarantee/Counter/counter_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": [
+              "ix://catalog/guarantee/Counter/value"
+            ]
+          },
+          "identity": "ix://catalog/guarantee/Counter/inc",
+          "name": "inc",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/guarantee/Counter/inc",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/guarantee/Counter/inc"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        },
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": [
+              "ix://catalog/guarantee/Counter/value"
+            ]
+          },
+          "identity": "ix://catalog/guarantee/Counter/dec",
+          "name": "dec",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/guarantee/Counter/dec",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/guarantee/Counter/dec"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/guarantee/Counter",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/guarantee/Counter"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    }
+  ]
+}

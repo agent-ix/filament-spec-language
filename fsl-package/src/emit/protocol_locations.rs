@@ -11,21 +11,22 @@
 //! (FR-383 assumption A1) and get no row. Nothing here derives a location
 //! from a source region, a node order or an operand position.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use filament_checked::node::{NodeKind, Visit};
 use filament_contract_model::{
-    CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
+    term_ordinals, CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
     CheckedProtocolLocationOrigin, CheckedProtocolSemanticLocation,
 };
-use filament_exact::{NodeKey, PathSegment};
+use filament_exact::NodeKey;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_semantics::check::{
     BodyTerm, CheckedActivation, CheckedBody, CheckedGraph, CheckedLifetime, CheckedNode,
-    CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag,
+    CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag, Operator,
 };
+use ix_trace_rs::implements;
 
 use super::{checked_occurrence, EmitRefusal};
 
@@ -197,7 +198,7 @@ pub(super) fn term_rows<L>(
                     .into_iter()
                     .flatten()
                     .map(|(key, _)| key)
-                    .filter(|key| is_deref_application(key) && !taken.contains(key))
+                    .filter(|key| has_operator(graph, key, Operator::Deref) && !taken.contains(key))
                     .collect::<std::collections::BTreeSet<_>>(),
             );
         }
@@ -246,31 +247,34 @@ fn refusal(application: &NodeKey) -> EmitRefusal {
 /// Number each group's rows from zero across its origins, the origins in
 /// origin order and one origin's rows in visit order, then order every row
 /// by (application, occurrence, `term_ordinal`).
+#[implements("FSpec-FR-322-AC-291")]
 pub(super) fn ordered<L, R>(
-    pending: Vec<PendingRow<L>>,
+    mut pending: Vec<PendingRow<L>>,
     build: impl Fn(CheckedNodeId, CheckedOccurrence, u64, L) -> R,
 ) -> Vec<R> {
-    let mut groups: BTreeMap<(CheckedNodeId, CheckedOccurrence), Vec<PendingRow<L>>> =
-        BTreeMap::new();
-    for row in pending {
-        groups
-            .entry((row.application.clone(), row.occurrence.clone()))
-            .or_default()
-            .push(row);
-    }
-    let mut rows = Vec::new();
-    for (_, mut group) in groups {
-        group.sort_by(|left, right| {
-            left.origin_name
-                .as_bytes()
-                .cmp(right.origin_name.as_bytes())
-                .then(left.visit.cmp(&right.visit))
-        });
-        rows.extend(group.into_iter().zip(0_u64..).map(|(row, term_ordinal)| {
+    pending.sort_by(|left, right| {
+        (&left.application, &left.occurrence)
+            .cmp(&(&right.application, &right.occurrence))
+            .then(
+                left.origin_name
+                    .as_bytes()
+                    .cmp(right.origin_name.as_bytes()),
+            )
+            .then(left.visit.cmp(&right.visit))
+    });
+    // FR-322-AC-291: the IR's one ordinal function numbers the sorted rows.
+    let ordinals = term_ordinals(
+        pending
+            .iter()
+            .map(|row| (&row.application, &row.occurrence)),
+    );
+    pending
+        .into_iter()
+        .zip(ordinals)
+        .map(|(row, term_ordinal)| {
             build(row.application, row.occurrence, term_ordinal, row.location)
-        }));
-    }
-    rows
+        })
+        .collect()
 }
 
 /// Every slot expression of `protocol` (FR-383's site-name registry). A
@@ -446,26 +450,20 @@ fn term_application<'c>(
     under: Option<(&NodeKey, &[&NodeKey])>,
 ) -> Result<Option<&'c NodeKey>, EmitRefusal> {
     let mut keys: Vec<&NodeKey> = Vec::new();
-    // NodeKey's checked-term grammar puts each application under the exact
-    // `expression/<form>` prefix. Inspecting those typed path segments keeps
-    // query and collection terms from being mistaken for another application
-    // at the same location; no display-string or substring search is used.
-    let form = match node.kind() {
+    // The operator class keeps query and collection terms from being mistaken
+    // for another application at the same location.
+    let class = match node.kind() {
         NodeKind::Query { visit, .. } => Some(match visit {
-            Visit::Forall | Visit::Exists => "quantify",
-            Visit::Map | Visit::Filter | Visit::Count | Visit::Sum | Visit::Only => "collection",
+            Visit::Forall | Visit::Exists => Operator::Quantify,
+            Visit::Map | Visit::Filter | Visit::Count | Visit::Sum | Visit::Only => {
+                Operator::Collection
+            }
         }),
-        NodeKind::Collection { .. } => Some("collection"),
+        NodeKind::Collection { .. } => Some(Operator::Collection),
         _ => None,
     };
     for (key, _) in candidates {
-        if form.is_some_and(|form| {
-            !matches!(
-                key.path().as_slice(),
-                [PathSegment::Text(expression), PathSegment::Text(candidate), ..]
-                    if expression == "expression" && candidate == form
-            )
-        }) {
+        if class.is_some_and(|class| !has_operator(graph, key, class)) {
             continue;
         }
         if !keys.contains(&key) && !taken.contains(&key) {
@@ -566,18 +564,20 @@ fn wire_location(location: &Location) -> Option<(String, CheckedProtocolLocation
     Some((name, CheckedProtocolLocation { origin, path }))
 }
 
-/// Whether `key` is the key of a `deref` application node.
-#[ix_trace_rs::string_edge]
-fn is_deref_application(key: &NodeKey) -> bool {
+/// Whether `key` names an application node of operator class `class`. The
+/// class is read from the node, never from the key's path: a recursion-group
+/// member's key carries its group's declaration path (FSpec FR-322-AC-274).
+fn has_operator(graph: &CheckedGraph, key: &NodeKey, class: Operator) -> bool {
     matches!(
-        key.path().as_slice(),
-        [PathSegment::Text(form), PathSegment::Text(kind), ..] if form == "expression" && kind == "deref"
+        graph.semantic_graph().node(key.clone()).map(|node| node.body()),
+        Some(BodyTerm::Application(application)) if application.operator == class
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use filament_exact::PathSegment;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use fsl_semantics::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
     use ix_trace_rs::trace;

@@ -107,7 +107,13 @@ fn cyclic_and_native_preserve_raw_post_and_full_key_identity_causes() {
         .unwrap_err(),
         0,
     );
-    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    let raw = system
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .unwrap()
+        .0;
     let bound = u64::try_from(raw.len()).unwrap();
     let native = fsl_replay::ExactProbLimits::default();
     identity_error(

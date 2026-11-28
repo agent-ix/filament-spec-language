@@ -26,25 +26,26 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use filament_contract_model::NativeJoinBudget;
 use filament_exact::NodeKey;
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_foundation::RequestIndex;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::{BarePackage, CheckedPackage, CompositionMemberValue, CompositionView};
 use fsl_replay::planner::{
-    DerivedSlot, ItemKey, PackageComposition, PackageCompositionRefusal, SlotKey, SlotRole,
-    composition_premises,
+    composition_premises, DerivedSlot, ItemKey, PackageComposition, PackageCompositionRefusal,
+    SlotKey, SlotRole,
 };
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
-use fsl_route::Registry;
 use fsl_route::request::ExtentClassification;
+use fsl_route::Registry;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{Capability, CheckedComposition, ComponentPackages, DeclarationFamily};
 use fsl_semantics::library::LibraryName;
-use serde_json::{Map, Value, json};
+use ix_trace_rs::implements;
+use serde_json::{json, Map, Value};
 
 use super::{
-    ItemSelection, ResolvedClaim, ResolvedItem, SubjectSelection, candidate_list, invalid_kind,
-    resolve_one, unknown_option,
+    candidate_list, invalid_kind, resolve_one, unknown_option, ItemSelection, ResolvedClaim,
+    ResolvedItem, SubjectSelection,
 };
 use crate::analyze::{
     AnalyzeLimits, ClaimItem, CompositionItem, Diagnostic, GraphUnavailable, ItemForm, ItemOptions,
@@ -459,7 +460,10 @@ impl CompositionFront for Context<'_> {
         let ResolvedItem::Claim(claim) = resolved else {
             return Ok(GuaranteeResolution::Settled(resolved));
         };
-        let owning_model = super::owning_model(&component, &claim.item.claim).map(str::to_owned);
+        let owning_model = component
+            .graph()
+            .owning_model(claim.item.claim.node())
+            .map(str::to_owned);
         Ok(GuaranteeResolution::Claim {
             claim,
             owning_model,
@@ -476,6 +480,7 @@ pub(super) fn guarantee_selection(clause: &GuaranteeClause) -> ItemSelection {
     }
 }
 
+#[implements("FR-1044-AC-1")]
 fn composition_named<'p>(
     package: &'p CheckedPackage,
     name: &str,
@@ -655,6 +660,7 @@ fn list(slots: &[SlotFacts]) -> Result<Vec<Value>, fsl_replay::planner::KeyWireE
 }
 
 /// The routed composition item (FSpec FR-331 `composition`).
+#[implements("FR-1044-AC-10", "FR-1044-AC-11")]
 fn routed<F: CompositionFront>(
     front: &F,
     index: RequestIndex,
@@ -698,6 +704,7 @@ fn routed<F: CompositionFront>(
 }
 
 /// A composition item anchored at `node`.
+#[implements("FR-1044-AC-1")]
 fn claim_item<F: CompositionFront>(
     front: &F,
     index: RequestIndex,
@@ -725,6 +732,8 @@ fn claim_item<F: CompositionFront>(
             max_cases: None,
             max_task_product_work: None,
             max_check_work: None,
+            max_states: None,
+            max_transitions: None,
             trace: None,
             traces: None,
             recording: None,
@@ -845,6 +854,7 @@ pub(super) fn premise_items<F: CompositionFront>(
     Ok(items)
 }
 
+#[implements("FR-1044-AC-4")]
 fn premise_item<F: CompositionFront>(
     front: &mut F,
     index: RequestIndex,
@@ -1009,6 +1019,7 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
 /// index segment), `malformed_wire`, with no cause, at the `node` member of an
 /// index segment the component graph does not hold; or the typed cause of a
 /// component package that has no graph.
+#[implements("FR-1044-AC-15")]
 fn restate<F: CompositionFront>(
     front: &F,
     facts: &CompositionFacts,
@@ -1017,8 +1028,8 @@ fn restate<F: CompositionFront>(
     caller: &Value,
 ) -> Result<Value, Box<ResolvedItem>> {
     use fsl_semantics::check::wire_id::{
-        ComponentKeyRefusal, check_component_key_package, component_key_structural,
-        key_holds_index_segment,
+        check_component_key_package, component_key_structural, key_holds_index_segment,
+        ComponentKeyRefusal,
     };
     let Value::Array(entries) = caller else {
         return Ok(caller.clone());

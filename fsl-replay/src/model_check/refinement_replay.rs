@@ -35,13 +35,14 @@ use fsl_eval::fairness::{Constraint, Identity, Strength};
 use fsl_eval::simulation::model::{ClockValuation, ModelFinding, TimedSystem};
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use crate::certificate::simulation::CertifiedEdge;
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::{
     CounterexampleKind, Lasso, TemporalCounterexample, UndefinedEvaluation, UndefinedLocus,
 };
-use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
+use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::replay::{
     close_loop, disagreement, fault, loop_states_of, no_value_cause, reexecute, refused,
     timed_prefix, unfair_constraint, ModelTraceRefusal, Position,
@@ -50,14 +51,16 @@ use crate::refinement::RefinementRead;
 use crate::refinement::{
     abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
     check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    initial_history, loop_segments, map_state, row_clock_step, step_history, stop_verdict,
-    AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
-    ConcreteStep, InvariantReading, ProtocolAssumptionReason, ProtocolAssumptionWitness,
-    ProtocolRelationError, ProtocolStateRelation, RefinementFailure, RefinementPosition,
-    RefinementSystems, RowClockStep, StepVerdict, Taken,
+    check_step_for_model, initial_history, loop_segments, map_state, row_clock_step, step_history,
+    stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState,
+    CandidateFairStep, ConcreteStep, InvariantReading, ProtocolAssumptionReason,
+    ProtocolAssumptionWitness, ProtocolRelationError, ProtocolStateRelation, RefinementFailure,
+    RefinementPosition, RefinementSystems, RowClockStep, StepVerdict, Taken,
 };
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
+
+type TimedPosition = (usize, Vec<u8>, Vec<ModelTransition>);
 
 /// FR-145's settlement of a refinement counterexample's replay.
 #[derive(Clone, Debug)]
@@ -101,6 +104,7 @@ fn protocol_undetermined_locus(locus: &str) -> Option<&str> {
 /// re-executes both sides of every paired edge, checks the recorded loop
 /// closes, and rechecks the checked predicate locus for a finite
 /// undetermined-relation witness.
+#[implements("FR-145-AC-7")]
 pub fn replay_protocol_assumption_witness(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
@@ -119,7 +123,7 @@ pub fn replay_protocol_assumption_witness(
     let Some(mut concrete) = systems.concrete.initial().into_iter().find(|state| {
         systems
             .concrete
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .is_ok_and(|(_, key)| key == witness.path.concrete_initial)
     }) else {
         return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -142,7 +146,7 @@ pub fn replay_protocol_assumption_witness(
     let mut paired_keys = vec![(
         systems
             .concrete
-            .state_key(&concrete)
+            .state_key(&concrete, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
             .1,
         protocol
@@ -162,7 +166,7 @@ pub fn replay_protocol_assumption_witness(
         paired_keys.push((
             systems
                 .concrete
-                .state_key(&concrete)
+                .state_key(&concrete, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
                 .1,
             protocol
@@ -183,7 +187,7 @@ pub fn replay_protocol_assumption_witness(
                 enabled == transition
                     && systems
                         .concrete
-                        .state_key(next)
+                        .state_key(next, fsl_foundation::IdentityLimits::default())
                         .is_ok_and(|(_, key)| key == step.concrete_post)
             }) else {
                 return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -193,7 +197,7 @@ pub fn replay_protocol_assumption_witness(
             concrete = next;
         } else if systems
             .concrete
-            .state_key(&concrete)
+            .state_key(&concrete, fsl_foundation::IdentityLimits::default())
             .map_or(true, |(_, key)| key != step.concrete_post)
         {
             return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -255,7 +259,7 @@ pub fn replay_protocol_assumption_witness(
         paired_keys.push((
             systems
                 .concrete
-                .state_key(&concrete)
+                .state_key(&concrete, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
                 .1,
             protocol
@@ -301,6 +305,15 @@ pub fn replay_protocol_assumption_witness(
             Ok(ProtocolAssumptionReplaySettlement::Reproduced)
         }
         ProtocolAssumptionReason::RelationUndetermined => {
+            // No loop confirms a memberless `each` identity here, so only a
+            // forged witness carries one.
+            if witness.identities.iter().any(|identity| {
+                identity.granularity == FairnessGranularity::Each && identity.selected.is_none()
+            }) {
+                return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
+                    disagreement(Category::Success),
+                ));
+            }
             if witness.path.loop_entry.is_some() {
                 return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
                     disagreement(Category::Success),
@@ -346,7 +359,11 @@ fn assumption_sources_match(
     identities: &[crate::refinement::AssumptionIdentity],
 ) -> Result<bool, ReplayRefusal> {
     for identity in identities {
-        if identity.granularity == filament_semantic_value::fairness::FairnessGranularity::Each
+        // An implementation `each` identity always names its member. A
+        // specification one may name none: `assumption_lasso_matches`
+        // confirms the class has no member on the loop.
+        if identity.side == AssumptionSide::Implementation
+            && identity.granularity == FairnessGranularity::Each
             && identity.selected.is_none()
         {
             return Ok(false);
@@ -559,6 +576,7 @@ struct AssumptionLasso<'a> {
     loop_end: usize,
 }
 
+#[implements("FR-145-AC-7")]
 fn assumption_lasso_matches(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
@@ -648,6 +666,22 @@ fn assumption_lasso_matches(
                     let expansion = protocol
                         .successors(state)
                         .map_err(|_| fault("assumption-replay-protocol-lasso-expands"))?;
+                    // An `each` identity naming no member is vacuous only
+                    // while no loop step or successor belongs to its class.
+                    if identity.granularity == FairnessGranularity::Each
+                        && identity.selected.is_none()
+                        && (expansion
+                            .successors
+                            .iter()
+                            .any(|(transition, _)| assumption.class_of(transition).is_some())
+                            || transitions.get(index).is_some_and(|(_, edge)| {
+                                edge.as_ref().is_some_and(|transition| {
+                                    assumption.class_of(transition).is_some()
+                                })
+                            }))
+                    {
+                        return Ok(false);
+                    }
                     enabled.push(expansion.successors.iter().any(|(transition, _)| {
                         assumption.class_of(transition).is_some_and(|class| {
                             identity.granularity
@@ -720,11 +754,14 @@ enum Found {
 /// refinement failure, a lasso's history values or candidates differ at the
 /// end of its loop from its entry, a lasso is unfair under `F_C`, or an
 /// internal fault occurs.
+#[implements("FR-255-AC-30")]
 pub fn replay_refinement_trace(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
+    limits: &ModelCheckLimits,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    bound_protocol_replay(systems, &limits.limits);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
@@ -736,7 +773,17 @@ pub fn replay_refinement_trace(
     if let Some(lasso) = payload.lasso.as_ref() {
         close_loop(&systems.concrete, &positions, lasso.clone())?;
     }
-    settle_positions(refinement, systems, payload, recorded, &positions)
+    settle_positions(refinement, systems, payload, recorded, &positions, true)
+}
+
+/// FR-255-AC-30: the protocol closures of one replay together expand at most
+/// `limits.max_transitions` transitions; a replay over a system with no
+/// protocol side has nothing to bound.
+#[implements("FR-255-AC-30")]
+fn bound_protocol_replay(systems: &RefinementSystems<'_>, limits: &Limits) {
+    if let Some(protocol) = systems.abstract_protocol.as_ref() {
+        protocol.bound_replay_transitions(widen(limits.max_transitions));
+    }
 }
 
 /// FSpec FR-430: replay `payload`, a refinement counterexample of
@@ -793,6 +840,7 @@ fn replay_refinement_trace_with_time_source(
     exploration: &Limits,
     timed: &TimedSystem<'_, '_>,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    bound_protocol_replay(systems, exploration);
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
@@ -824,7 +872,7 @@ fn replay_refinement_trace_with_time_source(
             _ => RefinementTraceSettlement::Inconclusive(disagreement(Category::Success)),
         });
     }
-    let settlement = settle_positions(refinement, systems, payload, recorded, &positions)?;
+    let settlement = settle_positions(refinement, systems, payload, recorded, &positions, false)?;
     let RefinementTraceSettlement::Reproduced { failure, .. } = &settlement else {
         return Ok(settlement);
     };
@@ -1093,12 +1141,20 @@ fn replay_abstract_timed_failure(
 
 /// The settlement of `payload` along its re-executed `positions`: the
 /// checks run at each position, stopping at the first failure.
+#[implements(
+    "FR-145-AC-1",
+    "FR-145-AC-3",
+    "FR-145-AC-5",
+    "FR-145-AC-6",
+    "FR-145-AC-8"
+)]
 fn settle_positions(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
     payload: &TemporalCounterexample,
     recorded: &RefinementFailure,
     positions: &[Position],
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     let mut mapped = Vec::new();
     let mut previous: Option<RefinementPosition> = None;
@@ -1130,7 +1186,12 @@ fn settle_positions(
                         .verdict
                     }
                     None => {
-                        check_step(
+                        let check = if merge_candidate_states {
+                            check_step_for_model
+                        } else {
+                            check_step
+                        };
+                        check(
                             refinement,
                             &systems.concrete,
                             &systems.abstract_system,
@@ -1287,6 +1348,7 @@ fn settle_positions(
             positions,
             trail,
             taken_by,
+            mapped,
         };
         return replay_lasso(
             refinement,
@@ -1295,7 +1357,7 @@ fn settle_positions(
             lasso.clone(),
             walk,
             found,
-            mapped,
+            merge_candidate_states,
         );
     }
     Ok(match found {
@@ -1409,10 +1471,13 @@ struct Walk<'p> {
     trail: Vec<RefinementPosition>,
     /// The abstract steps the step leaving each position took.
     taken_by: Vec<Taken>,
+    /// The abstract state each position maps to, as far as the checks ran.
+    mapped: Vec<ModelState>,
 }
 
 /// The settlement of a lasso whose prefix and loop `check_step` has run along:
 /// `found` is what the checks found, `walk` what they recomputed.
+#[implements("FR-145-AC-2")]
 fn replay_lasso(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,
@@ -1420,7 +1485,7 @@ fn replay_lasso(
     lasso: Lasso,
     mut walk: Walk<'_>,
     found: Found,
-    mapped: Vec<ModelState>,
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     match found {
         Found::Nothing => {}
@@ -1449,7 +1514,12 @@ fn replay_lasso(
         let (Some(last), Some(position)) = (walk.trail.last(), walk.positions.last()) else {
             return Err(fault("a-lasso-has-a-position"));
         };
-        let verdict = check_step(
+        let check = if merge_candidate_states {
+            check_step_for_model
+        } else {
+            check_step
+        };
+        let verdict = check(
             refinement,
             &systems.concrete,
             &systems.abstract_system,
@@ -1610,7 +1680,7 @@ fn replay_lasso(
             // run along the loop, FR-900 "Delay"); the step's rows leave the
             // last, from the candidates alive there, to those alive when the
             // next delay starts.
-            let mut timed_positions: Vec<Vec<(usize, Vec<u8>, Vec<ModelTransition>)>> = Vec::new();
+            let mut timed_positions: Vec<Vec<TimedPosition>> = Vec::new();
             let mut timed_rows: Vec<Vec<CandidateRow>> = Vec::new();
             for (index, step_segments) in segments.iter().enumerate() {
                 let known: Vec<(usize, &Vec<u8>)> = positions[index]
@@ -1885,8 +1955,11 @@ fn replay_lasso(
                 Taken::CandidateSteps(steps) => {
                     identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
                 }
-                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
-                }
+                Taken::Stutter
+                | Taken::Protocol(_)
+                | Taken::ProtocolTraces(_)
+                | Taken::ProtocolPathRefs(_)
+                | Taken::Failing => {}
             }
         }
         let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
@@ -1909,9 +1982,11 @@ fn replay_lasso(
     let divergent = loop_taken.iter().all(|taken| match taken {
         Taken::Stutter => true,
         Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
-        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
-            false
-        }
+        Taken::Abstract(_)
+        | Taken::Protocol(_)
+        | Taken::ProtocolTraces(_)
+        | Taken::ProtocolPathRefs(_)
+        | Taken::Failing => false,
     });
     Ok(match (payload.refinement.as_ref(), violated, divergent) {
         (Some(RefinementFailure::Divergence { .. }), true, true)
@@ -1922,7 +1997,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::HiddenUnfair { .. }), true, _) => {
@@ -1931,7 +2006,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::AbstractUnfair { .. }), true, unfair_loop)
@@ -1942,7 +2017,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (_, true, _) => RefinementTraceSettlement::Inconclusive(disagreement(Category::Violation)),
@@ -2310,6 +2385,7 @@ fn protocol_enabled_at(
 /// protocol has a step of it from that candidate's configuration, and a
 /// trace edge runs through the configurations of its internal closure, each
 /// with its own enabledness and its own taken application.
+#[implements("FR-899-AC-1")]
 fn protocol_hidden_graph(
     protocol: &crate::refinement::AbstractProtocolSystem<'_>,
     loop_trail: &[RefinementPosition],
@@ -2364,7 +2440,7 @@ fn protocol_hidden_graph(
                             rows.push((
                                 pre_candidate,
                                 pre.clone(),
-                                transition.application().cloned(),
+                                transition.applied_application().cloned(),
                                 post,
                                 None,
                                 Vec::new(),
@@ -2385,7 +2461,7 @@ fn protocol_hidden_graph(
                         let first = trace
                             .transitions
                             .first()
-                            .and_then(|step| step.application().cloned());
+                            .and_then(|step| step.applied_application().cloned());
                         // The configuration each later step leaves is the one
                         // the step before it reached.
                         let mut hops = Vec::new();
@@ -2401,7 +2477,99 @@ fn protocol_hidden_graph(
                                     return Ok(ProtocolHiddenGraph::Settled(settlement));
                                 }
                             };
-                            hops.push((enabled, step.application().cloned()));
+                            hops.push((enabled, step.applied_application().cloned()));
+                        }
+                        rows.push((pre_candidate, pre.clone(), first, post, None, hops));
+                    }
+                }
+                Taken::ProtocolPathRefs(paths) => {
+                    for path in paths.iter().filter(|path| path.seed.start_key == pre) {
+                        let post = path.endpoint_key().to_vec();
+                        if !reaches(&post) {
+                            continue;
+                        }
+                        let first = path
+                            .first_transition()
+                            .and_then(|step| step.applied_application().cloned());
+
+                        let mut enabled_union = BTreeSet::new();
+                        let mut enabled_intersection = None::<BTreeSet<ModelTransition>>;
+                        let mut interior_count = 0_usize;
+                        let seed_interior = if path.tail.is_some() {
+                            path.seed.candidates.as_slice()
+                        } else {
+                            path.seed
+                                .candidates
+                                .get(..path.seed.candidates.len().saturating_sub(1))
+                                .unwrap_or_default()
+                        };
+                        for candidate in seed_interior {
+                            let enabled = match protocol_enabled_at(protocol, candidate)? {
+                                Ok(enabled) => enabled,
+                                Err(settlement) => {
+                                    return Ok(ProtocolHiddenGraph::Settled(settlement));
+                                }
+                            };
+                            let enabled: BTreeSet<_> = enabled.into_iter().collect();
+                            enabled_union.extend(enabled.iter().cloned());
+                            enabled_intersection = Some(match enabled_intersection.take() {
+                                Some(previous) => {
+                                    previous.intersection(&enabled).cloned().collect()
+                                }
+                                None => enabled,
+                            });
+                            interior_count = interior_count.saturating_add(1);
+                        }
+                        let mut node = path.tail.as_deref();
+                        if let Some(endpoint) = node {
+                            node = endpoint.previous.as_deref();
+                        }
+                        while let Some(current) = node {
+                            let enabled =
+                                match protocol_enabled_at(protocol, current.candidate.as_ref())? {
+                                    Ok(enabled) => enabled,
+                                    Err(settlement) => {
+                                        return Ok(ProtocolHiddenGraph::Settled(settlement));
+                                    }
+                                };
+                            let enabled: BTreeSet<_> = enabled.into_iter().collect();
+                            enabled_union.extend(enabled.iter().cloned());
+                            enabled_intersection = Some(match enabled_intersection.take() {
+                                Some(previous) => {
+                                    previous.intersection(&enabled).cloned().collect()
+                                }
+                                None => enabled,
+                            });
+                            interior_count = interior_count.saturating_add(1);
+                            node = current.previous.as_deref();
+                        }
+                        let weak_enabled: Vec<_> = enabled_intersection
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
+                        let strong_enabled: Vec<_> = enabled_union.into_iter().collect();
+                        let mut hops = Vec::new();
+                        if interior_count != 0 {
+                            // The intersection vertex preserves weak fairness;
+                            // the union vertex preserves strong fairness.
+                            hops.push((weak_enabled.clone(), None));
+                            hops.push((strong_enabled, None));
+                        }
+                        let mut taken = BTreeSet::new();
+                        for transition in path.seed.transitions.iter().skip(1) {
+                            if let Some(application) = transition.applied_application() {
+                                taken.insert(application.clone());
+                            }
+                        }
+                        let mut node = path.tail.as_deref();
+                        while let Some(current) = node {
+                            if let Some(application) = current.transition.applied_application() {
+                                taken.insert(application.clone());
+                            }
+                            node = current.previous.as_deref();
+                        }
+                        for transition in taken {
+                            hops.push((weak_enabled.clone(), Some(transition)));
                         }
                         rows.push((pre_candidate, pre.clone(), first, post, None, hops));
                     }
@@ -2486,4 +2654,270 @@ fn abstract_enabled(
         );
     }
     Ok(Enabledness::Enabled(enabled))
+}
+
+#[cfg(test)]
+#[path = "../../../tests/support/refinement_cas.rs"]
+mod cas_fixture;
+
+#[cfg(test)]
+mod tests {
+    use fsl_eval::model_subject::ModelInstance;
+    use fsl_eval::simulation::model::operation_identity_text;
+    use fsl_eval::simulation::protocol::StepKind;
+    use ix_trace_rs::trace;
+
+    use super::cas_fixture::{failing_compensation, key, CAS, SPEC, UNLIMITED};
+    use super::*;
+    use crate::refinement::open_protocol_systems;
+    use crate::{ProtocolPathNode, ProtocolPathRef, ProtocolTrace};
+
+    /// One concrete step of [`failing_compensation`]: in the candidate graph
+    /// replay rebuilds, the rows apply `add` and never `inc`, whose
+    /// compensation attempt fails along them while `inc` stays enabled.
+    #[trace("TC-657", "FR-212-AC-5")]
+    #[test]
+    fn the_replay_candidate_graph_applies_no_failed_compensation_attempt() {
+        let world = failing_compensation();
+        let systems = open_protocol_systems(
+            world.refinement(),
+            &world.concrete_request(UNLIMITED),
+            world.package(),
+            vec![world.abstract_initial()],
+            ModelInstance {
+                population: key(SPEC, "counters"),
+                key: "c".to_owned(),
+            },
+            &[],
+        )
+        .expect("the compensating protocol opens");
+        let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+        let state = systems.concrete.initial_states()[0].clone();
+        let StepVerdict::Passes { post: initial, .. } = check_protocol_initial(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            0,
+            state.state(),
+        )
+        .expect("initial states settle")
+        .verdict
+        else {
+            panic!("the root maps");
+        };
+        let (transition, post) = systems
+            .concrete
+            .successors(&state)
+            .expect("the concrete state expands")
+            .successors
+            .into_iter()
+            .next()
+            .expect("bump is enabled");
+        let StepVerdict::Passes { post: after, taken } = check_protocol_step(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            &initial,
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&transition),
+                post: &post,
+            },
+        )
+        .verdict
+        else {
+            panic!("bump passes");
+        };
+
+        let paths = match taken.as_ref() {
+            Taken::ProtocolTraces(paths) => paths.clone(),
+            Taken::ProtocolPathRefs(paths) => paths.iter().map(|path| path.to_trace()).collect(),
+            other => panic!("bump takes protocol traces: {other:?}"),
+        };
+
+        let ProtocolHiddenGraph::Built(_, steps) =
+            protocol_hidden_graph(protocol, &[*initial, *after], &[*taken])
+                .expect("the candidate graph rebuilds")
+        else {
+            panic!("the candidate graph is built");
+        };
+        let fairness: Vec<_> = world
+            .refinement()
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let classes = abstract_classes(&systems.abstract_system, &fairness, &[])
+            .expect("both constraints name declared operations");
+        let [add, inc] = classes.as_slice() else {
+            panic!("one class per constraint: {classes:?}");
+        };
+        let rows: Vec<_> = steps.iter().flatten().collect();
+        let mut failed = 0;
+        for path in paths.iter().filter(|path| {
+            path.transitions
+                .iter()
+                .any(|step| step.kind() == StepKind::CFail)
+        }) {
+            let end = path.candidate_keys.last().unwrap_or(&path.start_key);
+            assert!(
+                rows.iter()
+                    .any(|row| row.1 == path.start_key && row.3 == *end),
+                "a path that fails the compensation of inc has no row"
+            );
+            failed += 1;
+        }
+        assert!(failed > 0, "some path fails the compensation of inc");
+        let applied: Vec<&ModelTransition> = rows
+            .iter()
+            .flat_map(|row| {
+                row.2
+                    .iter()
+                    .chain(row.5.iter().filter_map(|hop| hop.1.as_ref()))
+            })
+            .collect();
+        assert!(applied.iter().any(|taken| add.covers(taken)), "{applied:?}");
+        assert!(
+            !applied.iter().any(|taken| inc.covers(taken)),
+            "{applied:?}"
+        );
+        assert!(rows
+            .iter()
+            .any(|row| row.5.iter().any(|hop| inc.is_enabled_in(&hop.0))));
+    }
+
+    /// An `any` closure can carry its first internal edge only in the shared
+    /// tail; replay must put that edge in the first-taken slot.
+    #[trace("TC-2536", "FR-899-AC-1")]
+    #[test]
+    fn replay_keeps_the_first_internal_transition_of_an_empty_any_seed() {
+        let world = failing_compensation();
+        let systems = open_protocol_systems(
+            world.refinement(),
+            &world.concrete_request(UNLIMITED),
+            world.package(),
+            vec![world.abstract_initial()],
+            ModelInstance {
+                population: key(SPEC, "counters"),
+                key: "c".to_owned(),
+            },
+            &[],
+        )
+        .expect("the compensating protocol opens");
+        let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+        let state = systems.concrete.initial_states()[0].clone();
+        let StepVerdict::Passes { post: initial, .. } = check_protocol_initial(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            0,
+            state.state(),
+        )
+        .expect("initial states settle")
+        .verdict
+        else {
+            panic!("the root maps");
+        };
+        let (concrete_transition, concrete_post) = systems
+            .concrete
+            .successors(&state)
+            .expect("the concrete state expands")
+            .successors
+            .into_iter()
+            .find(|(step, _)| {
+                step.operation() == operation_identity_text(&key(CAS, "Counter/bump")).unwrap()
+            })
+            .expect("bump is enabled");
+        let StepVerdict::Passes { post, taken } = check_protocol_step(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            &initial,
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&concrete_transition),
+                post: &concrete_post,
+            },
+        )
+        .verdict
+        else {
+            panic!("the concrete step passes");
+        };
+        let Taken::ProtocolPathRefs(paths) = taken.as_ref() else {
+            panic!("the concrete step carries shared protocol paths: {taken:?}");
+        };
+        let fairness: Vec<_> = world
+            .refinement()
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let classes = abstract_classes(&systems.abstract_system, &fairness, &[])
+            .expect("the protocol fairness operations are declared");
+        let [add, inc] = classes.as_slice() else {
+            panic!("one class per fairness constraint: {classes:?}");
+        };
+        let path = paths
+            .iter()
+            .find(|path| {
+                path.seed
+                    .transitions
+                    .first()
+                    .and_then(|transition| transition.applied_application())
+                    .is_some_and(|transition| add.covers(transition))
+            })
+            .expect("the concrete add has a protocol path");
+        let expected_first = path.seed.transitions[0].clone();
+        let expected_candidate = path.seed.candidates[0].clone();
+        let expected_key = path.seed.candidate_keys[0].clone();
+        assert!(add.covers(
+            expected_first
+                .applied_application()
+                .expect("the expected path first takes add")
+        ));
+        assert!(!inc.covers(
+            expected_first
+                .applied_application()
+                .expect("the expected path first takes add")
+        ));
+        let empty_seed = ProtocolTrace {
+            start: path.seed.start.clone(),
+            start_key: path.seed.start_key.clone(),
+            transitions: Vec::new(),
+            candidates: Vec::new(),
+            candidate_keys: Vec::new(),
+        };
+        let path_ref = ProtocolPathRef {
+            seed: std::sync::Arc::new(empty_seed),
+            tail: Some(std::sync::Arc::new(ProtocolPathNode {
+                previous: None,
+                transition: std::sync::Arc::new(expected_first),
+                candidate: std::sync::Arc::new(expected_candidate),
+                candidate_key: expected_key,
+            })),
+        };
+        let empty_seed_taken = Taken::ProtocolPathRefs(vec![path_ref.clone()]);
+        let ProtocolHiddenGraph::Built(_, steps) = protocol_hidden_graph(
+            protocol,
+            &[*initial, *post],
+            std::slice::from_ref(&empty_seed_taken),
+        )
+        .expect("the replay candidate graph rebuilds") else {
+            panic!("the candidate graph is built");
+        };
+        let rows: Vec<_> = steps.iter().flatten().collect();
+        assert!(
+            rows.iter().any(|row| {
+                row.1 == path_ref.seed.start_key
+                    && row.3 == path_ref.endpoint_key()
+                    && row
+                        .2
+                        .as_ref()
+                        .is_some_and(|transition| add.covers(transition))
+            }),
+            "replay counts the expected add application in the first-taken slot"
+        );
+    }
 }

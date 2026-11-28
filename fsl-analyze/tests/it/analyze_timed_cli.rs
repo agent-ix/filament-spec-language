@@ -19,7 +19,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
-use crate::analyze_family_cli::{rpc_snapshot, rpc_unit, rpc_unit_with};
+use crate::analyze_family_support::{rpc_snapshot, rpc_unit, rpc_unit_with};
 
 /// ADR-026 section 11's `Settles`: every `Waiting` position is followed within
 /// `interval` by a position that is not `Waiting`.
@@ -92,11 +92,7 @@ fn an_mitl_claim_proves_certified_and_refutes_with_exact_delays() {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect();
@@ -151,6 +147,32 @@ fn a_zone_state_budget_is_incomplete() {
     );
     assert_eq!(label(&items[0]), "incomplete");
     assert_eq!(run.exit, 22);
+}
+
+/// FR-255-AC-25: a timed item's `temporal.limits.max_states` and the
+/// caller's `zone_check.max_symbolic_states` are one bound given twice.
+#[trace("FR-255-AC-25")]
+#[test]
+fn a_timed_item_limit_and_the_zone_setting_are_refused() {
+    let ws = Workspace::new("timed-zone-conflict");
+    let request = request_over(
+        &ws,
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Settles", "temporal": {"limits": {"max_states": 2}}}]}),
+    );
+    let run = crate::analyze_cli_support::analyze_under(
+        &request,
+        &[(fsl_foundation::Setting::ZoneCheckMaxSymbolicStates, 5)],
+    );
+    assert_eq!(run.exit, 20, "{}", run.document());
+    let document = run.document().to_string();
+    assert!(document.contains("items[0]"), "{document}");
+    assert!(
+        document.contains("zone_check.max_symbolic_states"),
+        "{document}"
+    );
 }
 
 /// QSL-2129: a clock bound of the wrong dimension (a bare number against a
@@ -298,7 +320,8 @@ fn a_state_graph_claim_over_a_timed_subject_proves_on_zones() {
         .expect("a concrete witness path");
     assert_eq!(steps.len(), 1, "{item}");
     assert_eq!(
-        steps[0]["transition"]["operation"]["node"], "ix://test/timed/Call/send",
+        steps[0]["transition"]["operation"],
+        r#"{"node":"ix://test/timed/Call/send","package":"test/timed"}"#,
         "{item}"
     );
     assert_eq!(
@@ -340,6 +363,16 @@ fn an_unread_member_settles_unsupported_not_requires_bound() {
     assert_eq!(run.exit, 21);
 }
 
+/// The operation's name in `step`'s transition, whose `operation` is its
+/// declaration identity text (FR-120); `-` when it is not one.
+fn operation_name(step: &Value) -> String {
+    step["transition"]["operation"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|identity| Some(identity["node"].as_str()?.rsplit('/').next()?.to_owned()))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
 /// The first two steps of `item`'s counterexample: each delay's numerator and
 /// denominator and its operation's name.
 fn head(item: &Value) -> Vec<(String, String, String)> {
@@ -353,11 +386,7 @@ fn head(item: &Value) -> Vec<(String, String, String)> {
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
-                step["transition"]["operation"]
-                    .as_str()
-                    .and_then(|node| node.rsplit('/').next())
-                    .unwrap_or("-")
-                    .to_owned(),
+                operation_name(step),
             )
         })
         .collect()
@@ -805,4 +834,170 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
         "{}",
         run.item(0)
     );
+}
+
+/// One `Call` object whose `ping` changes no data field, under
+/// `time invariant x <= 1 ms`, with the temporal clauses `Safe`, `Live` and
+/// `Wrong`; `resets` makes `ping` reset `x`. The items are the three claims
+/// on EN-6, then on EN-1 `digital-clocks`; each result is backend, value and
+/// cause kind.
+fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    let (post, writes): (&str, &[&str]) = if resets {
+        (
+            "post Pinged using v on M::Call::ping { self.x = 0 ms }\n",
+            &["x"],
+        )
+    } else {
+        ("", &[])
+    };
+    let claims: String = [
+        ("Safe", "always holds(true)"),
+        ("Live", "always eventually holds(true)"),
+        ("Wrong", "always holds(false)"),
+    ]
+    .iter()
+    .map(|(claim, body)| {
+        format!(
+            "temporal {claim} using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ {body} }}\n"
+        )
+    })
+    .collect();
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}{post}time invariant Stall when {{ true }} {{ self.x <= 1 ms }}\n{claims}"
+        ),
+    );
+    let digital = json!({"method": "digital-clocks"});
+    let ws = Workspace::new(name);
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[("ping", writes)]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe"}, {"claim": "Live"}, {"claim": "Wrong"},
+            {"claim": "Safe", "options": digital.clone()},
+            {"claim": "Live", "options": digital.clone()},
+            {"claim": "Wrong", "options": digital}]}),
+    ));
+    (0..6)
+        .map(|n| {
+            let item = run.item(n);
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(&item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn expected_on_both_routes(per_claim: [(&str, &str); 3]) -> Vec<(String, String, String)> {
+    ["en-6", "en-1"]
+        .iter()
+        .flat_map(|backend| {
+            per_claim.iter().map(|(value, cause)| {
+                (
+                    (*backend).to_owned(),
+                    (*value).to_owned(),
+                    (*cause).to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// FR-232 "Vacuity", FR-240 "Vacuity": FR-232-AC-3's `Stall` is closed and has
+/// no time-divergent behaviour, so every claim over it, the false one
+/// included, is `inconclusive` `no-admitted-behaviour` on both routes, with
+/// no fairness declared.
+#[trace("FR-232-AC-3", "FR-240-AC-4")]
+#[test]
+fn digital_clocks_prove_nothing_over_a_stalled_subject() {
+    assert_eq!(
+        stalling("timed-digital-stall", false),
+        expected_on_both_routes([("inconclusive", "no-admitted-behaviour"); 3])
+    );
+}
+
+/// The same model with `ping` resetting `x`: time diverges, so the true claims
+/// are proved and the false one refuted on both routes. The first result,
+/// EN-6 on `always holds(true)`, is not asserted: EN-6 rejects its own
+/// certificate there (QSL-3486). A control for the stall test above; no
+/// criterion states these verdicts, so it carries no trace tag.
+#[test]
+fn digital_clocks_decide_claims_once_time_can_diverge() {
+    assert_eq!(
+        stalling("timed-digital-stall-reset", true)[1..],
+        expected_on_both_routes([("proved", ""), ("proved", ""), ("refuted", "")])[1..]
+    );
+}
+
+/// FR-239-AC-10 and FR-243-AC-8: a false initial position refutes the claim
+/// on both the default temporal route and explicit EN-1 digital clocks.
+#[trace("FR-239-AC-10", "FR-243-AC-8")]
+#[test]
+fn an_initial_position_violation_is_refuted_on_both_timed_routes() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let body = format!(
+        "{}\
+         pre Block using v on M::Call::block {{ self.phase = 0 }}\n\
+         post Blocked using v on M::Call::block {{ self.phase = 2 }}\n\
+         pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Gone using v on M::Call::go {{ self.phase = 1 }}\n\
+         time invariant Locked when {{ self.phase = 2 }} {{ self.x <= 0 ms }}\n\
+         temporal InitialPhase using tt over (c: M::Call) clock \"model-time\" on origin {{ always holds(c.phase = 1) }}\n",
+        DENSE,
+    );
+    let unit = unit_text(PACKAGE, crate::zone_search::TIMED, &body);
+    let document = document(&["x"], &[("block", &["phase"]), ("go", &["phase"])]);
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "s0"},
+        "observation": "current",
+        "model": {"identity": PACKAGE},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": format!("ix://{PACKAGE}/calls"), "complete": true,
+            "objects": [{"key": "c", "type": format!("ix://{PACKAGE}/Call"),
+                "fields": {"phase": {"integer": "0"}, "inflight": {"boolean": false},
+                    "late": {"boolean": false}, "retried": {"boolean": false}}}]}],
+    })
+    .to_string()
+    .into_bytes();
+    let ws = Workspace::new("initial-position-refutation");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document,
+        &[snapshot],
+        json!({"items": [
+            {"claim": "InitialPhase"},
+            {"claim": "InitialPhase", "options": {"method": "digital-clocks"}}
+        ]}),
+    ));
+    let items = run.document()["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(items.len(), 2, "analysis result: {:#?}", run.document());
+
+    let outcomes = items.iter().map(label).collect::<Vec<_>>();
+    assert_eq!(
+        outcomes,
+        ["refuted", "refuted"],
+        "route records: {items:#?}"
+    );
+    assert_eq!(items[0]["record"]["backend"], "en-6", "{items:#?}");
+    assert_eq!(items[1]["record"]["backend"], "en-1", "{items:#?}");
+    assert_eq!(run.exit, 10, "route records: {items:#?}");
 }

@@ -3,7 +3,9 @@
 //! §15.5's `Retx`, decided by the finite-horizon solver.
 
 use filament_exact::{Cancel, Integer, Rational};
-use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::analyze::{
+    analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
+};
 use fsl_analyze::exact_probabilistic::{
     build_product, decide_bounded_event, witness_scheduler, ActionChoice, EntryChoice,
     ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
@@ -625,7 +627,7 @@ fn not_markov_evidence_uses_the_actual_filtered_digital_posts() {
         })
         .map(|(_, post)| {
             system
-                .state_key(post)
+                .state_key(post, fsl_foundation::IdentityLimits::default())
                 .expect("an actual model post-state")
                 .1
         })
@@ -745,11 +747,11 @@ fn exact_timed_claims_route_to_en5_and_statistical_ones_to_en4() {
     ]
     .into_iter()
     .collect();
-    let registry = crate::probabilistic_request_items::registry();
+    let registry = crate::probabilistic_request_support::registry();
     let items = items_with_evidence(&records, &registry, None, EvidenceSelection::Record);
     let routed: Vec<_> = items
         .iter()
-        .map(crate::probabilistic_request_items::candidate_ids)
+        .map(crate::probabilistic_request_support::candidate_ids)
         .collect();
     assert_eq!(routed, [vec!["en-5".to_owned()], vec!["en-4".to_owned()]]);
 }
@@ -1433,7 +1435,10 @@ fn time_locked_state_is_terminal() {
             })
         ) && built.outgoing(*state).is_empty()
     });
-    assert!(time_locked.is_some(), "a pending deadline state has no move");
+    assert!(
+        time_locked.is_some(),
+        "a pending deadline state has no move"
+    );
 }
 
 /// FR-203-AC-3 / FR-204-AC-3 (TC-639): an exponential delay requested as
@@ -1460,7 +1465,13 @@ fn exponential_delay_exact_item_is_unsupported_without_a_measured_value() {
         },
     );
     let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let record = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
     let terminal = record.terminal().expect("unsupported is terminal");
     assert!(matches!(
         terminal.value(),
@@ -1562,6 +1573,75 @@ fn delay_weighting_and_elapsed_quantiles_check_over_retx() {
     }
 }
 
+/// G11's held timed-form boundary: the existing Delay route remains unchanged
+/// while FR-199-AC-6 covers weighted every-scheduler Reward support.
+#[trace("TC-2169", "FR-186-AC-15")]
+#[test]
+fn long_run_weighting_guards_keep_typed_unsupported_and_deciding_engine() {
+    let claims = "probabilistic DelayLongRun using ev on M over (c: M::Call) under every scheduler on origin \
+         { long_run_fraction holds(c.late) weighted by delay <= 0.5 }\n";
+    let world = retx(GUARD, true, "reward cost on M::Call::send = 1;\n", claims);
+    let model = world.package.graph().probabilistic_model();
+    assert!(matches!(
+        &model
+            .claim("DelayLongRun")
+            .expect("FR-186 delay claim checks")
+            .form,
+        ProbForm::LongRunFraction {
+            weight: Some(Weighting::Delay),
+            ..
+        }
+    ));
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let rows = [("DelayLongRun", "FR-186-AC-15 / FSpec FR-407")];
+    for (name, ownership) in rows {
+        let claim = model.claim(name).expect("the guarded claim checks");
+        let item = exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            ProductRequest {
+                subject: ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits: ExactProbLimits::default(),
+            },
+        );
+        let record = analyze_items(
+            &engines,
+            vec![item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        )
+        .remove(0);
+        let Settlement::Disposed(disposed) = &record.settlement else {
+            panic!("{name} ({ownership}): expected an EN-5 disposition, got {record:?}");
+        };
+        assert!(
+            disposed.kind == DispositionKind::Unsupported,
+            "{name} ({ownership}): {:?}",
+            disposed.kind
+        );
+        assert_eq!(
+            disposed.backend.as_ref().map(|backend| backend.as_str()),
+            Some("en-5"),
+            "{name} ({ownership})"
+        );
+        assert_eq!(
+            disposed
+                .diagnostic
+                .as_ref()
+                .map(|diagnostic| diagnostic.code.to_string())
+                .as_deref(),
+            Some("unsupported_construct/not-yet-implemented"),
+            "{name}"
+        );
+        assert!(record.terminal().is_none(), "{name}");
+        assert!(record.exact_probabilistic.is_none(), "{name}");
+        assert!(record.probabilistic_counterexample.is_none(), "{name}");
+    }
+}
+
 /// FR-186-AC-15 (TC-2168): on an untimed Service, `delay` reports the absent
 /// binding while the declared `duration` reward remains resolvable.
 #[trace("TC-2168", "FR-186-AC-15")]
@@ -1624,40 +1704,11 @@ fn timed_form_shape(
     }
 }
 
-fn formula_root(world: &World, claim: &str) -> filament_exact::NodeKey {
-    use fsl_semantics::check::Statement;
-    let claim = world
-        .package
-        .graph()
-        .probabilistic_model()
-        .claim(claim)
-        .expect("the claim checks");
-    let Some(Statement::Aggregate(claim)) = claim.statement() else {
-        panic!("a lowered statement");
-    };
-    let find = |members: &[(&'static str, Statement)], name: &str| {
-        members
-            .iter()
-            .find(|(held, _)| *held == name)
-            .map(|(_, value)| value.clone())
-    };
-    let Some(Statement::Aggregate(form)) = find(claim, "form") else {
-        panic!("a form binding");
-    };
-    let Some(Statement::Aggregate(event)) = find(&form, "event") else {
-        panic!("an event binding");
-    };
-    let Some(Statement::Formula { root, .. }) = find(&event, "formula") else {
-        panic!("a formula binding");
-    };
-    root
-}
-
-/// FR-498-AC-8 (TC-1288 step 3): a `TimedFormShape` cause of a claim with an
+/// FR-498-AC-3 (TC-1288 step 3): a `TimedFormShape` cause of a claim with an
 /// identity carries the member path of the part it refuses: `[form]` and no
 /// formulas for a form with no timed reading. An elapsed measure under a
 /// quantile has one (FR-877), so it is no longer refused.
-#[trace("FR-498-AC-8", "TC-1288")]
+#[trace("FR-498-AC-3", "TC-1288")]
 #[test]
 fn a_timed_form_shape_cause_carries_the_claim_member_path() {
     let claims = "probabilistic LongRun using ev on M over (c: M::Call) under every scheduler \
@@ -1680,35 +1731,101 @@ fn a_timed_form_shape_cause_carries_the_claim_member_path() {
     assert!(member.formulas.is_empty());
 }
 
-/// FR-498-AC-8 (TC-1288 step 3): the member path of an event formula names
-/// the formula nodes from the one the `formula` binding references down to
-/// the node whose interval is refused, outermost first; with the refused
-/// operator as the whole event it is that one node.
-#[trace("FR-498-AC-8", "TC-1288")]
+/// FR-498-AC-8 (TC-1288 step 3) and FR-204-AC-21: a punctual `eventually`
+/// inside a bounded `always` window settles an exact verdict for the selected
+/// claim, whose wire locus is exactly `{node, occurrence}`. Every scheduler
+/// that sends first at 2 ms delivers by 2 ms only on that send, so the minimum
+/// is `9/10`: `>= 0.99` is refuted on it and `>= 0.9` is proved by it.
+#[trace("TC-1288", "FR-498-AC-8", "FR-204-AC-21")]
 #[test]
-fn a_timed_form_shape_member_path_names_the_nested_formula_nodes() {
-    let claims = "probabilistic Nested using ev on M over (c: M::Call) under every scheduler \
-                  on origin { probability >= 0.99 \
-                  [ always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(c.late) ] }\n\
-                  probabilistic Whole using ev on M over (c: M::Call) under every scheduler \
-                  on origin { probability >= 0.99 [ eventually[2 ms, 2 ms] holds(c.late) ] }\n";
-    let world = retx(GUARD, true, "", claims);
-
-    let (_, member) = timed_form_shape(&world, "Nested");
-    let member = member.expect("a member path");
-    assert_eq!(member.body, ["form", "event", "formula"]);
-    assert_eq!(
-        member.formulas.len(),
-        2,
-        "the always node, then its operand"
+fn a_bounded_nested_punctual_claim_settles_an_exact_verdict() {
+    let claim = |name: &str, bound: &str| {
+        format!(
+            "probabilistic {name} using ev on M over (c: M::Call) under every scheduler \
+             on origin {{ probability {bound} \
+             [ always[0 ms, 4 ms] eventually[2 ms, 2 ms] holds(c.late) ] }}\n"
+        )
+    };
+    let claims = format!(
+        "{}{}",
+        claim("Nested", ">= 0.99"),
+        claim("NestedMinimum", ">= 0.9")
     );
-    assert_eq!(member.formulas[0], formula_root(&world, "Nested"));
-    assert_ne!(member.formulas[0], member.formulas[1]);
+    let world = retx(GUARD, true, "", &claims);
 
-    let (_, member) = timed_form_shape(&world, "Whole");
-    let member = member.expect("a member path");
-    assert_eq!(member.body, ["form", "event", "formula"]);
-    assert_eq!(member.formulas, [formula_root(&world, "Whole")]);
+    assert_eq!(
+        exact_value(&settle_trio(&world, "NestedMinimum", None)),
+        ratio(9, 10)
+    );
+    let selected = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Nested")
+        .expect("the claim checks");
+    let identity = selected
+        .occurrence()
+        .expect("the claim has a package identity");
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim: selected,
+            limits: ExactProbLimits::default(),
+        },
+    )
+    .at_claim(
+        &world.package,
+        fsl_route::request::ItemKind::Formula,
+        identity,
+    );
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let refuted = analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0);
+    assert!(
+        matches!(
+            refuted.terminal().expect("a terminal record").value(),
+            TerminalValue::Refuted
+        ),
+        "{refuted:#?}"
+    );
+
+    // The replayed refutation and the record's locus both name the selected
+    // claim.
+    let witness = refuted
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("a replayed witness");
+    assert_eq!(
+        witness.evidence().item,
+        fsl_replay::probabilistic_claim_identity(selected).expect("an obligation identity")
+    );
+    let reported = refuted.claim.as_ref().expect("the record names its claim");
+    let locus = fsl_replay::claim_locus_wire(reported).expect("a wire locus");
+    assert_eq!(
+        locus,
+        fsl_replay::claim_locus_wire(identity).expect("a wire locus")
+    );
+    let mut members: Vec<&str> = locus
+        .as_object()
+        .expect("a locus object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    members.sort_unstable();
+    assert_eq!(members, ["node", "occurrence"]);
+    assert_eq!(
+        locus["occurrence"],
+        json!({"role": "claim", "ordinal": identity.origin().ordinal()})
+    );
 }
 
 /// `Trio` of FR-204's worked example over the timed fixture's `Call`: its
@@ -1798,7 +1915,13 @@ fn settle_trio(
         }
         None => fsl_analyze::analyze::exact_probabilistic_item(index, request),
     };
-    fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    fsl_analyze::analyze::analyze_items(
+        &engines,
+        vec![item],
+        &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
+    )
+    .remove(0)
 }
 
 fn exact_value(record: &fsl_analyze::analyze::AnalyzeRecord) -> Rational {
@@ -1915,7 +2038,7 @@ fn assert_forged_initial_values_rejected(
             fsl_replay::ProbabilityDocumentLimits {
                 states: 4096,
                 edges: 65_536,
-                ..super::long_run_certificate::limits()
+                ..crate::long_run_support::limits()
             },
             &Cancel::new(),
         );
@@ -2139,4 +2262,31 @@ fn operation_weight_is_shared_among_tied_identities() {
         ratio(9, 20),
         &[ratio(17, 36), ratio(5, 12)],
     );
+}
+
+/// FR-125 "Instancing": an instance is identified by its key alone, so the
+/// identity of a cycle state does not depend on which population listed the
+/// bound key first.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_cycle_state_identity_names_the_bound_instance_by_key_alone() {
+    let identity = |population: &str, key: &str| {
+        fsl_analyze::exact_probabilistic::ProbKey {
+            binding: Some(fsl_eval::model_subject::ModelInstance {
+                population: filament_checked::key::DeclarationKey {
+                    package: "test/link".to_owned(),
+                    node: population.to_owned(),
+                },
+                key: key.to_owned(),
+            }),
+            model: b"state".to_vec(),
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            certificate_state: None,
+        }
+        .digital_cycle_identity()
+    };
+    assert_eq!(identity("first", "m"), identity("second", "m"));
+    assert_ne!(identity("first", "m"), identity("first", "n"));
 }

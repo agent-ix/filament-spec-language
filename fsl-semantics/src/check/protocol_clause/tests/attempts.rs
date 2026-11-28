@@ -1,15 +1,16 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-114 attempt binding: the `contracts` list against the unit's state
 //! clauses, and the assembler's operation resolution.
 
 use ix_trace_rs::trace;
 
-use super::attempt_fixture::{HEADER, attempt_flow};
+use super::attempt_fixture::{attempt_flow, HEADER};
 use super::{
     assemble, assembly_errors, checks, empty_scope_and_signatures, only_cause, protocol_causes,
     recovery_flow, refusals,
 };
-use crate::check::CheckCause;
 use crate::check::refusal::ProtocolAnchorCause;
+use crate::check::CheckCause;
 
 /// SR-770 FND-005: a `contracts` entry naming two state clauses of one
 /// name never binds the first silently. The whole pipeline already

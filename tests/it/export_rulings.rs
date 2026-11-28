@@ -357,7 +357,7 @@ fn the_type_ok_comment_names_the_bound_region() {
 /// The `test/float-export` package: object type `Gauge` (population
 /// `gauges`) with the `Float64` field `a` and the operation `flip()`
 /// (`modifies a`).
-fn float_model() -> Value {
+pub(crate) fn float_model() -> Value {
     let id = |suffix: &str| format!("ix://test/float-export/{suffix}");
     let origin = |identity: &str| {
         json!({"generated": {"generatorIdentity": identity, "generatorVersion": "1.0.0",
@@ -518,6 +518,52 @@ fn a_float_model_field_exports_its_exact_bits() {
         "exact AC-8 NaN bit-pattern string: {target}"
     );
     assert!(target.contains("F_float64_neg_nan bits"));
+}
+
+/// A temporal clause atom reads the clause's quantified key `o_g`, also under
+/// a `Float64` negation, in both targets.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-1")]
+fn a_temporal_atom_under_a_float_negation_reads_the_quantified_key() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("float-model.semantic-ir.json"),
+        serde_json::to_vec(&float_model()).unwrap(),
+    )
+    .unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         model Config = \"test/float-export\";\n\
+         temporal T using t over (g: Config::Gauge) clock \"model-steps\" on origin \
+         { always holds(-g.a = g.a) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let path = directory.path().join("request.json");
+    for (member, atom) in [
+        (
+            tla(json!(["T"])),
+            "F_float64_eq(F_float64_neg(v_Gauge[o_g].fld_a), v_Gauge[o_g].fld_a)",
+        ),
+        (
+            lean(json!(["T"])),
+            "F_float64_eq(F_float64_neg((F_get_Gauge o_g s.v_Gauge).fld_a), \
+             (F_get_Gauge o_g s.v_Gauge).fld_a)",
+        ),
+    ] {
+        let request = json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("float-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "export": member}});
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+            .unwrap_or_else(|error| panic!("the export runs: {error}"));
+        let value: Value = serde_json::from_str(&result.value.to_string()).expect("JSON document");
+        assert_eq!(result.exit_code, 0, "{value}");
+        let target = text(&value);
+        assert!(target.contains(atom), "the atom reads o_g: {target}");
+        assert!(!target.contains("p_g"), "no unbound parameter: {target}");
+    }
 }
 
 #[test]

@@ -460,7 +460,7 @@ pub(super) fn walk_of<'s, 'a>(
 ) -> Result<Walk<'s, 'a>, ExpansionStop> {
     let observation = system
         .model
-        .observation(&state.state, state_document())
+        .observation(state.state(), state_document())
         .map_err(|_| stop(BROKEN))?;
     Ok(Walk {
         result_policy: ResultPolicy::FirstResult,
@@ -469,7 +469,7 @@ pub(super) fn walk_of<'s, 'a>(
         system,
         state,
         observation,
-        rows: rows_of(system, &state.state)?,
+        rows: rows_of(system, state.state())?,
         enforcement,
         clock_selectors: None,
         post_presence: None,
@@ -813,7 +813,7 @@ pub(super) fn absent_rows(system: &ModelSystem<'_>, state: &ModelSimState) -> Ve
         let Some(keys) = system.universes.get(&population.key) else {
             continue;
         };
-        let held = state.state.populations.get(&population.key);
+        let held = state.state().populations.get(&population.key);
         for key in keys
             .iter()
             .filter(|key| !held.is_some_and(|held| held.contains_key(*key)))

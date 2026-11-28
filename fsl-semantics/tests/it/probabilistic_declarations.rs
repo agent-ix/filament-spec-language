@@ -24,10 +24,10 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph,
-    CheckingLimitKind, Confidence, Event, GroupMember, LeafTerm, MemberTerm, Owner,
-    PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator, SemanticNode, WeightOwner,
+    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, CheckedGraph, CheckingLimitKind,
+    Confidence, Event, GroupMember, LeafTerm, MemberTerm, Owner, PackageDeclarations,
+    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ReachTarget, Reward,
+    RewardEvaluationFailure, RewardEvaluator, SemanticCheckRefusal, SemanticNode, WeightOwner,
     Weighting,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -411,7 +411,7 @@ fn checked_timed_service(body: &str) -> CheckedGraph {
         .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
 }
 
-fn refusals_of(body: &str) -> Vec<CheckRefusal> {
+fn refusals_of(body: &str) -> Vec<SemanticCheckRefusal> {
     assemble(body)
         .check(
             CheckMode::Linked,
@@ -3987,6 +3987,29 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
     );
 }
 
+/// FR-194-AC-4 and FR-194-AC-7: an aggregate over a model subject is refused
+/// as an unsupported expression at the aggregate term.
+#[trace("FR-194-AC-4", "FR-194-AC-7")]
+#[test]
+fn a_window_aggregate_on_model_subject_refuses_at_the_aggregate_term() {
+    let aggregate = "count where holds(c.phase = 1) over past[0 ms, 5 ms]";
+    let claim = exact_claim(
+        "ev",
+        "Steady",
+        CONFIDENT,
+        &format!("probability >= 0.5 [ {aggregate} >= 1 ]"),
+    );
+
+    assert_eq!(
+        located(&claim),
+        [(
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            aggregate.to_owned()
+        )]
+    );
+}
+
 /// FR-764-AC-3: a bare decimal literal is checked exactly as the
 /// `decimal(c, s)` it spells.
 #[trace("TC-2162", "FR-764-AC-3")]
@@ -4289,6 +4312,34 @@ fn a_timed_profile_refuses_unbounded_event_operators() {
     }
     // The bounded timed-window case remains admitted.
     checked_timed_service(&source(&format!("eventually[0 ms,4 ms] {holds}")));
+}
+
+/// FR-498-AC-9 (TC-1288 step 3): an open-ended window, at the root or inside
+/// a bounded one, is refused at S3 at its interval and nowhere else, so no
+/// claim reaches EN-5.
+#[trace("TC-1288", "FR-498-AC-9")]
+#[test]
+fn a_timed_profile_refuses_an_open_window_at_any_depth() {
+    let holds = format!("holds({IDLE})");
+    for formula in [
+        format!("eventually[2 ms,*] {holds}"),
+        format!("always[0 ms,4 ms] eventually[2 ms,*] {holds}"),
+    ] {
+        let source = format!(
+            "time Service dense unit ms;\n{STEADY}\n\
+             probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ {formula} ] }}"
+        );
+        assert_eq!(
+            located_over(&timed_service_document(), &source),
+            [(
+                Code::UnsupportedConstruct,
+                Some("expression-form"),
+                "[2 ms,*]".to_owned()
+            )],
+            "{formula}"
+        );
+    }
 }
 
 /// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the

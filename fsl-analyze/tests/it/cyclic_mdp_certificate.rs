@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Actual checked MDP subjects, caller controls and first-hit scope.
-use super::long_run_certificate::limits;
+use crate::long_run_support::limits;
 use crate::prob_world::{Model, Operation, World};
 use filament_exact::{Cancel, CancelCause};
 use filament_semantic_value::checking::CheckMode;
@@ -20,6 +20,7 @@ fn produce(world: &World, name: &str) -> Vec<u8> {
             world.request(name, fsl_replay::ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     records[0]
         .terminal()

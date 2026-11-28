@@ -93,7 +93,7 @@ pub(super) fn read_observation_inputs(
     if observation_override.is_some() && requested_limits.is_some() {
         return Err(invalid(
             "observation_limits",
-            "request member and RequestOverrides::observation were both supplied",
+            "request member and an observation limit override were both supplied",
         ));
     }
     if request
@@ -215,18 +215,22 @@ fn read_with_source(
     {
         timestamped.late.evidence_ledger = evidence_ledger;
     }
-    fsl_replay::spine::read_canonical_clause_run_request(ClauseRequestParts {
-        package_name: super::package_name(&source_identity),
-        source,
-        packages,
-        dependencies,
-        observations,
-        selection,
-        limits,
-        observation_limits,
-        accounting: super::call_accounting(&clause.accounting),
-        clocks: request.clocks.clone(),
-        ledger,
-    }, request.limits.supplied.unwrap_or_default(), filament_exact::Cancel::new())
+    fsl_replay::spine::read_canonical_clause_run_request(
+        ClauseRequestParts {
+            package_name: super::package_name(&source_identity),
+            source,
+            packages,
+            dependencies,
+            observations,
+            selection,
+            limits,
+            observation_limits,
+            accounting: super::call_accounting(&clause.accounting),
+            clocks: request.clocks.clone(),
+            ledger,
+        },
+        request.limits.supplied.unwrap_or_default(),
+        filament_exact::Cancel::new(),
+    )
     .map_err(|error| invalid(error.member, error.reason))
 }

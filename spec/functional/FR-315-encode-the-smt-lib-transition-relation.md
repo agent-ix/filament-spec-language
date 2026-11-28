@@ -43,6 +43,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-952
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
 ---
 # FR-315: Encode a model subject's transition relation as SMT-LIB
 
@@ -77,6 +79,7 @@ solver used the same encoding the core rebuilds.
   form (FR-123), or the subject's deadlock-freedom item (FR-124).
 - A `SmtQueryKind`: `Unrolling { depth }`, `InductionBase { depth }` or
   `InductionStep { depth }`.
+- A `SmtInstances`: `All`, or `First(n)` for rule 4d's search.
 
 ```rust
 pub enum SmtQueryKind {
@@ -85,10 +88,17 @@ pub enum SmtQueryKind {
     InductionStep { depth: u64 },
 }
 
+/// The instances whose failures the negated property reads.
+pub enum SmtInstances {
+    All,                    // every proof query
+    First(NonZeroU64),      // the search of rule 4d
+}
+
 pub fn encode_smt_query(
     subject: &ModelSubject,
     item: ModelCheckItem<'_>,
     kind: SmtQueryKind,
+    instances: SmtInstances,
     limits: &SmtEncodingLimits,
 ) -> Result<Vec<u8>, SmtEncodingRefusal>;
 
@@ -122,26 +132,30 @@ limits is rebuilt as the solver received it.
   when the item or the subject uses a construct the encoding has no form
   for. Each refusal of `encode_smt_query` has one code. The encoding SHALL
   apply the checks in the order of this table, one row at a time, and SHALL
-  refuse on the first row that applies:
+  refuse on the first row that applies. Rows 5 to 8 are FR-125's instancing
+  outcomes in FR-125's order. Rows 1 to 4 (item form, profile, query kind
+  and admission) precede instancing, so an item one of them refuses reports
+  that refusal, not an instancing outcome:
 
 | Order | Code | When | Locus |
 | --- | --- | --- | --- |
 | 1 | `item-form` | The item is a TP-4 liveness clause, guarded or not, whose refutations are EN-2's lassos (Monitors); a clause with no recorded property form; or a clause whose property-automaton translation refuses, carrying that refusal | the clause |
 | 2 | `profile` | The clause binds a profile other than infinite-trace and event-position false-extension, such as ADR-026's `model-time` | the clause |
-| 3 | `query-kind` | `InductionBase` or `InductionStep` for a TP-2 `on origin` item, whose V-2 verdict needs no induction; `Unrolling{depth}` with `depth < u` for `eventually[0,u] holds(I)` (Finite behaviours); `Unrolling{depth}` with `depth < h` for an `on origin` monitor item, `h` its ADR-014 TR-4 horizon (Monitors) | the clause |
-| 4 | `subject-admission` | FR-120's admission of the subject refuses, carrying that refusal | the subject |
-| 5 | `no-initial-state` | The subject's `initial` list is empty (FR-125), so every query would be unsatisfiable | the subject |
-| 6 | `object-lifecycle` | An operation's frame creates or deletes objects, or a universe object is not held by every initial state at one type, so the objects of a state copy are not fixed | the operation, or the object |
-| 7 | `constant-name` | A name cannot be printed as an SMT-LIB symbol, or two constants would print the same name (two objects under one key, or a dotted key that prints as another object's field) | the name |
-| 8 | `field-sort` | A field of a universe object has a sort with no SMT form (FR-315-AC-3) | the object and field |
-| 9 | `parameter-domain` | An operation parameter, or an operation's declared result, has no finite domain under FR-120 or a type with no SMT form | the operation, and the parameter or `result` |
-| 10 | `field-domain` | The query expands the candidates of an application (Finite behaviours, Deadlock-freedom, Undefined evaluation) and a field the application may write has no finite domain under FR-120, such as an `Integer` field | the object and field |
-| 11 | `requires-bound` | A population that admits the clause's `over` type has no universe (FR-125 `RequiresBound`) | the population |
-| 12 | `no-instance` | The clause has zero instances (FR-125 `NoInstance`), so every query would be unsatisfiable | the clause |
-| 13 | `instance-type` | An instance's object does not conform to the `over` type in an initial state | the instance |
-| 14 | `too-large` | The `constants`, then `applications`, then `monitor-atoms`, then `monitor-states`, then `candidates` measure passes its limit (Size limits) | the measure, its value and its limit |
-| 15 | `out-of-fragment` | An expression is outside the `QF_LIA` fragment the encoding prints, such as a product of two non-literal terms or a non-literal divisor | the expression's clause and node |
-| 16 | `too-large` | The `script-bytes` measure passes its limit | the measure, its value and its limit |
+| 3 | `query-kind` | `InductionBase` or `InductionStep` for a TP-2 `on origin` item, whose V-2 verdict needs no induction; `Unrolling{depth}` with `depth < u` for `eventually[0,u] holds(I)` (Finite behaviours); `Unrolling{depth}` with `depth < h` for an `on origin` monitor item, `h` its ADR-014 TR-4 horizon (Monitors); `InductionStep` with `SmtInstances::First` | the clause |
+| 4 | `subject-admission` | FR-120's admission of the subject refuses, carrying that refusal, other than for a universe and key with two types in different populations or initial states (row 7) | the subject |
+| 5 | `requires-bound` | A population that admits the clause's `over` type has no universe (FR-125 `RequiresBound`) | the population |
+| 6 | `no-initial-state` | The subject's `initial` list is empty (FR-125), so every query would be unsatisfiable | the subject |
+| 7 | `subject-admission` | Two member records, in different populations or different initial states, among the populations that overlap the clause's `over` type, give one universe and key two types (FR-125), carrying `invalid_runtime_input`/`conflicting-identity` | the subject |
+| 8 | `no-instance` | The clause has zero instances (FR-125 `NoInstance`), so every query would be unsatisfiable | the clause |
+| 9 | `object-lifecycle` | An operation's frame creates or deletes objects, or a universe object is not held by every initial state at one type, so the objects of a state copy are not fixed | the operation, or the object |
+| 10 | `constant-name` | A name cannot be printed as an SMT-LIB symbol, or two constants would print the same name (two objects under one key, or a dotted key that prints as another object's field) | the name |
+| 11 | `field-sort` | A field of a universe object has a sort with no SMT form (FR-315-AC-3) | the object and field |
+| 12 | `parameter-domain` | An operation parameter, or an operation's declared result, has no finite domain under FR-120 or a type with no SMT form | the operation, and the parameter or `result` |
+| 13 | `field-domain` | The query expands the candidates of an application (Finite behaviours, Deadlock-freedom, Undefined evaluation) and a field the application may write has no finite domain under FR-120, such as an `Integer` field | the object and field |
+| 14 | `instance-type` | An instance's object does not conform to the `over` type in an initial state | the instance |
+| 15 | `too-large` | The `constants`, then `applications`, then `monitor-atoms`, then `monitor-states`, then `candidates` measure passes its limit (Size limits) | the measure, its value and its limit |
+| 16 | `out-of-fragment` | An expression is outside the `QF_LIA` fragment the encoding prints, such as a product of two non-literal terms or a non-literal divisor | the expression's clause and node |
+| 17 | `too-large` | The `script-bytes` measure passes its limit | the measure, its value and its limit |
 
 Of several constructs that one row refuses, the encoding names the first in
 the canonical order of the script: object, field and operation order for
@@ -377,8 +391,25 @@ internal-failure category, never `inconclusive` or `unsupported`:
      violation is read, the instance is that of the first violation
      disjunct that holds at `p` in instance order; for a monitor item, the
      instance whose monitor `m<p>.<n>` rejects first in instance order. Each
-     instance has its own monitor, so the reading needs no search over
+     instance has its own monitor, so reading one model needs no search over
      instances.
+  4d. The item's reported instance is its first refuted instance in
+     FR-125's canonical order (FR-621 "Items over several claim
+     instances"), which one model need not name. When the counterexample CG
+     holds names the instance at index `n > 0`, CG SHALL query the same kind
+     and depth again with `SmtInstances::First(n)`, under what remains of
+     the run's limits, and read a satisfiable model by rules 1 to 4c. When a
+     model gives no counterexample that FR-128's replay confirms (it is no
+     candidate, or replay does not confirm it), CG SHALL assert, beside the
+     script and its earlier assertions of this kind, that the state copies
+     at positions `0..=q` are not that model's (some field, by field
+     equality, or some `h<i>` differs), `q` the last position rules 2 to 4b
+     read in it, and ask again. When a model gives a confirmed
+     counterexample, CG SHALL hold it instead, and search again while its
+     index is above 0. When the answer is unsatisfiable, or a solver or run
+     limit is reached, CG SHALL report the counterexample it holds. Rule 5
+     does not apply to this search, and its added assertions are no part of
+     the encoding.
   5. After a model that is no candidate, CG SHALL settle from that query
      with no further model: a base query gives `InductionNotClosed{depth}`
      (V-6), and an `Unrolling` query gives no outcome at that depth. It
@@ -555,12 +586,22 @@ below hold for every TP-2 item.
 
 ### Instances
 
-- A query SHALL cover every instance of the item together. The property at
+- A query with `SmtInstances::All` SHALL cover every instance of the item
+  together. The property at
   a position is the conjunction over the item's instances, in FR-125's
   canonical order, and its violation is the disjunction of the instances'
   violations in that order. A model shows that some instance fails, and the
   counterexample built from it names that instance's `over_binding`
-  (ADR-018 CX-2, rule 4c), which replay checks.
+  (ADR-018 CX-2, rule 4c), which replay checks; rule 4d decides which
+  instance the item reports.
+- A query with `SmtInstances::First(n)` SHALL print the script of `All`
+  with one change: of the negated property's disjuncts it keeps only the
+  violation disjuncts and the claim's definedness failure disjuncts of the
+  instances at indices below `n`, the end-of-behaviour disjunct `h<p>` of
+  `always[0,u]` included, and no precondition, postcondition or
+  deadlock-freedom failure, which belongs to no instance. With `n` at least
+  the instance count the violation and claim disjuncts are all those of
+  `All`.
 - A monitor item SHALL have one monitor per instance, whatever the number
   of instances: the constants `m<i>.<n>` for every instance `n`, each with
   its range assertion and its moves over its own letters, and the property
@@ -1008,8 +1049,8 @@ to an earlier one is printed once, at its first place, by rule 3. FR-314's
 byte comparison is over the normalised script.
 
 **Refusals.** `encode_refinement_query` SHALL check the refusals 1 to 5 below
-first, in this order, then the table's rows 4 to 14 and 16 as they apply to the
-concrete subject, with row 15's `out-of-fragment` check (refusal 6) read over the
+first, in this order, then the table's rows 4 to 15 and 17 as they apply to the
+concrete subject, with row 16's `out-of-fragment` check (refusal 6) read over the
 terms of the query; it refuses on the first that applies, with the code and
 locus named. This precedence is chosen here, because STD-556 asks for a
 normative statement and no earlier text orders these refusals; a request with a
@@ -1090,8 +1131,8 @@ they produce:
   package of the request's subjects (see Product identity, "One checked
   package"), `package` being the first subject's. `CheckedStepMatch` reads no
   state and no instance, so the encoder passes one `ParameterBinding` per
-  `clause.parameters` member, in parameter order, whose population is that
-  parameter's population and whose key is the request's key, and the readings
+  `clause.parameters` member, in parameter order, whose population is a
+  population of that parameter and whose key is the request's key, and the readings
   do not depend on them.
 - **The body's atoms are not evaluated.** An atom is read symbolically. The
   encoder reads `clause.condition(atom)` and `clause.component_reads(atom)`
@@ -1346,13 +1387,15 @@ impl HyperProductIdentity {
      an alias to its model, so the check is one subject per alias over one
      checked package;
   3. `instance-binding`, when `instance` does not hold exactly one pair per
-     member of `clause.parameters`, in parameter order, each key in that
-     parameter's universe, at the first parameter that breaks this. The
-     parameter's universe is the key list of the populations of its alias's
-     subject that admit the parameter's object type (FR-125 Instancing); an admitting subject
-     whose instances cannot be listed refuses `instance-binding`; and when
-     FR-120 does not admit the subject, it is the keys of all of that
-     subject's universes.
+     member of `clause.parameters`, in parameter order, each key an instance
+     of its parameter (FR-125 Instancing), at the first parameter that breaks
+     this. A universe key that no initial state admits is not an instance.
+     Over a subject whose `initial` list is empty, which admits no key, every
+     key of an overlapping population's universe is accepted, so that the
+     identity exists and the item settles `NoInitialState`. An admitting
+     subject whose instances cannot be listed refuses `instance-binding`; and
+     when FR-120 does not admit the subject, the accepted keys are those of
+     all of that subject's universes.
      `encode_hyper_query` then refuses a subject that FR-120 does not admit
      as `subject-binding` at its alias (FR-315-AC-51), after these four
      checks and before `hyper-body`;
@@ -1432,10 +1475,10 @@ impl HyperProductIdentity {
 | FR-315-AC-33 | Over FR-315-AC-1's `Counter` under event-position false-extension, `Unrolling{depth: 2}` for the TP-2 claim `eventually[0,1] holds(c.value = 3)` with activation `on each` declares `s0.c.value`, `m0.0`, `h0`, `s1.c.value`, `m1.0`, `h1`, `s2.c.value`, `m2.0`, `h2` in that order; asserts at each position the range assertion of `s<i>.c.value` and then `(and (<= 0 m<i>.0) (<= m<i>.0 s-1))`, `s` the tabulated monitor states; asserts `(= s0.c.value 0)`, `(not h0)` and two step assertions in FR-315-AC-17's false-extension form with no stutter disjunct; and then the monitor implications. The monitor has one letter member, the atom `A<i>` = `(= s<i>.c.value 3)`, so the position-0 implications are one per move from the initial state on the letters 0, 1 and the end letter 2, whose terms are `(and (not h0) (not A0))`, `(and (not h0) A0)` and `h0`; positions 1 and 2 have one implication per tabulated move. The negated property has, at each position `p` in `0..=2`, the violation `(= m<p>.0 r)`, `r` the rejecting state's number, followed by `inc`'s postcondition failure `(and (not h<p>) F)` (FR-315-AC-31). Encoding it twice gives byte-equal scripts. `InductionBase{depth: 1}` and `InductionStep{depth: 1}` for the same item are encoded, not refused `query-kind`; the step asserts no initial-state predicate, no `(not h0)` and no position-0 implication, and its one distinctness assertion is `(not (and (= h1 h0) (or h1 (= s1.c.value s0.c.value)) (= m1.0 m0.0)))`. | Test (TC-1201) |
 | FR-315-AC-34 | Read by a `QF_LIA` solver over FR-315-AC-1's `Counter` under event-position false-extension, for `eventually[0,1] holds(c.value = 3)` `on each`: `Unrolling{depth: 2}` is satisfiable, the monitor rejecting first at position 1, where the activation at position 0 has read the values 0 and 1; CG reads it by rule 4b as the prefix `0, 1, 2` (`e` the least of the cover position `1 + 1` and the last live position 2), which FR-128 replays to `refuted`, the counterexample FR-126-AC-2 finds by EN-1. `Unrolling{depth: 1}` is satisfiable with the same rejection, and its prefix `0, 1` neither reaches the cover position 2 nor ends at a terminal state, so the query gives no outcome at depth 1. For `eventually[0,1] holds(c.value >= 1)` `on each`, `InductionStep{depth: 1}` is satisfiable, from a copy past the end whose monitor state holds an open activation, and `InductionBase{depth: 2}` and `InductionStep{depth: 2}` are both unsatisfiable, the outcome `Inductive{depth: 2}` (ADR-018 V-3). | Analysis (TC-1201) |
 | FR-315-AC-35 | Over FR-315-AC-1's `Counter` under event-position false-extension, the TP-2 `on origin` claim `always[0,3] eventually[0,1] holds(c.value >= 1)`, whose horizon is 4, is a monitor item: `Unrolling{depth: 4}` declares `m<i>.0` and `h<i>` at each position 0 to 4, asserts the monitor implications of its one letter member `(>= s<i>.c.value 1)` with the end letter `h<i>`, and its violation at each position is `(= m<p>.0 r)`. Read by a `QF_LIA` solver it is unsatisfiable, the V-2 outcome `BoundedComplete{depth: 4}`. For `always[0,3] eventually[0,1] holds(c.value = 3)`, `Unrolling{depth: 4}` is satisfiable, the monitor rejecting at position 1; CG reads the prefix `0, 1, 2, 3`, ending at the terminal state 3 before the cover position 4, which FR-128 replays to `refuted`. `Unrolling{depth: 0}`, `Unrolling{depth: 1}` and `Unrolling{depth: 3}` for either claim refuse `query-kind`, below the horizon 4, so no unsatisfiable answer below the horizon can stand as a `BoundedComplete` proof of the refuted `= 3` claim; `InductionBase{depth: 4}` for either claim refuses `query-kind`. | Analysis (TC-1201) |
-| FR-315-AC-36 | Over FR-315-AC-1's `Counter` under infinite-trace, the guarded TP-1 claim `always holds(c.value <= 1)` `on each` `when c.value >= 3` is a monitor item. `Unrolling{depth: 1}` declares `m0.0` and `m1.0` and no `h<i>`; its letter members are the condition `C<i>` = `(>= s<i>.c.value 3)` (bit 0) and then the atom `A<i>` = `(<= s<i>.c.value 1)` (bit 1), so letter 2's term at position `i` is `(and (not C<i>) A<i>)`; the monitor has no end letter, and each step assertion keeps the stutter disjunct. Over the same `Counter` under event-position false-extension, `Unrolling{depth: 2}` for `eventually[0,3] holds(c.value = 3)` `on each` `when c.value + 2 = c.value` has, at each position `p` in `0..=2`, after the violation `(= m<p>.0 r)`, the condition's definedness failure, the range coercion of the integer sum `c.value + 2` into `Int[0, 3]` that FR-104's equality typing makes (as in FR-315-AC-31): `s<p>.c.value + 2` outside `[0, 3]`, a linear term, conjoined as `(and (not h<p>) F)`; and then `inc`'s postcondition failure. The atom holds no partial construct, so the query has no atom-failure disjunct. The condition is false wherever it is defined, so the clause never activates, and it is undefined exactly at the values 2 and 3. | Test (TC-1201) |
-| FR-315-AC-37 | Read by a `QF_LIA` solver: `Unrolling{depth: 3}` for AC-36's guarded `always holds(c.value <= 1)` `when c.value >= 3` is satisfiable, the monitor rejecting at position 3, where the activation starts at value 3; the model takes `inc` three times with no stutter, and CG reads the prefix `0, 1, 2, 3`, which FR-128 replays to `refuted`, FR-126-AC-16's counterexample. With the condition `c.value = 7`, `InductionStep{depth: 2}` is satisfiable, from two copies whose monitor state holds the activation, and `InductionBase{depth: 3}` and `InductionStep{depth: 3}` are both unsatisfiable, the outcome `Inductive{depth: 3}`. AC-36's false-extension query, whose condition `c.value + 2 = c.value` is defined and false at the values 0 and 1 and undefined at value 2, is satisfiable only by the condition failure at position 2; CG reads the prefix `0, 1, 2` (rule 4b, UE-3), which FR-128 replays to `refuted` with `kind: UndefinedEvaluation` at position 2, its site naming the activation (FR-126-AC-16). | Analysis (TC-1201) |
+| FR-315-AC-36 | Over FR-315-AC-1's `Counter` under infinite-trace, the guarded TP-1 claim `always holds(c.value <= 1)` `on each` `when c.value >= 3` is a monitor item. `Unrolling{depth: 1}` declares `m0.0` and `m1.0` and no `h<i>`; its letter members are the condition `C<i>` = `(>= s<i>.c.value 3)` (bit 0) and then the atom `A<i>` = `(<= s<i>.c.value 1)` (bit 1), so letter 2's term at position `i` is `(and (not C<i>) A<i>)`; the monitor has no end letter, and each step assertion keeps the stutter disjunct. Over the same `Counter` under event-position false-extension, `Unrolling{depth: 2}` for `eventually[0,3] holds(c.value = 3)` `on each` `when c.value < 2 and c.value + 2 = c.value` has, at each position `p` in `0..=2`, after the violation `(= m<p>.0 r)`, the condition's definedness failure, the range coercion of the integer sum `c.value + 2` into `Int[0, 3]` that FR-104's equality typing makes (as in FR-315-AC-31): `F` = `(not (=> (< s<p>.c.value 2) (and (<= 0 (+ s<p>.c.value 2)) (<= (+ s<p>.c.value 2) 3))))`, the sum outside `[0, 3]` where the short-circuit left operand reaches the coercion, a linear term, conjoined as `(and (not h<p>) F)`; and then `inc`'s postcondition failure. The atom holds no partial construct, so the query has no atom-failure disjunct. S3 discharges the coercion from the left operand, which bounds the sum to `[2, 3]` (FR-104), so the condition is defined and false at every value and the clause never activates. | Test (TC-1201) |
+| FR-315-AC-37 | Read by a `QF_LIA` solver: `Unrolling{depth: 3}` for AC-36's guarded `always holds(c.value <= 1)` `when c.value >= 3` is satisfiable, the monitor rejecting at position 3, where the activation starts at value 3; the model takes `inc` three times with no stutter, and CG reads the prefix `0, 1, 2, 3`, which FR-128 replays to `refuted`, FR-126-AC-16's counterexample. With the condition `c.value > 3`, `InductionStep{depth: 2}` is satisfiable, from two copies whose monitor state holds the activation, and `InductionBase{depth: 3}` and `InductionStep{depth: 3}` are both unsatisfiable, the outcome `Inductive{depth: 3}`. AC-36's false-extension query, whose condition is defined and false at every value, is unsatisfiable: the clause never activates, so no position holds a violation, and neither a condition failure nor a postcondition failure is reachable. FR-315-AC-58 holds the satisfiable condition failure. | Analysis (TC-1201) |
 | FR-315-AC-38 | Over a `Counter` subject with the universe `{c, d}`, both objects initially 0, and the operation `inc` with frame `modifies self.value` (FR-154's receiver scope), under infinite-trace, the TP-3 claim `always (holds(x.value = 1) implies eventually[0,1] holds(x.value = 2))` with `over (x: Counter)` has the instances `c` (index 0) and `d` (index 1). `Unrolling{depth: 2}` declares, at each position `i`, `s<i>.c.value`, `s<i>.d.value`, `m<i>.0`, `m<i>.1` in that order; asserts the monitor implications at each position for instance 0, whose letters read `s<i>.c.value`, and then for instance 1, whose letters read `s<i>.d.value`, both from the item's one tabulation; and its negated property has, at each position `p`, `(= m<p>.0 r)` and then `(= m<p>.1 r)`. `InductionStep{depth: 1}`'s distinctness assertion is `(not (and (= s1.c.value s0.c.value) (= s1.d.value s0.d.value) (= m1.0 m0.0) (= m1.1 m0.1)))`. FR-315-AC-23's TP-3 item over this subject encodes with `m<i>.0` and `m<i>.1` and is not refused. | Test (TC-1201) |
-| FR-315-AC-39 | Read by a `QF_LIA` solver: a model of AC-38's `Unrolling{depth: 2}` that applies `c.inc` and then `d.inc`, reaching `(1, 0)` and then `(1, 1)` as `(c, d)`, fails at position 2, where only instance 0's monitor rejects: `c` is 1 at position 1 and not 2 at position 2. CG names `over_binding` `c` (rule 4c) and reads the prefix of the two steps, which has no stutter, and FR-128 replays it to `refuted`. The model that applies `d.inc` and then `c.inc` names `over_binding` `d`. | Analysis (TC-1201) |
+| FR-315-AC-39 | Read by a `QF_LIA` solver: a model of AC-38's `Unrolling{depth: 2}` that applies `c.inc` and then `d.inc`, reaching `(1, 0)` and then `(1, 1)` as `(c, d)`, fails at position 2, where only instance 0's monitor rejects: `c` is 1 at position 1 and not 2 at position 2. CG names `over_binding` `c` (rule 4c) and reads the prefix of the two steps, which has no stutter, and FR-128 replays it to `refuted`. Rule 4c reads the model that applies `d.inc` and then `c.inc` as naming `d`; rule 4d's search with `First(1)` then reports `over_binding` `c` with the prefix `c.inc`, `d.inc`, whichever model the solver gives first: the other model that rejects `c` at position 2, `c.inc` and then the proof-query stutter, is no candidate and is excluded before CG asks again. | Analysis (TC-1201) |
 | FR-315-AC-40 | Over FR-315-AC-1's `Counter` under event-position false-extension, `Unrolling{depth: 3}` for `always[0,3] holds(c.value <= 3)`, whose script declares eight constants, encoded under `SmtEncodingLimits` with `max_constants` 8 gives a script byte-equal to the one the defaults give; with `max_constants` 7 it refuses `too-large` naming the measure `constants`, value 8, limit 7 and setting `smt_encoding.max_constants`, with no script; with `max_script_bytes` 1 it refuses `too-large` naming `script-bytes`, limit 1 and setting `smt_encoding.max_script_bytes`. FR-315-AC-23's TP-3 item with `max_monitor_states` 1 refuses `too-large` naming `monitor-states`, a value above 1, limit 1 and setting `smt_encoding.max_monitor_states`. FR-315-AC-21's `Unrolling{depth: 1048576}` under the defaults names the setting `smt_encoding.max_constants` with its measure, value and limit. ADR-023 §8's `NonInterference` `InductionBase{depth: 1}` for instance `v`, whose script declares eight constants (FR-315-AC-7), with `encoding.max_constants` 7 refuses `too-large` naming `constants`, value 8, limit 7 and `smt_encoding.max_constants`, and its `HyperProductIdentity::of` equals the identity under the default encoding limits. Each call twice gives equal results. | Test (TC-1250) |
 | FR-315-AC-41 | CG's SMT map, read against these vectors: AC-40's `max_constants` 7 refusal, the item's next query with no earlier query having settled it, settles `failed`, execution `resource-incomplete`, `Incomplete(LimitReached{limit: SmtMaxConstants, value: 7, setting: smt_encoding.max_constants})`, never `unsupported`, V-5 or V-6, and its terminal record states the encoding limits used. For `always holds(c.value <= 3)` over `Counter`, an `InductionBase{depth: 1}` query that the solver stops at `max_solver_steps` 1 settles `Incomplete(LimitReached{max_solver_steps, 1, smt.max_solver_steps})`, and one stopped at `max_solver_time` 1 settles `Incomplete(LimitReached{max_solver_time, 1, smt.max_solver_time})`, each never `InductionNotClosed` or `TimedOut`; the same step-limit stop with the cancellation handle tripped settles `Incomplete(Cancelled{source})`, and with the backend's own wall-clock limit expired `Incomplete(TimedOut)`; a solver `unknown` with no limit reached settles `InductionNotClosed{depth: 1}`. Two requests that differ only in `max_solver_time` have equal request identity, and two that differ only in `max_solver_steps` differ. | Analysis (TC-1250) |
 | FR-315-AC-42 | A `ModelCheckRequest` (FR-126) for `always holds(c.value <= 3)` over `Counter` carries `smt_encoding` and `smt_run`, each `Default` when the caller sets no `smt_encoding.*` or `smt.*` setting. Two requests that differ only in `smt_encoding.max_constants` (7 and 8) have different request identities; two that differ only in `smt.max_solver_time` have equal ones. The `CertificateRequest` that the settlement builds for an SMT proof of that item carries `smt_encoding` equal to the run's `ModelCheckRequest.smt_encoding`. | Test (TC-1250) |
@@ -1454,6 +1497,11 @@ impl HyperProductIdentity {
 | FR-315-AC-55 | Refusals of the refinement queries, each case refusing as stated: (1) with the refinement's concrete model given a hidden field or a history field, a direct call of `Initial` and of every `Step` refuses `out-of-fragment` naming the field (FR-314 never reaches this case, since FR-146 writes no record); (2) an `any` row refuses `refinement-any-row` naming the row, before a `_` argument of the same row is read; (3) a protocol-subject refinement's delivery, `memory` or `activate` row refuses `out-of-fragment` naming the row; (4) `RingIsQueue`'s `put` and `take` rows (FR-136-AC-1, `binds_result: true`) refuse `out-of-fragment` naming the row; (5) a row with two `_` arguments refuses `refinement-open-argument` naming the first in written order. For cases 2 to 5 FR-314 settles that row's part `Unencodable` and every record of the refinement `Uncertified`. For case 6, a mapping row outside `QF_LIA` refuses `Initial` `out-of-fragment` naming the row, and FR-314 rejects the base part `QueryMismatch` at `Base`, never `Unencodable`. | Test (TC-900) |
 | FR-315-AC-56 | Normal form of the refinement queries, over `CasRefinesCounter` and `CasRefinesCounter2`: no assertion of the `Initial` query or of any `Step { row }` query, the `commitB` row (row 1) included, holds a double negation, a Boolean constant as an operand of `not`, `and`, `or` or `=`, an `and` (`or`) operand of an `and` (`or`), a repeated `and` or `or` operand, an implication, a comparison of two literals or of a term with itself, a sum with a nested sum or two literal summands, an `ite` with a constant condition, equal branches or a constant branch, or a difference of two literals. `CasRefinesCounter`'s `Initial` query asserts `(and (not s0.c.busyA) (not s0.c.busyB) (= s0.c.tmpA 0) (= s0.c.tmpB 0) (= s0.c.value 0))` and then `(not (= s0.c.value 0))`; its `commitA` row assertion is the flat conjunction `(and s0.c.busyA (= s0.c.tmpA s0.c.value) (< s0.c.value 2) (or (not (< s0.c.tmpA 2)) (and (<= (- 1) s0.c.tmpA) (<= s0.c.tmpA 1))) (< s0.c.tmpA 2) (= s1.c.value (+ s0.c.tmpA 1)) (not s1.c.busyA) (= s1.c.busyB s0.c.busyB) (= s1.c.tmpA s0.c.tmpA) (= s1.c.tmpB s0.c.tmpB) (not (and (< s0.c.value 2) (or (not (< s0.c.value 2)) (and (<= (- 1) s0.c.value) (<= s0.c.value 1))) (= s1.c.value (+ s0.c.value 1)))))`. Each rule of Normal form, applied to a term that it rewrites, gives the term it states. | Test (TC-900) |
 | FR-315-AC-57 | The two Int-sorted linear terms from FR-314-AC-18's `t28`, `(* 1 (- (+ 1 x) y))` and `(* 1 (- x (+ (- 1) y)))`, each normalize to `(+ x (- y) 1)` and therefore print byte-for-byte equally. The normal form distributes only literal scaling over Int addition and subtraction, combines exact coefficients of equal Int atoms, and does not multiply two nonconstant terms; a product of two nonconstant terms is refused `out-of-fragment`. Rule 9 takes precedence over rule 7 for every linear term: `(- x) + (- y)` prints `(+ (- x) (- y))`, and `2*x + (-y)` prints `(+ (* 2 x) (- y))`, because only the exact two-atom coefficient pattern `+1,-1` with zero constant prints `(- t u)`. | Test (TC-900) |
+| FR-315-AC-58 | Over a `Counter` with a required `value` and an optional `held`, both `Int[0, 3]`, the universe `{c, d}`, both at `value` 0, `c.held` 0 and `d.held` absent, and the operation `inc`, which raises its receiver's `value` by 1 below 3 (frame `modifies self.value`, FR-154), take a package built by hand: the checked package of the unit whose clause is `eventually[0,3] holds(c.value = 3)` `on each` `when present(c.held) and (c.value < 2 or value(c.held) = 0)` under event-position false-extension, its guard replaced after S3 by the right operand `c.value < 2 or value(c.held) = 0` alone, whose presence obligation only the dropped operand discharged (FR-104, FR-337). The negated property of `Unrolling{depth: 2}` holds, at each position `p` in `0..=2` and for each instance `x`, the condition's definedness failure `(and (not h<p>) F)` with `F` = `(not (=> (not (< s<p>.x.value 2)) s<p>.x.held.present))`. Of its disjuncts only `d`'s at position 2 is satisfiable, and every model of it has `c.value` 0, 0, 0 and `d.value` 0, 1, 2: CG reads the prefix `inc` on `d` twice (rule 4b, UE-3) and names `over_binding` `d` (rule 4c). FR-128 replays that prefix, the condition read from the hand-built package, to `refuted` with `kind: UndefinedEvaluation` at position 2, cause `none-value`, its site naming the activation (FR-126); the same payload with `over_binding` `c` settles `inconclusive`, `ReplayParity`. | Test (TC-1201) |
+| FR-315-AC-59 | Over an HP-2 clause with one object parameter whose universe is `{v, w}` and whose initial states hold an object under `v` only, `HyperProductIdentity::of` at the instance `w` refuses `instance-binding` at the parameter, and at `v` returns an identity. With an empty `initial` list it returns an identity at `v`, and the item settles `NoInitialState`. | Test (TC-3219) |
+| FR-315-AC-60 | Over FR-315-AC-1's `Counter` under infinite-trace with the universe `[c, d]`, `c` initially 0 and `d` initially 1, and `inc`'s frame `modifies self.value` (FR-154's receiver scope), the TP-1 claim `always holds(x.value <= 1)` with `over (x: Counter)` is violated for `d` by one `inc` and for `c` by two. At `Unrolling{depth: 2}` the item reports `over_binding` `c` with the prefix of two `inc` steps on `c`, whichever model the solver gives first: a first model naming `d` is followed by the query with `First(1)`, whose negated property holds `c`'s disjuncts only and whose other assertions are byte-equal to those of `All`. At `Unrolling{depth: 1}` the `First(1)` query is unsatisfiable and the item reports `d` with the prefix of one `inc` on `d`. | Test (TC-1201) |
+| FR-315-AC-61 | `encode_smt_query` for AC-60's item with `InductionStep{depth: 1}` and `SmtInstances::First(1)` refuses `query-kind` and returns no script; the same call with `SmtInstances::All` returns one. | Test (TC-1201) |
+| FR-315-AC-62 | Instancing outcomes are refused in FR-125's order. Over FR-315-AC-1's `Counter` with no universe for the population of `c` and an empty `initial` list, `encode_smt_query` refuses `requires-bound` naming the population, not `no-initial-state`. Over FR-125-AC-13's records, an `Animal` under `c` in `animals` and a `Dog` under `c` in `dogs`, a claim over `Animal` refuses `subject-admission` carrying `invalid_runtime_input`/`conflicting-identity`. Over `Counter` with the universe `[c]`, one initial state that holds no object and an operation `setTo(n: Integer)`, it refuses `no-instance`, not `object-lifecycle` or `parameter-domain`. Each call writes no script. | Test (TC-900) |
 
 ## Dependencies
 

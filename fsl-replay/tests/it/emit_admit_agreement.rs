@@ -18,7 +18,8 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2,
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
+    CheckedPackageReadLimits, CheckedPackageV2,
 };
 use filament_exact::Cancel;
 use fsl_bench::prop::{self, near_miss, unit};
@@ -62,6 +63,18 @@ fn read(emitted: &EmittedUnit) -> CheckedPackageDispatchResult {
         CheckedPackageReadLimits::bounded(),
         emitted.evidence(),
     )
+}
+
+fn catalog_free_evidence(bytes: &[u8]) -> CheckedPackageEvidence {
+    let package: serde_json::Value = serde_json::from_slice(bytes).expect("package JSON");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in package["lock"]["required_features"]
+        .as_array()
+        .expect("required features")
+    {
+        evidence.support_feature(feature.as_str().expect("feature identity"));
+    }
+    evidence
 }
 
 /// Provenance: QSL-2062 P1. A unit the checker accepts is emitted and the strict reader admits it.
@@ -135,7 +148,8 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .expect("emit package")
         .into_value();
     let floor_identity = fsl_replay::DefinitionRole::IntegerDivisionFloor.identity();
-    let ceiling_identity = "filament.value.integer-division.ceiling/v1";
+    let alternate_identity = fsl_replay::DefinitionRole::IntegerDivisionTruncating.identity();
+    let unlisted_identity = "filament.value.integer-division.ceiling/v1";
     let original: serde_json::Value =
         serde_json::from_slice(emitted.package().bytes()).expect("emitted JSON");
     let floor_row = original["lock"]["definition_selections"]
@@ -203,29 +217,64 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
             &floor_authority,
             floor_identity,
             &floor_authority,
-            ceiling_identity,
+            alternate_identity,
         ) >= 2,
         "lock selection and operation-law definition are changed together"
     );
     let bytes = serde_json::to_vec(&paired).expect("serialize paired mutation");
-    let admitted = match read_checked_package(
-        &bytes,
-        CheckedPackageReadLimits::bounded(),
-        emitted.evidence(),
-    ) {
-        CheckedPackageDispatchResult::AdmittedV2(package) => package,
-        other => panic!("strict reader refused paired law mutation: {other:?}"),
-    };
+    let evidence = catalog_free_evidence(emitted.package().bytes());
+    assert!(matches!(
+        read_checked_package(
+            emitted.package().bytes(),
+            CheckedPackageReadLimits::bounded(),
+            &evidence,
+        ),
+        CheckedPackageDispatchResult::AdmittedV2(_)
+    ));
+    let admitted =
+        match read_checked_package(&bytes, CheckedPackageReadLimits::bounded(), &evidence) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("strict reader refused paired law mutation: {other:?}"),
+        };
     let retained = admitted
         .lock()
         .definition_selections
         .iter()
-        .find(|row| row.identity.as_ref() == ceiling_identity)
+        .find(|row| row.identity.as_ref() == alternate_identity)
         .expect("strict reader retains altered selection pair");
     assert_eq!(retained.authority.as_ref(), floor_authority);
-    assert_eq!(retained.identity.as_ref(), ceiling_identity);
+    assert_eq!(retained.identity.as_ref(), alternate_identity);
     let graph = serde_json::to_value(admitted.graph()).expect("admitted graph");
-    assert!(contains_pair(&graph, &floor_authority, ceiling_identity));
+    assert!(contains_pair(&graph, &floor_authority, alternate_identity));
+
+    let mut unlisted_pair = original.clone();
+    assert!(
+        replace_pair(
+            &mut unlisted_pair,
+            &floor_authority,
+            floor_identity,
+            &floor_authority,
+            unlisted_identity,
+        ) >= 2,
+        "the unlisted law is paired in the lock and operation"
+    );
+    let unlisted_bytes = serde_json::to_vec(&unlisted_pair).expect("serialize unlisted pair");
+    let refusal = match read_checked_package(
+        &unlisted_bytes,
+        CheckedPackageReadLimits::bounded(),
+        emitted.evidence(),
+    ) {
+        CheckedPackageDispatchResult::Refused(refusal) => refusal,
+        other => panic!("catalog-bound reader admitted unlisted law: {other:?}"),
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::InvalidPackage
+    );
+    assert_eq!(
+        refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::OperationLawMismatch)
+    );
 
     let mut lock_only = original;
     let row = lock_only["lock"]["definition_selections"]
@@ -234,13 +283,10 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         .iter_mut()
         .find(|row| row["identity"] == floor_identity)
         .expect("floor law row");
-    row["identity"] = ceiling_identity.into();
+    row["identity"] = alternate_identity.into();
     let bytes = serde_json::to_vec(&lock_only).expect("serialize lock-only mutation");
-    let refusal = match read_checked_package(
-        &bytes,
-        CheckedPackageReadLimits::bounded(),
-        emitted.evidence(),
-    ) {
+    let refusal = match read_checked_package(&bytes, CheckedPackageReadLimits::bounded(), &evidence)
+    {
         CheckedPackageDispatchResult::Refused(refusal) => refusal,
         other => panic!("strict reader admitted lock-only mutation: {other:?}"),
     };

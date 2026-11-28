@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F64 = Float64[nearest-even];
+type F32 = Float32[nearest-even];
+function f using v(s: Sequence<F64>[0,3]): F64 pure { sum<F64>(x in s: x) }
+function g using v(s: Sequence<F32>[0,3]): F32 pure { sum<F32>(x in s: x) }

@@ -8,8 +8,8 @@
 
 use filament_eval::{CallFailure, FamilyOutcome};
 use filament_exact::{
-    ChargePoint, IeeeFlag, IeeeValue, LimitKind, Meter, ObjectId, ObjectReference, ScalarLimits,
-    UniverseId, Value, ValueType,
+    ChargePoint, FieldValue, IeeeFlag, IeeeValue, Integer, LimitKind, Meter, ObjectId,
+    ObjectReference, Outcome, ScalarLimits, UniverseId, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::location::ExpressionOwner as LocationOwner;
@@ -21,9 +21,6 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{
-    AdmissionUsage, AdmittedObservations, DocumentRef, Observation, SelfKind,
-};
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
 
@@ -144,6 +141,62 @@ fn checked_unit(functions: &str) -> (CheckedPackage, fsl_package::Emission) {
     let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
         .expect("the checked package emits");
     (package, emission)
+}
+
+/// FR-255 AC-17/19: the evaluator's package route accepts maximum I2 identity
+/// join limits and retains the first typed work refusal at a zero allowance.
+#[trace("TC-721", "FR-255-AC-17", "FR-255-AC-19")]
+#[test]
+fn evaluator_identity_rows_accept_maximum_and_report_zero_work_refusal() {
+    let (package, emission) =
+        checked_unit("function f using v(x: Integer): Boolean pure { x >= 0 }\n");
+    let no_models = package_input(std::iter::empty::<&[u8]>()).expect("no model imports");
+    let read = fsl_package::read_evaluation_emission(
+        &package,
+        &emission,
+        LibraryName::new("fixture").expect("library name"),
+        &no_models,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the checked bytes are admitted");
+    let admitted = read.admitted();
+
+    let mut maximum = fsl_package::NativeJoinBudget::new(u64::MAX, u64::MAX);
+    emission
+        .identity_rows(admitted, &mut maximum)
+        .expect("u64::MAX work and storage admit the evaluator identity join");
+    let needed = maximum.consumed();
+    assert!(
+        needed.work > 0,
+        "the I2 identity join charges positive work"
+    );
+    assert!(
+        needed.storage > 0,
+        "the I2 identity join charges positive storage"
+    );
+
+    let mut exact = fsl_package::NativeJoinBudget::new(needed.work, needed.storage);
+    emission
+        .identity_rows(admitted, &mut exact)
+        .expect("the evaluator's measured W/S join allowance admits");
+    assert_eq!(exact.consumed(), needed);
+
+    let mut zero_work = fsl_package::NativeJoinBudget::new(0, u64::MAX);
+    let error = match emission.identity_rows(admitted, &mut zero_work) {
+        Err(fsl_package::IdentityFileRefusal::Rows(error)) => error,
+        Err(other) => panic!("zero work returned the wrong refusal: {other:?}"),
+        Ok(_) => panic!("zero work admitted a positive I2 identity join charge"),
+    };
+    assert_eq!(error.code(), fsl_package::NativeRowErrorCode::WorkLimit);
+    let denied = error
+        .denied()
+        .expect("the evaluator refusal preserves the first denied charge");
+    assert!(denied.amount > 0);
+    assert_eq!(zero_work.first_unpaid(), Some(denied));
+    assert_eq!(zero_work.first_unpaid_locus(), error.locus());
+    assert_eq!(error.configured_bound(), Some(0));
 }
 
 fn signature_after<'a>(source: &'a str, marker: &str) -> &'a str {
@@ -808,8 +861,10 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
 }
 
 /// FR-531-AC-40: the source-owned operation clause is selected by its
-/// admitted operation anchor on the bytes route, and both evaluators retain
-/// the source identity and child paths across the full work-unit sweep.
+/// operation anchor on both routes, and both evaluators retain the source
+/// identity and child paths across the full work-unit sweep. A label of
+/// another operation's precondition selects nothing on either route.
+#[trace("TC-3133", "FR-531-AC-40")]
 #[test]
 fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_routes() {
     let text = "language \"ix:native\" edition \"1-draft\";\n\
@@ -821,7 +876,7 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         body sizeB using v on Sub::size() { 2 }\n\
         body sizeC using v on Leaf::size() { 3 }\n\
         pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
-        pre sqrtPre using v on ConfigVersion::size { filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n";
+        pre sqrtPre using v on ConfigVersion::size { filament::value::ieee::sqrt(convert<Float64[nearest-even]>(float64(bits: 0x4000000000000000))) <= filament::value::ieee::sqrt(convert<Float64[nearest-even]>(float64(bits: 0x4000000000000000))) }\n";
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "u"),
         "unit.native",
@@ -873,43 +928,46 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         source_clause.context(),
         ObjectId::new("size-instance").expect("non-empty object identity"),
     );
-    let pre = Observation {
-        identity: DocumentRef {
-            authority: "fixture".to_owned(),
-            identity: "fr531-ac40-pre".to_owned(),
-        },
-        environment: ObjectEnvironment::default(),
-        populations: Default::default(),
-        out_of_range: Vec::new(),
-    };
-    let observations = AdmittedObservations {
-        usage: AdmissionUsage::default(),
-        clause: source_clause.identity(),
-        current: None,
-        pre: Some(pre),
-        post: None,
-        self_object: reference.clone(),
-        self_population: None,
-        value_origins: Default::default(),
-        invocation: None,
-        self_kind: SelfKind::Object,
-        receiver_pre: None,
-        receiver_post: None,
-        parameters: Vec::new(),
-        result: None,
-        created: Vec::new(),
-        deleted: Vec::new(),
+    let source_operation = source_clause
+        .operation()
+        .expect("a precondition names its operation");
+    let source_anchor = package
+        .graph()
+        .operation_anchor_of(
+            source_operation.declaring.clone(),
+            source_operation.declaration.name(),
+        )
+        .expect("the checked size operation has an anchor");
+    let source_objects = ObjectEnvironment::new(
+        ObjectClosure::new(
+            package.graph().scope().types(),
+            [(
+                reference.clone(),
+                vec![(
+                    "versionNumber",
+                    FieldValue::Present(Value::Integer(Integer::from(1_i64))),
+                )],
+            )],
+            &[],
+        )
+        .expect("the source-owned receiver admits in the checked package"),
+    );
+    let evaluate_source_clause = |name: &str, meter: &mut Meter| {
+        fsl_eval::value::evaluate_source_operation_clause(
+            &package,
+            &source_anchor,
+            &fsl_package::SourceOperationClause::Precondition {
+                name: name.to_owned(),
+            },
+            vec![Value::Reference(reference.clone())],
+            &source_objects,
+            meter,
+        )
     };
     let evaluate_source = |limits| {
         let mut meter = Meter::new(limits);
-        let evaluation = package
-            .evaluate_clause(
-                &QualifiedName::unqualified("sqrtPre").expect("the authored clause name"),
-                &observations,
-                &mut meter,
-            )
-            .expect("the checked source precondition evaluates")
-            .evaluation;
+        let evaluation = evaluate_source_clause("sqrtPre", &mut meter)
+            .expect("the checked source precondition evaluates");
         (evaluation, meter)
     };
     let (source, source_meter) = evaluate_source(UNLIMITED);
@@ -1045,6 +1103,30 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(Value::Boolean(true)))
     ));
 
+    let mut source_refusal_meter = Meter::new(UNLIMITED);
+    let source_refusal = evaluate_source_clause("rootCall", &mut source_refusal_meter)
+        .expect_err("rootCall is a precondition of probe, not of size");
+    let mut package_refusal_meter = Meter::new(UNLIMITED);
+    let mut refusal_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let Err(fsl_eval::value::BareSourceOperationEvaluationFailure::Call(package_refusal)) =
+        fsl_eval::value::evaluate_bare_source_operation_clause(
+            &bare,
+            &anchor,
+            fsl_package::SourceOperationClause::Precondition {
+                name: "rootCall".to_owned(),
+            },
+            vec![Value::Reference(reference.clone())],
+            &objects,
+            &mut package_refusal_meter,
+            &mut refusal_budget,
+        )
+    else {
+        panic!("the bytes route refuses another operation's precondition label");
+    };
+    assert_eq!(source_refusal, package_refusal);
+    assert_eq!(source_refusal_meter.consumed(LimitKind::WorkUnits), 0);
+    assert_eq!(package_refusal_meter.consumed(LimitKind::WorkUnits), 0);
+
     let wire: serde_json::Value = serde_json::from_slice(bytes).expect("canonical JSON");
     let rows = wire["checked_term_data"]["body_locations"]
         .as_array()
@@ -1129,6 +1211,160 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
             "work limit {limit}"
         );
     }
+}
+
+/// FR-531-AC-64: a checked source-object field read remains executable after
+/// the checked package is read from its emitted bytes.
+#[trace("TC-1331", "FR-531-AC-64")]
+#[test]
+fn probe_a_source_field_read_on_both_routes() {
+    let text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        object ConfigVersion { versionNumber: Integer; operation probe(): Integer; operation size(): Integer; }\n\
+        body sizeA using v on ConfigVersion::size() { 1 }\n\
+        pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
+        pre versioned using v on ConfigVersion::size { self.versionNumber > 0 }\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "qsl-3404"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the source-object unit");
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the source-object unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("S3 admits the source-object operations and clauses");
+    declarations
+        .link_dispatch(Default::default())
+        .expect("rootCall reaches the source size operation");
+    let package = CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .unwrap_or_else(|refusal| panic!("{refusal:?}")),
+    );
+    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits the source-object package");
+    let source_clause = package
+        .graph()
+        .state_clause("versioned")
+        .expect("the field-read precondition is checked");
+    let source_operation = source_clause
+        .operation()
+        .expect("the precondition names its source operation");
+    let anchor = package
+        .graph()
+        .operation_anchor_of(
+            source_operation.declaring.clone(),
+            source_operation.declaration.name(),
+        )
+        .expect("the checked source operation has an anchor");
+    let reference = filament_exact::ObjectReference::new(
+        filament_exact::UniverseId::new(source_clause.identity()),
+        source_clause.context(),
+        filament_exact::ObjectId::new("qsl-3404-instance")
+            .expect("the source-object instance identity is non-empty"),
+    );
+    let objects = ObjectEnvironment::new(
+        ObjectClosure::new(
+            package.graph().scope().types(),
+            [(
+                reference.clone(),
+                vec![(
+                    "versionNumber",
+                    FieldValue::Present(Value::Integer(Integer::from(1_i64))),
+                )],
+            )],
+            &[],
+        )
+        .expect("the source-owned receiver admits its direct field"),
+    );
+    let mut source_meter = Meter::new(UNLIMITED);
+    let source_evaluation = fsl_eval::value::evaluate_source_operation_clause(
+        &package,
+        &anchor,
+        &fsl_package::SourceOperationClause::Precondition {
+            name: "versioned".to_owned(),
+        },
+        vec![Value::Reference(reference.clone())],
+        &objects,
+        &mut source_meter,
+    )
+    .expect("the source route reads versionNumber");
+    assert!(
+        matches!(
+            &source_evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ),
+        "the source field read returns true"
+    );
+
+    let no_domains = package_input(std::iter::empty::<&[u8]>()).expect("no model imports");
+    let read = fsl_package::read_evaluation_emission(
+        &package,
+        &emission,
+        LibraryName::new("fixture").expect("the package library name is valid"),
+        &no_domains,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the strict reader admits the emitted package");
+    let admitted = read.admitted();
+    let mut native_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(admitted, &mut native_budget)
+        .expect("source-object identity rows materialize");
+    let bare = fsl_package::BarePackage::new(admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut native_budget,
+        )
+        .expect("the admitted package joins its source-object rows");
+    let bare_anchor = identities
+        .source_operations()
+        .iter()
+        .find(|row| row.source_identity.as_ref() == "ConfigVersion::size")
+        .expect("the admitted size operation identity row")
+        .anchor_id
+        .clone();
+    let mut bare_meter = Meter::new(UNLIMITED);
+    let bare_evaluation = fsl_eval::value::evaluate_bare_source_operation_clause(
+        &bare,
+        &bare_anchor,
+        fsl_package::SourceOperationClause::Precondition {
+            name: "versioned".to_owned(),
+        },
+        vec![Value::Reference(reference)],
+        &objects,
+        &mut bare_meter,
+        &mut native_budget,
+    )
+    .expect("the bytes route reads versionNumber without missing-type-representation");
+    assert!(
+        matches!(
+            &bare_evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+        ),
+        "the bytes route returns the same true result"
+    );
+    assert_eq!(
+        charged(&source_evaluation, &source_meter),
+        charged(&bare_evaluation, &bare_meter),
+        "source and bytes routes have equal charge logs"
+    );
 }
 
 /// TC-1331: public native joins have caller-owned finite budgets, the

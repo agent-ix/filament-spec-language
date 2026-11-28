@@ -1,0 +1,1741 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.record-value-type/v1",
+        "members": {
+          "identityFields": "optional"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {
+          "identityFields": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.value-type/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "bounded"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/compensation",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1"
+  },
+  "populations": [
+    {
+      "displayName": "ix://catalog/compensation/orders",
+      "extent": "closed",
+      "identity": "ix://catalog/compensation/orders",
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/compensation/Order"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/orders",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/orders"
+          ]
+        }
+      }
+    },
+    {
+      "displayName": "ix://catalog/compensation/ledgers",
+      "extent": "closed",
+      "identity": "ix://catalog/compensation/ledgers",
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/compensation/Ledger"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/ledgers",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/ledgers"
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/compensation/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [
+        {
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "identity": "ix://catalog/compensation/Digit/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Digit",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Digit"
+              ]
+            }
+          }
+        },
+        {
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "identity": "ix://catalog/compensation/Digit/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "9"
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Digit",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Digit"
+              ]
+            }
+          }
+        }
+      ],
+      "displayName": "Digit",
+      "extensions": [],
+      "identity": "ix://catalog/compensation/Digit",
+      "kind": {
+        "module": "test/business",
+        "name": "bounded"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Digit",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Digit"
+          ]
+        }
+      },
+      "roles": [],
+      "scalar": "integer",
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Money",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Money/amount_minor",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "amount_minor",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Money/amount_minor",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Money/amount_minor"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Money/currency",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "currency",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Money/currency",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Money/currency"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Money",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Money",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Money"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "TaxedMoney",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/TaxedMoney/tax_minor",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "tax_minor",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/TaxedMoney/tax_minor",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/TaxedMoney/tax_minor"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/TaxedMoney",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/TaxedMoney",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/TaxedMoney"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [
+        "ix://catalog/compensation/Money"
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "GiftTaxedMoney",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/GiftTaxedMoney/wrap_minor",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "wrap_minor",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/GiftTaxedMoney/wrap_minor",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/GiftTaxedMoney/wrap_minor"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/GiftTaxedMoney",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/GiftTaxedMoney",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/GiftTaxedMoney"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [
+        "ix://catalog/compensation/TaxedMoney"
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Node",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Node/level",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "level",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Node/level",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Node/level"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Node/next",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "next",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Node/next",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Node/next"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/Node"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Node",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Node",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Node"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Tagged",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Tagged/tag",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "tag",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Tagged/tag",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Tagged/tag"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Tagged",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Tagged",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Tagged"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Bundle",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Bundle/amounts",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 8
+          },
+          "name": "amounts",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Bundle/amounts",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Bundle/amounts"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Bundle/tagged",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 8
+          },
+          "name": "tagged",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Bundle/tagged",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Bundle/tagged"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Tagged"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Bundle",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Bundle",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Bundle"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Fee",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Fee/fee_minor",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "fee_minor",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Fee/fee_minor",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Fee/fee_minor"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Fee",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Fee",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Fee"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "OrderPlaced",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/OrderPlaced/order_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "order_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/OrderPlaced/order_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/OrderPlaced/order_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/OrderPlaced/occurred_at",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "occurred_at",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/OrderPlaced/occurred_at",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/OrderPlaced/occurred_at"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/OrderPlaced",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/OrderPlaced",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/OrderPlaced"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "ExpressOrderPlaced",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/ExpressOrderPlaced/promised_by",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "promised_by",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/ExpressOrderPlaced/promised_by",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/ExpressOrderPlaced/promised_by"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/ExpressOrderPlaced",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/ExpressOrderPlaced",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/ExpressOrderPlaced"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [
+        "ix://catalog/compensation/OrderPlaced"
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "RushOrderPlaced",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/RushOrderPlaced/rush_by",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "rush_by",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/RushOrderPlaced/rush_by",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/RushOrderPlaced/rush_by"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/RushOrderPlaced",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/RushOrderPlaced",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/RushOrderPlaced"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [
+        "ix://catalog/compensation/ExpressOrderPlaced"
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Pair",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Pair/first",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "first",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Pair/first",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Pair/first"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Pair/second",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "second",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Pair/second",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Pair/second"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Pair",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Pair",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Pair"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Holder",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Holder/placed",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "placed",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Holder/placed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Holder/placed"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/OrderPlaced"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Holder/maybe",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "maybe",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Holder/maybe",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Holder/maybe"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/OrderPlaced"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Holder/many",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 8
+          },
+          "name": "many",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Holder/many",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Holder/many"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/OrderPlaced"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Holder",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Holder",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Holder"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Invoice",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Invoice/total",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "total",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Invoice/total",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Invoice/total"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/Money"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Invoice/discount",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "discount",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Invoice/discount",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Invoice/discount"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/Money"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Invoice",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Invoice",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Invoice"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Lines",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Lines/lines",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 8
+          },
+          "name": "lines",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Lines/lines",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Lines/lines"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Lines/tags",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": false,
+            "unique": true,
+            "upper": 8
+          },
+          "name": "tags",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Lines/tags",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Lines/tags"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Lines/counted",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": false,
+            "unique": false,
+            "upper": 8
+          },
+          "name": "counted",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Lines/counted",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Lines/counted"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Lines/queue",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": true,
+            "upper": 8
+          },
+          "name": "queue",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Lines/queue",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Lines/queue"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Lines",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Lines",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Lines"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "TaxedInvoice",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/TaxedInvoice/total",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "total",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/TaxedInvoice/total",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/TaxedInvoice/total"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/TaxedMoney"
+        }
+      ],
+      "identity": "ix://catalog/compensation/TaxedInvoice",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/TaxedInvoice",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/TaxedInvoice"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Quant",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Quant/n",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "n",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Quant/n",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Quant/n"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Quant",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Quant",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Quant"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "NarrowQuant",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/NarrowQuant/n",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "n",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/NarrowQuant/n",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/NarrowQuant/n"
+              ]
+            }
+          },
+          "presence": "required",
+          "redefines": "ix://catalog/compensation/Quant/n",
+          "typeRef": "ix://catalog/compensation/Digit"
+        }
+      ],
+      "identity": "ix://catalog/compensation/NarrowQuant",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/NarrowQuant",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/NarrowQuant"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [
+        "ix://catalog/compensation/Quant"
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Stamp",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Stamp/at",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "at",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Stamp/at",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Stamp/at"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/OrderPlaced"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Stamp",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Stamp",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Stamp"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "ExpressStamp",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/ExpressStamp/at",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "at",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/ExpressStamp/at",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/ExpressStamp/at"
+              ]
+            }
+          },
+          "presence": "required",
+          "redefines": "ix://catalog/compensation/Stamp/at",
+          "typeRef": "ix://catalog/compensation/ExpressOrderPlaced"
+        }
+      ],
+      "identity": "ix://catalog/compensation/ExpressStamp",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/ExpressStamp",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/ExpressStamp"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [
+        "ix://catalog/compensation/Stamp"
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "RenamedStamp",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/RenamedStamp/when",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "when",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/RenamedStamp/when",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/RenamedStamp/when"
+              ]
+            }
+          },
+          "presence": "required",
+          "redefines": "ix://catalog/compensation/Stamp/at",
+          "typeRef": "ix://catalog/compensation/ExpressOrderPlaced"
+        }
+      ],
+      "identity": "ix://catalog/compensation/RenamedStamp",
+      "kind": {
+        "module": "test/business",
+        "name": "money"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/RenamedStamp",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/RenamedStamp"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [
+        "ix://catalog/compensation/Stamp"
+      ],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Order",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Order/order_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "order_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Order/order_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Order/order_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Order/total",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "total",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Order/total",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Order/total"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Order/discount",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "discount",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Order/discount",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Order/discount"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/Money"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Order/taxed",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "taxed",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Order/taxed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Order/taxed"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/TaxedMoney"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Order/chain",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "chain",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Order/chain",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Order/chain"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/Node"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Order/bundle",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "bundle",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Order/bundle",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Order/bundle"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/compensation/Bundle"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Order/items",
+          "multiplicity": {
+            "lower": 0,
+            "ordered": true,
+            "unique": false,
+            "upper": 8
+          },
+          "name": "items",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Order/items",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Order/items"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://catalog/compensation/Money"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Order",
+      "identityFields": [
+        "ix://catalog/compensation/Order/order_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "operations": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Order",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Order"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Ledger",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/compensation/Ledger/ledger_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "ledger_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Ledger/ledger_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Ledger/ledger_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/compensation/Ledger",
+      "identityFields": [
+        "ix://catalog/compensation/Ledger/ledger_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/compensation/Ledger/pay",
+          "name": "pay",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Ledger/pay",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Ledger/pay"
+              ]
+            }
+          },
+          "params": [
+            {
+              "defaultKind": "none",
+              "identity": "ix://catalog/compensation/Ledger/pay/m",
+              "multiplicity": {
+                "lower": 1,
+                "ordered": false,
+                "unique": true,
+                "upper": 1
+              },
+              "name": "m",
+              "nullable": false,
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://catalog/compensation/Ledger/pay/m",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://catalog/compensation/Ledger/pay/m"
+                  ]
+                }
+              },
+              "presence": "required",
+              "typeRef": "ix://catalog/compensation/Money"
+            }
+          ],
+          "post": [],
+          "pre": [],
+          "returns": {
+            "multiplicity": {
+              "lower": 1,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "nullable": false,
+            "typeRef": "ix://catalog/compensation/Money"
+          }
+        },
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": []
+          },
+          "identity": "ix://catalog/compensation/Ledger/payTaxed",
+          "name": "payTaxed",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/compensation/Ledger/payTaxed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/compensation/Ledger/payTaxed"
+              ]
+            }
+          },
+          "params": [
+            {
+              "defaultKind": "none",
+              "identity": "ix://catalog/compensation/Ledger/payTaxed/m",
+              "multiplicity": {
+                "lower": 1,
+                "ordered": false,
+                "unique": true,
+                "upper": 1
+              },
+              "name": "m",
+              "nullable": false,
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://catalog/compensation/Ledger/payTaxed/m",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://catalog/compensation/Ledger/payTaxed/m"
+                  ]
+                }
+              },
+              "presence": "required",
+              "typeRef": "ix://catalog/compensation/TaxedMoney"
+            }
+          ],
+          "post": [],
+          "pre": [],
+          "returns": {
+            "multiplicity": {
+              "lower": 1,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "nullable": false,
+            "typeRef": "ix://catalog/compensation/Money"
+          }
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/compensation/Ledger",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/compensation/Ledger"
+          ]
+        }
+      },
+      "roles": [],
+      "unknownPolicy": "reject"
+    }
+  ]
+}

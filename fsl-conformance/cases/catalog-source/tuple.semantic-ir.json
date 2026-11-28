@@ -1,0 +1,87 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.tuple-value-type/v1",
+        "members": {
+          "positions": "required"
+        },
+        "shape": "tuple"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "tuple"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/tuple",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1"
+  },
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/tuple/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [],
+      "displayName": "Pair",
+      "extensions": [],
+      "identity": "ix://catalog/tuple/Pair",
+      "kind": {
+        "module": "test/business",
+        "name": "tuple"
+      },
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/tuple/Pair",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/tuple/Pair"
+          ]
+        }
+      },
+      "positions": [
+        {
+          "identity": "ix://catalog/tuple/Pair/p0",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/tuple/Pair/p0",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/tuple/Pair/p0"
+              ]
+            }
+          },
+          "typeRef": "ix://filament/native/Boolean"
+        },
+        {
+          "identity": "ix://catalog/tuple/Pair/p1",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/tuple/Pair/p1",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/tuple/Pair/p1"
+              ]
+            }
+          },
+          "typeRef": "ix://filament/native/Boolean"
+        }
+      ],
+      "roles": [],
+      "unknownPolicy": "reject"
+    }
+  ]
+}

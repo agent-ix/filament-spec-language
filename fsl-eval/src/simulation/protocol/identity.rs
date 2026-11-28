@@ -1783,13 +1783,34 @@ impl ProtocolTransition {
     }
 
     /// For an `attempt`, `cattempt`, `cfail` or `ctimeout`, the FR-120
-    /// transition identity of the application it applied (ADR-027 TS-3).
+    /// transition identity of the application it names (ADR-027 TS-3).
     pub fn application(&self) -> Option<&ModelTransition> {
         match &self.members {
             Members::Attempt { application, .. }
             | Members::CAttempt { application, .. }
             | Members::COutcome { application, .. } => Some(application),
             Members::Control
+            | Members::Recommendation { .. }
+            | Members::Record { .. }
+            | Members::Channel { .. }
+            | Members::Memory { .. }
+            | Members::Fence { .. }
+            | Members::Role { .. }
+            | Members::CEnd { .. } => None,
+        }
+    }
+
+    /// The application the step applies: [`Self::application`] of an
+    /// `attempt` or a `cattempt`, the only steps FSpec FR-430 puts in the
+    /// operation's fairness classes. A `cfail` or `ctimeout` names an
+    /// application and applies nothing (FSpec FR-736).
+    pub fn applied_application(&self) -> Option<&ModelTransition> {
+        match &self.members {
+            Members::Attempt { application, .. } | Members::CAttempt { application, .. } => {
+                Some(application)
+            }
+            Members::COutcome { .. }
+            | Members::Control
             | Members::Recommendation { .. }
             | Members::Record { .. }
             | Members::Channel { .. }

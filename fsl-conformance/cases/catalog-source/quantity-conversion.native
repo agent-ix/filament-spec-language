@@ -1,0 +1,8 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+unit m : Length = rational(1,1);
+unit km : Length = rational(1000,1) * m;
+function f using v(a: Quantity<km>): Quantity<m> pure { convert<Quantity<m>>(a) }
+function t using v(a: Text[0,8;nfc]): Quantity<m> pure { convert<Quantity<m>>(a) }
+function s using v(a: String): Quantity<m> pure { convert<Quantity<m>>(a) }

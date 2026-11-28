@@ -22,7 +22,7 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-641
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-267
-    type: references
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-114
     type: implements
   - target: ix://agent-ix/filament-specification/FR-301
@@ -350,6 +350,10 @@ test reruns each stream, compares each line with the file, checks each line
 is its own RFC 8785 re-encoding, and validates each event line against
 `MONITOR_EVENT_SCHEMA_1` and the summary line against
 `MONITOR_SUMMARY_SCHEMA_1`.
+
+- A request with provider-routed `items` MAY carry `require_certified`, a JSON
+  boolean, absent meaning `false`, read only beside `items`, which settles
+  them under [FR-1052](FR-1052-settle-a-proof-that-is-not-certified-inconclusive-when-the-request-requires-certified-proofs.md).
 
 ## Acceptance Criteria
 

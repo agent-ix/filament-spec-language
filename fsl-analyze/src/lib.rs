@@ -87,9 +87,17 @@ pub mod zone_check;
 pub(crate) mod test_ids;
 
 #[cfg(test)]
+#[path = "../tests/it/letters.rs"]
+pub(crate) mod letters;
+
+#[cfg(test)]
+#[expect(
+    dead_code,
+    reason = "shared fixture helpers are used by integration targets"
+)]
 #[path = "../tests/it/counter.rs"]
 pub(crate) mod counter;
 
 #[cfg(test)]
-#[path = "../tests/it/units.rs"]
-pub(crate) mod units;
+#[path = "../tests/it/timed_world.rs"]
+pub(crate) mod timed_world;

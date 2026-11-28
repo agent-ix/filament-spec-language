@@ -12,6 +12,7 @@
 //! `crate::model_world` notes.
 
 use filament_semantic_value::checking::CheckMode;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
@@ -542,6 +543,7 @@ impl World {
             request,
             stutter_closure: false,
             certificate,
+            engines: Default::default(),
             replay: Box::new(|counterexample| {
                 replay_unit_result(
                     &unit,
@@ -559,8 +561,12 @@ impl World {
         engines
             .with(fsl_analyze::analyze::Engine::model_check().expect("EN-1 is registered"))
             .expect("the engine id is unique");
-        let mut records =
-            fsl_analyze::analyze::analyze_items(&engines, vec![analyze_item], &Cancel::new());
+        let mut records = fsl_analyze::analyze::analyze_items(
+            &engines,
+            vec![analyze_item],
+            &Cancel::new(),
+            fsl_replay::CertificationPolicy::AdmitAny,
+        );
         assert_eq!(records.len(), 1);
         records.remove(0)
     }
@@ -580,7 +586,11 @@ impl World {
                 .into_iter()
                 .find(|(transition, state)| {
                     *transition == step.transition
-                        && system.state_key(state).expect("encodes").0.as_slice()
+                        && system
+                            .state_key(state, fsl_foundation::IdentityLimits::default())
+                            .expect("encodes")
+                            .0
+                            .as_slice()
                             == step.post_state.as_bytes()
                 })
                 .map(|(_, state)| state)
@@ -695,7 +705,8 @@ pub(crate) fn replay_unit_result(
         byte_provision,
         documents,
     };
-    let (node, occurrence) = clause.unwrap_or_else(|| crate::model_settle::model_anchor(PACKAGE));
+    let (node, occurrence) =
+        clause.unwrap_or_else(|| crate::model_settle_support::model_anchor(PACKAGE));
     let envelope = WitnessEnvelope::reconstruct(
         WitnessPacket {
             obligation_identity: Some(crate::fixture_ids::obligation_identity()),
@@ -764,18 +775,18 @@ impl World {
         )
     }
 
-    /// FR-127: `outcome` of clause `clause` (its atoms read by `atoms`)
-    /// settled through `settle_model_check`, a refutation by replaying its
-    /// counterexample through FR-128.
-    pub(crate) fn settle_clause(
+    /// FR-127: settle a clause outcome and expose how many times its replay
+    /// callback ran for tests that assert replay is part of settlement.
+    pub(crate) fn settle_clause_with_replay_count(
         &self,
         clause: usize,
         atoms: Vec<Atom>,
         outcome: &ModelCheckOutcome,
-    ) -> fsl_replay::ModelCheckRecord {
+    ) -> (fsl_replay::ModelCheckRecord, usize) {
         let letters = Letters::new(self, clause, atoms);
         let unit = self.replay_unit();
-        settle_model_check(
+        let replay_count = Cell::new(0usize);
+        let record = settle_model_check(
             outcome,
             &ModelCheckLimits::default(),
             &CertificateRequest {
@@ -789,6 +800,7 @@ impl World {
             },
             &Cancel::new(),
             |counterexample| {
+                replay_count.set(replay_count.get().saturating_add(1));
                 replay_unit_result(
                     &unit,
                     &self.trace_subject(),
@@ -797,7 +809,21 @@ impl World {
                     &letters,
                 )
             },
-        )
+        );
+        (record, replay_count.get())
+    }
+
+    /// FR-127: `outcome` of clause `clause` (its atoms read by `atoms`)
+    /// settled through `settle_model_check`, a refutation by replaying its
+    /// counterexample through FR-128.
+    pub(crate) fn settle_clause(
+        &self,
+        clause: usize,
+        atoms: Vec<Atom>,
+        outcome: &ModelCheckOutcome,
+    ) -> fsl_replay::ModelCheckRecord {
+        self.settle_clause_with_replay_count(clause, atoms, outcome)
+            .0
     }
 
     /// FR-128: replay `payload` as clause `clause`'s counterexample, its

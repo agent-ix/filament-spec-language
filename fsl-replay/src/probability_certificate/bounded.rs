@@ -250,7 +250,7 @@ fn enumerate_controlled(
             return encoded.map_err(|error| admission.refusal(error));
         }
         let (bytes, _) = system
-            .state_key(model)
+            .state_key(model, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         ProbabilityProductKey::for_formula_state(
             binding,

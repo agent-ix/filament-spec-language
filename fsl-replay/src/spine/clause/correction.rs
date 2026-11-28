@@ -16,7 +16,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::{ClauseRunReport, FiniteWindowReport};
 
 /// The format tag of the evidence ledger file a run writes (FR-975).
-pub const EVIDENCE_LEDGER_FORMAT: &str = "filament.finite-window-evidence-ledger/1";
+pub const EVIDENCE_LEDGER_FORMAT: &str =
+    fsl_foundation::wire_format::WireFormat::EvidenceLedger.as_str();
 
 /// The largest `lineage` the file form carries (FR-975).
 const LINEAGE_CEILING: u64 = 9_007_199_254_740_991;
@@ -149,6 +150,7 @@ fn malformed(reason: impl Into<String>) -> EvidenceLedgerReadError {
 /// unknown member, another `format`, entries out of key order or repeating a
 /// key, a `lineage` past the ceiling, or a `superseded` list whose length
 /// differs from its entry's `lineage`.
+#[ix_trace_rs::string_edge]
 pub fn read_evidence_ledger(bytes: &[u8]) -> Result<EvidenceLedgerFile, EvidenceLedgerReadError> {
     // The canonical reader refuses duplicate members before serde sees them.
     quire_canonical::read(bytes, u64::MAX).map_err(|error| malformed(error.to_string()))?;

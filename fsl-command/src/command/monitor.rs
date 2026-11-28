@@ -24,21 +24,23 @@ use fsl_replay::spine::{
     read_trace_binding, write_clause_run_result, write_ledger, OverObject, ProgressLowerBoundary,
     TimestampedMissingValuation, TimestampedOrderKey,
 };
+use ix_trace_rs::implements;
 use serde_json::{json, Value};
 
 use super::limits::{CommandLimits, MonitorPreparationLimits};
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request_integer_division, request_with_overrides,
+    require_native_header, wire, FileCounts, NativeResult, RequestOverrides, Result, RunCause,
+    RunError, RunLimits, RunResult,
 };
 
 /// The format of one event.
-pub const EVENT_FORMAT: &str = "filament.monitor-event/1";
+pub const EVENT_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorEvent.as_str();
 /// The format of the summary.
-pub const SUMMARY_FORMAT: &str = "filament.monitor-summary/1";
+pub const SUMMARY_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorSummary.as_str();
 /// The format of the batch result.
-pub const RUN_FORMAT: &str = "filament.monitor-run/1";
+pub const RUN_FORMAT: &str = fsl_foundation::wire_format::WireFormat::MonitorRun.as_str();
 /// FR-644's published draft 2020-12 schema for `filament.monitor-event/1`.
 pub const MONITOR_EVENT_SCHEMA_1: &str =
     include_str!("../../schemas/filament-monitor-event-1.schema.json");
@@ -543,7 +545,9 @@ fn read_record(
 /// FR-644 "Provider-routed items": the request's `items` with the
 /// `subject`, `documents` and `deadline_ms` beside them, each read as FR-620
 /// reads it in a `native-analyze/1` request; `None` for a request without
-/// `items`, which carries none of the three.
+/// `items`, which carries none of the three; `require_certified` is read the
+/// same way (FR-1052).
+#[implements("FR-1052-AC-14")]
 fn read_routed(
     intake: &mut super::Intake<'_>,
     request: &mut wire::MonitorRequest,
@@ -560,6 +564,7 @@ fn read_routed(
             ("subject", request.subject.is_some()),
             ("documents", !request.documents.is_empty()),
             ("deadline_ms", request.deadline_ms.is_some()),
+            ("require_certified", request.require_certified.is_some()),
         ];
         return match beside.iter().find(|(_, present)| *present) {
             Some((member, _)) => Err(invalid(member, "is read only beside items")),
@@ -576,7 +581,9 @@ fn read_routed(
     super::analyze::validate_items(Some(&items))?;
     let documents = super::analyze::read_documents(intake, &request.documents, Some(&items))?;
     let subject = super::analyze::read_subject(request.subject.take(), &documents)?;
+    let certification = super::analyze::read_certification(request.require_certified.take())?;
     Ok(Some(super::analyze::RoutedItems {
+        certification,
         documents,
         subject,
         memory: Vec::new(),
@@ -606,13 +613,7 @@ fn read_inputs(
     mut request: wire::MonitorRequest,
     caller: &CommandLimits,
     package: &fsl_package::CheckedPackage,
-    target_preparer: &mut Option<
-        &mut dyn FnMut(
-            &fsl_package::CheckedPackage,
-            &fsl_replay::MonitorTarget,
-            &CommandLimits,
-        ) -> std::result::Result<(), RunCause>,
-    >,
+    target_preparer: &mut Option<&mut TargetPreparer<'_>>,
 ) -> Result<Inputs> {
     let target = request
         .target
@@ -659,7 +660,7 @@ fn read_inputs(
                 "a driver target-preparation handoff is required",
             ));
         };
-        prepare(package, target, caller)?;
+        prepare(package, target, caller).map_err(|cause| *cause)?;
     }
     let kind = match request.trace.kind {
         wire::MonitorKindWire::Finite => MonitorTraceKind::Finite,
@@ -735,6 +736,8 @@ struct DriveRequest<'a> {
     bytes: &'a [u8],
     dependent_bytes: usize,
     caller: &'a CommandLimits,
+    /// FR-640: the batch run's caller overrides, for the clock selections.
+    overrides: &'a RequestOverrides<'a>,
 }
 
 /// Drive one stream. `lines` yields the records; `sink` gets each event.
@@ -744,21 +747,16 @@ fn drive(
     sink: &mut dyn FnMut(&MonitorEvent),
     settle: &Settle<'_>,
     cancel: &Cancel,
-    mut target_preparer: Option<
-        &mut dyn FnMut(
-            &fsl_package::CheckedPackage,
-            &fsl_replay::MonitorTarget,
-            &CommandLimits,
-        ) -> std::result::Result<(), RunCause>,
-    >,
+    mut target_preparer: Option<&mut TargetPreparer<'_>>,
 ) -> Result<MonitorSummary> {
     let DriveRequest {
         directory,
         bytes,
         dependent_bytes,
         caller,
+        overrides,
     } = request_input;
-    let mut request: wire::MonitorRequest = request(bytes)?;
+    let mut request: wire::MonitorRequest = request_with_overrides(bytes, overrides)?;
     let integer_division = request_integer_division(request.integer_division.take())?;
     let records_file = request.records.clone();
     match (matches!(source, Records::Batch), &records_file) {
@@ -1117,6 +1115,30 @@ pub struct MonitorProviders<'a> {
     pub options: &'a ProviderOptions,
 }
 
+/// Driver callback for preparing the request's typed monitor target.
+pub type TargetPreparer<'a> = dyn FnMut(
+        &fsl_package::CheckedPackage,
+        &fsl_replay::MonitorTarget,
+        &CommandLimits,
+    ) -> std::result::Result<(), Box<RunCause>>
+    + 'a;
+
+/// Caller limits and the driver handoff for a monitor target.
+pub struct MonitorPreparation<'a> {
+    caller: &'a CommandLimits,
+    target_preparer: &'a mut TargetPreparer<'a>,
+}
+
+impl<'a> MonitorPreparation<'a> {
+    /// Construct the preparation handoff for one monitor request.
+    pub fn new(caller: &'a CommandLimits, target_preparer: &'a mut TargetPreparer<'a>) -> Self {
+        Self {
+            caller,
+            target_preparer,
+        }
+    }
+}
+
 /// FR-644: run the `native-monitor/1` request at `path` over `records`,
 /// handing each event to `sink` before the next record is read. It writes
 /// nothing to the process streams.
@@ -1157,7 +1179,16 @@ pub fn monitor(
     caller: &CommandLimits,
     cancel: &Cancel,
 ) -> std::result::Result<MonitorSummary, Box<RunError>> {
-    monitor_inner(path, records, sink, routing, limits, caller, cancel, None)
+    monitor_inner(MonitorExecution {
+        path,
+        records,
+        sink,
+        routing,
+        limits,
+        caller,
+        cancel,
+        target_preparer: None,
+    })
 }
 
 /// Run a monitor request with the driver's typed target-preparation handoff.
@@ -1170,15 +1201,14 @@ pub fn monitor_with_target_preparer(
     sink: &mut dyn FnMut(&MonitorEvent),
     routing: MonitorProviders<'_>,
     limits: RunLimits,
-    caller: &CommandLimits,
+    preparation: MonitorPreparation<'_>,
     cancel: &Cancel,
-    target_preparer: &mut dyn FnMut(
-        &fsl_package::CheckedPackage,
-        &fsl_replay::MonitorTarget,
-        &CommandLimits,
-    ) -> std::result::Result<(), RunCause>,
 ) -> std::result::Result<MonitorSummary, Box<RunError>> {
-    monitor_inner(
+    let MonitorPreparation {
+        caller,
+        target_preparer,
+    } = preparation;
+    monitor_inner(MonitorExecution {
         path,
         records,
         sink,
@@ -1186,26 +1216,37 @@ pub fn monitor_with_target_preparer(
         limits,
         caller,
         cancel,
-        Some(target_preparer),
-    )
+        target_preparer: Some(target_preparer),
+    })
 }
 
-fn monitor_inner(
-    path: &Path,
-    records: impl Iterator<Item = std::io::Result<Vec<u8>>>,
-    sink: &mut dyn FnMut(&MonitorEvent),
-    routing: MonitorProviders<'_>,
+struct MonitorExecution<'a, 'prepare, InputRecords> {
+    path: &'a Path,
+    records: InputRecords,
+    sink: &'a mut dyn FnMut(&MonitorEvent),
+    routing: MonitorProviders<'a>,
     limits: RunLimits,
-    caller: &CommandLimits,
-    cancel: &Cancel,
-    target_preparer: Option<
-        &mut dyn FnMut(
-            &fsl_package::CheckedPackage,
-            &fsl_replay::MonitorTarget,
-            &CommandLimits,
-        ) -> std::result::Result<(), RunCause>,
-    >,
-) -> std::result::Result<MonitorSummary, Box<RunError>> {
+    caller: &'a CommandLimits,
+    cancel: &'a Cancel,
+    target_preparer: Option<&'prepare mut TargetPreparer<'prepare>>,
+}
+
+fn monitor_inner<InputRecords>(
+    execution: MonitorExecution<'_, '_, InputRecords>,
+) -> std::result::Result<MonitorSummary, Box<RunError>>
+where
+    InputRecords: Iterator<Item = std::io::Result<Vec<u8>>>,
+{
+    let MonitorExecution {
+        path,
+        records,
+        sink,
+        routing,
+        limits,
+        caller,
+        cancel,
+        target_preparer,
+    } = execution;
     let MonitorProviders {
         negotiate,
         providers,
@@ -1238,6 +1279,7 @@ fn monitor_inner(
                 bytes,
                 dependent_bytes: limits.dependent_bytes,
                 caller,
+                overrides: &RequestOverrides::default(),
             },
             Records::Stream(Box::new(records.map(|line| {
                 line.map_err(|error| RunCause::Io {
@@ -1260,12 +1302,17 @@ pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    overrides: &RequestOverrides<'_>,
     settle: &Settle<'_>,
 ) -> Result<RunResult> {
-    let caller = CommandLimits::monitor(MonitorPreparationLimits {
-        work: u64::MAX,
-        storage: u64::MAX,
-    });
+    let caller = super::overrides::command_limits(
+        super::overrides::RunRoute::Monitor,
+        CommandLimits::monitor(MonitorPreparationLimits {
+            work: u64::MAX,
+            storage: u64::MAX,
+        }),
+        overrides,
+    )?;
     let mut events = Vec::new();
     let summary = drive(
         DriveRequest {
@@ -1273,6 +1320,7 @@ pub(super) fn run_bytes(
             bytes,
             dependent_bytes,
             caller: &caller,
+            overrides,
         },
         Records::Batch,
         &mut |event| events.push(event.as_value().clone()),

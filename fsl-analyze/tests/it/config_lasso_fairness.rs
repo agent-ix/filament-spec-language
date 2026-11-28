@@ -20,7 +20,7 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 
 use crate::example_units::{config, decide, receiver, violated, Versions, EACH, WHOLE};
-use crate::model_settle::{envelope_at, request};
+use crate::model_settle_support::{envelope_at, request};
 use crate::units::World;
 
 fn is_two(version: i64) -> Option<bool> {

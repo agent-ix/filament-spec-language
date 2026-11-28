@@ -32,6 +32,6 @@ Tag the tests `#[trace("TC-764", "<AC id>")]`.
 - Step 2: rejected with a cause naming the failing obligation.
 - Step 3: the genuine certificate is accepted; the altered one is rejected.
 - Step 4: accepted; the altered certificate is rejected naming the missing successor.
-- Step 5: accepted; the altered certificate is rejected naming the backward edge.
+- Step 5: accepted; the altered certificate is rejected `BackwardEdge`, naming the source product state of the backward edge.
 - Step 6: accepted; the altered certificate is rejected with `verdict: None`. For a position listed for an initial state: rule `InitialMismatch` at `SimulationStep{position, edge: None}`, naming that position, which no step precedes. Otherwise: rule `PostDiffers` at the `SimulationStep{position, edge}` of the first edge, in position then edge order, whose post position lost the pair, naming the concrete step left without a matching abstract position.
 - Step 7: accepted; the altered certificate is rejected naming the missing successor.

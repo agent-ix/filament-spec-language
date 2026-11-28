@@ -12,9 +12,9 @@ relationships:
 
 ## Description
 
-Verify the qualitative step, `+∞` expected rewards, interval iteration's two sequences, the exact policy-iteration fallback at equality and its budget, and timed elapsed extrema under an authored fairness set.
+Verify the qualitative step, `+∞` expected rewards, interval iteration's two sequences, the exact policy-iteration fallback at equality and its policy and rational budgets, and timed elapsed extrema under an authored fairness set.
 
-Scope: FR-198-AC-1 to FR-198-AC-6.
+Scope: FR-198-AC-1 to FR-198-AC-10.
 
 ## Test Procedure
 
@@ -33,6 +33,20 @@ Fixtures: `Coin`; `Link` with `Deliver`'s unbounded variant and the `cost` claim
    `fsl-probability-check` process, inspect its optimization and fairness
    members, then remove the fairness record from one document and check it
    again.
+7. Decide step 3's equality case with `max_rational_bits` 2. Analyze AC-7's
+   until and always claims over `Link`, each at threshold `24/25`, with
+   `max_rational_bits` 8, `max_iterations` 3 and the default precision
+   limits.
+8. Over `Loop` at threshold `12/25`, with `max_rational_bits` 1,
+   `max_iterations` 100 and `precision_bits` 4, decide and analyze with
+   `max_precision_bits` 16, then 4.
+9. Analyze AC-9's always claim at threshold `0.95` with
+   `max_rational_bits` 4, `max_iterations` 100, `precision_bits` 4 and
+   `max_precision_bits` 4.
+10. Analyze AC-10's two `cost` claims over `Link`, `>= 1` and `<= 6/5`, with
+    `max_rational_bits` 3, `max_iterations` 100, `precision_bits` 4 and
+    `max_precision_bits` 4; check the first claim's two documents in a
+    separate `fsl-probability-check` process.
 
 Tag the tests `#[trace("TC-633", "FR-198-AC-n")]`.
 
@@ -49,3 +63,16 @@ Tag the tests `#[trace("TC-633", "FR-198-AC-n")]`.
   checked `[fair strong Msg::send]` record. Each separate checker accepts its
   document. Removing the fairness record causes `objective mismatch` before
   the values are accepted.
+- Step 7: `Exact` with `1/2`; both claims settle `proved`, `ExactValue{24/25}`,
+  with no counterpart document.
+- Step 8: at 16, `Bounds` at `precision_bits` 8 with `sweeps` 103,
+  `12/25 < lower <= 1/2 <= upper` and `lower < upper`, and `proved`,
+  `ValueBounds` with `IntervalIteration{precision_bits: 8, sweeps: 103}`; at 4,
+  `PrecisionBudget` with `lower <= 12/25 <= upper`, and `incomplete` with that
+  budget and no certificate.
+- Step 9: `incomplete`, `PrecisionBudget` with `lower <= 24/25 <= upper`, and
+  no certificate.
+- Step 10: `>= 1` settles `proved`, `ValueBounds` with `IntervalIteration` at
+  `precision_bits` 4 and `1 <= lower <= 11/10 <= upper`, and the checker
+  accepts both documents; `<= 6/5` settles `incomplete`, `PrecisionBudget`
+  with `lower <= 6/5 <= upper`, and no certificate.

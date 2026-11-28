@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The C1b3 protocol members over fixture R of the protocol obligation
 //! tests (FR-211, FR-218): the `terminal when` predicate, replicated roles
 //! and the binder reader sets with the `scope` region.
@@ -12,13 +13,13 @@ use ix_trace_rs::trace;
 use super::{CheckedLifetime, CheckedTerminalMember};
 use crate::check::protocol_clause::ProtocolNodeId;
 use crate::check::refusal::{ProtocolAnchorCause, ProtocolReferenceCause, SlotKind};
-use crate::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, SemanticCheckRefusal};
 
 mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{HEADER, obligation_model_with};
+use fixture::{obligation_model_with, HEADER};
 
 /// ADR-027 §7's `Fill` over `k: M::Node`, activated `activation`, with
 /// `members` written before `run`.
@@ -93,7 +94,7 @@ fn assembled(text: &str) -> PackageDeclarations {
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
 }
 
-fn check(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+fn check(text: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     assembled(text).check(
         CheckMode::Linked,
         CheckingLimits::default(),
@@ -112,7 +113,7 @@ fn checks(text: &str) -> CheckedGraph {
             &crate::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
-    let refusals: Vec<&CheckRefusal> = graph
+    let refusals: Vec<&SemanticCheckRefusal> = graph
         .protocol_refusals()
         .iter()
         .flat_map(|result| result.refusals.iter())
@@ -851,17 +852,15 @@ fn the_reference_protocols_check_with_their_edges() {
 
     let chatter = format!("{HEADER}{CHATTER}");
     let graph = checks(&chatter);
-    assert!(
-        graph
-            .protocol("Chatter")
-            .expect("checked")
-            .edges
-            .contains(&CausalEdge {
-                kind: EdgeKind::Message,
-                from: port(node_id(&chatter, "Tx"), Port::Exit),
-                to: port(node_id(&chatter, "Rx"), Port::Enter),
-            })
-    );
+    assert!(graph
+        .protocol("Chatter")
+        .expect("checked")
+        .edges
+        .contains(&CausalEdge {
+            kind: EdgeKind::Message,
+            from: port(node_id(&chatter, "Tx"), Port::Exit),
+            to: port(node_id(&chatter, "Rx"), Port::Enter),
+        }));
 
     let graph = checks(&workers("until(r.total > 0)"));
     assert_eq!(

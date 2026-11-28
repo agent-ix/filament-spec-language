@@ -27,13 +27,13 @@ source in the byte provision and universe `{c}` in the request.
 3. Replay it with its last step removed, so it ends at value 1; then with
    `where.locus` naming another expression of the clause.
 4. Replay TC-537 step 4's deadlock-freedom counterexample (`terminal when
-   6 mod (3 - c.value) = 0`, prefix to value 3).
+   q(3 - self.value) = 0`, prefix to value 3).
 5. Replay that prefix with `kind: Deadlock`.
 6. Replay FR-126-AC-6's empty-prefix counterexample of `always holds(true)`
-   over the `Counter` subject with `pre CanInc { 6 mod (2 - self.value) >= 0 }`
+   over the `Counter` subject with `pre CanInc { q(2 - self.value) >= 0 }`
    from value 2, with the `CanInc` locus, then with the clause's atom as
    locus.
-7. Add FR-128-AC-7's `pre CanInc { 6 mod (3 - self.value) >= 0 }` to
+7. Add FR-128-AC-7's `pre CanInc { q(3 - self.value) >= 0 }` to
    step 4's subject and replay the prefix to value 3 with `where.locus`
    naming `CanInc`, then with it naming the `terminal when` predicate.
 8. Run FR-128-AC-8's constrained claim over ADR-021 §7.3's subject with

@@ -1,0 +1,360 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {
+          "identityFields": "required"
+        },
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/composition",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1"
+  },
+  "populations": [
+    {
+      "displayName": "ix://catalog/composition/producers",
+      "extent": "closed",
+      "identity": "ix://catalog/composition/producers",
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/composition/Producer"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/composition/producers",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/composition/producers"
+          ]
+        }
+      }
+    },
+    {
+      "displayName": "ix://catalog/composition/consumers",
+      "extent": "closed",
+      "identity": "ix://catalog/composition/consumers",
+      "kind": {
+        "module": "test/business",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/composition/Consumer"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/composition/consumers",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/composition/consumers"
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/composition/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [],
+      "displayName": "Producer",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/composition/Producer/producer_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "producer_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Producer/producer_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Producer/producer_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/composition/Producer/sent",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "sent",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Producer/sent",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Producer/sent"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Boolean"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/composition/Producer/sent_count",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "sent_count",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Producer/sent_count",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Producer/sent_count"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/composition/Producer",
+      "identityFields": [
+        "ix://catalog/composition/Producer/producer_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": [
+              "ix://catalog/composition/Producer/sent_count"
+            ]
+          },
+          "identity": "ix://catalog/composition/Producer/send",
+          "name": "send",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Producer/send",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Producer/send"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/composition/Producer",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/composition/Producer"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    },
+    {
+      "constraints": [],
+      "displayName": "Consumer",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/composition/Consumer/consumer_id",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "consumer_id",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Consumer/consumer_id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Consumer/consumer_id"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/composition/Consumer/received",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "received",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Consumer/received",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Consumer/received"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Boolean"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/composition/Consumer/done",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "done",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Consumer/done",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Consumer/done"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Boolean"
+        },
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/composition/Consumer/received_count",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "received_count",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Consumer/received_count",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Consumer/received_count"
+              ]
+            }
+          },
+          "presence": "required",
+          "typeRef": "ix://filament/native/Integer"
+        }
+      ],
+      "identity": "ix://catalog/composition/Consumer",
+      "identityFields": [
+        "ix://catalog/composition/Consumer/consumer_id"
+      ],
+      "kind": {
+        "module": "test/business",
+        "name": "thing"
+      },
+      "operations": [
+        {
+          "frame": {
+            "creates": [],
+            "deletes": [],
+            "modifies": [
+              "ix://catalog/composition/Consumer/received_count"
+            ]
+          },
+          "identity": "ix://catalog/composition/Consumer/receive",
+          "name": "receive",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/composition/Consumer/receive",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/composition/Consumer/receive"
+              ]
+            }
+          },
+          "params": [],
+          "post": [],
+          "pre": []
+        }
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/composition/Consumer",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/composition/Consumer"
+          ]
+        }
+      },
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    }
+  ]
+}

@@ -1491,8 +1491,8 @@ fn half_claim() -> StatisticalClaim {
     )
 }
 
-/// FR-189-AC-8's `Undef`: `1 / (1 - z.v)` with `z.v = 1` from the start is
-/// undefined at `position`.
+/// The undefined evaluation a sampler stub reports at `position`: a division
+/// by zero (FR-189-AC-8).
 fn undefined_evaluation(position: u64) -> UndefinedEvaluation {
     UndefinedEvaluation {
         site: UndefinedSite {

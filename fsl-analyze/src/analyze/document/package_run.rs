@@ -11,24 +11,38 @@
 //! echoed and written by the source route's own negotiation and writer, so
 //! an item settles with the source route's record, counterexample, replay
 //! and summary. An item whose family has no package form yet refuses the
-//! request whole, typed and naming the family, never settling `unsupported`
-//! for a fact the source route reads.
+//! request whole, typed and naming the family, rather than settle
+//! `unsupported` for a fact the source route reads.
+//!
+//! Operation-contract items fall short of that (QSL-2934): the contract check
+//! and an external provider have no evaluator over a package. Each item is
+//! negotiated first, and what negotiation settles itself is written as on the
+//! source route. A named `pre` or `post` clause over a bounded extent that is
+//! routed to the contract check then refuses the request whole. An item
+//! routed to the check over an unbounded extent settles `requires_bound`, as
+//! on the source route. These settle
+//! `unsupported`/`unsupported-requested-capability`, although the source route
+//! may evaluate them: a `pre` or `post` clause or an invariant routed to an
+//! external provider, an invariant routed to the contract check over a
+//! bounded extent, and a default `pre` or `post` item (a request with no
+//! `items`) routed to the check over a bounded extent.
 
 use std::collections::BTreeMap;
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::{CapacityBinding, RoleBinding};
-use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
+use fsl_eval::simulation::model::{PackageModelInput, PendingClauseForm, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
-use fsl_replay::TerminalRecord;
 use fsl_replay::value_check::ValueTarget;
+use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{Map, json};
+use ix_trace_rs::implements;
+use serde_json::{json, Map};
 
 use super::super::hyper_route::PackageRelationSubject;
 use super::super::package_hyper::PackageHyperSubject;
@@ -43,16 +57,18 @@ mod probability;
 mod schedule;
 
 use super::{
-    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
-    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
-    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
-    write_run,
+    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
+    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
+    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
+    SubjectSelection,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
 /// does not settle yet (FR-940 "Package forms of the source-checked
 /// evaluators"): the request is refused whole rather than settle that item
-/// `unsupported`.
+/// `unsupported`. Some operation-contract items settle `unsupported` all the
+/// same until their evaluators read a package (QSL-2934; the module
+/// documentation lists them).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingPackageFamily {
     /// The request index of the first such item, `None` for the default
@@ -176,8 +192,9 @@ pub enum PendingFamily {
     Declaration,
     /// A value-validity parameter or body form has no package evaluator form.
     ValueShape,
-    /// A selected operation contract needs the source requirement record,
-    /// whose operation-contract form the package wire contract does not carry.
+    /// An operation contract whose admitted requirement row and record give
+    /// no item, or a named `pre` or `post` clause over a bounded extent routed
+    /// to the contract check, which has no package evaluator yet (QSL-2934).
     OperationContractRequirementRecord,
     /// A name the package carries no row for while it holds a claim whose
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
@@ -284,6 +301,8 @@ pub struct PackageRun<'a> {
     /// The invocation's cumulative native budget, which reading a
     /// composition and its component packages continues (FR-531, FR-1044).
     pub budget: filament_contract_model::NativeJoinBudget,
+    /// Which proofs settle `proved`.
+    pub certification: fsl_replay::CertificationPolicy,
 }
 
 /// One item as the package's name tables resolve it.
@@ -395,7 +414,9 @@ enum Route<'a> {
     ProtocolAnalysis,
     SuppliedProtocol(String),
     Deadlock,
-    StateClause,
+    /// A state clause, with the refusal it gets if negotiation routes it to
+    /// the contract check (QSL-2934).
+    StateClause(Option<Box<PendingPackageFamily>>),
     StateGraph(Box<PackageStateGraphSubject<'a>>),
     Hyper(Box<PackageHyperSubject<'a>>),
     Relation(Box<PackageRelationSubject<'a>>),
@@ -427,6 +448,9 @@ struct ClauseRoute<'a> {
 /// package form yet, and for a package whose model-check input meets a form
 /// it does not read yet, before any engine runs;
 /// [`PackageRunError::Document`] as [`super::settle_run`] refuses or faults.
+#[implements("FSpec-FR-348-AC-3")]
+#[implements("FSpec-FR-290-AC-14")]
+#[implements("FR-335-AC-2")]
 pub fn settle_package_run(
     run: PackageRun<'_>,
     negotiate: &dyn Negotiate,
@@ -447,6 +471,7 @@ pub fn settle_package_call(
     settle_package_run_inner(run, Some((function, call_items)), negotiate, cancel)
 }
 
+#[ix_trace_rs::string_edge]
 fn settle_package_run_inner(
     run: PackageRun<'_>,
     call: Option<(&str, &[super::CallItem])>,
@@ -463,6 +488,7 @@ fn settle_package_run_inner(
         engines,
         limits,
         mut budget,
+        certification,
     } = run;
     let explicit_items = items.is_some();
     let defaults = items.is_none().then(|| default_selections(package));
@@ -625,6 +651,8 @@ fn settle_package_run_inner(
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     let mut value_claims: Vec<OccurrenceKey> = Vec::new();
     let mut hyper_claims: Vec<OccurrenceKey> = Vec::new();
+    // Each alias the hyper items name, with its model's identity.
+    let mut hyper_subjects = BTreeMap::new();
     let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
     let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
     let mut probability_claims: Vec<OccurrenceKey> = Vec::new();
@@ -641,6 +669,11 @@ fn settle_package_run_inner(
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, subject) => {
                     hyper_claims.push(claim.item.claim.clone());
+                    if claim.item.kind == Capability::TemporalSatisfaction {
+                        if let Some(models) = subject.subject_models() {
+                            hyper_subjects.extend(models.clone());
+                        }
+                    }
                     routes.insert(index, Route::Hyper(subject));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
@@ -775,9 +808,9 @@ fn settle_package_run_inner(
                 selection,
             } => match reads.state_clause(index, name, &declaration, ordinal, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
-                Resolution::Claim(claim, ()) => {
+                Resolution::Claim(claim, unevaluated) => {
                     invariant_claims.push(claim.item.claim.clone());
-                    routes.insert(index, Route::StateClause);
+                    routes.insert(index, Route::StateClause(unevaluated));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -847,6 +880,20 @@ fn settle_package_run_inner(
     let premises =
         super::composition_item::premise_items(&mut compositions, groups, &mut resolved, first)?;
     resolved.extend(premises);
+    // FR-173: the request writer adds the deadlock-freedom item of each
+    // distinct model subject the hyper items name, after every other item and
+    // in alias order, as the source route does.
+    for identity in hyper_subjects.values() {
+        let index = RequestIndex::new(resolved.len());
+        match reads.hyper_subject_deadlock(index, identity, &resolved)? {
+            None => {}
+            Some(Resolution::Settled(settled)) => resolved.push(settled),
+            Some(Resolution::Claim(claim, ())) => {
+                routes.insert(index, Route::Deadlock);
+                resolved.push(ResolvedItem::Claim(claim));
+            }
+        }
+    }
     let PackageCompositions {
         routes: premise_routes,
         inputs: premise_inputs,
@@ -907,6 +954,18 @@ fn settle_package_run_inner(
             family: &family,
         },
     )?;
+    // QSL-2934: the contract check reads no package yet, so a clause held
+    // for refusal that negotiation routed to it refuses the request.
+    for item in &negotiated {
+        let contract_check = item.disposition.target().is_some_and(|backend| {
+            backend.id().as_str() == crate::contract_check::manifest::BACKEND_ID
+        });
+        if let (true, Some(Route::StateClause(Some(pending)))) =
+            (contract_check, routes.get(&item.item.request_index))
+        {
+            return Err(PackageRunError::Pending((**pending).clone()));
+        }
+    }
     let mut analyzed = Vec::with_capacity(negotiated.len());
     if let (Some(input), Some(model)) = (input.as_ref(), model_input.as_ref()) {
         // FR-624: the shared subject binding is admitted before any item
@@ -975,7 +1034,7 @@ fn settle_package_run_inner(
             analyzed.push(work.item(route, item));
         }
     }
-    let records = super::super::analyze_items(engines, analyzed, cancel);
+    let records = super::super::analyze_items(engines, analyzed, cancel, certification);
     let details = records.iter().map(super::super::ItemDetail::of).collect();
     let protocol_conformance = records
         .iter()
@@ -1070,6 +1129,7 @@ fn owner_of_graph(
 }
 
 /// Whether the package node `node` is a `claim`/`state_graph` node (FR-410).
+#[ix_trace_rs::string_edge]
 fn is_state_graph(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
@@ -1200,6 +1260,7 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
 /// composition, which only the default items select over a package yet: the
 /// name could be that claim's or composition's. A default item selecting a
 /// composition (`defaults`) resolves to it (FR-1044-AC-10).
+#[ix_trace_rs::string_edge]
 fn resolve_names<'s>(
     view: &dyn AnalysisView,
     selections: &'s [ItemSelection],
@@ -1659,6 +1720,7 @@ fn protocol_binding(
 
 /// Whether the package node `node` names a state clause. The kind determines
 /// whether FR-489 routes it to `contract-checker` or EN-1.
+#[ix_trace_rs::string_edge]
 fn is_state_clause(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
@@ -2024,6 +2086,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// A Boolean value clause or an explicitly selected scalar record.
     /// Non-Boolean function names retain their declaration's inapplicable
     /// family; unsupported parameter shapes keep their typed refusal.
+    #[ix_trace_rs::string_edge]
     fn value(
         &self,
         index: RequestIndex,
@@ -2295,7 +2358,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// Supplied finite replay or recording over an admitted protocol declaration.
+    /// Resolve conformance or supplied replay/recording over a package protocol.
+    #[implements("FR-896-AC-8", "FR-896-AC-9", "FR-896-AC-10", "FR-990-AC-11")]
     fn supplied_protocol(
         &self,
         index: RequestIndex,
@@ -2333,8 +2397,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ) {
             return Ok(Resolution::Settled(refused));
         }
-        if (kind == Capability::GlobalConformance && selection.recording.is_none())
-            || !crate::protocol_analysis::recording::package_recording_supported(
+        if !(kind == Capability::GlobalConformance && selection.recording.is_none())
+            && !crate::protocol_analysis::recording::package_recording_supported(
                 &input.input(),
                 name,
             )
@@ -2351,8 +2415,45 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let candidates = self.registry.candidates(kind, named.as_ref());
         let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
-        let item_form = (kind == Capability::GlobalConformance)
-            .then(|| ItemForm::Temporal(temporal_settings(&temporal)));
+        // FR-896-AC-8/9: a `subject.protocol` binding this protocol selects
+        // the item's `over` and roles; one binding another protocol declines.
+        let mut form = temporal_settings(&temporal);
+        if kind == Capability::GlobalConformance {
+            if own_subject
+                .protocol
+                .as_ref()
+                .is_some_and(|selected| selected.protocol != name)
+            {
+                return Ok(Resolution::Settled(super::invalid_value(
+                    index,
+                    name,
+                    "temporal.subject.protocol",
+                )));
+            }
+            form.protocol = match protocol_binding(&own_subject, input) {
+                Ok(protocol) => protocol,
+                Err(member) => {
+                    return Ok(Resolution::Settled(super::invalid_value(
+                        index, name, member,
+                    )));
+                }
+            };
+        }
+        // FR-896-AC-10: a deadlock-freedom item needs an explicit protocol
+        // subject, as on the source route (FR-850-AC-2).
+        if kind == Capability::GlobalConformance
+            && form.protocol.is_none()
+            && temporal
+                .item_kind
+                .is_some_and(|item_kind| item_kind.kind() == ItemKind::DeadlockFreedom)
+        {
+            return Ok(Resolution::Settled(super::invalid_value(
+                index,
+                name,
+                "temporal.subject.protocol",
+            )));
+        }
+        let item_form = (kind == Capability::GlobalConformance).then(|| ItemForm::Temporal(form));
         Ok(Resolution::Claim(
             Box::new(ResolvedClaim {
                 item: ClaimItem {
@@ -2640,6 +2741,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 
     /// Resolve universal hyper analysis from its authenticated package form.
+    #[implements("FR-173-AC-3", "FR-173-AC-5", "FR-281-AC-3")]
     fn hyper(
         &self,
         index: RequestIndex,
@@ -2656,6 +2758,25 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             key.clone(),
             filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
         );
+        let profile = package.hyper_clause_profile(&claim).map_err(|_| fault())?;
+        let unsupported_form = package
+            .hyper_clause_hp4_reason(&claim)
+            .map_err(|_| fault())?;
+        if !matches!(
+            profile,
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+                | fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        ) || unsupported_form.is_some()
+        {
+            return Ok(Resolution::Settled(ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(TerminalRecord::disposition_unsupported(
+                    index,
+                    fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                    Map::new(),
+                )),
+            }));
+        }
         let pending = |fact| {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -2664,19 +2785,14 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 note: None,
             })
         };
-        let form = package
-            .hyper_clause_form(&claim)
+        let clause = input
+            .hyper_clause(&claim, crate::plan::MODEL_BASED_POSITIONS)
             .map_err(|refusal| match refusal {
-                fsl_package::BareClauseRefusal::Pending { fact, .. } => pending(fact),
+                PendingClauseForm::Read(fsl_package::BareClauseRefusal::Pending {
+                    fact, ..
+                }) => pending(fact),
                 _ => fault(),
             })?;
-        let world = package.world().map_err(|_| fault())?;
-        let clause = fsl_semantics::check::CheckedHyperClause::of_package_form(
-            form,
-            world.types(),
-            crate::plan::MODEL_BASED_POSITIONS,
-        )
-        .map_err(|_| fault())?;
         use fsl_eval::simulation::model::ModelEvaluator;
         package
             .hyper_reference_literals(&clause)
@@ -3116,16 +3232,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 )),
             }));
         }
-        let root = fsl_semantics::check::model_root_key(
-            &fsl_semantics::model::domain_package::DomainPackageRef {
-                identity: name.to_owned(),
-            },
-        )
-        .map_err(|_| AnalyzeDocumentError::Fault)?;
-        let claim = OccurrenceKey::new(
-            root,
-            filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
-        );
+        let claim = model_deadlock_claim(name)?;
         // FSpec FR-368-AC-22, FR-124-AC-12: as on the source route's
         // `resolve_derived`, a subject that reads several model selections has
         // no anchor, so its item settles `unsupported` with no request item,
@@ -3160,22 +3267,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 )));
             }
             [only] if *only == name => {
-                // FR-124: a model the subject reads that declares `terminal any`
-                // opts out of the item, so the source route writes none and
-                // settles `inapplicable-kind` (`SubjectReading::opted_out`).
-                let opted_out = self
-                    .package
-                    .terminal_declarations()
-                    .map_err(|_| AnalyzeDocumentError::Fault)?
-                    .iter()
-                    .any(|terminal| {
-                        terminal.model == name
-                            && matches!(
-                                terminal.declaration,
-                                fsl_package::BareTerminalDeclaration::Any
-                            )
-                    });
-                if opted_out {
+                // FR-124: an opted-out subject has no item, so the source route
+                // writes none and settles `inapplicable-kind`
+                // (`SubjectReading::opted_out`).
+                if self.opts_out(name)? {
                     return Ok(Resolution::Settled(invalid_kind(
                         index,
                         Some(name),
@@ -3201,6 +3296,61 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 }));
             }
         }
+        self.deadlock_item(index, name, claim, selection)
+    }
+
+    /// FR-124: whether the model `identity` declares `terminal any`, which
+    /// opts its subject out of the deadlock-freedom item.
+    fn opts_out(&self, identity: &str) -> Result<bool, PackageRunError> {
+        Ok(self
+            .package
+            .terminal_declarations()
+            .map_err(|_| AnalyzeDocumentError::Fault)?
+            .iter()
+            .any(|terminal| {
+                terminal.model == identity
+                    && matches!(
+                        terminal.declaration,
+                        fsl_package::BareTerminalDeclaration::Any
+                    )
+            }))
+    }
+
+    /// FR-173's derived item of the model subject `identity` that a hyper item
+    /// names, as the source route's `append_hyper_subject_items` writes it:
+    /// none when `resolved` already holds the model's item or the model opts
+    /// out, and named by no claim.
+    fn hyper_subject_deadlock(
+        &self,
+        index: RequestIndex,
+        identity: &str,
+        resolved: &[ResolvedItem],
+    ) -> Result<Option<Resolution<()>>, PackageRunError> {
+        let claim = model_deadlock_claim(identity)?;
+        let written = resolved.iter().any(
+            |item| matches!(item, ResolvedItem::Claim(written) if written.item.claim == claim),
+        );
+        if written || self.opts_out(identity)? {
+            return Ok(None);
+        }
+        let selection = deadlock_selection(identity.to_owned());
+        let mut resolution = self.deadlock_item(index, identity, claim, &selection)?;
+        if let Resolution::Claim(derived, ()) = &mut resolution {
+            derived.claim_name.clear();
+        }
+        Ok(Some(resolution))
+    }
+
+    /// The temporal item of the model subject whose identity `name` is,
+    /// anchored at `claim`, with the settings of `selection`.
+    fn deadlock_item(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        claim: OccurrenceKey,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<()>, PackageRunError> {
+        let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();
@@ -3234,6 +3384,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 max_cases: None,
                 max_task_product_work: None,
                 max_check_work: None,
+                max_states: None,
+                max_transitions: None,
                 trace: None,
                 traces: selection
                     .traces
@@ -3261,13 +3413,16 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// FR-625's item over the `invariant` state clause `name`, whose
-    /// `claim_names` row is on `declaration`, as the source route's
-    /// `resolve_one` resolves it: at the clause's node and `claim`
-    /// occurrence, kind `operation-contract` unless the item names another,
-    /// and, over a model subject, FR-489's tie narrowed to EN-1 (FR-962). An
-    /// item with no model subject is decided by EN-2's contract check, which
-    /// has no package form yet.
+    /// FR-625's item over the state clause `name` (`invariant`, `pre` or
+    /// `post`), whose `claim_names` row is on `declaration`, as the source
+    /// route's `resolve_one` resolves it: at the clause's node and `claim`
+    /// occurrence, with the extent of its admitted requirement row, kind
+    /// `operation-contract` unless the item names another, and, for an
+    /// invariant over a model subject, FR-489's tie narrowed to EN-1
+    /// (FR-962). A named `pre` or `post` clause over a bounded extent also
+    /// returns the refusal it gets if negotiation routes it to the contract
+    /// check, which reads no package yet (QSL-2934; the module documentation).
+    /// A default item with no model subject refuses the request.
     fn state_clause(
         &self,
         index: RequestIndex,
@@ -3275,7 +3430,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         declaration: &CheckedNodeId,
         ordinal: u64,
         selection: &ItemSelection,
-    ) -> Result<Resolution<()>, PackageRunError> {
+    ) -> Result<Resolution<Option<Box<PendingPackageFamily>>>, PackageRunError> {
         let pending = |family| {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -3290,14 +3445,13 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         // state-clause input: pre/post clauses have no EN-1 form, so looking
         // them up there first turns the expected pending package record into
         // an internal fault.
-        let pending_requirement_record = || {
-            PackageRunError::Pending(PendingPackageFamily {
-                request_index: Some(index),
-                family: PendingFamily::OperationContractRequirementRecord,
-                node: Some(declaration.clone()),
-                note: Some(format!("`{name}` (claim occurrence {ordinal})")),
-            })
+        let requirement_record_family = || PendingPackageFamily {
+            request_index: Some(index),
+            family: PendingFamily::OperationContractRequirementRecord,
+            node: Some(declaration.clone()),
+            note: Some(format!("`{name}` (claim occurrence {ordinal})")),
         };
+        let pending_requirement_record = || PackageRunError::Pending(requirement_record_family());
         let row = self
             .package
             .requirement_items()
@@ -3314,11 +3468,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         else {
             return Err(pending_requirement_record());
         };
-        if !record.invariant && self.explicit_items {
-            // Named pre/post clauses have a retained requirement row, but
-            // the package route has no operation-contract form for them.
-            return Err(pending_requirement_record());
-        }
+        // FR-940: an admitted record is a request item whatever its kind of
+        // clause, so negotiation settles it before any evaluator is chosen.
         let claim = if record.invariant {
             let input = self
                 .input
@@ -3345,6 +3496,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             )
         };
         let extent = ExtentClassification::of(&extent);
+        // An unbounded extent is not held: the shared contract-check decision
+        // settles it `requires_bound` without an evaluator.
+        let unevaluated =
+            (self.explicit_items && !record.invariant && extent == ExtentClassification::Bounded)
+                .then(|| Box::new(requirement_record_family()));
         let own_subject = self.own_subject(index, selection)?;
         let kind = match selection.kind.as_deref() {
             Some(label) => match Capability::from_wire(label) {
@@ -3410,7 +3566,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            (),
+            unevaluated,
         ))
     }
 }
@@ -3468,6 +3624,16 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .as_ref()
             .and_then(|temporal| temporal.limits)
             .and_then(|limits| limits.max_check_work),
+        max_states: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_states),
+        max_transitions: selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.limits)
+            .and_then(|limits| limits.max_transitions),
         trace: selection
             .trace
             .as_ref()
@@ -3548,6 +3714,7 @@ impl<'a> WorkInputs<'_, 'a> {
     /// route, as the source route's `work` builds it: a temporal clause
     /// over its package form, a derived deadlock-freedom item over the
     /// package route's input, and any other kind its unadapted item.
+    #[ix_trace_rs::string_edge]
     fn item(&self, route: Option<Route<'a>>, negotiated: &NegotiatedItem) -> AnalyzeItem<'a> {
         let item = &negotiated.item;
         let temporal_kind = match &item.form {
@@ -3606,25 +3773,42 @@ impl<'a> WorkInputs<'_, 'a> {
             (_, Some(Route::SuppliedProtocol(protocol)))
                 if item.kind == Capability::GlobalConformance =>
             {
-                let recording = item
-                    .options
-                    .recording
-                    .as_ref()
-                    .and_then(|reference| self.binding.snapshots.get(reference))
-                    .map(Vec::as_slice);
-                crate::protocol_analysis::conformance::package_global_recording_item(
-                    item.request_index,
-                    crate::protocol_analysis::conformance::PackageRecordingRequest {
-                        input: self.input.input(),
-                        selected_protocol: protocol,
-                        recording_identity: item.options.recording.clone(),
-                        recording,
-                        population: item.options.population.clone(),
-                        incremental: item.options.assessment
-                            == Some(super::super::request::AssessmentMode::Incremental),
-                        replay_limits: self.limits.replay,
-                    },
-                )
+                match item.options.recording.as_ref() {
+                    Some(recording_identity) => {
+                        let recording = self
+                            .binding
+                            .snapshots
+                            .get(recording_identity)
+                            .map(Vec::as_slice);
+                        crate::protocol_analysis::conformance::package_global_recording_item(
+                            item.request_index,
+                            crate::protocol_analysis::conformance::PackageRecordingRequest {
+                                input: self.input.input(),
+                                selected_protocol: protocol,
+                                recording_identity: Some(recording_identity.clone()),
+                                recording,
+                                population: item.options.population.clone(),
+                                incremental: item.options.assessment
+                                    == Some(super::super::request::AssessmentMode::Incremental),
+                                replay_limits: self.limits.replay,
+                            },
+                        )
+                    }
+                    None => crate::protocol_analysis::conformance::package_global_behavior_item(
+                        item.request_index,
+                        self.input.input().clone(),
+                        self.binding.clone(),
+                        self.limits,
+                        protocol,
+                        item.form
+                            .as_ref()
+                            .and_then(|form| match form {
+                                ItemForm::Temporal(form) => Some(form.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default(),
+                    ),
+                }
             }
             (
                 Some(ItemForm::Temporal(form)),
@@ -3693,7 +3877,7 @@ impl<'a> WorkInputs<'_, 'a> {
             }
             // FR-489's tie routed the invariant over the model subject to
             // EN-1 (FR-625, FR-951), as on the source route.
-            (_, Some(Route::StateClause))
+            (_, Some(Route::StateClause(_)))
                 if item.kind == Capability::OperationContract
                     && negotiated.disposition.target().is_some_and(|backend| {
                         backend.id().as_str() == crate::model_check::manifest::BACKEND_ID
@@ -4030,6 +4214,7 @@ fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
 /// list, then the start byte of the declaration span), then each task-set
 /// schedulability claim, then the derived deadlock-freedom item of each model
 /// selection. Each item carries the published default of every setting.
+#[implements("FR-620-AC-5", "FR-620-AC-10", "FR-1044-AC-10")]
 fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     use filament_contract_model::CheckedSourceRegion;
 
@@ -4117,19 +4302,41 @@ fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     items.extend(
         view.model_selections()
             .into_iter()
-            .map(|selection| ItemSelection {
-                claim: Some(selection.identity),
-                temporal: Some(super::TemporalSelection {
-                    item_kind: Some(super::ItemKindSelection::DeadlockFreedom),
-                    ..super::TemporalSelection::default()
-                }),
-                ..ItemSelection::default()
-            }),
+            .map(|selection| deadlock_selection(selection.identity)),
     );
     items
 }
 
+/// The deadlock-freedom selection of the model `identity` with the published
+/// default of every setting.
+fn deadlock_selection(identity: String) -> ItemSelection {
+    ItemSelection {
+        claim: Some(identity),
+        temporal: Some(super::TemporalSelection {
+            item_kind: Some(super::ItemKindSelection::DeadlockFreedom),
+            ..super::TemporalSelection::default()
+        }),
+        ..ItemSelection::default()
+    }
+}
+
+/// The anchor of the model `identity`'s derived items: its `model_root` node
+/// with the `generated` occurrence 0.
+fn model_deadlock_claim(identity: &str) -> Result<OccurrenceKey, PackageRunError> {
+    let root = fsl_semantics::check::model_root_key(
+        &fsl_semantics::model::domain_package::DomainPackageRef {
+            identity: identity.to_owned(),
+        },
+    )
+    .map_err(|_| AnalyzeDocumentError::Fault)?;
+    Ok(OccurrenceKey::new(
+        root,
+        filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
+    ))
+}
+
 /// Whether the package node `node` is a `claim`/`schedulability` node (FR-246).
+#[ix_trace_rs::string_edge]
 fn is_schedulability(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()

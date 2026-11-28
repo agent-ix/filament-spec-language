@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Test-only [`DomainPackageRef`] fixtures. They live apart from
 //! `domain_package.rs`, which names `serde_json` (ADR-013 §2).
 

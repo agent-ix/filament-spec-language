@@ -2,14 +2,17 @@
 //! Named-reward documents are recomputed by a fresh qualified-core process.
 
 use super::bounded::{
-    alter_keys, document, key, mutate, request_with, requests_with_mode, run, run_with,
+    alter_keys, document, document_limits, key, mutate, request_with, requests_with_accounting,
+    run, run_with,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/reward.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
+// Checker conformance fixtures need room for analyzer certificate production.
+const CHECKER_FIXTURE_WORK: u64 = 10_000_000;
 fn header() -> String {
     // Retain the production fixture's admitted language identity.
     let language = include_str!("../fixtures/link.native")
@@ -104,7 +107,7 @@ fn accepted(request: &Value, n: &str, d: &str) {
     assert_eq!(output["value"], json!({"numerator": n, "denominator": d}));
 }
 
-#[trace("FSpec-FR-1042-AC-11")]
+#[trace("TC-3151")]
 #[test]
 fn partial_reward_lower_certificate_uses_infinite_upper_bound() {
     let mut limits = ExactProbLimits::default();
@@ -134,6 +137,118 @@ fn partial_reward_lower_certificate_uses_infinite_upper_bound() {
     ));
 }
 
+/// The partial expected-reward `lower` document, read over its one named state
+/// and that state's successors or over the whole graph, rejects the same false
+/// documents.
+#[trace("TC-3212", "FSpec-FR-412-AC-5")]
+#[test]
+fn a_partial_reward_lower_checked_either_way_refuses_a_false_document() {
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 1;
+    let source = claim(&two_step(), "Even", ">=", "rational(0,1)", "m.delivered");
+    let (request, settlement) = request_with(&source, SNAPSHOT, limits, DOMAIN);
+    let wide = request.unwrap_or_else(|| panic!("a partial reward proof: {settlement:?}"));
+    let mut narrow = wide.clone();
+    narrow["limits"]["states"] = json!(1);
+    let emitted = document(&wide);
+    let initial = emitted["values"][0]["state"].clone();
+    let ordinal = emitted["identity"]["ordinal"].as_u64().unwrap();
+    for request in [&narrow, &wide] {
+        // `1/2 (1 + 0) + 1/2 (4 + 0)` with both successors unnamed.
+        accepted(request, "5", "2");
+        let (code, output) = run(&mutate(request, |doc| {
+            doc["values"][0]["value"] = json!({"numerator": "3", "denominator": "1"});
+        }));
+        assert_eq!(code, 1, "{output}");
+        assert_eq!(output["rule"], "inequality-fails", "{output}");
+        assert_eq!(output["at"], json!({"product_key": initial}), "{output}");
+        let (code, output) = run(&mutate(request, |doc| doc["ranking"] = json!([])));
+        assert_eq!(code, 1, "{output}");
+        assert_eq!(output["rule"], "malformed", "{output}");
+        assert_eq!(output["at"], json!({"member": "ranking"}), "{output}");
+        let (code, output) = run(&mutate(request, |doc| {
+            doc["identity"]["ordinal"] = json!(ordinal + 1);
+        }));
+        assert_eq!(code, 2, "{output}");
+        assert_eq!(output["status"], "refused", "{output}");
+        assert!(
+            output["reason"]
+                .as_str()
+                .unwrap()
+                .contains("conflicting_identity"),
+            "{output}"
+        );
+    }
+}
+
+/// The acyclic expected-reward `upper` keeps its properness ranking through
+/// the value-bounds wrapping (FR-1042 "Conditions"): the checker accepts it,
+/// and refuses it with a changed rank, no ranking or a lowered value.
+#[trace("TC-3151")]
+#[test]
+fn an_acyclic_reward_upper_keeps_its_ranking_and_refuses_a_changed_one() {
+    let source = claim(&two_step(), "Even", "<=", "rational(4,1)", "m.delivered");
+    let exact = proof(&source);
+    let limits = document_limits(&exact);
+    let cancel = filament_exact::Cancel::new();
+    let read = fsl_replay::read_probability_proof_document(
+        exact["certificate"].as_str().unwrap().as_bytes(),
+        limits,
+        &cancel,
+    )
+    .unwrap();
+    let bytes = fsl_replay::write_value_bounds_proof_document(
+        &read,
+        fsl_replay::SubsystemBoundKind::Upper,
+        limits,
+        &cancel,
+    )
+    .unwrap();
+    let mut upper = exact.clone();
+    upper["certificate"] = json!(String::from_utf8(bytes).unwrap());
+    let emitted = document(&upper);
+    assert_eq!(emitted["kind"], "upper");
+    assert_eq!(emitted["ranking"], document(&exact)["ranking"]);
+    // `1/2 (1 + 2) + 1/2 * 4`.
+    accepted(&upper, "7", "2");
+
+    let value = json!({"numerator": "7", "denominator": "2"});
+    let initial = emitted["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["value"] == value)
+        .expect("the initial row")["state"]
+        .clone();
+    let at_initial = json!({"product_key": initial});
+    let row = |doc: &Value, list: &str| {
+        doc[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|row| row["state"] == initial)
+            .expect("the initial row")
+    };
+    let refused = |request: &Value, rule: &str, at: &Value| {
+        let (code, output) = run(request);
+        assert_eq!(code, 1, "{output}");
+        assert_eq!(output["rule"], rule, "{output}");
+        assert_eq!(output["at"], *at, "{output}");
+    };
+    let reranked = mutate(&upper, |doc| {
+        let at = row(doc, "ranking");
+        doc["ranking"][at]["rank"] = json!(0);
+    });
+    refused(&reranked, "rank-broken", &at_initial);
+    let unranked = mutate(&upper, |doc| doc["ranking"] = json!([]));
+    refused(&unranked, "malformed", &json!({"member": "ranking"}));
+    let lowered = mutate(&upper, |doc| {
+        let at = row(doc, "values");
+        doc["values"][at]["value"] = json!({"numerator": "3", "denominator": "1"});
+    });
+    refused(&lowered, "inequality-fails", &at_initial);
+}
+
 /// FR-1042-AC-20: the geometric retry reward is two; both interval bounds are
 /// independently accepted and reject a changed value.
 #[trace("TC-3212", "FR-1042-AC-20")]
@@ -152,7 +267,10 @@ fn low_budget_expected_reward_bounds_are_accepted_by_the_separate_checker() {
         max_precision_bits: 16,
         ..ExactProbLimits::default()
     };
-    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = CHECKER_FIXTURE_WORK;
+    let (requests, settlement) =
+        requests_with_accounting(&source, SNAPSHOT, limits, DOMAIN, accounting, false);
     let [lower, upper] = requests.as_slice() else {
         panic!("the reward interval has two documents: {settlement:?}");
     };
@@ -684,7 +802,8 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
             let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
                 panic!("the negative reward is a checking refusal: {refusal:?}");
             };
-            let [fsl_semantics::check::CheckRefusal { cause, .. }] = refusals.as_slice() else {
+            let [fsl_semantics::check::SemanticCheckRefusal { cause, .. }] = refusals.as_slice()
+            else {
                 panic!("one negative-reward refusal: {refusals:?}");
             };
             let fsl_semantics::check::CheckCause::Probabilistic(cause) = cause.as_ref() else {
@@ -710,12 +829,10 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
     foreign_item["item"]["ordinal"] = json!(99);
     let (code, output) = run(&foreign_item);
     assert_eq!(code, 2, "{output}");
-    assert!(
-        output["reason"]
-            .as_str()
-            .unwrap()
-            .contains("conflicting_identity")
-    );
+    assert!(output["reason"]
+        .as_str()
+        .unwrap()
+        .contains("conflicting_identity"));
 }
 
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
@@ -723,10 +840,10 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
 fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_work() {
     use filament_checked::key::DeclarationKey;
     use filament_exact::{Cancel, CancelCause};
-    use fsl_eval::simulation::TransitionSystem;
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
     };
+    use fsl_eval::simulation::TransitionSystem;
     use fsl_replay::spine::SpineLimits;
     use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -790,4 +907,74 @@ fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_w
         );
         assert_eq!(system.actions(&initial).unwrap().unwrap()[0].draws.len(), 2);
     }
+}
+
+/// FR-1042-AC-19 under a workload, over the cyclic chain base: the omitted
+/// retry `r` is the only successor of `s`. The `lower` ranks the states it
+/// names, so `r` has no rank row, and its progress goes through `r`.
+#[trace("TC-3212", "FR-1042-AC-19")]
+#[test]
+fn a_subset_cyclic_reward_lower_omits_the_only_successor_of_the_initial_state() {
+    let source = claim(
+        &retry_value_two(),
+        "Steady",
+        ">=",
+        "rational(1,2)",
+        "m.delivered",
+    );
+    let exact = proof(&source);
+    let base = document(&exact);
+    assert_eq!(
+        base["objective"]["profile"],
+        "filament.probability-objective/dtmc-expected-reward/v1"
+    );
+    let target = base["objective"]["targets"][0].clone();
+    let rows = base["ranking"].as_array().unwrap();
+    let initial = rows
+        .iter()
+        .max_by_key(|row| row["rank"].as_u64().unwrap())
+        .unwrap()["state"]
+        .clone();
+    let valued = |state: &serde_json::Value, numerator: &str| {
+        let value = json!({"numerator": numerator, "denominator": "1"});
+        json!({"state": state, "value": value})
+    };
+    let values: Vec<_> = base["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|found| {
+            if found["state"] == initial {
+                Some(valued(&initial, "1"))
+            } else {
+                (found["state"] == target).then(|| valued(&target, "0"))
+            }
+        })
+        .collect();
+    assert_eq!(values.len(), 2);
+    let objective = "filament.probability-objective/value-bounds/v1";
+    let lower = json!({
+        "identity": base["identity"],
+        "objective": {"profile": objective, "base": base["objective"]},
+        "kind": "lower",
+        "values": values,
+        "ranking": rows
+            .iter()
+            .filter(|row| row["state"] == initial || row["state"] == target)
+            .collect::<Vec<_>>(),
+    });
+    let mut request = exact.clone();
+    request["certificate"] = json!(serde_json::to_string(&lower).unwrap());
+    request["claim_side"] = json!(true);
+    accepted(&request, "1", "1");
+    let (code, output) = run(&mutate(&request, |doc| {
+        for row in doc["values"].as_array_mut().unwrap() {
+            if row["state"] == initial {
+                row["value"] = json!({"numerator": "2", "denominator": "1"});
+            }
+        }
+    }));
+    assert_eq!(code, 1, "{output}");
+    assert_eq!(output["rule"], "inequality-fails", "{output}");
+    assert_eq!(output["at"], json!({"product_key": initial}), "{output}");
 }

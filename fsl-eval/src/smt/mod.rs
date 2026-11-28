@@ -34,7 +34,7 @@ pub mod script;
 
 pub use hyper::{encode_hyper_script, HyperScriptRequest};
 pub use kind::SmtQueryKind;
-pub use limits::{SmtEncodingLimits, SmtRunLimits};
+pub use limits::SmtEncodingLimits;
 pub use monitor::{MonitorTable, Move};
 pub use query::{encode_smt_query, SmtItem};
 pub use refinement::{encode_refinement_query, RefinementCertificateRequest, RefinementQueryKind};

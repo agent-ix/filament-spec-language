@@ -9,7 +9,6 @@
 //! entry point.
 
 use filament_exact::{LimitKind as Counter, ScalarLimits};
-use std::collections::BTreeSet;
 use fsl_eval::execution::PrepareLimits;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::Limits as ExploreLimits;
@@ -20,13 +19,15 @@ use fsl_foundation::{
 use fsl_semantics::library::bundle::PackageLimits as LibraryLimits;
 use fsl_semantics::model::observation::ObservationLimits;
 use fsl_semantics::model::population::PopulationAdmissionLimits;
+use ix_trace_rs::implements;
+use std::collections::BTreeSet;
 
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::CertificateCheckLimits;
 use crate::model_check::limits::{ExactProbLimits, ModelCheckLimits};
 use crate::spine::{default_accounting, SpineLimits, DEFAULT_WORK_UNITS};
 use crate::statistical::{StatisticalLimits, TimedSampling};
-use crate::{SmtEncodingLimits, SmtRunLimits};
+use crate::SmtEncodingLimits;
 
 /// The call's accounting limits (`filament.value.accounting/v1`): each of the
 /// ten counters is an [`AccountingSetting`] named `accounting.<counter>` (FR-255's
@@ -165,6 +166,45 @@ impl SettingLimits for RenderLimits {
     }
 }
 
+/// Caller-selected bounds on one SMT solver run (FR-315).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SmtRunLimits {
+    /// Maximum solver steps, in work units.
+    pub max_solver_steps: u64,
+    /// Maximum solver wall-clock time, in whole seconds.
+    pub max_solver_time: u64,
+}
+
+impl Default for SmtRunLimits {
+    #[implements("FR-255-AC-14")]
+    fn default() -> Self {
+        Self {
+            max_solver_steps: 100_000_000,
+            max_solver_time: 60,
+        }
+    }
+}
+
+impl SettingLimits for SmtRunLimits {
+    #[implements("FR-255-AC-3")]
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        vec![
+            (Setting::SmtMaxSolverSteps, self.max_solver_steps),
+            (Setting::SmtMaxSolverTime, self.max_solver_time),
+        ]
+    }
+
+    #[implements("FR-255-AC-3")]
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        match setting {
+            Setting::SmtMaxSolverSteps => self.max_solver_steps = bound,
+            Setting::SmtMaxSolverTime => self.max_solver_time = bound,
+            _ => return false,
+        }
+        true
+    }
+}
+
 /// FR-255 "Engine limit setting names" defaults of the `plan_search.*` rows
 /// (FR-1011).
 const PLAN_SEARCH_DEFAULTS: [u64; 5] =
@@ -205,6 +245,8 @@ pub struct EngineLimits {
     pub certificate: CertificateCheckLimits,
     /// `certificate_check.max_rank` (FR-201).
     pub certificate_max_rank: u64,
+    /// `analysis.retained_bytes` (FR-255).
+    pub analysis_retained_bytes: u64,
     /// `schedule.max_demand_points` (FR-247).
     pub schedule_max_demand_points: u64,
     /// `hybrid.max_solver_steps` and `hybrid.max_solver_time` (FR-250).
@@ -233,6 +275,11 @@ impl Default for EngineLimits {
             zone_check: [1 << 20, 1 << 24, 1 << 20, 1 << 30],
             certificate: CertificateCheckLimits::default(),
             certificate_max_rank: DEFAULT_CERTIFICATE_MAX_RANK,
+            analysis_retained_bytes: const {
+                Setting::AnalysisRetainedBytes
+                    .default_bound()
+                    .expect("FR-255 tabulates a default")
+            },
             schedule_max_demand_points: 1_048_576,
             hybrid: [1_000_000, 60],
             smt_encoding: SmtEncodingLimits::default(),
@@ -322,6 +369,11 @@ impl SettingLimits for EngineLimits {
             (Setting::ZoneCheckMaxAutomatonStates, self.zone_check[2]),
             (Setting::ZoneCheckMaxZoneBytes, self.zone_check[3]),
             (
+                Setting::ZoneCheckMaxCheckWork,
+                self.certificate.max_check_work,
+            ),
+            (Setting::AnalysisRetainedBytes, self.analysis_retained_bytes),
+            (
                 Setting::CertificateCheckMaxCertificateEdges,
                 self.certificate.max_certificate_edges,
             ),
@@ -401,6 +453,8 @@ impl SettingLimits for EngineLimits {
             Setting::ZoneCheckMaxSymbolicTransitions => self.zone_check[1] = bound,
             Setting::ZoneCheckMaxAutomatonStates => self.zone_check[2] = bound,
             Setting::ZoneCheckMaxZoneBytes => self.zone_check[3] = bound,
+            Setting::ZoneCheckMaxCheckWork => self.certificate.max_check_work = bound,
+            Setting::AnalysisRetainedBytes => self.analysis_retained_bytes = bound,
             Setting::CertificateCheckMaxCertificateEdges => {
                 self.certificate.max_certificate_edges = bound;
             }
@@ -455,6 +509,7 @@ impl Default for WorkerCounts {
 }
 
 impl WorkerCounts {
+    #[ix_trace_rs::string_edge]
     fn set(&mut self, name: &str, value: u64) -> bool {
         let field = match name {
             "explore.workers" => &mut self.explore,
@@ -679,10 +734,11 @@ mod tests {
     use super::*;
     use crate::request::StageLimits;
 
-    const MONITOR_SETTINGS: [Setting; 5] = [
+    const MONITOR_SETTINGS: [Setting; 6] = [
         Setting::MonitorMaxWindowValues,
         Setting::MonitorRetainedPositions,
         Setting::MonitorRetainedIdentities,
+        Setting::MonitorMaxActivations,
         Setting::MonitorPreparationWorkUnits,
         Setting::MonitorPreparationStorage,
     ];
@@ -694,6 +750,25 @@ mod tests {
             .find(|(reported, _)| *reported == setting)
             .map(|(_, bound)| bound)
             .unwrap_or_else(|| panic!("no limits type reports {setting}"))
+    }
+
+    #[trace("FR-255-AC-27")]
+    #[test]
+    fn the_settings_operation_returns_published_defaults_and_refuses_zero() {
+        let limits = CallerLimits::from_operands([]).unwrap();
+        for (setting, bound) in [
+            (Setting::S1Tokens, 100_000),
+            (Setting::EmitOutputBytes, 16_777_216),
+            (Setting::ZoneCheckMaxSymbolicStates, 1_048_576),
+            (Setting::ZoneCheckMaxCheckWork, 100_000_000),
+            (Setting::AnalysisRetainedBytes, 4_294_967_296),
+        ] {
+            assert_eq!(bound_of(&limits, setting), bound, "{setting}");
+        }
+        for operand in ["analysis.retained_bytes=0", "zone_check.max_check_work=0"] {
+            let refusal = CallerLimits::from_operands([operand]).unwrap_err();
+            assert_eq!(refusal.operand, operand);
+        }
     }
 
     /// The builders and the settings mapping are one: each builder sets the
@@ -863,14 +938,13 @@ mod tests {
                 ..SmtEncodingLimits::default()
             }
         );
-        let replay_entries: StageLimits =
-            [(Setting::SmtEncodingMaxConstants, 8)].into_iter().collect();
-        let replay_limits = CallerLimits::for_request(
-            &replay_entries,
-            AccountingLimits::default().0,
-            ReplayLimits::default(),
+        // A replay encodes no SMT query: a request refuses the entry.
+        assert_eq!(
+            StageLimits::default().with_named("smt_encoding.max_constants", 8),
+            Err(crate::request::StageLimitNameRefusal {
+                name: "smt_encoding.max_constants".to_owned()
+            })
         );
-        assert_eq!(replay_limits.engines.smt_encoding.max_constants, 8);
         let defaults = CallerLimits::from_operands([]).expect("defaults are available");
         assert_eq!(defaults.engines.smt, SmtRunLimits::default());
         assert_eq!(defaults.engines.smt_encoding, SmtEncodingLimits::default());
@@ -928,8 +1002,10 @@ mod tests {
         ] {
             let one = CallerLimits::from_operands([operand]).expect("worker setting is accepted");
             assert_eq!(one.workers, expected, "{operand}");
-            let mut expected_limits = CallerLimits::default();
-            expected_limits.workers = expected;
+            let expected_limits = CallerLimits {
+                workers: expected,
+                ..CallerLimits::default()
+            };
             assert_eq!(one, expected_limits, "other limits changed for {operand}");
         }
         assert_eq!(Setting::from_name("explore.workers"), None);

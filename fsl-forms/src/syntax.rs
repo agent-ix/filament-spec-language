@@ -18,6 +18,7 @@ use std::ops::ControlFlow;
 use filament_exact::{CollectionKind, Integer};
 pub(super) use filament_semantic_value::absence::AbsenceMode;
 use fsl_foundation::{Span, Spanned};
+use ix_trace_rs::implements;
 
 use super::protocol_control::{
     AwaitForm, ChannelForm, ParallelForm, ProtocolMemberForm, RepeatForm,
@@ -1670,6 +1671,7 @@ impl Expression {
     }
 
     /// `read @ trace`.
+    #[implements("FR-171-AC-1")]
     pub fn indexed(read: Self, trace: impl Into<String>) -> Self {
         let trace = trace.into();
         Self::compose([read], |[read]| ExprNode::Indexed { read, trace })
@@ -1681,6 +1683,7 @@ impl Expression {
     }
 
     /// `trace.step.<label>`.
+    #[implements("FR-171-AC-1")]
     pub fn step_label(trace: impl Into<String>, label: StepLabelForm) -> Self {
         Self::single(ExprNode::StepLabel {
             trace: trace.into(),
@@ -3425,18 +3428,13 @@ pub enum BinderKind {
 /// empty top-level scope its own declaration lives in (FR-113-AC-5: a
 /// nested `capture` shadows it).
 ///
-/// `scope` locates a binder for FR-114's later binding pass; it plays no
-/// part in FR-113's own no-shadowing check. FSpec `shared-grammar.md`
-/// requires every binder "unique in their enclosing declaration" -- the
-/// checked protocol as a whole, not any one lexical scope inside it -- so
-/// the check (`fsl-semantics`' `shadow_refusals`) treats every binder name
-/// in the protocol as one flat namespace: a `finish` binder may shadow a
-/// `run`-tree binder, two different `compensate` declarations' binders of
-/// one name collide, and sibling `case`/`branch` binders of one name
-/// collide, the same as the composed lane's own `DuplicateBinder` checker
-/// (`src/linking/composed/scopes.rs`). Only a *different* protocol
-/// declaration is a separate "enclosing declaration": two protocols may
-/// reuse a binder name (FR-113 "Refusals").
+/// `scope` gives FR-113 the named-control ancestry used to determine which
+/// earlier local binders remain active at this declaration. A completed
+/// child scope and a disjoint sibling scope do not conflict with a later
+/// binder. The finish and compensation-template record binders are local to
+/// their owning declaration, whose identity S3 adds because neither has a
+/// named-control scope. Package aliases and native declarations remain
+/// visible independently of this local scope.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BinderForm {
     /// The binder's syntactic role.
@@ -4158,6 +4156,17 @@ pub enum TemporalNodeForm {
     AggregateAtom(Box<AggregateAtomForm>),
     /// An operator applied to its operands.
     Operator(TemporalOperatorForm),
+}
+
+impl TemporalNodeForm {
+    /// The node's whole source span: for an operator, the whole application.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Constant { span, .. } | Self::Holds { span, .. } => *span,
+            Self::AggregateAtom(atom) => atom.span,
+            Self::Operator(operator) => operator.span,
+        }
+    }
 }
 
 /// A temporal formula: an arena of nodes naming their operands by id, so

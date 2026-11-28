@@ -30,6 +30,7 @@ use fsl_semantics::check::{
     CheckedProbabilisticModel, ProbabilisticOperation, ReadReward, Reward, Workload,
 };
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 
 use super::contracts::{verdict, Verdict};
 use super::domain::{Domain, Odometer};
@@ -764,6 +765,7 @@ impl ModelSystem<'_> {
     /// The [`ExpansionStop`] FR-120's expansion stops with;
     /// `resource_exhausted`/`insufficient-next-charge` when a reward
     /// evaluation exhausts the meter.
+    #[implements("FR-187-AC-1", "FR-187-AC-2")]
     pub fn actions(
         &self,
         state: &ModelSimState,
@@ -857,7 +859,7 @@ impl ModelSystem<'_> {
             .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
         {
             let key = match key_policy {
-                Some(policy) => policy.key(self, &state.state)?,
+                Some(policy) => policy.key(self, state.state())?,
                 None => self.canonical_state_key(state).map_err(|_| stop(BROKEN))?,
             };
             return Ok(Err(UndecidedSuccessor { state: key }));
@@ -903,7 +905,7 @@ impl ModelSystem<'_> {
                     .and_then(Option::take)
                     .ok_or_else(|| stop(BROKEN))?;
                 let key = match key_policy {
-                    Some(policy) => policy.key(self, &successor.1.state)?,
+                    Some(policy) => policy.key(self, successor.1.state())?,
                     None => self
                         .canonical_state_key(&successor.1)
                         .map_err(|_| stop(BROKEN))?,
@@ -980,6 +982,7 @@ impl ModelSystem<'_> {
     /// [`Self::actions`]; `runtime_invariant`/`established-invariant-broken`
     /// when `workload` gives no weight to an enabled operation, which a
     /// workload of another model's subject does.
+    #[implements("FR-187-AC-1", "FR-187-AC-2")]
     pub fn weighted_steps(
         &self,
         state: &ModelSimState,
@@ -1045,7 +1048,7 @@ impl ModelSystem<'_> {
             }]));
         }
         let key = match key_policy {
-            Some(policy) => policy.key(self, &state.state)?,
+            Some(policy) => policy.key(self, state.state())?,
             None => self.canonical_state_key(state).map_err(|_| stop(BROKEN))?,
         };
         for action in &actions {
@@ -1090,7 +1093,9 @@ impl ModelSystem<'_> {
             .collect();
         let total = drawn
             .values()
-            .fold(Rational::from_integer(Integer::zero()), |total, weight| total.add(weight));
+            .fold(Rational::from_integer(Integer::zero()), |total, weight| {
+                total.add(weight)
+            });
         let mut steps: Vec<(Vec<u8>, WeightedStep)> = Vec::new();
         for action in actions {
             let (_, identities) = operations
@@ -1145,7 +1150,7 @@ impl ModelSystem<'_> {
                 )));
             }
             let key = match key_policy {
-                Some(policy) => policy.key(self, &post.state)?,
+                Some(policy) => policy.key(self, post.state())?,
                 None => self.canonical_state_key(post).map_err(|_| stop(BROKEN))?,
             };
             // Candidate generation visits each assignment once and retains
@@ -1195,7 +1200,9 @@ mod tests;
 /// takes none (`None`) while another has a positive weight; when every weight
 /// is 0 each takes 1, so they are drawn uniformly. Both the model's
 /// `weighted_steps` and the digital product's tie ordering draw by this rule.
-pub fn draw_weights<'w>(weights: impl IntoIterator<Item = &'w Rational> + Clone) -> Vec<Option<Rational>> {
+pub fn draw_weights<'w>(
+    weights: impl IntoIterator<Item = &'w Rational> + Clone,
+) -> Vec<Option<Rational>> {
     let any_positive = weights.clone().into_iter().any(|weight| !weight.is_zero());
     weights
         .into_iter()

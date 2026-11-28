@@ -9,7 +9,8 @@
 //! FR-125-AC-11 and AC-12 read the bound parameter through the production
 //! letters of the checked clause (`ModelSystem::clause_letters`).
 //!
-//! Not covered: FR-125-AC-9, whose reads are of the reference itself.
+//! FR-125-AC-9 is covered only for the written binding: its reads and the
+//! key-alone instance identity are not asserted here.
 
 use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
@@ -19,8 +20,8 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ModelCheckRequest, StateGraphItem, StateGraphRequest, check_model,
-    check_state_graph,
+    check_model, check_single_existential, check_state_graph, ModelCheckRefusal, ModelCheckRequest,
+    SingleExistentialRequest, StateGraphItem, StateGraphRequest,
 };
 use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
@@ -33,24 +34,27 @@ use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
-use fsl_replay::{CertificateRequest, ClosureCertificate, ClosureRefusal, check_closure};
+use fsl_replay::{check_closure, CertificateRequest, ClosureCertificate, ClosureRefusal};
+use fsl_replay::{
+    settle_existential, ProductClosureClause, ProductClosureRefusal, ProductClosureRequest,
+    ResultLabel, StateGraphMethod,
+};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
-use fsl_semantics::check::{
-    CheckCause, CheckedTemporalClause, FormulaNode, FormulaNodeId, HyperCause,
-};
+use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::counter::{UNLIMITED, declarations_in, declarations_with_model_profile};
+use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::counter::{declarations_in, declarations_with_model_profile, unit_text_in, UNLIMITED};
 
-const PACKAGE: &str = "test/things";
+pub(crate) const PACKAGE: &str = "test/things";
 
-fn ident(suffix: &str) -> String {
+pub(crate) fn ident(suffix: &str) -> String {
     format!("ix://{PACKAGE}/{suffix}")
 }
 
@@ -70,12 +74,21 @@ fn object_type(name: &str, supertypes: &[&str]) -> Json {
     let identity = ident(name);
     let fields: Vec<Json> = if name == "Animal" {
         let age = ident("Animal/age");
-        vec![json!({
-            "identity": age, "name": "age", "typeRef": ident("Level"),
-            "presence": "required", "nullable": false, "defaultKind": "none",
-            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-            "origin": origin(&age),
-        })]
+        let weight = ident("Animal/weight");
+        vec![
+            json!({
+                "identity": age, "name": "age", "typeRef": ident("Level"),
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&age),
+            }),
+            json!({
+                "identity": weight, "name": "weight", "typeRef": "ix://filament/native/Float64",
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&weight),
+            }),
+        ]
     } else {
         Vec::new()
     };
@@ -109,7 +122,7 @@ fn level(upper: u64) -> Json {
 }
 
 /// The domain package with `populations`, each `(name, member types)`.
-fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
+pub(crate) fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
     let constructs: Vec<Json> = [
         ("object_type", meaning::OBJECT_TYPE),
         ("population", meaning::POPULATION),
@@ -160,18 +173,18 @@ fn document(populations: &[(&str, &[&str])]) -> Vec<u8> {
 
 /// One population of a snapshot: its name and its objects, each `(key,
 /// type)`.
-type Held<'a> = (&'a str, &'a [(&'a str, &'a str)]);
+pub(crate) type Held<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 
 /// The model, its checked package, and one initial snapshot.
-struct World {
-    document: Vec<u8>,
-    package: CheckedPackage,
-    packages: fsl_semantics::model::intake::PackageInput,
-    snapshots: fsl_semantics::model::observation::DocumentProvision,
-    initial: Vec<DocumentRef>,
+pub(crate) struct World {
+    pub(crate) document: Vec<u8>,
+    pub(crate) package: CheckedPackage,
+    pub(crate) packages: fsl_semantics::model::intake::PackageInput,
+    pub(crate) snapshots: fsl_semantics::model::observation::DocumentProvision,
+    pub(crate) initial: Vec<DocumentRef>,
 }
 
-fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
+pub(crate) fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
     let document = document(populations);
     let graph = declarations_in(PACKAGE, &document, "")
         .check(
@@ -188,7 +201,10 @@ fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
                 .iter()
                 .map(|(key, type_name)| {
                     let fields = if matches!(*type_name, "Animal" | "Dog" | "Cat") {
-                        json!({"age": {"integer": "5"}})
+                        json!({
+                            "age": {"integer": "5"},
+                            "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                        })
                     } else {
                         json!({})
                     };
@@ -225,7 +241,7 @@ fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
 }
 
 /// The universes, each `(population, keys)`.
-fn universes(universes: &[(&str, &[&str])]) -> Vec<PopulationUniverse> {
+pub(crate) fn universes(universes: &[(&str, &[&str])]) -> Vec<PopulationUniverse> {
     universes
         .iter()
         .map(|(population, keys)| PopulationUniverse {
@@ -236,7 +252,7 @@ fn universes(universes: &[(&str, &[&str])]) -> Vec<PopulationUniverse> {
 }
 
 impl World {
-    fn subject<'w>(
+    pub(crate) fn subject<'w>(
         &'w self,
         package: &'w CheckedPackage,
         universes: Vec<PopulationUniverse>,
@@ -396,6 +412,7 @@ impl World {
                 max_depth: None,
                 limits,
                 seed: None,
+                retained: None,
             },
             &Cancel::new(),
         )?;
@@ -599,6 +616,76 @@ fn excluded_keys_are_initially_unadmitted_and_deduplicated_in_instance_order() {
     );
 }
 
+/// FR-125-AC-10: the metered policy listing takes the same instances as
+/// `ModelSystem::instances`: population then universe order across `P1` and
+/// `P2`, a key listed by both once at its first occurrence, and no key an
+/// initial record does not admit.
+#[trace("TC-520", "FR-125-AC-10")]
+#[test]
+fn metered_instances_cross_populations_in_order_and_take_a_repeated_key_once() {
+    use filament_exact::{Meter, ScalarLimits};
+
+    let unlimited = ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    };
+    let check = |held: &[Held<'_>], listed: &[(&str, &[&str])], expected: &[ModelInstance]| {
+        let world = world(&[P1, P2], held);
+        let package = world.formula("Thing", "always holds(true)");
+        let system = ModelSystem::new(world.subject(&package, universes(listed)).simulation)
+            .expect("the bounded subject admits");
+        let [clause] = package.graph().temporal_clauses() else {
+            panic!("one temporal clause");
+        };
+        let over = &clause.clause().over().1;
+        assert_eq!(system.instances(over).expect("instances"), expected);
+        assert_eq!(
+            system
+                .instances_with_meter(over, &mut Meter::new(unlimited))
+                .expect("the metered listing succeeds"),
+            expected
+        );
+    };
+    check(
+        &[
+            ("P1", &[("d", "Lamp"), ("c", "Switch")]),
+            ("P2", &[("b", "Lamp"), ("a", "Switch")]),
+        ],
+        &[("P1", &["d", "c"]), ("P2", &["b", "a"])],
+        &[
+            instance("P1", "d"),
+            instance("P1", "c"),
+            instance("P2", "b"),
+            instance("P2", "a"),
+        ],
+    );
+    check(
+        &[
+            ("P1", &[("d", "Lamp"), ("c", "Switch")]),
+            ("P2", &[("c", "Switch"), ("a", "Switch")]),
+        ],
+        &[("P1", &["d", "c"]), ("P2", &["c", "a"])],
+        &[
+            instance("P1", "d"),
+            instance("P1", "c"),
+            instance("P2", "a"),
+        ],
+    );
+    check(
+        &[("P1", &[("d", "Lamp")]), ("P2", &[("a", "Switch")])],
+        &[("P1", &["d", "u"]), ("P2", &["u", "a"])],
+        &[instance("P1", "d"), instance("P2", "a")],
+    );
+}
+
 /// FR-125-AC-15: a state-graph claim uses the same ordered instances as a
 /// temporal claim over AC-10's populations, and both expose the same excluded
 /// universe keys.
@@ -720,26 +807,21 @@ fn hyper_parameters_read_the_held_most_specific_type_or_absent_key() {
         "{absent:?}"
     );
 
+    // FR-172 "Object parameters": an object type no population overlaps
+    // checks, and its parameter holds no population.
     let unrelated = "hyper HUnrelated using t0 over behaviours (v: M::Other) \
-        forall trace a of M { always holds(v = v) }\n";
-    let refusal = declarations_in(PACKAGE, &world.document, unrelated)
+        forall trace a of M { always holds((v = v) @ a) }\n";
+    let graph = declarations_in(PACKAGE, &world.document, unrelated)
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
         )
-        .expect_err("an unrelated type has no overlapping population");
-    assert!(
-        refusal
-            .iter()
-            .any(|refusal| matches!(
-                refusal.cause.as_ref(),
-                CheckCause::Hyper(cause)
-                    if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
-                        if parameter == "v")
-            )),
-        "the unrelated parameter keeps its typed unresolved-population refusal: {refusal:?}"
-    );
+        .unwrap_or_else(|refusals| panic!("the unrelated parameter checks: {refusals:?}"));
+    let [unrelated] = graph.hyper_clauses() else {
+        panic!("one hyper clause");
+    };
+    assert!(unrelated.parameters()[0].populations.is_empty());
 }
 
 /// FR-125-AC-8: a population that admits `T` and has no universe is
@@ -815,8 +897,9 @@ fn an_unbounded_admitting_population_requires_a_bound_and_no_key_is_no_instance(
 /// FR-125-AC-13: instancing exits before exploration in the specified order.
 /// An unbounded overlapping population requires a universe even with no
 /// initial state; bounded empty initials report NoInitialState; conflicting
-/// same-key types refuse before any instance is formed; agreeing types admit;
-/// and a bounded subject with no admitted key reports NoInstance.
+/// same-key types refuse before any instance is formed; equal records for a
+/// clock-free agreeing type admit; differing records refuse; and a bounded
+/// subject with no admitted key reports NoInstance.
 #[trace("TC-520", "FR-125-AC-13")]
 #[test]
 fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
@@ -864,7 +947,10 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
                     {"population": ident("animals"), "complete": true, "objects": []},
                     {"population": ident("dogs"), "complete": true,
                      "objects": [{"key": "c", "type": ident("Dog"),
-                                 "fields": {"age": {"integer": "5"}}}]}
+                                 "fields": {
+                                     "age": {"integer": "5"},
+                                     "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                                 }}]}
                 ]
             })
             .to_string()
@@ -951,6 +1037,64 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ),
         Ok(ModelCheckOutcome::Holds { stats, .. }) if stats.product_states == 1
     ));
+
+    let mut differing = self::world(
+        &[("animals", &["Animal"]), ("moreAnimals", &["Animal"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("moreAnimals", &[("c", "Animal")]),
+        ],
+    );
+    let identity = differing.initial[0].clone();
+    let mut snapshot: Json = serde_json::from_slice(
+        differing
+            .snapshots
+            .get(&identity)
+            .expect("initial snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"][1]["objects"][0]["fields"]["age"] = json!({"integer": "6"});
+    differing.snapshots.insert(
+        identity,
+        serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+    );
+    let (differing_package, _) = differing.clause("Animal");
+    let refusal = ModelSystem::new(
+        differing
+            .subject(
+                &differing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .err()
+    .expect("same-key records with different values are not coalesced");
+    let AdmissionFailure::Refused(record) = refusal else {
+        panic!("unequal shared records retain the typed refusal: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
+    );
+
+    // `Other` is in no hierarchy with `Animal`, so its `c` is another object
+    // universe's object and no conflict.
+    let unrelated = self::world(
+        &[("animals", &["Animal"]), ("others", &["Other"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("others", &[("c", "Other")]),
+        ],
+    );
+    assert_eq!(
+        unrelated.instances(
+            "Animal",
+            universes(&[("animals", &["c"]), ("others", &["c"])])
+        ),
+        Ok(vec![instance("animals", "c")])
+    );
     let no_key = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
     let no_key_result = no_key.run("Animal", universes(&[("animals", &["c"])]), true);
     assert!(
@@ -962,6 +1106,50 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
             }) if stats.product_states == 0
         ),
         "{no_key_result:?}"
+    );
+}
+
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn model_instancing_compares_shared_float_fields_by_wire_bits() {
+    let populations = &[("left", &["Animal"][..]), ("right", &["Animal"][..])];
+    let held = &[
+        ("left", &[("c", "Animal")][..]),
+        ("right", &[("c", "Animal")][..]),
+    ];
+    let bounded_universes = || universes(&[("left", &["c"]), ("right", &["c"])]);
+
+    let agreeing = world(populations, held);
+    let (package, _) = agreeing.clause("Animal");
+    assert!(ModelSystem::new(agreeing.subject(&package, bounded_universes()).simulation).is_ok());
+
+    let mut differing = world(populations, held);
+    let identity = differing.initial[0].clone();
+    let mut snapshot: Json = serde_json::from_slice(
+        differing
+            .snapshots
+            .get(&identity)
+            .expect("initial snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"][1]["objects"][0]["fields"]["weight"]["bits"] =
+        json!("3ff0000000000001");
+    differing.snapshots.insert(
+        identity,
+        serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+    );
+    let (package, _) = differing.clause("Animal");
+    let refusal = ModelSystem::new(differing.subject(&package, bounded_universes()).simulation)
+        .err()
+        .expect("different Float64 bit patterns are not identical records");
+    let AdmissionFailure::Refused(record) = refusal else {
+        panic!("different Float64 records retain the typed refusal: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
     );
 }
 
@@ -2215,4 +2403,221 @@ fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
     );
     assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 0);
     assert_eq!(generated_initial_states() - generated_before, 0);
+}
+
+/// FR-125 "Instancing": the instances of `v: M::Thing` are the admitted keys
+/// of the populations that overlap `Thing`. `P1` (through `Lamp`) overlaps
+/// it; `spare`, in `P1`'s universe, is admitted by no initial state and is
+/// excluded. `Q`, a population of `Dog`'s supertype `Animal`, does not overlap
+/// `Thing`: it contributes no instance, and settlement refuses its key as it
+/// refuses `spare`.
+#[trace("TC-3219", "FR-181-AC-8")]
+#[test]
+fn hyper_instances_are_the_admitted_keys_of_the_overlapping_populations() {
+    let world = world(
+        &[("P1", &["Dog", "Lamp"]), ("Q", &["Animal"])],
+        &[("P1", &[("l", "Lamp")]), ("Q", &[("a", "Animal")])],
+    );
+    let body = "hyper H using t0 over behaviours (v: M::Thing) \
+        exists trace a of M { always holds((v = v) @ a) }\n";
+    let graph = declarations_in(PACKAGE, &world.document, body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the hyper clause checks: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let [clause] = package.graph().hyper_clauses() else {
+        panic!("one hyper clause");
+    };
+    let both = || universes(&[("P1", &["l", "spare"]), ("Q", &["a", "b"])]);
+    let limits = ModelCheckLimits::default();
+    let system =
+        ModelSystem::new(world.subject(&package, both()).simulation).expect("the subject admits");
+    let letters =
+        CheckedHyperLetters::new(&package, clause, vec![&system]).expect("the letters build");
+    let run = check_single_existential(
+        SingleExistentialRequest {
+            clause,
+            subject: world.subject(&package, both()),
+            letters: &letters,
+            limits,
+            max_depth: None,
+            seed: None,
+            meter: UNLIMITED,
+        },
+        &Cancel::new(),
+    )
+    .expect("the HP-5 run is not refused");
+    let bound = |key: &str| vec![("v".to_owned(), key.to_owned())];
+    let listed: Vec<_> = run
+        .instances
+        .iter()
+        .map(|decided| decided.instance.clone())
+        .collect();
+    assert_eq!(listed, [bound("l")]);
+
+    let subjects = [world.subject(&package, both())];
+    let request = ProductClosureRequest {
+        package: &package,
+        clause: ProductClosureClause::Hyper(clause),
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    let method = StateGraphMethod {
+        limits,
+        max_depth: None,
+        seed: 0,
+    };
+    let held = settle_existential(&request, &run.instances[0], &method, &Cancel::new())
+        .expect("replay binds the key the engine listed");
+    assert_eq!(held.record.label, ResultLabel::Proved);
+    for key in ["a", "spare"] {
+        let mut foreign = run.instances[0].clone();
+        foreign.instance = bound(key);
+        assert!(
+            matches!(
+                settle_existential(&request, &foreign, &method, &Cancel::new()),
+                Err(ProductClosureRefusal::Input("HP-5-instance"))
+            ),
+            "{key}"
+        );
+    }
+}
+
+/// The `native-analyze/1` run of the claim `body` declares over the
+/// population `pets`, which declares `Dog`, ordered before `Lamp` and in
+/// `Animal`'s universe, and holds a `Lamp` under `l`.
+fn analyze_over_pets(name: &str, body: &str, item: Json) -> crate::analyze_cli_support::Run {
+    let world = world(&[("pets", &["Dog", "Lamp"])], &[("pets", &[("l", "Lamp")])]);
+    let workspace = Workspace::new(name);
+    let snapshot = world.snapshots.values().next().expect("one snapshot");
+    analyze(&request_over(
+        &workspace,
+        &unit_text_in(PACKAGE, body),
+        &world.document,
+        std::slice::from_ref(snapshot),
+        json!({"items": [item]}),
+    ))
+}
+
+/// FR-125 "Instancing"'s written binding of the key `l`: `Thing`'s universe,
+/// the admitted type `Lamp` and the key.
+pub(crate) fn the_admitted_lamp() -> Json {
+    json!({
+        "identity": "l",
+        "object_type": {
+            "original": {"node": "ix://test/things/Lamp", "package": "test/things"},
+            "owner_effective_type": null
+        },
+        "type": "reference",
+        "universe": {
+            "ordinal": 0,
+            "package": "test/things",
+            "path": ["model", "object_type", "ix://test/things/Thing"]
+        }
+    })
+}
+
+/// FR-125 "Instancing", FR-181: the HP-5 witness of `v: M::Thing` names the
+/// admitted `Lamp`, neither the declared type `Thing` nor the population's
+/// least member type `Dog`.
+#[trace("TC-520")]
+#[test]
+fn an_hp5_witness_binds_the_admitted_member_type() {
+    let run = analyze_over_pets(
+        "instances-hp5-admitted-type",
+        "hyper H using t0 over behaviours (v: M::Thing) \
+            exists trace a of M { eventually always holds((v = v) @ a) }\n",
+        json!({"claim": "H", "temporal": {"witness_samples": 0}}),
+    );
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(
+        run.item(0)["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "v", "key": the_admitted_lamp()}),
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-125 "Instancing": the state-graph evidence of `over (x: M::Thing)`
+/// names the admitted `Lamp`, not the declared `over` type.
+#[trace("TC-520")]
+#[test]
+fn state_graph_evidence_binds_the_admitted_member_type() {
+    let run = analyze_over_pets(
+        "instances-state-graph-admitted-type",
+        "possible P using v over (x: M::Thing) { true }\n",
+        json!({"claim": "P"}),
+    );
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(
+        run.item(0)["record"]["evidence"]["instance"],
+        json!({"type": "instance", "parameter": "x", "key": the_admitted_lamp()}),
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-125 "Instancing": a refuted temporal `over_binding` of
+/// `over (x: M::Thing)` names the admitted `Lamp`, not the declared `over`
+/// type.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn a_refuted_over_binding_names_the_admitted_member_type() {
+    let run = analyze_over_pets(
+        "instances-temporal-admitted-type",
+        "temporal C using t0 over (x: M::Thing) clock \"model-steps\" on origin \
+            { always holds(x != x) }\n",
+        json!({"claim": "C"}),
+    );
+    assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
+    assert_eq!(
+        run.item(0)["counterexample"]["over_binding"],
+        the_admitted_lamp(),
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-125 "Instancing": a system whose initial states are given to it, as a
+/// refinement's mapped abstract system is (FSL FR-630), writes the admitted
+/// member type of those states, not the declared `over` type.
+#[trace("TC-520", "FR-125-AC-9")]
+#[test]
+fn given_initial_states_write_the_admitted_member_type() {
+    let world = world(&[("P1", &["Dog", "Lamp"])], &[("P1", &[("l", "Lamp")])]);
+    let (package, clause) = world.clause("Thing");
+    let held = || universes(&[("P1", &["l"])]);
+    let read =
+        ModelSystem::new(world.subject(&package, held()).simulation).expect("the subject admits");
+    let states: Vec<_> = read
+        .initial_states()
+        .iter()
+        .map(|state| {
+            let anchor = state.required_anchor().expect("a snapshot state").clone();
+            (state.state().clone(), anchor)
+        })
+        .collect();
+    let mut request = world.subject(&package, held()).simulation;
+    request.initial = Vec::new();
+    let given = ModelSystem::new(request)
+        .expect("a subject with no initial snapshot admits")
+        .with_initial_states(states)
+        .expect("the given states admit");
+    let over = clause.over().1.clone();
+    let filament_exact::ValueType::Reference(thing) = &over else {
+        panic!("a reference `over` type");
+    };
+    let instances = given.instances(&over).expect("the instances");
+    let [instance] = instances.as_slice() else {
+        panic!("one admitted key: {instances:?}");
+    };
+    let written = given
+        .written_reference(thing.clone(), instance)
+        .expect("the binding is written");
+    assert_eq!(written.object().as_str(), "l");
+    let admitted_type = format!("{:?}", written.object_type());
+    assert!(admitted_type.contains("Lamp"), "{admitted_type}");
 }

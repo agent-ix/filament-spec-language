@@ -77,6 +77,8 @@ use super::search::{
 };
 use super::Dbm;
 
+type GuardCoverGroup = (Vec<usize>, Option<Vec<Vec<PlaceConstraint>>>);
+
 mod live;
 
 /// A request to decide a timed refinement's safety half.
@@ -660,7 +662,6 @@ impl Product<'_, '_> {
                 }
                 Judgement::Ends(outcome) => return Ok(Ended::Outcome(outcome)),
             };
-            let mut zone = zone;
             let q = self.alive_at_zero(run, q, &mut zone)?;
             if let Some(failure) = self.auxiliary_invariant_failure(run, q, &zone)? {
                 self.initial_invariant_failures.insert(index, failure);
@@ -1441,7 +1442,7 @@ impl Product<'_, '_> {
         };
         // Rows over the same physical block and the same guard have one
         // truth value. Split once and retain every logical row ordinal.
-        let mut groups: Vec<(Vec<usize>, Option<Vec<Vec<PlaceConstraint>>>)> = Vec::new();
+        let mut groups: Vec<GuardCoverGroup> = Vec::new();
         for (ordinal, row) in rows.iter().enumerate() {
             let covers = match &row.step {
                 None => None,

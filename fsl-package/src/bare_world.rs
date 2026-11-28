@@ -23,9 +23,11 @@ use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment, UnionMemberDeclaration,
 };
 use filament_semantic_value::enumeration::EnumMemberIndex;
+use ix_trace_rs::implements;
 
 use crate::bare::BarePackage;
 use crate::bare_slot::BareSelectionFailure;
+use crate::bare_units::UnitDefinitionRefusal;
 
 /// The declarations a bytes-only protocol-slot evaluation runs against.
 #[derive(Clone, Debug)]
@@ -227,6 +229,7 @@ impl BarePackage<'_> {
         self.world_of(true, true)
     }
 
+    #[implements("FR-531-AC-62")]
     fn world_of(
         &self,
         source_objects: bool,
@@ -425,8 +428,16 @@ impl BarePackage<'_> {
             .map(|declaration| (declaration.key(), declaration))
             .collect();
         let units = if include_units {
-            crate::bare_units::world_units(self)
-                .map_err(|_| fault("admitted-unit-definitions-form-a-world-graph"))?
+            crate::bare_units::world_units(self).map_err(|refusal| {
+                fault(match refusal {
+                    UnitDefinitionRefusal::Disagreement => "authenticated-unit-definitions-agree",
+                    UnitDefinitionRefusal::Read(_)
+                    | UnitDefinitionRefusal::Graph
+                    | UnitDefinitionRefusal::Unjoined => {
+                        "admitted-unit-definitions-form-a-world-graph"
+                    }
+                })
+            })?
         } else {
             filament_semantic_value::quantity::UnitTable::default()
         };

@@ -2,7 +2,7 @@
 //! Production settlement of an SMT temporal proof through FSL's FR-314 checker.
 
 use filament_exact::Cancel;
-use fsl_foundation::{BackendId, RequestIndex, source::provenance::OccurrenceKey};
+use fsl_foundation::{source::provenance::OccurrenceKey, BackendId, RequestIndex};
 use fsl_replay::{
     CertificateCheckLimits, CertificateRequest, ModelCheckItem, SmtProofOutcome,
     SmtProofSettlement, SubjectIdentity,
@@ -70,7 +70,7 @@ impl<'a> BoundSmtProofRequest<'a> {
             claim,
             subject,
             temporal_clock_selections: certificate_request.temporal_clock_selections.to_vec(),
-            smt_encoding: certificate_request.smt_encoding.clone(),
+            smt_encoding: certificate_request.smt_encoding,
             certificate_request,
         })
     }
@@ -154,7 +154,7 @@ pub fn settle_temporal_smt_proof(
         subject: request.subject.clone(),
         item_kind: ItemKind::Formula,
         temporal_clock_selections: request.temporal_clock_selections.clone(),
-        smt_encoding: request.smt_encoding.clone(),
+        smt_encoding: request.smt_encoding,
         settlement,
     }
 }

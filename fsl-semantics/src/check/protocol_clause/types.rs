@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The checked protocol's identity types: [`ProtocolNodeId`], the S3-level
 //! [`BoundAttempt`] and the lowered [`CheckedAttempt`] and
 //! [`CheckedProtocol`] (FR-113 Outputs, FR-114 Outputs).
@@ -6,7 +7,7 @@ use crate::check::protocol_controls::CheckedChannel;
 use crate::check::protocol_obligation::CheckedObligations;
 use crate::check::state_clause::{ClauseOperation, PopulationDomain};
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 
 /// The identity of one static protocol node: its index into the

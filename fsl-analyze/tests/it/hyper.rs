@@ -19,10 +19,10 @@
 //! quotient by the swap (FR-174, `crate::hyper_swap`), so the counts the engine
 //! reports are the quotient's; `World::explore` reads the unreduced product.
 
-use filament_exact::{Cancel, CancelCause, Charge, ChargePoint, Meter, Undefined};
+use crate::hyper_support::{inputs, positions, refuted, Exhausted, Refusing};
+use filament_exact::{Cancel, CancelCause, Meter, Undefined};
 use fsl_eval::hyper::{HyperLetters, MatchReading, ParameterBinding, StepLabel, StepMatch};
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
-use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::ModelSimState;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::{
     BoundCovers, HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperStep,
@@ -31,10 +31,9 @@ use fsl_replay::{
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
-use crate::counter::ZERO;
 use crate::hyper_world::{
-    assert_hyper_division_refused, high, low, low_of, non_interference, Vault, World, EQUAL_INPUTS,
-    KEY, STARTS,
+    assert_hyper_division_refused, low, low_of, non_interference, Vault, World, EQUAL_INPUTS, KEY,
+    STARTS,
 };
 
 /// The engine's outcome of `world` under the default limits.
@@ -85,75 +84,6 @@ fn an_unreachable_asymmetric_disjunct_keeps_truth_but_changes_proof_reduction() 
             _ => unreachable!("only the secure and leaky vaults are selected"),
         }
     }
-}
-
-/// The counterexample of a violated run.
-pub(crate) fn refuted(outcome: HyperOutcome) -> HyperCounterexample {
-    match outcome {
-        HyperOutcome::Violated { counterexample, .. } => *counterexample,
-        other => panic!("expected a violation, got {other:?}"),
-    }
-}
-
-/// The input `i` of the model step `step`, which must be a `step(i)`.
-pub(crate) fn input(step: &HyperStep) -> i64 {
-    match step {
-        HyperStep::Model(step) => {
-            let [argument] = step.transition.arguments() else {
-                panic!("step takes one input");
-            };
-            argument
-                .split("\"value\":\"")
-                .nth(1)
-                .and_then(|rest| rest.split('"').next())
-                .expect("an integer argument")
-                .parse()
-                .expect("a small input")
-        }
-        HyperStep::TerminalStutter => panic!("the vault has no terminal state"),
-    }
-}
-
-/// The inputs `step(i)` a trace's steps take, by `i`; the steps must all be
-/// model steps of `step`.
-pub(crate) fn inputs(counterexample: &HyperCounterexample, trace: usize) -> Vec<i64> {
-    counterexample.traces[trace]
-        .steps
-        .iter()
-        .map(input)
-        .collect()
-}
-
-/// The `(h, l)` of each position of trace `trace`, read by re-executing its
-/// steps through the vault from its initial state (the oracle).
-pub(crate) fn positions(
-    world: &World,
-    counterexample: &HyperCounterexample,
-    trace: usize,
-) -> Vec<(i64, i64)> {
-    let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
-    let trace = &counterexample.traces[trace];
-    let mut state = system.initial()[trace.initial as usize].clone();
-    let mut seen = vec![(high(&state), low(&state))];
-    for step in &trace.steps {
-        let HyperStep::Model(step) = step else {
-            panic!("the vault has no terminal state");
-        };
-        state = system
-            .successors(&state)
-            .expect("the vault expands")
-            .successors
-            .into_iter()
-            .find(|(transition, next)| {
-                *transition == step.transition
-                    && system.state_key(next).expect("a key").0.as_slice()
-                        == step.post_state.as_bytes()
-            })
-            .unwrap_or_else(|| panic!("{step:?} is not a step of the vault"))
-            .1;
-        seen.push((high(&state), low(&state)));
-    }
-    seen
 }
 
 /// ADR-023 section 8.1: `NonInterference` over the leaky vault is refuted by a
@@ -483,62 +413,6 @@ fn a_subject_without_an_initial_state_or_an_instance_decides_nothing() {
     };
     assert_eq!(cause, UndecidedCause::NoInstance);
     assert_eq!(stats.product_states, 0);
-}
-
-/// A `match` that refuses: the reading of every joint step is `Refused`.
-pub(crate) struct Refusing;
-
-impl StepMatch for Refusing {
-    fn universal(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        Ok(MatchReading::Refused {
-            conjunct: 0,
-            outcome: fsl_eval::simulation::model::ClauseOutcome::NotBoolean,
-        })
-    }
-
-    fn existential(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        panic!("an HP-2 clause has no existential conjunct")
-    }
-}
-
-/// A `match` whose evaluation exhausts its meter: it charges a meter that
-/// admits no work.
-pub(crate) struct Exhausted;
-
-impl StepMatch for Exhausted {
-    fn universal(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        Meter::new(ZERO)
-            .charge(Charge::new(ChargePoint::GraphExpand))
-            .map_err(|incomplete| fsl_eval::hyper::MatchIncomplete {
-                conjunct: 0,
-                incomplete,
-            })?;
-        Ok(MatchReading::Holds)
-    }
-
-    fn existential(
-        &self,
-        _instance: &[ParameterBinding],
-        _steps: &[StepLabel<'_>],
-        _meter: &mut Meter,
-    ) -> Result<MatchReading, fsl_eval::hyper::MatchIncomplete> {
-        panic!("an HP-2 clause has no existential conjunct")
-    }
 }
 
 /// FR-176 "Product": a `μ_U` that is refused or incomplete at a reachable
@@ -1029,63 +903,53 @@ const PAIR: &str = "hyper H using inf over behaviours (v: V::Vault) \
      match { a.step.op = b.step.op and a.step.Vault::step.i = b.step.Vault::step.i } \
      { always holds(v.l @ a = v.l @ b) }";
 
-/// The same ranking at depth 1. The first instance finds an undefined letter
-/// at depth 1 (after `step(1)` on `v0`). A later instance is explored only
-/// through depth 1, expanding its initial states and no deeper: the counts of
-/// the whole run, set as the limits, still let it finish, and an uncapped
-/// second instance, a product of dozens of states, would exceed them and stop
-/// the run.
-#[trace("TC-601")]
-#[test]
-fn a_finding_at_depth_one_caps_the_later_instances() {
-    let world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
-    let letters = UndefinedFor {
-        seams: world.seams(),
-        key: "v0",
-    };
-    let HyperOutcome::Violated {
-        counterexample,
-        stats,
-    } = world
-        .run_through(
-            &letters,
-            &world.seams(),
-            ModelCheckLimits::default(),
-            &Cancel::new(),
-        )
-        .expect("not refused")
-    else {
-        panic!("expected a violation");
-    };
-    assert_eq!(counterexample.instance, [("v".to_owned(), "v0".to_owned())]);
-    assert_eq!(counterexample.trace_position, 1);
-    // The counts measured from the capped run: `v0` explored in full, `v1` only
-    // through the expansion of its initial states. They are the budget the
-    // run is held to; any state the capped `v1` explored past its initial states would exceed the 18.
-    assert_eq!((stats.product_states, stats.product_edges), (18, 80));
-    let mut exact = ModelCheckLimits::default();
-    exact.limits.max_states = 18;
-    exact.limits.max_transitions = 80;
-    let outcome = world
-        .run_through(&letters, &world.seams(), exact, &Cancel::new())
-        .expect("not refused");
-    let HyperOutcome::Violated {
-        counterexample: again,
-        ..
-    } = outcome
-    else {
-        panic!("the capped second instance fits the budget: {outcome:?}");
-    };
-    assert_eq!(*again, *counterexample);
+/// [`UndefinedFor`] that must be asked about its own instance alone.
+struct NoLaterInstance<'w>(UndefinedFor<'w>);
+
+impl HyperLetters for NoLaterInstance<'_> {
+    fn atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: &[ParameterBinding],
+        states: &[&ModelSimState],
+        meter: &mut Meter,
+    ) -> Result<AtomReading, fsl_eval::model_subject::AtomStop> {
+        assert_eq!(instance[0].instance.key, self.0.key, "a later instance");
+        self.0.atom(atom, instance, states, meter)
+    }
 }
 
-/// A search horizon deeper than the finding that caps a later instance does
-/// not widen it: the instance is explored through the finding's depth, so the
-/// run of the test above, with a horizon of 5, has the same counts and the
-/// same counterexample.
+/// FR-177 "Instances": the first refuted instance in order ends the item at
+/// any depth. The first instance finds an undefined letter at depth 1 (after
+/// `step(1)` on `v0`), and no letter of the later instance is read.
+#[trace("TC-601", "FR-176-AC-8")]
+#[test]
+fn a_finding_at_depth_one_ends_the_search() {
+    let world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
+    let letters = NoLaterInstance(UndefinedFor {
+        seams: world.seams(),
+        key: "v0",
+    });
+    let counterexample = refuted(
+        world
+            .run_through(
+                &letters,
+                &world.seams(),
+                ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("not refused"),
+    );
+    assert_eq!(counterexample.instance, [("v".to_owned(), "v0".to_owned())]);
+    assert_eq!(counterexample.trace_position, 1);
+}
+
+/// A search horizon deeper than the deciding finding does not change the run:
+/// with a horizon of 5 it has the counts and the counterexample of the run
+/// with none.
 #[trace("TC-601")]
 #[test]
-fn a_horizon_deeper_than_a_finding_does_not_widen_the_later_instances() {
+fn a_horizon_deeper_than_a_finding_does_not_change_the_run() {
     let run_with = |max_depth: Option<usize>| {
         let mut world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
         world.max_depth = max_depth;
@@ -1112,15 +976,11 @@ fn a_horizon_deeper_than_a_finding_does_not_widen_the_later_instances() {
     assert_eq!(run_with(Some(5)), run_with(None));
 }
 
-/// A `match` finding is at the depth of the joint position it ends at, one
-/// deeper than the state it is found at. The first instance has an undefined
-/// letter at depth 1; the second has an undefined `match` on its first joint
-/// step out of a depth-0 state, depth 1 too. A tie goes to the earlier
-/// instance; ranking the `match` at the state's depth (0) would let the
-/// second win.
+/// The earlier instance's finding stands whether it is an undefined letter or
+/// an undefined `match`, over a later instance's finding of the other kind.
 #[trace("TC-601")]
 #[test]
-fn a_match_finding_ranks_at_the_joint_position_it_ends_at() {
+fn the_earlier_instance_finding_stands_whatever_its_kind() {
     let world = World::with_vaults(Vault::Secure, &[("v0", (0, 0)), ("v1", (0, 0))], PAIR);
     let letters = UndefinedFor {
         seams: world.seams(),

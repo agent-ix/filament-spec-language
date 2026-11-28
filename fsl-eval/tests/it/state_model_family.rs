@@ -451,13 +451,19 @@ fn available_source_attribute_and_reaches_have_declared_nodes_and_types() {
 #[trace("TC-790", "FR-300-AC-2")]
 #[test]
 fn available_source_attribute_and_reaches_negatives_have_owned_raw_pairs_and_loci() {
-    for (body, authored, expected_cause, expected_code) in [
+    for (body, authored, mut expected_cause, expected_code) in [
         (
-            // FR-056-AC-9 preserves an ill_typed check refusal for a field
-            // absent from the effective static type (deref(g).nope).
+            // FR-056-AC-9, FR-363: a field absent from the effective static
+            // type (deref(g).nope) is an ill_typed check refusal keeping its
+            // owner, spelling and token span. The span is the token's place
+            // in the compiled source, set below.
             "function F using v(r: M::A): Boolean pure { deref(r).missing }",
             "missing",
-            CheckCause::IllTyped(IllTypedCause::TypeMismatch),
+            CheckCause::UnknownField {
+                owner: "A".into(),
+                field: "missing".into(),
+                span: None,
+            },
             ("ill_typed", "type-mismatch"),
         ),
         (
@@ -500,6 +506,13 @@ fn available_source_attribute_and_reaches_negatives_have_owned_raw_pairs_and_loc
         ),
     ] {
         let (declarations, _, source) = declarations(body, true);
+        if let CheckCause::UnknownField { span, .. } = &mut expected_cause {
+            let start = source.find("deref(r).missing").unwrap() + "deref(r).".len();
+            *span = Some(fsl_foundation::Span {
+                start,
+                end: start + "missing".len(),
+            });
+        }
         let regions = declarations.regions();
         let refusals = declarations
             .check(CheckMode::Linked, CheckingLimits::default(),
@@ -798,12 +811,13 @@ fn source_state_clause_retains_false_selected_precondition_as_model_undefined() 
     }
 }
 
-/// FR-107-AC-19/-20: an undefined precondition remains in the returned
-/// results while later preconditions are evaluated; postconditions are
-/// skipped unless every precondition completes true.
+/// FR-107-AC-19/-20: the first precondition that is not `Completed(true)`,
+/// an undefined one included, ends the preconditions, so a later one has no
+/// entry; postconditions are skipped unless every precondition completes
+/// true.
 #[trace("TC-1039", "FR-107-AC-19", "FR-107-AC-20")]
 #[test]
-fn clause_sets_report_undecided_preconditions_and_skip_postconditions() {
+fn clause_sets_stop_at_a_non_true_precondition_and_skip_postconditions() {
     use fsl_eval::value::ClauseSetOutcome;
     use fsl_semantics::model::observation::{
         document_reference, ClauseSelectionInput, SelectedObject,
@@ -905,23 +919,19 @@ fn clause_sets_report_undecided_preconditions_and_skip_postconditions() {
             &[(g_name.clone(), &g), (f_name.clone(), &f)],
             fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
         )
-        .expect("the two admitted preconditions evaluate");
+        .expect("the two admitted preconditions are accepted");
     assert_eq!(
         together
             .results
             .iter()
             .map(|entry| entry.name.to_string())
             .collect::<Vec<_>>(),
-        ["F", "G"]
+        ["F"]
     );
     assert!(matches!(
         &together.results[0].evaluation.evaluation.outcome,
         FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))
             if cause.undefined_record().reason.as_str() == "precondition-false"
-    ));
-    assert!(matches!(
-        &together.results[1].evaluation.evaluation.outcome,
-        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
     ));
     assert_eq!(together.outcome, ClauseSetOutcome::Undecided);
 

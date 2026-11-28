@@ -2,10 +2,11 @@
 //! FR-140 and FR-141 (TC-545, TC-546, TC-555, TC-1086) over ADR-020 §8's
 //! ring buffer refined to a queue.
 
-use filament_exact::{Integer, Value, ValueType};
+use filament_exact::{FieldValue, Integer, Value, ValueType};
 use filament_semantic_value::catalog::UndefinedReason;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{operation_identity_text, ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
     check_step, map_state, ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef,
@@ -16,7 +17,8 @@ use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::trace;
 
 use crate::ring_world::{
-    key, ring_is_queue, ring_state, RingWorld, Variant, QUEUE, RING, UNLIMITED, ZERO,
+    boxed_refinement, holder_refinement, key, pair_refinement, parcel_refinement, ring_is_queue,
+    ring_state, RingWorld, Variant, QUEUE, RING, UNLIMITED, ZERO,
 };
 
 fn integer(value: i64) -> Value {
@@ -85,6 +87,202 @@ fn the_slots_map_to_the_items_of_one_queue() {
             .expect("a key")
             .0
     );
+}
+
+/// FR-140-AC-19 (TC-545): a nested record field is reconstructed under its
+/// abstract type and its reference keeps the referenced object key.
+#[trace("TC-545", "FR-140-AC-19")]
+#[test]
+fn a_reference_inside_a_record_is_lifted_by_field_name() {
+    let variant = Variant {
+        boxed_reference: true,
+        composite_two_targets: true,
+        ..Variant::default()
+    };
+    let world = RingWorld::with(variant, &boxed_refinement());
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let mapped = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        concrete
+            .initial_iter()
+            .next()
+            .expect("the concrete initial state exists")
+            .expect("the concrete initial state is admitted")
+            .state(),
+        &HistoryValues::default(),
+    )
+    .expect("the state maps");
+    let mapped_box =
+        &mapped.visible.populations[&key(QUEUE, "queues")]["a"].fields[&key(QUEUE, "Queue/box")];
+    let Value::Composite(box_value) = mapped_box else {
+        panic!("the mapped field is a Box record");
+    };
+    let [FieldValue::Present(Value::Reference(target))] = box_value.slots() else {
+        panic!("Box.target is the mapped reference");
+    };
+    let expected = abstracted
+        .object_reference(&key(QUEUE, "Queue"), "b")
+        .expect("the abstract target b exists");
+    assert_eq!(target, &expected);
+}
+
+/// FR-140-AC-20 (TC-545): tuple positions retain their order and only the
+/// reference position changes its model type.
+#[trace("TC-545", "FR-140-AC-20")]
+#[test]
+fn a_reference_inside_a_tuple_is_lifted_by_position() {
+    let variant = Variant {
+        tuple_reference: true,
+        ..Variant::default()
+    };
+    let world = RingWorld::with(variant, &pair_refinement());
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let mapped = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &ring_state(&concrete, 0, 0, [0, 0]),
+        &HistoryValues::default(),
+    )
+    .expect("the state maps");
+    let Value::Composite(pair) =
+        &mapped.visible.populations[&key(QUEUE, "queues")]["r"].fields[&key(QUEUE, "Queue/pair")]
+    else {
+        panic!("the mapped field is a Pair tuple");
+    };
+    let [FieldValue::Present(Value::Reference(target)), FieldValue::Present(Value::Boolean(true))] =
+        pair.slots()
+    else {
+        panic!("Pair keeps its Boolean and lifts only position 0");
+    };
+    let expected = abstracted
+        .object_reference(&key(QUEUE, "Queue"), "r")
+        .expect("the abstract target exists");
+    assert_eq!(target, &expected);
+}
+
+/// FR-140-AC-21 (TC-545): the active union tag is retained while its
+/// positional reference payload is lifted.
+#[trace("TC-545", "FR-140-AC-21")]
+#[test]
+fn an_active_union_payload_reference_is_lifted_under_its_tag() {
+    let variant = Variant {
+        union_reference: true,
+        ..Variant::default()
+    };
+    let world = RingWorld::with(variant, &holder_refinement());
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let mapped = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &ring_state(&concrete, 0, 0, [0, 0]),
+        &HistoryValues::default(),
+    )
+    .expect("the state maps");
+    let Value::Union(holder) =
+        &mapped.visible.populations[&key(QUEUE, "queues")]["r"].fields[&key(QUEUE, "Queue/holder")]
+    else {
+        panic!("the mapped field is a Holder union");
+    };
+    assert_eq!(holder.member().identifier(), "Has");
+    let [Value::Reference(target)] = holder.payload() else {
+        panic!("Has keeps its lifted reference payload");
+    };
+    let expected = abstracted
+        .object_reference(&key(QUEUE, "Queue"), "r")
+        .expect("the abstract target exists");
+    assert_eq!(target, &expected);
+
+    let ValueType::Composite(holder_type) = &concrete
+        .fields_of(&key(RING, "Ring"))
+        .and_then(|fields| fields.iter().find(|field| field.name == "holder"))
+        .expect("Ring.holder")
+        .value_type
+    else {
+        panic!("Ring.holder is a union");
+    };
+    let empty = filament_exact::UnionValue::from_admitted(
+        filament_exact::UnionMember::from_admitted(holder_type.clone(), "Empty")
+            .expect("the Empty tag is admitted"),
+        Vec::new(),
+    );
+    let mut concrete_state = ring_state(&concrete, 0, 0, [0, 0]);
+    concrete_state
+        .populations
+        .get_mut(&key(RING, "rings"))
+        .expect("the Ring population")
+        .get_mut("r")
+        .expect("the Ring object")
+        .fields
+        .insert(key(RING, "Ring/holder"), empty);
+    let mapped_empty = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &concrete_state,
+        &HistoryValues::default(),
+    )
+    .expect("the Empty state maps");
+    let Value::Union(empty) = &mapped_empty.visible.populations[&key(QUEUE, "queues")]["r"].fields
+        [&key(QUEUE, "Queue/holder")]
+    else {
+        panic!("the mapped Empty value is a Holder union");
+    };
+    assert_eq!(empty.member().identifier(), "Empty");
+    assert!(empty.payload().is_empty(), "Empty has no payload");
+}
+
+/// FR-140-AC-22 (TC-545): the record name, sequence order, and option
+/// presence survive while the nested reference is lifted.
+#[trace("TC-545", "FR-140-AC-22")]
+#[test]
+fn nested_sequence_options_and_references_are_preserved_by_map_state() {
+    let variant = Variant {
+        parcel_reference: true,
+        composite_two_targets: true,
+        ..Variant::default()
+    };
+    let world = RingWorld::with(variant, &parcel_refinement());
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let mapped = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        concrete
+            .initial_iter()
+            .next()
+            .expect("the concrete initial state exists")
+            .expect("the concrete initial state is admitted")
+            .state(),
+        &HistoryValues::default(),
+    )
+    .expect("the state maps");
+    let Value::Composite(parcel) =
+        &mapped.visible.populations[&key(QUEUE, "queues")]["a"].fields[&key(QUEUE, "Queue/parcel")]
+    else {
+        panic!("the mapped field is a Parcel record");
+    };
+    let [FieldValue::Present(Value::Collection(owners))] = parcel.slots() else {
+        panic!("Parcel.owners is retained as a collection");
+    };
+    let [Value::Option(some), Value::Option(none)] = owners.elements() else {
+        panic!("the sequence preserves its two option positions");
+    };
+    let Value::Reference(target) = some.payload().expect("the first option is present") else {
+        panic!("Some contains the lifted reference");
+    };
+    assert!(none.payload().is_none(), "the second option stays None");
+    let expected = abstracted
+        .object_reference(&key(QUEUE, "Queue"), "b")
+        .expect("the abstract target b exists");
+    assert_eq!(target, &expected);
 }
 
 /// FR-140-AC-3 (TC-545 step 3) and FR-140-AC-9 (TC-1086 step 4): with the
@@ -241,6 +439,87 @@ fn verdict(world: &RingWorld, pre: &ModelState, operation: &str, post: &ModelSta
         operation,
         post,
     )
+}
+
+/// FR-140-AC-19..22: the evaluator accepts concrete `put` steps when mapping
+/// a state that carries each composite reference shape; the abstract action
+/// stutters because this fixture deliberately hides slot values.
+#[trace(
+    "TC-545",
+    "FR-140-AC-19",
+    "FR-140-AC-20",
+    "FR-140-AC-21",
+    "FR-140-AC-22"
+)]
+#[test]
+fn composite_reference_lifting_survives_evaluated_steps() {
+    for (name, variant, authored) in [
+        (
+            "Box",
+            Variant {
+                boxed_reference: true,
+                ..Variant::default()
+            },
+            boxed_refinement(),
+        ),
+        (
+            "Pair",
+            Variant {
+                tuple_reference: true,
+                ..Variant::default()
+            },
+            pair_refinement(),
+        ),
+        (
+            "Holder",
+            Variant {
+                union_reference: true,
+                ..Variant::default()
+            },
+            holder_refinement(),
+        ),
+        (
+            "Parcel",
+            Variant {
+                parcel_reference: true,
+                ..Variant::default()
+            },
+            parcel_refinement(),
+        ),
+    ] {
+        let refinement = authored
+            .replace("Q::Queue::enq(self.ring, x)", "stutter")
+            .replace("Q::Queue::deq(self.ring)", "stutter");
+        let world = RingWorld::with(variant, &refinement);
+        let concrete = world.concrete_system(UNLIMITED);
+        let abstracted = world.abstract_system(UNLIMITED);
+        let pre = ring_state(&concrete, 0, 0, [0, 0]);
+        let operation =
+            operation_identity_text(&key(RING, "Slot/put")).expect("the put operation identity");
+        let (transition, reached) = concrete
+            .expand_state(&pre)
+            .expect("the pair-bearing Ring state expands")
+            .successors
+            .into_iter()
+            .find(|(transition, _)| transition.operation() == operation)
+            .unwrap_or_else(|| panic!("{name}: put is enabled"));
+        let result = check_step(
+            world.refinement(),
+            &concrete,
+            &abstracted,
+            &position(&world, &pre),
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&transition),
+                post: &reached,
+            },
+        );
+        assert!(
+            matches!(result.verdict, StepVerdict::Passes { .. }),
+            "{name}: {:?}",
+            result.verdict
+        );
+    }
 }
 
 /// The one abstract transition `operation` takes the abstract `pre` to

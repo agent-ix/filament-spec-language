@@ -27,24 +27,29 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{BinaryOperator, DeclaredClauseKind, ExprNode, Expression, StateClauseKind};
-use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 use super::check::DispatchOperation;
 use super::checked_dispatch::{
-    DispatchBridgeRefusal, DispatchRoot, OperationClauses, body_clause, body_function,
-    checked_dispatch_core, rename_names,
+    body_clause, body_function, checked_dispatch_core, rename_names, DispatchBridgeRefusal,
+    DispatchRoot, OperationClauses,
 };
 use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::ModelClause;
 use super::refusal::{DispatchLinkCause, DispatchSubtypeFailure};
-use super::{CheckCause, CheckRefusal, PackageDeclarations};
+use super::{CheckCause, PackageDeclarations, SemanticCheckRefusal};
 use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::{DispatchLinkOutcome, GeneralizationClosure, LinkCheckOutcome};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::intake::member_identity_name;
 use crate::model::normalize::{EffectiveView, ModelRefusal};
 use filament_checked::key::DeclarationKey;
+
+/// The third segment of a source operation's effective-precondition function
+/// name, `[<type>, <operation>, "effective_precondition"]` (FR-569).
+const EFFECTIVE_PRECONDITION: &str = "effective_precondition";
 
 /// One family a called member name may name: the alias of the selected model
 /// that declares it, the key of its root operation (an operation that
@@ -61,7 +66,7 @@ struct CalledFamily {
 struct PendingFamily {
     member: String,
     receivers: BTreeSet<EffectiveId>,
-    refusals: Vec<CheckRefusal>,
+    refusals: Vec<SemanticCheckRefusal>,
 }
 
 /// The families that did not link, held until the unit is checked: a family
@@ -78,7 +83,7 @@ impl PendingLinks {
     /// its first call, and the reported families come in charge order
     /// (ascending alias, then root key), not call order. Every other refusal
     /// is kept as it is, and a failed family no call needed is dropped.
-    pub fn report(&self, refusals: Vec<CheckRefusal>) -> Vec<CheckRefusal> {
+    pub fn report(&self, refusals: Vec<SemanticCheckRefusal>) -> Vec<SemanticCheckRefusal> {
         // Each reached family, by its place in the charge order, with the
         // location of its first call.
         let mut reached: BTreeMap<usize, Location> = BTreeMap::new();
@@ -119,7 +124,7 @@ impl PendingLinks {
 
 /// The member and receiver type of a call the check found no dispatch
 /// operation for.
-fn unresolved_call(refusal: &CheckRefusal) -> Option<(&str, EffectiveId)> {
+fn unresolved_call(refusal: &SemanticCheckRefusal) -> Option<(&str, EffectiveId)> {
     match refusal.cause.as_ref() {
         CheckCause::StateModel(model) => match (&model.cause, model.receiver.clone()) {
             (CheckCause::MissingName(name), Some(receiver)) => Some((name, receiver)),
@@ -148,7 +153,7 @@ impl PackageDeclarations {
     pub fn link_dispatch(
         &mut self,
         limits: ModelNormalizationLimits,
-    ) -> Result<PendingLinks, Vec<CheckRefusal>> {
+    ) -> Result<PendingLinks, Vec<SemanticCheckRefusal>> {
         let called = self.called_members();
         let mut meter = NormalizationMeter::new(limits);
         let mut pending = PendingLinks::default();
@@ -226,7 +231,7 @@ impl PackageDeclarations {
     /// (FR-576-AC-10). One function per operation key, whichever aliases
     /// select its document. A body that cannot be built refuses as a broken
     /// invariant (FR-302), never silently.
-    fn build_uncalled_bodies(&mut self) -> Vec<CheckRefusal> {
+    fn build_uncalled_bodies(&mut self) -> Vec<SemanticCheckRefusal> {
         let mut built: BTreeSet<DeclarationKey> = self
             .model_clauses
             .values()
@@ -295,7 +300,7 @@ impl PackageDeclarations {
         for (key, function, signature) in functions {
             let index = self.functions.len();
             let Some(signature) = signature else {
-                refusals.push(CheckRefusal::ill_typed(
+                refusals.push(SemanticCheckRefusal::ill_typed(
                     &Location::root(Origin::Body {
                         function: function.name.clone(),
                         index,
@@ -306,14 +311,15 @@ impl PackageDeclarations {
                 continue;
             };
             self.resolved_signatures.insert(index, signature);
-            self.model_clauses.insert(
-                index,
-                ModelClause {
-                    declaration: key.clone(),
-                    kind: DeclaredClauseKind::Body,
-                    source_declaration: source_declarations.get(&key).cloned(),
-                },
-            );
+            let clause = ModelClause {
+                declaration: key.clone(),
+                kind: DeclaredClauseKind::Body,
+                source_declaration: source_declarations.get(&key).cloned(),
+            };
+            if let Some(span) = self.clause_declaration_span(&clause) {
+                self.clause_declaration_spans.insert(index, span);
+            }
+            self.model_clauses.insert(index, clause);
             self.functions.push(function);
         }
         refusals
@@ -475,7 +481,7 @@ impl PackageDeclarations {
                     vec![
                         type_name.clone(),
                         operation_name.clone(),
-                        "effective_precondition".to_owned(),
+                        EFFECTIVE_PRECONDITION.to_owned(),
                     ],
                 );
             }
@@ -549,6 +555,9 @@ impl PackageDeclarations {
                 .and_then(|clause| self.precondition_span(&clause.declaration))
             {
                 self.synthesized_spans.insert(index, span);
+            }
+            if let Some(span) = clause.and_then(|clause| self.clause_declaration_span(clause)) {
+                self.clause_declaration_spans.insert(index, span);
             }
             self.functions.push(function);
         }
@@ -647,10 +656,37 @@ impl PackageDeclarations {
             .map(|clause| clause.spans.declaration)
     }
 
+    /// FR-569: where the one `declaration` occurrence of a source operation's
+    /// clause function is: a body at its `body` declaration, an effective
+    /// precondition at the candidate's `operation` member. `None` for a model
+    /// operation's clause function, whose `generated` occurrence is at its
+    /// body, and for an authored precondition, which `synthesized_spans`
+    /// already places at its `pre` declaration.
+    #[implements("FR-569-AC-6")]
+    #[ix_trace_rs::string_edge]
+    fn clause_declaration_span(&self, clause: &ModelClause) -> Option<Span> {
+        let path = clause.source_declaration.as_ref()?;
+        match clause.kind {
+            DeclaredClauseKind::Body => self
+                .operation_body(&clause.declaration)
+                .map(|body| body.spans.declaration),
+            DeclaredClauseKind::Precondition
+                if path
+                    .get(2)
+                    .is_some_and(|kind| kind == EFFECTIVE_PRECONDITION) =>
+            {
+                self.source_operation_spans
+                    .get(&clause.declaration)
+                    .copied()
+            }
+            _ => None,
+        }
+    }
+
     /// FR-302-AC-8: a body function from `first` on whose `operation-body`
     /// declares a different number of parameters than its operation refuses
     /// `ill_typed`/`type-mismatch`, located at the body.
-    fn body_arity_refusals(&self, first: usize) -> Vec<CheckRefusal> {
+    fn body_arity_refusals(&self, first: usize) -> Vec<SemanticCheckRefusal> {
         let mut refusals = Vec::new();
         for (index, function) in self.functions.iter().enumerate().skip(first) {
             let Some(clause) = self
@@ -664,7 +700,7 @@ impl PackageDeclarations {
                 continue;
             };
             if body.parameters.len() != body.operation.declaration.parameters().len() {
-                refusals.push(CheckRefusal::ill_typed(
+                refusals.push(SemanticCheckRefusal::ill_typed(
                     &Location::root(Origin::Body {
                         function: function.name.clone(),
                         index,
@@ -677,8 +713,8 @@ impl PackageDeclarations {
     }
 }
 
-fn dispatch_link(cause: DispatchLinkCause) -> CheckRefusal {
-    CheckRefusal {
+fn dispatch_link(cause: DispatchLinkCause) -> SemanticCheckRefusal {
+    SemanticCheckRefusal {
         location: Location::root(Origin::Expression),
         cause: Box::new(CheckCause::DispatchLink(Box::new(cause))),
     }

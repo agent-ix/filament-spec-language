@@ -22,6 +22,7 @@
 //! both is undefined. `Witnessed` and `Holds` need a run that completed with
 //! no open node.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeSet, VecDeque};
 
 use fsl_eval::simulation::model::PredicateReading;
@@ -123,9 +124,23 @@ impl<'g> Reader<'g> {
         }
     }
 
-    /// The first node in discovery order where a predicate of the claim is
-    /// undefined, with where and why.
+    /// The first node in discovery order where a predicate of the claim, or
+    /// one of the subject's expressions, is undefined, with where and why. A
+    /// node where both are reports the predicate.
+    #[implements("FR-168-AC-11", "FR-168-AC-12", "FR-168-AC-13")]
     fn first_undefined(&self) -> Option<(usize, GraphUndefined)> {
+        let predicate = self.first_undefined_predicate();
+        let subject = self
+            .graph
+            .subject_undefined
+            .as_ref()
+            .filter(|(node, _)| predicate.as_ref().is_none_or(|(at, _)| node.0 < *at))
+            .map(|(node, undefined)| (node.0, undefined.clone()));
+        subject.or(predicate)
+    }
+
+    /// [`Self::first_undefined`] over the claim's predicates alone.
+    fn first_undefined_predicate(&self) -> Option<(usize, GraphUndefined)> {
         (0..self.count()).find_map(|node| {
             self.graph.nodes[node].labels.iter().find_map(|label| {
                 if label.item != self.view.item || label.instance != self.view.instance {
@@ -803,6 +818,7 @@ mod tests {
             parent: vec![None],
             root: vec![0],
             initial: vec![NodeIndex(0)],
+            subject_undefined: None,
         };
         let form = StateGraphForm::Possible {
             target: CheckedStatePredicate::ConstantTrue,
@@ -872,6 +888,7 @@ mod tests {
             parent: vec![None; count],
             root: vec![0; count],
             initial: vec![NodeIndex(0)],
+            subject_undefined: None,
         }
     }
 

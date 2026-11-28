@@ -55,6 +55,7 @@ use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{CheckedActivation, CheckedProtocol};
 use fsl_semantics::family::ClaimExtent;
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use crate::fairness::{Constraint, Identity};
@@ -64,13 +65,13 @@ use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
 use crate::simulation::model::encode::{
-    self, Canonicalizer, Enc, map_enc, reference_enc, value_enc,
+    self, map_enc, reference_enc, value_enc, Canonicalizer, Enc,
 };
 use crate::simulation::model::{
-    BROKEN, BoundedDomain, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem,
-    Observed, TerminalClass, Verdict, verdict,
+    verdict, BoundedDomain, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState,
+    ModelSystem, Observed, TerminalClass, Verdict, BROKEN,
 };
-use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
+use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, InitialStateRefusal, SubjectSystem};
@@ -81,13 +82,13 @@ pub use access::{
     AccessShape, AttemptInstance, InstanceAccess, LoadBufferingShape, WeakAccessFailure,
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
-pub use capacity::{Capacities, CapacityRefusal, UnboundCapacity, capacity_value};
+pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
 pub use fairness::{
-    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
-    protocol_constraints,
+    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
+    ProtocolTarget,
 };
 pub use footprint::{
-    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
+    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
 };
 pub use identity::{
     Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
@@ -110,7 +111,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
+pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -1071,6 +1072,7 @@ pub fn explore_protocol<M: MemoryModel>(
 
 /// The `over` parameter's value: the reference to `over`'s key in its
 /// declared type's universe.
+#[implements("FR-125-AC-9")]
 pub(crate) fn over_value(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
@@ -1094,7 +1096,7 @@ pub(crate) fn over_value(
         return Err(refused());
     }
     model
-        .bound_reference(object_type.clone(), over)
+        .written_reference(object_type.clone(), over)
         .map(Value::Reference)
         .map_err(|_| refused())
 }
@@ -1236,10 +1238,11 @@ pub fn classify_package_accesses(
 
 /// FR-226, FR-940: load-buffering shapes of an admitted package protocol
 /// under `ra`, preserving the same access and program-order rules as source.
+#[implements("FR-882-AC-3")]
 pub fn package_load_buffering_shapes(
     model: &ModelSystem<'_>,
     program: &PackageProtocolProgram<'_>,
-    over: &Value,
+    over: Option<&Value>,
     capacities: &Capacities,
 ) -> Result<Vec<LoadBufferingShape>, ProtocolRefusal> {
     let governing = program
@@ -1252,15 +1255,28 @@ pub fn package_load_buffering_shapes(
         return Ok(Vec::new());
     }
     let runtime = Program::new_package(model, program, capacities)?;
-    let accesses = access::classify_package(
-        model,
-        &runtime,
-        program,
-        &governing,
-        model.generated_initial().next().as_ref(),
-        over,
-        access::ClassificationMode::Potential,
-    )?;
+    // `over` is the subject's reference; `None` is a scalar `over`, which
+    // ranges over its bounded domain (FR-882-AC-3).
+    let overs: Vec<Value> = match over {
+        Some(over) => vec![over.clone()],
+        None => model
+            .bounded_domain(&program.over_type, &[])
+            .map_err(ProtocolRefusal::InitialStop)?
+            .iter()
+            .collect(),
+    };
+    let mut accesses = WeakAccesses::default();
+    for over in &overs {
+        accesses.extend(access::classify_package(
+            model,
+            &runtime,
+            program,
+            &governing,
+            model.generated_initial().next().as_ref(),
+            over,
+            access::ClassificationMode::Potential,
+        )?);
+    }
     Ok(
         access::load_buffering_shapes(&runtime, &governing, &accesses)?
             .into_iter()
@@ -1698,6 +1714,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     ///
     /// # Errors
     /// Refuses an unsupported proof form or a target without an admitted proof.
+    #[implements("FR-125-AC-9", "FR-896-AC-7")]
     pub fn new_package_with_loop_proof(
         model: ModelSystem<'a>,
         subject: &'a ProtocolSubject<'a>,
@@ -1766,15 +1783,18 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 }
                 BoundedDomain::single(Value::Reference(
                     model
-                        .bound_reference(object_type.clone(), &subject.over)
+                        .written_reference(object_type.clone(), &subject.over)
                         .map_err(|_| ProtocolRefusal::fault("a-package-over-reference-resolves"))?,
                 ))
             }
-            _ => {
-                return Err(ProtocolRefusal::fault(
-                    "package-protocol-over-is-a-reference-value",
+            _ if !model.enumerates(&package.over_type) => {
+                return Err(ProtocolRefusal::Unsupported(
+                    Unsupported::UnenumerableRecord,
                 ));
             }
+            _ => model
+                .bounded_domain(&package.over_type, &[])
+                .map_err(ProtocolRefusal::InitialStop)?,
         };
         let governing = package
             .governing_models()
@@ -1953,7 +1973,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     .map_err(|_| refused())?;
                 let mut objects = instances
                     .iter()
-                    .map(|instance| self.model.bound_reference(role.object.clone(), instance))
+                    .map(|instance| self.model.written_reference(role.object.clone(), instance))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|_| refused())?;
                 objects.sort();
@@ -3051,6 +3071,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             .transpose()
     }
 
+    #[implements("FR-882-AC-3")]
     fn package_observation(
         &self,
         state: &ModelSimState,
@@ -3063,19 +3084,30 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         let subject = self.package_subject.ok_or_else(broken)?;
         let request = &subject.model.simulation;
         let package = self.package_program.as_ref().ok_or_else(broken)?;
-        let ValueType::Reference(over) = &package.over_type else {
-            return Err(broken());
-        };
-        let declaring = self
-            .model
-            .declaring_package(over.clone())
-            .ok_or_else(broken)?;
-        let selection = request
-            .input
-            .model_selections
-            .iter()
-            .find(|selection| selection.identity == declaring)
-            .ok_or_else(broken)?;
+        // A reference `over` selects the model that declares its object type
+        // (FR-125); a scalar `over` has no declaring model, so the subject's
+        // single model selection supplies the observation (FR-882-AC-3).
+        let selection = match &package.over_type {
+            ValueType::Reference(over) => {
+                let declaring = self
+                    .model
+                    .declaring_package(over.clone())
+                    .ok_or_else(broken)?;
+                request
+                    .input
+                    .model_selections
+                    .iter()
+                    .find(|selection| selection.identity == declaring)
+            }
+            _ => {
+                let mut all = request.input.model_selections.iter();
+                match (all.next(), all.next()) {
+                    (Some(only), None) => Some(only),
+                    _ => None,
+                }
+            }
+        }
+        .ok_or_else(broken)?;
         self.evaluator
             .package_protocol_observation(
                 selection,
@@ -3621,7 +3653,8 @@ mod tests {
     use super::*;
 
     /// The same root fault is reported within budget and never constructed
-    /// when its root identity crosses the budget, even with repeated keys.
+    /// when its root identity crosses the budget. A repeated key coalesces:
+    /// it takes no slot and its root is not constructed again.
     #[trace("TC-521", "FR-126-AC-26")]
     #[test]
     fn protocol_initial_faults_follow_distinct_root_admission() {
@@ -3642,10 +3675,10 @@ mod tests {
         };
         let (within, settled) = run(2);
         assert!(matches!(within, Err(InitialStateRefusal::Construction(found)) if found == fault));
-        assert_eq!(settled, 3);
+        assert_eq!(settled, 2);
         let (outside, settled) = run(1);
         assert!(matches!(outside, Err(InitialStateRefusal::OverBudget(1))));
-        assert_eq!(settled, 2);
+        assert_eq!(settled, 1);
     }
 
     /// Trace: FR-230, FR-390

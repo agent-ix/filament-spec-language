@@ -17,6 +17,7 @@ use crate::negotiation::Fr290;
 enum Entry {
     Run,
     RunReader,
+    ClauseReader,
     Monitor,
     Compile,
     Analyze,
@@ -30,6 +31,7 @@ fn call(entry: Entry, path: &Path) -> Option<(Value, u8)> {
     let cancel = filament_exact::Cancel::new();
     let error = match entry {
         Entry::RunReader => command::prepare_run(path, RunLimits::default()).err(),
+        Entry::ClauseReader => command::read_clause_run_request(path).err(),
         Entry::Run => {
             command::run_with_providers(path, &Fr290, Vec::new(), &options, &cancel).err()
         }
@@ -701,6 +703,323 @@ fn an_export_request_that_is_not_an_object_is_refused_naming_the_request() {
             &json!({"format": RUN, "request": request}),
             "invalid clause request member /request: expected an object",
             &Value::Null,
+        );
+    }
+}
+
+/// FR-100-AC-25's message, under which a request that selects a source and
+/// no run member is refused.
+const NO_RUN_MESSAGE: &str =
+    "a 1-draft program runs through the spine; the request selects no call";
+
+/// The run entry and both run-reader entries.
+const RUN_READING: [Entry; 3] = [Entry::Run, Entry::RunReader, Entry::ClauseReader];
+
+fn source_selection() -> Value {
+    json!({"file": "p.fsl", "authority": "example", "identity": "example:p", "document": "P", "formal_revision": 1})
+}
+
+/// FR-1047-AC-10's `program` request: a selected program and no run member.
+fn program_request() -> Value {
+    json!({"format": RUN, "request": {"models": [], "program": {"source": source_selection()}}})
+}
+
+/// FR-1047-AC-10's `package` request.
+fn package_request() -> Value {
+    json!({"format": RUN, "request": {"models": [], "package": {"file": "p.json"}}})
+}
+
+/// `document` with `request.<member>` set to `value`.
+fn with(mut document: Value, member: &str, value: Value) -> Value {
+    document["request"][member] = value;
+    document
+}
+
+fn native_rule_models() -> Value {
+    json!([{"format": "native-rule-model/1", "source": source_selection()}])
+}
+
+fn complete_libraries(count: usize) -> Value {
+    Value::Array(
+        (0..count)
+            .map(|index| json!({"identity": format!("example/lib{index}"), "source": source_selection()}))
+            .collect(),
+    )
+}
+
+fn assert_no_run_member(entry: Entry, document: &Value) {
+    assert_refusal(
+        entry,
+        document,
+        NO_RUN_MESSAGE,
+        &json!({"missing": [["/request/call", "/request/clause", "/request/items"]]}),
+    );
+}
+
+/// `entry` gives `document` another refusal than the no-run-member one, with
+/// `code` and `exit`, naming `named`.
+fn assert_comes_first(entry: Entry, document: &Value, code: &str, exit: u8, named: &str) -> Value {
+    let (value, actual) = refusal(entry, document);
+    assert_not_no_run_member(&value);
+    assert_eq!(actual, exit, "{document}: {value}");
+    assert_eq!(value["code"], code, "{document}: {value}");
+    assert!(value.to_string().contains(named), "{named}: {value}");
+    value
+}
+
+fn assert_not_no_run_member(value: &Value) {
+    assert!(value["details"].get("missing").is_none(), "{value}");
+    assert_ne!(value["message"], NO_RUN_MESSAGE, "{value}");
+}
+
+/// A request-stage `invalid-request` refusal that comes first.
+fn assert_invalid_first(entry: Entry, document: &Value, named: &str) {
+    let value = assert_comes_first(entry, document, "invalid-request", 20, named);
+    assert_eq!(value["stage"], "request", "{value}");
+}
+
+/// FR-1047-AC-10: a selected source with no run member is refused with the
+/// run group alone, under the no-call message, before any named file is read.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-10")]
+fn a_selected_source_with_no_run_member_names_the_group_before_reading() {
+    for entry in RUN_READING {
+        assert_no_run_member(entry, &program_request());
+        assert_no_run_member(entry, &package_request());
+
+        let mut without_models = program_request();
+        without_models["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("models");
+        assert_refusal(
+            entry,
+            &without_models,
+            "invalid request: missing required members /request/models, /request/call | /request/clause | /request/items",
+            &json!({"missing": ["/request/models", ["/request/call", "/request/clause", "/request/items"]]}),
+        );
+
+        assert_invalid_first(
+            entry,
+            &with(package_request(), "libraries", complete_libraries(1)),
+            "libraries",
+        );
+    }
+}
+
+/// FR-1047-AC-11: the request size limit and the typed reader's decode
+/// refusals come before the no-run-member refusal.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-11")]
+fn size_and_decode_refusals_precede_the_no_run_member_refusal() {
+    for document in [program_request(), package_request()] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("request.json");
+        let text = document.to_string();
+        std::fs::write(&path, &text).unwrap();
+        let limits = RunLimits {
+            request_bytes: text.len() - 1,
+            ..RunLimits::default()
+        };
+        let error = command::prepare_run(&path, limits)
+            .err()
+            .expect("the request is one byte over");
+        let value = error.value().unwrap();
+        assert_not_no_run_member(&value);
+        assert_eq!(error.category().exit_code(), 22, "{value}");
+        assert_eq!(value["code"], "resource_exhausted", "{value}");
+        assert!(value.to_string().contains("request_bytes"), "{value}");
+
+        for entry in RUN_READING {
+            for (member, added) in [
+                ("extra", json!(1)),
+                ("extensions", json!(3)),
+                ("requirements", json!({})),
+            ] {
+                assert_invalid_first(entry, &with(document.clone(), member, added), member);
+            }
+        }
+
+        let twice = with(document.clone(), "clocks", json!({}));
+        std::fs::write(&path, twice.to_string()).unwrap();
+        let supplied = serde_json::value::RawValue::from_string(
+            json!({"c": {"kind": "event_position", "sequence_authority": "a"}}).to_string(),
+        )
+        .unwrap();
+        let error = command::prepare_run_with_overrides(
+            &path,
+            RunLimits::default(),
+            &RequestOverrides {
+                clocks: Some(&supplied),
+                ..RequestOverrides::default()
+            },
+        )
+        .err()
+        .expect("clocks are given twice");
+        let value = error.value().unwrap();
+        assert_not_no_run_member(&value);
+        assert_eq!(error.category().exit_code(), 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        let message = value["message"].as_str().unwrap();
+        assert!(
+            message.contains("clocks") && message.contains("--clocks"),
+            "{value}"
+        );
+    }
+}
+
+/// FR-1047-AC-12: `sources` beside `program` is refused first.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-12")]
+fn program_sources_refusal_precedes_the_no_run_member_refusal() {
+    for entry in RUN_READING {
+        assert_invalid_first(
+            entry,
+            &with(program_request(), "sources", json!([])),
+            "/request/sources",
+        );
+    }
+}
+
+/// FR-1047-AC-13: a package request's own member refusals come first.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-13")]
+fn package_member_refusals_precede_the_no_run_member_refusal() {
+    for entry in RUN_READING {
+        for (member, added, named) in [
+            ("integer_division", json!("floor"), "integer_division"),
+            ("refinement_internals", json!([]), "refinement_internals"),
+            (
+                "clocks",
+                json!({"c": {"kind": "event_position", "sequence_authority": "a"}}),
+                "clocks",
+            ),
+            (
+                "sources",
+                json!([source_selection(), source_selection()]),
+                "/request/sources/1",
+            ),
+        ] {
+            assert_invalid_first(entry, &with(package_request(), member, added), named);
+        }
+    }
+}
+
+/// FR-1047-AC-14: a program request's checks that read no file come first.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-14")]
+fn program_request_checks_precede_the_no_run_member_refusal() {
+    let extension =
+        json!({"authority": "example", "identity": "example:extension", "file": "e.json"});
+    for entry in [Entry::Run, Entry::RunReader] {
+        assert_invalid_first(
+            entry,
+            &with(program_request(), "refinement_internals", json!([])),
+            "refinement_internals",
+        );
+
+        let mut library = complete_libraries(1);
+        library[0]["integer_division"] = json!("ceiling");
+        for (document, named) in [
+            (
+                with(program_request(), "integer_division", json!("ceiling")),
+                "integer_division",
+            ),
+            (
+                with(program_request(), "libraries", library),
+                "libraries[0].integer_division",
+            ),
+        ] {
+            let value = assert_comes_first(entry, &document, "unknown_profile", 20, named);
+            assert_eq!(value["cause"], "unsupported-selection", "{value}");
+        }
+
+        let twice = json!([extension.clone(), extension.clone()]);
+        let (value, _) = refusal(entry, &with(program_request(), "extensions", twice));
+        assert_not_no_run_member(&value);
+        assert_eq!(value["code"], "invalid_package", "{value}");
+        assert!(
+            value.to_string().contains("conflicting-definition"),
+            "{value}"
+        );
+
+        assert_comes_first(
+            entry,
+            &with(program_request(), "libraries", complete_libraries(64)),
+            "resource_exhausted",
+            22,
+            "selected files",
+        );
+
+        let mut revision = program_request();
+        revision["request"]["program"]["source"]["formal_revision"] = json!(0);
+        let (value, _) = refusal(entry, &revision);
+        assert_not_no_run_member(&value);
+        assert_eq!(value["code"], "invalid-identifier", "{value}");
+    }
+}
+
+/// AC-10's `program` request with an extraction holding `bindings` clause
+/// bindings.
+#[cfg(feature = "quire-extraction")]
+fn extraction_request(bindings: usize) -> Value {
+    let mut document = program_request();
+    document["request"]["program"]["extraction"] =
+        json!({"body": {"authority": "example", "identity": "example:body", "document": "Body"}});
+    document["request"]["program"]["clauses"] =
+        Value::Array(vec![json!({"clause": "c", "package": ""}); bindings]);
+    document
+}
+
+/// FR-1047-AC-15: the extraction clause count is refused first.
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-3170", "FR-1047-AC-15")]
+fn extraction_clause_count_precedes_the_no_run_member_refusal() {
+    for entry in [Entry::Run, Entry::ClauseReader] {
+        let value = assert_comes_first(
+            entry,
+            &extraction_request(0),
+            "extraction-clause-count",
+            20,
+            "extraction",
+        );
+        assert_eq!(value["stage"], "request", "{value}");
+    }
+}
+
+/// FR-1047-AC-16: every other check gives way to the no-run-member refusal.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-16")]
+fn later_checks_give_way_to_the_no_run_member_refusal() {
+    assert_no_run_member(
+        Entry::ClauseReader,
+        &with(program_request(), "refinement_internals", json!([])),
+    );
+    let mut revision = program_request();
+    revision["request"]["program"]["source"]["formal_revision"] = json!(0);
+    assert_no_run_member(Entry::ClauseReader, &revision);
+    for entry in RUN_READING {
+        assert_no_run_member(
+            entry,
+            &with(program_request(), "models", native_rule_models()),
+        );
+    }
+    assert_no_run_member(
+        Entry::RunReader,
+        &with(package_request(), "models", native_rule_models()),
+    );
+    assert_no_run_member(
+        Entry::RunReader,
+        &with(package_request(), "export_evidence", json!({})),
+    );
+    #[cfg(feature = "quire-extraction")]
+    {
+        assert_no_run_member(Entry::RunReader, &extraction_request(0));
+        assert_no_run_member(
+            Entry::Run,
+            &with(extraction_request(1), "refinement_internals", json!([])),
         );
     }
 }

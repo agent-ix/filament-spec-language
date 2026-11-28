@@ -20,7 +20,10 @@ use fsl_replay::{
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
-use crate::timed_world::{document, world, World, DENSE};
+use crate::certificate_rejection_support::{state_locus, written_cause};
+use crate::component_certificate::assert_written_rejection;
+use crate::provider_schema_support::{assert_valid, provider_definition};
+use crate::timed_world::{document, family_world, world, World, DENSE};
 use crate::zone_replay::{fault, lock_resetting};
 use crate::zone_search::{
     check, claim, deadlock, lock, proved, quiet, rpc, Certificate, Outcome, INFINITE, SUBJECT,
@@ -53,7 +56,7 @@ fn verdict(world: &crate::timed_world::World, certificate: &Certificate) -> Zone
     check(world, certificate, CertificateCheckLimits::default()).expect("the check runs")
 }
 
-fn rejected(rule: CertificateRule, at: CertificateLocus) -> ZoneCertificateVerdict {
+pub(crate) fn rejected(rule: CertificateRule, at: CertificateLocus) -> ZoneCertificateVerdict {
     ZoneCertificateVerdict::Rejected(CertificateRejection { rule, at })
 }
 
@@ -152,7 +155,7 @@ fn the_search_certificates_are_accepted() {
 /// initial state is `InitialMissing` at that state. The backward edge and
 /// the component reason are tampered in `crate::zone_live_certificate`;
 /// the bad node is FR-245-AC-5's, over `Lock`.
-#[trace("TC-700", "TC-1197")]
+#[trace("TC-700", "TC-1197", "FR-245-AC-7")]
 #[test]
 fn each_tampering_is_rejected_at_its_rule_and_locus() {
     let (world, certificate) = no_late_reply();
@@ -226,6 +229,16 @@ fn each_tampering_is_rejected_at_its_rule_and_locus() {
         panic!("the initial discrete state's locus");
     };
     assert_eq!(state_key, certificate.nodes[0].state_key.clone());
+    let written = state_locus(&state_key);
+    assert_written_rejection(
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::InitialMissing,
+            at: CertificateLocus::ModelState(state_key),
+        }),
+        "initial-missing",
+        "StateLocus",
+        &written,
+    );
 }
 
 /// Part of FR-245-AC-3 (TC-700): `NoLateReply`'s certificate checked for the
@@ -344,7 +357,10 @@ fn a_locked_node_is_checked_for_divergence() {
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let start = timed.initial().remove(0);
     let key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        system.state_key(state).expect("a state key").1
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("a state key")
+            .1
     };
     let a = key(start.discrete());
     let (_, gone) = timed
@@ -391,21 +407,47 @@ fn a_locked_node_is_checked_for_divergence() {
 }
 
 /// FR-245-AC-7 (TC-1197): the zone loci are written in FSpec FR-331's
-/// `{node}`, `{edge}`, `{component}` and `{member}` forms, each index a
-/// `U64String`.
+/// `{node}`, `{edge}`, `{component}` and `{member}` forms, each index an
+/// integer `Count`, and FR-331's schema admits each written cause and not
+/// its decimal-string index.
 #[trace("TC-1197", "FR-245-AC-7")]
 #[test]
 fn zone_loci_are_written_in_their_fr331_forms() {
-    for (locus, written) in [
-        (node(3), serde_json::json!({"node": "3"})),
+    let schema = provider_definition("CertificateRejected");
+    for (rule, spelled, locus, member, index) in [
+        (CertificateRule::BadState, "bad-state", node(3), "node", 3),
         (
-            CertificateLocus::ZoneEdge { edge: 7 },
-            serde_json::json!({"edge": "7"}),
+            CertificateRule::BackwardEdge,
+            "backward-edge",
+            CertificateLocus::ZoneEdge {
+                edge: 7,
+                verdict: None,
+            },
+            "edge",
+            7,
         ),
         (
+            CertificateRule::WitnessFails,
+            "witness-fails",
             CertificateLocus::ZoneComponent { component: 0 },
-            serde_json::json!({"component": "0"}),
+            "component",
+            0,
         ),
+    ] {
+        let mut cause = written_cause(TerminalValue::Inconclusive(
+            InconclusiveCause::CertificateRejected { rule, at: locus },
+        ));
+        assert_eq!(
+            cause,
+            serde_json::json!(
+                {"type": "certificate-rejected", "rule": spelled, "at": {member: index}}
+            )
+        );
+        assert_valid(&schema, &cause, spelled);
+        cause["at"][member] = serde_json::json!(index.to_string());
+        assert!(!schema.is_valid(&cause), "{cause}");
+    }
+    for (locus, written) in [
         (
             CertificateLocus::CertificateMember(CertificateMember::Bounds),
             serde_json::json!({"member": "bounds"}),
@@ -515,7 +557,7 @@ fn retarget(mut certificate: Certificate, world: &World) -> Certificate {
     certificate
 }
 
-fn summary(outcome: &Outcome) -> &'static str {
+pub(crate) fn summary(outcome: &Outcome) -> &'static str {
     match outcome {
         ZoneCheckOutcome::Holds { .. } => "Holds",
         ZoneCheckOutcome::HoldsReduced { .. } => "HoldsReduced",
@@ -712,7 +754,10 @@ fn a_zeno_set_is_bounded_by_its_own_invariants() {
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let start = timed.initial().remove(0);
     let key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        system.state_key(state).expect("a key").1
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("a key")
+            .1
     };
     let (_, gone) = timed
         .steps(&start)
@@ -1137,4 +1182,170 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
         }
         other => panic!("a Zeno loop is not an admitted witness: {other:?}"),
     }
+}
+
+/// `alpha` (every held element's `x` at most 0) and `go` (at least 5 ms)
+/// enter phase 1, which `y <= 1 ms` bounds and `tick` leaves; `work` needs
+/// phase `from` and `x >= 5 ms`. `ts` declares no maximum, so every read of
+/// `x` is in a quantifier family.
+fn family_gate(from: u8) -> World {
+    family_world(
+        &["ts"],
+        &["y"],
+        &[
+            ("alpha", &["phase", "y"]),
+            ("go", &["phase", "y"]),
+            ("tick", &["phase"]),
+            ("work", &["phase"]),
+        ],
+        INFINITE,
+        &format!(
+            "pre Early using v on M::Call::alpha {{ self.phase = 0 and forall(e in self.ts: e.x <= 0 ms) }}\n\
+             post Earlied using v on M::Call::alpha {{ self.phase = 1 and self.y = 0 ms }}\n\
+             pre Late using v on M::Call::go {{ self.phase = 0 and forall(e in self.ts: e.x >= 5 ms) }}\n\
+             post Lated using v on M::Call::go {{ self.phase = 1 and self.y = 0 ms }}\n\
+             pre Rest using v on M::Call::tick {{ self.phase = 1 }}\n\
+             post Rested using v on M::Call::tick {{ self.phase = 3 }}\n\
+             pre Bad using v on M::Call::work {{ self.phase = {from} and forall(e in self.ts: e.x >= 5 ms) }}\n\
+             post Badded using v on M::Call::work {{ self.phase = 2 }}\n\
+             time invariant Brief when {{ self.phase = 1 }} {{ self.y <= 1 ms }}\n\
+             temporal NoTwo using inf over (c: M::Call) clock \"model-steps\" on origin \
+             {{ always holds(not (c.phase = 2)) }}\n"
+        ),
+    )
+}
+
+/// FR-245 over FR-230 "Family parts" (ADR-026 EZ-4): the checker's LU
+/// bounds include the constants inside a quantifier family. `x` of each
+/// element of `ts` is compared with 5 from below (`go`, `work`) and with 0
+/// from above (`alpha`); with one live element at most, `x` takes the first
+/// two places and `y` the third.
+///
+/// The property is false over `family_gate(1)`: `go` enters phase 1 with
+/// `x >= 5`, where `work` is enabled. The proof of the sibling, whose `work`
+/// needs phase 2, is forged for it: `go` is pointed at `alpha`'s phase-1
+/// node (`x <= 1`, where `work` is disabled), which covers `go`'s successor
+/// only if `x` has no bounds, and the nodes left unreached are dropped.
+#[trace("TC-700", "FR-245-AC-2")]
+#[trace("TC-1197", "FR-245-AC-7")]
+#[test]
+fn bounds_below_a_quantifier_family_constant_are_rejected() {
+    let real = family_gate(1);
+    assert_eq!(summary(&family_claim(&real)), "Violated");
+    let sibling = family_gate(2);
+    let honest = proved(family_claim(&sibling));
+    let bound = |value: i64| Some(filament_exact::Integer::from(value));
+    assert_eq!(honest.scale, filament_exact::Integer::from(1_i64));
+    assert_eq!(honest.lu_bounds.lower, [bound(5), bound(5), bound(0)]);
+    assert_eq!(honest.lu_bounds.upper, [bound(0), bound(0), bound(1)]);
+    assert_eq!(
+        family_verdict(&sibling, &honest),
+        ZoneCertificateVerdict::Accepted
+    );
+    let bounds = rejected(
+        CertificateRule::Malformed,
+        CertificateLocus::CertificateMember(CertificateMember::Bounds),
+    );
+
+    // Node 0 is the initial node, 1 follows `alpha`, 2 follows `go`, and 3
+    // and 4 follow `tick` from each.
+    let step = |certificate: &Certificate, from: usize, to: usize| {
+        certificate
+            .edges
+            .iter()
+            .position(|edge| edge.from == from && edge.to == to)
+            .expect("the edge")
+    };
+    assert_eq!(honest.nodes.len(), 5);
+    let mut forged = retarget(honest, &real);
+    let go = step(&forged, 0, 2);
+    forged.edges[go].to = 1;
+    step(&forged, 2, 4);
+    let mut forged = without_node(&without_node(&forged, 4), 2);
+    for place in [0, 1] {
+        forged.lu_bounds.lower[place] = None;
+        forged.lu_bounds.upper[place] = None;
+    }
+    assert_eq!(family_verdict(&real, &forged), bounds);
+    // One family bound alone, one below its constant.
+    for (lower, value) in [(true, 4), (false, -1)] {
+        let mut lowered = proved(family_claim(&sibling));
+        let side = if lower {
+            &mut lowered.lu_bounds.lower
+        } else {
+            &mut lowered.lu_bounds.upper
+        };
+        side[1] = bound(value);
+        assert_eq!(family_verdict(&sibling, &lowered), bounds, "{lower}");
+    }
+}
+
+/// A quantifier family's live places: one clock field and two live clocks,
+/// the receiver's `y` and one element's `x`.
+const FAMILY_CLOCKS: std::num::NonZeroU64 = std::num::NonZeroU64::MIN.saturating_add(1);
+
+/// [`claim`] over a timed subject of at most [`FAMILY_CLOCKS`] live clocks.
+fn family_claim(world: &World) -> Outcome {
+    claim_within(world, FAMILY_CLOCKS)
+}
+
+/// [`claim`] over a timed subject of at most `max_clocks` live clocks.
+pub(crate) fn claim_within(world: &World, max_clocks: std::num::NonZeroU64) -> Outcome {
+    let system = world.system();
+    let timed = TimedSystem::with_max_clocks(&system, "M", max_clocks).expect("a timed subject");
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("letters");
+    fsl_analyze::zone_check::check_timed_model(
+        fsl_analyze::zone_check::ZoneCheckRequest {
+            subject: &timed,
+            item: fsl_analyze::zone_check::ZoneCheckItem::Clause {
+                clause: node.clause(),
+                letters: &letters,
+            },
+            obligation: ItemObligation {
+                subject: SUBJECT,
+                kind: ObligationKind::Authored(fsl_replay::node_occurrence(node)),
+                reductions: fsl_route::reductions::ObligationReductions::default(),
+            },
+            limits: ZoneCheckLimits::default(),
+            reductions: &fsl_route::reductions::Reductions::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("EN-6 takes the claim")
+}
+
+/// The core's verdict on `certificate` for `world`'s clause under
+/// [`FAMILY_CLOCKS`].
+fn family_verdict(world: &World, certificate: &Certificate) -> ZoneCertificateVerdict {
+    verdict_within(world, FAMILY_CLOCKS, certificate)
+}
+
+/// The core's verdict on `certificate` for `world`'s clause over at most
+/// `max_clocks` live clocks.
+pub(crate) fn verdict_within(
+    world: &World,
+    max_clocks: std::num::NonZeroU64,
+    certificate: &Certificate,
+) -> ZoneCertificateVerdict {
+    let system = world.system();
+    let node = &world.package.graph().temporal_clauses()[0];
+    let letters = system.clause_letters(node).expect("letters");
+    fsl_replay::check_zone_certificate(
+        fsl_replay::ZoneCertificateRequest {
+            simulation: world.request(),
+            model: "M",
+            max_clocks,
+            item: fsl_replay::CertifiedItem::Clause {
+                clause: node.clause(),
+                letters: &letters,
+            },
+        },
+        &certificate.obligation,
+        certificate_item,
+        certificate,
+        CertificateCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the check runs")
 }

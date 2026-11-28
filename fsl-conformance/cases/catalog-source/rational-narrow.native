@@ -1,0 +1,3 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function f using v(): Rational[0,10;1,10] pure { let x: Rational[-20,20;1,20] = rational(-6,-4) in convert<Rational[0,10;1,10]>(x) }

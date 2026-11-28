@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared analyzer fixture support spans split integration test binaries"
+)]
 //! The state-graph tests' worlds: a one-type domain package whose fields are
 //! bounded integers and whose operations take no parameter, a native unit
 //! selecting it with a contract and state-graph claims, and the snapshots,
@@ -230,6 +234,12 @@ impl World {
         Self::with_profiles(model, "", body, starts)
     }
 
+    /// A world for fixtures whose function bodies deliberately retain
+    /// runtime definedness or range refusals while clauses remain linked.
+    pub(crate) fn kernel(model: Model, body: &str, starts: &[&[Object<'_>]]) -> Self {
+        Self::build(model, DIVISION_PROFILE, body, starts, CheckMode::Kernel)
+    }
+
     /// As [`Self::new`], with `profiles` (header `profile` lines) after the
     /// value profile.
     pub(crate) fn with_profiles(
@@ -353,6 +363,20 @@ impl World {
         }
     }
 
+    /// The binding `analyze` takes over this world's subject, with the
+    /// universe `keys` of its population.
+    pub(crate) fn binding(&self, keys: &[&str]) -> fsl_analyze::analyze::SubjectBinding<'_> {
+        fsl_analyze::analyze::SubjectBinding {
+            packages: &self.packages,
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![PopulationUniverse {
+                population: self.model.key(self.model.population),
+                keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+            }],
+        }
+    }
+
     /// The subject over the world's initial snapshots with universe `keys`.
     pub(crate) fn subject(&self, keys: &[&str], meter: ScalarLimits) -> ModelSubject<'_> {
         ModelSubject {
@@ -399,7 +423,7 @@ impl World {
             claim,
             GraphEvidence::Witness {
                 paths: vec![(WitnessPath::Path(path), source)],
-                over,
+                over: over.into_iter().collect(),
             },
             keys,
             ReplayLimits::default(),
@@ -537,6 +561,7 @@ impl World {
             max_depth: None,
             limits,
             seed: None,
+            retained: None,
         }
     }
 
@@ -602,22 +627,6 @@ pub(crate) fn temporal_config_world() -> World {
     World::with_profiles(config_version(), profile, &body, &[&objects])
 }
 
-/// The same temporal and hyper bindings under an order-only transition and
-/// claim, for identity read-back tests without equality-decision metadata.
-pub(crate) fn temporal_config_world_ordered() -> World {
-    let profile = "profile t = \"filament.temporal.event-position.false-extension/v1\";\n";
-    let contract = "post Advance using v on Config::ConfigVersion::attemptUpdate { \
-                    self.versionNumber > pre(self.versionNumber) }\n";
-    let temporal = "temporal TemporalProgress using t over (c: Config::ConfigVersion) \
-                    clock \"model-steps\" on origin { eventually[0,2] holds(true) }\n";
-    let hyper = "hyper HyperProgress using t over behaviours (c: Config::ConfigVersion) \
-                 exists trace a of Config { always [0, 2] holds(true) }\n";
-    let claim = "possible ReachesTwo using v over (c: Config::ConfigVersion) \
-                 { c.versionNumber < 2 }\n";
-    let body = format!("{contract}{claim}{temporal}{hyper}");
-    let objects: [Object<'_>; 1] = [("a", &[("versionNumber", 0)])];
-    World::with_profiles(config_version(), profile, &body, &[&objects])
-}
 pub(crate) const REACHES_THREE: &str =
     "possible ReachesThree using v over (c: Config::ConfigVersion) { c.versionNumber = 3 }\n";
 /// FR-166-AC-5's and FR-168-AC-5's target with no value at `versionNumber`
@@ -645,10 +654,69 @@ pub(crate) fn config_kernel_world_over(
 ) -> World {
     config_world_over_model_mode(
         config_version(),
+        "",
         extra,
         &format!("{QUOTIENT}{claims}"),
         keys,
         starts,
+        CheckMode::Kernel,
+    )
+}
+
+/// The header line by which a unit selects the integer-division law itself,
+/// so that replay recompiles it from its source.
+const DIVISION_PROFILE: &str = "profile d = \"filament.value.integer-division.truncating/v1\";\n";
+
+/// As [`config_kernel_world_over`], in a unit with [`DIVISION_PROFILE`].
+pub(crate) fn config_replayable_kernel_world(
+    extra: &str,
+    claims: &str,
+    keys: &[&str],
+    starts: &[Vec<i64>],
+) -> World {
+    config_world_over_model_mode(
+        config_version(),
+        DIVISION_PROFILE,
+        extra,
+        &format!("{QUOTIENT}{claims}"),
+        keys,
+        starts,
+        CheckMode::Kernel,
+    )
+}
+
+/// One counter `c`, initially 0, over `Int[0, 3]` with `inc` below 3,
+/// checked under Kernel in a unit with [`DIVISION_PROFILE`]: `aliases` (more
+/// `model` lines for the counter), then the functions `remainder`, undefined
+/// at 0, and `narrow`, refused at 3, the contract and `body`.
+pub(crate) fn counter_kernel_world(aliases: &str, body: &str) -> World {
+    let model = Model {
+        package: "test/counter",
+        alias: "C",
+        object: "Counter",
+        population: "counters",
+        symmetric: false,
+        fields: vec![Field {
+            name: "value",
+            range: Some((0, 3)),
+        }],
+        operations: vec![Operation {
+            name: "inc",
+            modifies: &["value"],
+        }],
+    };
+    let body = format!(
+        "{aliases}function remainder using v(divisor: Integer): Integer pure {{ 6 mod divisor }}\n\
+         function narrow using v(n: Integer): Int[0, 2] pure {{ n }}\n\
+         pre CanInc using v on C::Counter::inc {{ self.value < 3 }}\n\
+         post Inc using v on C::Counter::inc {{ self.value = pre(self.value) + 1 }}\n{body}"
+    );
+    let counter: [Object<'_>; 1] = [("c", &[("value", 0)])];
+    World::build(
+        model,
+        DIVISION_PROFILE,
+        &body,
+        &[&counter],
         CheckMode::Kernel,
     )
 }
@@ -714,11 +782,12 @@ fn config_world_over_model(
     keys: &[&str],
     starts: &[Vec<i64>],
 ) -> World {
-    config_world_over_model_mode(model, extra, claims, keys, starts, CheckMode::Linked)
+    config_world_over_model_mode(model, "", extra, claims, keys, starts, CheckMode::Linked)
 }
 
 fn config_world_over_model_mode(
     model: Model,
+    profiles: &str,
     extra: &str,
     claims: &str,
     keys: &[&str],
@@ -746,7 +815,7 @@ fn config_world_over_model_mode(
     let starts: Vec<&[Object<'_>]> = objects.iter().map(Vec::as_slice).collect();
     World::build(
         model,
-        "",
+        profiles,
         &format!("{CONFIG_CONTRACT}{extra}{claims}"),
         &starts,
         mode,

@@ -19,6 +19,7 @@ use fsl_package::verification_plan::{
     emit_verification_plans, VerificationPlan, VerificationPlanRefusal,
 };
 use fsl_semantics::model::observation::DocumentProvision;
+use ix_trace_rs::implements;
 use serde_json::Value;
 
 use super::settle::Settle;
@@ -84,6 +85,7 @@ fn refuse(code: Code, pointer: &str, cause: &'static str, reason: impl Into<Stri
 /// # Errors
 ///
 /// A refusal at the member's pointer, or the compile's refusal.
+#[implements("FR-480-AC-2")]
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
@@ -94,6 +96,7 @@ pub(super) fn run_bytes(
     let Some((request::Route::Source, plan_request)) = member(bytes)? else {
         return Ok(None);
     };
+    super::overrides::admit(super::overrides::RunRoute::VerificationPlan, overrides)?;
     let mut request: wire::Request = super::request_with_overrides(bytes, overrides)?;
     // A `synthesis` beside this member is refused by the synthesis run's own
     // mutual-exclusion check (FR-1037), which names every excluded member.
@@ -123,6 +126,7 @@ pub(super) fn run_bytes(
         });
     }
     let integer_division = request_integer_division(request.integer_division.take())?;
+    let certification = super::analyze::read_certification(request.require_certified.take())?;
     let program = super::required_program(&request)?;
     let mut intake = intake_with_bytes(
         directory,
@@ -176,7 +180,7 @@ pub(super) fn run_bytes(
         &mut intake,
         sources,
         false,
-        overrides.limits.copied().unwrap_or_default(),
+        overrides.spine_limits(),
         integer_division,
         None,
         |intake, checked, _, _, packages, units, _, _, _, _| {
@@ -204,8 +208,20 @@ pub(super) fn run_bytes(
             }
             // FSpec FR-824: `initial` is the state each consuming step starts
             // from, and its complete populations are the subject's universes.
-            let mut binding =
-                SubjectSelection::default_over(&documents).binding(&packages, &documents);
+            let mut binding = SubjectSelection::default_over(&documents)
+                .binding_with_source_packages(
+                    &packages,
+                    &documents,
+                    package.graph().source_packages(),
+                )
+                .map_err(|ambiguity| {
+                    refuse(
+                        Code::AmbiguousDeclaration,
+                        "/initial",
+                        "ambiguous-name",
+                        ambiguity.to_string(),
+                    )
+                })?;
             binding.initial = initial;
             let mut provision = SourceProvision::default();
             for unit in std::iter::once(&source).chain(units) {
@@ -226,18 +242,15 @@ pub(super) fn run_bytes(
                 seed: plan_request.seed,
                 max_trace_length: plan_request.max_trace_length,
                 max_value_bits: plan_request.max_value_bits,
+                certification,
             };
             // The native-run request carries no analysis limits or deadline member
             // (FSpec FR-824 "no member sets a step's limits"), so the limits are
             // the analyze route's own over its empty `limits` member.
-            let mut analyze_limits =
-                super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None);
-            if let Some(accounting) = overrides.accounting {
-                analyze_limits.accounting = *accounting;
-            }
-            if let Some(observation) = overrides.observation {
-                analyze_limits.observation = *observation;
-            }
+            let analyze_limits = super::overrides::analyze_limits(
+                super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None),
+                overrides,
+            );
             let consumers =
                 plan_consumers(package, plan, &inputs, &analyze_limits).map_err(plan_refusal)?;
             plan_request.close_by_plan(&request::Consumers {

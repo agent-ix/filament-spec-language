@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Finite first-target reward proofs with cyclic continuations.
 
-use super::long_run_certificate::{limits, produce};
+use super::long_run_certificate::produce;
+use crate::long_run_support::limits;
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::checking::CheckMode;
@@ -140,7 +141,13 @@ fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
     let binding = fsl_replay::claim_binding(&system, closed.claim("Cost"))
         .unwrap()
         .unwrap();
-    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    let raw = system
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .unwrap()
+        .0;
     let key = ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap();
     let item = fsl_replay::probabilistic_claim_identity(closed.claim("Cost")).unwrap();
     let certificate = ExactProbabilityCertificate {
@@ -175,6 +182,7 @@ fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
             closed.request("Cost", ModelCheckLimits::default()),
         )],
         &Cancel::new(),
+        fsl_replay::CertificationPolicy::AdmitAny,
     );
     // The closed zero-cost class never reaches the target, so the expected
     // total is infinite and `<= 0` fails. It is refuted by a replayed finite

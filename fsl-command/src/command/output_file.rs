@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-810: create the compile's output file without replacing what is there.
 
 use super::{Result, RunCause};

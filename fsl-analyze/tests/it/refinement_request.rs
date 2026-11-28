@@ -20,7 +20,7 @@ use fsl_semantics::check::{Capability, RequirementRecord};
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
-use crate::derived_request::derived_items;
+use crate::derived_request_support::derived_items;
 use crate::refinement_fixture::{cas_refines_counter, mutated, World, UNLIMITED};
 
 const ENSURE: &str = "ensure fair weak each Spec::Counter::inc;\n";
@@ -288,6 +288,7 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            retained: None,
         },
         &Cancel::new(),
     )
@@ -316,7 +317,14 @@ fn settle(world: &World, initial: &DocumentRef) -> TerminalValue {
             abstract_initial: vec![initial.clone()].into(),
         },
         &Cancel::new(),
-        |payload| replay_refinement_trace(world.refinement(), &systems, payload),
+        |payload| {
+            replay_refinement_trace(
+                world.refinement(),
+                &systems,
+                payload,
+                &fsl_replay::ModelCheckLimits::default(),
+            )
+        },
     )
     .value
 }

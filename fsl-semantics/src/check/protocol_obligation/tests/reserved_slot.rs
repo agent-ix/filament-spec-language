@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-488 "Reserved slot names": the checker refuses a source identifier in
 //! FSpec FR-402's reserved slot-parameter form where it would name a
 //! `value`/`parameter` node, at the identifier, and admits near misses
@@ -7,8 +8,8 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
-use super::{BASE, assemble};
-use crate::check::{CheckCause, CheckRefusal};
+use super::{assemble, BASE};
+use crate::check::{CheckCause, SemanticCheckRefusal};
 
 /// One reserved-name refusal: the identifier, its tag and the text of the
 /// region the refusal names.
@@ -21,7 +22,7 @@ struct Found {
 
 /// Every refusal of `declarations`, with the reserved-name ones read out
 /// beside the text of their region, and whether the unit checked.
-fn reserved(declarations: &str) -> (Vec<Found>, Vec<CheckRefusal>) {
+fn reserved(declarations: &str) -> (Vec<Found>, Vec<SemanticCheckRefusal>) {
     let (text, assembled) = assemble(declarations);
     let regions = assembled.regions();
     let refusals = match assembled.check(

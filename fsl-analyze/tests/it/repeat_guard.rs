@@ -15,7 +15,7 @@ use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
 use crate::litmus::{attempt, contracts, field, package, protocol, Documents};
-use crate::weak_memory::select;
+use crate::weak_memory_support::select;
 
 const PRETEST_CLAIM: &str = "temporal NoLoad using t0 over (k: M::Core) clock \"model-steps\" \
     on origin { always holds(k.r1 = 3) }\n";

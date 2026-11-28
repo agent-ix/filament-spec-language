@@ -1,0 +1,19 @@
+{
+  "grammar_schema": {
+    "productions": [
+      { "keyword": "retention", "clauses": ["subject", "days"] }
+    ]
+  },
+  "typed_node_schema": {
+    "nodes": [
+      {
+        "keyword": "retention",
+        "node_kind": "retention",
+        "clauses": [
+          { "name": "subject", "type": "Text" },
+          { "name": "days", "type": "Int[1, 3650]" }
+        ]
+      }
+    ]
+  }
+}

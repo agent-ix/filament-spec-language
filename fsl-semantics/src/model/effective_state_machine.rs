@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! A completed view's answer for a state machine's effective states and
 //! transitions, and for type conformance (FR-081, FR-208).
 //!
