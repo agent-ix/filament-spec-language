@@ -88,6 +88,19 @@ This 48-unit bound admits the linear post-fix result and rejects that recorded
 quadratic baseline by more than 700 times. These counters are test-support
 instrumentation, not caller-visible stage counters.
 
+For the additional compile rewrite criterion FR-869-AC-11, the accepted
+12,000-value fixture counts both structural-to-index rewriting and operand-slot
+restoration. One work unit is an ID-slot visit, one full path-length inspection
+allowance for an ID predicate or rewrite, one structural-key lookup, or one
+operand-row lookup. The measured linear total is 2,233,442 units
+(1,584,882 structural-to-index and 648,560 operand-slot-to-index), or 186.12
+per value; adding 14% headroom and rounding up gives the 213-unit ceiling.
+The test reports each component and their combined total, rejects the
+4,753,944,407-unit repeated-replacement baseline, and asserts identical
+checked-package bytes between the repeated-reference and one-pass paths.
+These counters are test-support instrumentation, not caller-visible stage
+counters.
+
 ## Expected Results
 
 | Workload row | Compile | Check/lower | Checked-package read | Analyze | Replay |
