@@ -1758,7 +1758,9 @@ impl Pass<'_, '_> {
                 // Aggregates over that subject have no checked aggregate
                 // payload for package emission; refuse them here instead of
                 // letting the lowerer report a missing typed term.
-                causes.push(TemporalCause::AggregateModelSubject { span: atom.span });
+                causes.push(TemporalCause::AggregateModelSubject {
+                    span: atom.term.span,
+                });
             }
         }
         if timed_reader.is_some() && formula.iter().any(|(_, node)| {
