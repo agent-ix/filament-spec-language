@@ -728,20 +728,17 @@ fn workload_infinite_mean_checker_rederives_free_delay_refusal_shapes() {
             .terminal()
             .and_then(|terminal| terminal.exact_certificate_document())
             .expect("the source claim retains its certificate");
-        let mut typed = fsl_replay::read_probability_certificate(
-            source_bytes,
-            limits(),
-            &Cancel::new(),
-        )
-        .expect("source certificate parses");
+        let mut typed =
+            fsl_replay::read_probability_certificate(source_bytes, limits(), &Cancel::new())
+                .expect("source certificate parses");
         let target_claim = target_world
             .package
             .graph()
             .probabilistic_model()
             .claim("MeanTime")
             .expect("target claim");
-        typed.identity = fsl_replay::probabilistic_claim_identity(target_claim)
-            .expect("target identity");
+        typed.identity =
+            fsl_replay::probabilistic_claim_identity(target_claim).expect("target identity");
         typed.targets.clear();
         let doc: Value = serde_json::from_slice(
             &fsl_replay::write_probability_certificate(&typed, limits(), &Cancel::new())
@@ -750,7 +747,10 @@ fn workload_infinite_mean_checker_rederives_free_delay_refusal_shapes() {
         .expect("rewritten document parses");
         let checked = check(&target_world, "MeanTime", &doc);
         assert!(
-            matches!(checked, Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))),
+            matches!(
+                checked,
+                Ok(ExactProbabilityCertificateCheck::AcceptedInfinite(_))
+            ),
             "{checked:?}"
         );
     }
@@ -786,7 +786,14 @@ fn free_delay_mean_world(
 }
 
 fn uncertified_race(send: &str, toggle: &str, delays: &str) -> World {
-    free_delay_mean_world(send, toggle, delays, "under One", "holds(c.late)", ">= 3 ms")
+    free_delay_mean_world(
+        send,
+        toggle,
+        delays,
+        "under One",
+        "holds(c.late)",
+        ">= 3 ms",
+    )
 }
 
 fn is_not_yet_certifiable(world: &World) {

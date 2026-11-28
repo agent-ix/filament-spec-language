@@ -212,7 +212,9 @@ fn grid_floor(value: &Rational, q: u32) -> Result<(Integer, bool), TimedDelayRef
 #[implements("FSpec-FR-420-AC-17", "FSpec-FR-420-AC-18")]
 fn on_grid(delay: Rational, range: &DelayInterval, q: u32) -> Result<Rational, TimedDelayRefusal> {
     let one = Integer::one();
-    let at = |index: &Integer| Rational::from_integer(index.clone()).divided_by_power_of_two(u64::from(q));
+    let at = |index: &Integer| {
+        Rational::from_integer(index.clone()).divided_by_power_of_two(u64::from(q))
+    };
     let (floor, exact) = grid_floor(&delay, q)?;
     let up = if exact { floor } else { floor.add(&one) };
     let rounded = at(&up);
@@ -224,7 +226,11 @@ fn on_grid(delay: Rational, range: &DelayInterval, q: u32) -> Result<Rational, T
     }
     // The greatest multiple at or below the upper end, below it if excluded.
     let (floor, exact) = grid_floor(upper, q)?;
-    let last = if exact && !closed { floor.sub(&one) } else { floor };
+    let last = if exact && !closed {
+        floor.sub(&one)
+    } else {
+        floor
+    };
     let point = at(&last);
     let (lower, lower_closed) = range.lower();
     if point > *lower || (point == *lower && lower_closed) {
@@ -596,7 +602,10 @@ mod tests {
         // A uniform delay is never rounded: (2, 5/2] at u = 0 is
         // 2 + (1/2) / 2 = 9/4, off the grid of 2^0.
         let open = DelayInterval::between((exact(2, 1), false), Some((exact(5, 2), true)));
-        assert_eq!(draw_at_zero(&DelayDistribution::Uniform, open), Ok(exact(9, 4)));
+        assert_eq!(
+            draw_at_zero(&DelayDistribution::Uniform, open),
+            Ok(exact(9, 4))
+        );
     }
 
     #[trace("FSpec-FR-420-AC-18")]
