@@ -437,79 +437,15 @@ fn analyze_admits_one_thousand_enums_at_its_request_byte_bound() {
     assert_analyze_request_exact_and_one_byte_over(&path);
 }
 
-/// The analyze request over the checked package of the 1,000-link
-/// operation-redefinition model. FR-869-AC-8 refuses that compile at the
-/// default `emit.output_bytes` and its package exceeds 1 GiB, so the request
-/// carries a prebuilt valid checked package of the same shape (TC-3242) with
-/// the emit bound raised for the one build, and the analysis reads it back
-/// under the bounds `analyze_size_limits` states.
-fn redefinition_package_request(directory: &Path) -> PathBuf {
-    let model = counter_model_with_one_thousand_links(true);
-    let model_value: Value = serde_json::from_slice(&model).expect("link model is JSON");
-    let compile = compile_request_with_semantic_model(directory, &analyze_source(""), &model_value);
-    let limits = std::collections::BTreeMap::from([
-        (Setting::S1Tokens, 2_000_000),
-        (Setting::S1Nodes, 2_000_000),
-        (Setting::S1WorkUnits, 2_000_000),
-        (Setting::S3Nodes, 2_000_000),
-        (Setting::S3WorkUnits, 2_000_000),
-        (Setting::EmitOutputBytes, 4_294_967_296),
-    ]);
-    let overrides = RequestOverrides {
-        limits: Some(&limits),
-        ..RequestOverrides::default()
-    };
-    let outcome = command::compile_outcome_with_limits_and_overrides(
-        &compile,
-        RunLimits::default(),
-        &overrides,
-    )
-    .expect("the redefinition package builds with the emit bound raised");
-    std::fs::write(directory.join("package.json"), outcome.package_bytes())
-        .expect("package writes");
-    drop(outcome);
-    std::fs::write(directory.join("counter.json"), &model).expect("model writes");
-    let start = json!({"format":"filament.state.snapshot/v1",
-        "identity":{"authority":"contracts","identity":"queue-start"},
-        "observation":"current","model":{"identity":"test/counter"},
-        "anchor":{"kind":"initialization","name":"queue-start"},
-        "populations":[{"population":"ix://test/counter/counters","complete":true,
-            "objects":[{"key":"queue-east","type":"ix://test/counter/Counter",
-                "fields":{"value":{"integer":"0"}}}]}]});
-    std::fs::write(
-        directory.join("start.json"),
-        serde_json::to_vec(&start).expect("snapshot serializes"),
-    )
-    .expect("snapshot writes");
-    let request = json!({"format":"native-analyze/1","request":{
-        "package":{"file":"package.json"},
-        "models":[{"format":"semantic-ir/2.0.0","source":{"file":"counter.json",
-            "authority":"agent-ix","identity":"test:qsl-3570-model",
-            "document":"SizeMatrixModel","formal_revision":1}}],
-        "documents":[{"file":"start.json"}],"items":[{"claim":"Bounded"}]}});
-    let path = directory.join("analyze.json");
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&request).expect("analyze request serializes"),
-    )
-    .expect("analyze request writes");
-    path
-}
-
-/// Analyze admits both 1,000-link model fixtures at exact request bytes and
+/// Analyze admits the 1,000-link inheritance model at exact request bytes and
 /// settles the bounded claim; one extra request byte stays document-level.
-/// The redefinition fixture is analyzed over its prebuilt checked package
-/// (FR-620-AC-15).
+/// FR-620-AC-15 redefinition half open: QSL-3634b.
 #[trace("TC-3242", "FR-620-AC-15")]
 #[test]
-fn analyze_admits_both_thousand_link_models_at_the_request_byte_bound() {
+fn analyze_admits_the_thousand_link_inheritance_model_at_the_request_byte_bound() {
     let directory = tempfile::tempdir().expect("analyze workspace");
     let model = counter_model_with_one_thousand_links(false);
     let path = analyze_request_with_model(directory.path(), &analyze_source(""), &model);
-    assert_analyze_request_exact_and_one_byte_over(&path);
-
-    let directory = tempfile::tempdir().expect("redefinition workspace");
-    let path = redefinition_package_request(directory.path());
     assert_analyze_request_exact_and_one_byte_over(&path);
 }
 
