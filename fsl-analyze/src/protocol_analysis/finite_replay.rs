@@ -323,6 +323,27 @@ pub(crate) enum ReplayFault {
     /// The protocol has a symbolic capacity, and a supplied trace's subject
     /// binds no capacity: requires-bound (FSpec FR-785).
     UnboundCapacity,
+    /// An admitting population of the protocol's `over` input has no
+    /// universe: requires-bound, before any instance is listed (FR-125-AC-13).
+    RequiresBound,
+    /// Two initial records of one universe key differ in type: the subject's
+    /// admission refusal (FR-125-AC-13, AC-23; FR-315 row 7).
+    ConflictingIdentity(Box<fsl_eval::simulation::ConflictingIdentity>),
+}
+
+impl ReplayFault {
+    /// The fault of an `over` instancing that was not simulated: the refusals
+    /// FR-125-AC-13 names keep their own codes, as `instance_stop` maps them
+    /// for every other route; a stopped classification is a broken invariant.
+    fn instancing(error: fsl_eval::simulation::NotSimulated) -> Self {
+        use fsl_eval::simulation::NotSimulated;
+        match error {
+            NotSimulated::RequiresBound(_) => Self::RequiresBound,
+            NotSimulated::UnboundCapacity(_) => Self::UnboundCapacity,
+            NotSimulated::ConflictingIdentity(conflict) => Self::ConflictingIdentity(conflict),
+            _ => Self::Broken,
+        }
+    }
 }
 
 /// What a claim's required clauses add to a replay (FR-941 "Formula claims").
@@ -707,9 +728,12 @@ impl<'a> ReplaySubject<'a, '_> {
             .ok_or(ReplayFault::Broken)?;
         let model = ModelSystem::new(self.simulation())
             .map_err(|failure| ReplayFault::Admission(Box::new(failure)))?;
+        // FR-125 "Instancing": an empty claim lists no instance, which the
+        // replay reports as no initial state.
         model
-            .instances(&input.value_type)
-            .map_err(|_| ReplayFault::Broken)
+            .claim_bindings(&input.value_type)
+            .map(fsl_eval::simulation::model::ClaimBindings::into_instances)
+            .map_err(ReplayFault::instancing)
     }
 
     /// The temporal clauses the protocol requires (FR-218), in `requires`
@@ -1050,7 +1074,12 @@ fn report_fault(error: ReplayFault) -> EngineReport {
             EngineReport::Refused(crate::analyze::admission(&failure))
         }
         ReplayFault::Stopped(stop) => EngineReport::Refused(Refusal::Failed(stop.cause)),
-        ReplayFault::UnboundCapacity => EngineReport::Refused(Refusal::RequiresBound),
+        ReplayFault::UnboundCapacity | ReplayFault::RequiresBound => {
+            EngineReport::Refused(Refusal::RequiresBound)
+        }
+        ReplayFault::ConflictingIdentity(conflict) => {
+            EngineReport::Refused(crate::analyze::items::conflicting_identity(&conflict))
+        }
         ReplayFault::Protocol | ReplayFault::Broken => fault(),
     }
 }
@@ -1232,9 +1261,9 @@ pub(crate) fn package_finite_replay_item<'a>(
                 Ok(model) => model,
                 Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
             };
-            let instances = match model.instances(&program.over_type) {
-                Ok(instances) => instances,
-                Err(_) => return fault(),
+            let instances = match model.claim_bindings(&program.over_type) {
+                Ok(instances) => instances.into_instances(),
+                Err(error) => return report_fault(ReplayFault::instancing(error)),
             };
             let selected = binding
                 .universes

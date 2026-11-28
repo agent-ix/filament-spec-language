@@ -32,7 +32,9 @@ use super::{
     ModelSampleError, ModelShrinkError, ModelSimState, ModelSimulationRequest, ModelSystem,
     ModelTrace,
 };
-use super::{AdmissionFailure, ClauseOutcome, ContractClause, ContractClauseKind};
+use super::{
+    AdmissionFailure, ClauseOutcome, ContractClause, ContractClauseKind, NoClaimInstances,
+};
 use crate::simulation::choice::ChoicePoint;
 use crate::simulation::trace::SampleProvenance;
 use crate::value::{CheckedPackageEvaluation, QualifiedName};
@@ -3847,13 +3849,17 @@ fn temporal_result(
             ModelShrinkError::NotCounterexample,
         ));
     };
-    let instances = system.instances(&node.clause().over().1)?;
-    if instances.is_empty() {
-        return Err(ModelBasedTestError::ClauseUndetermined {
-            clause: node.clause().name().to_owned(),
-            outcome: "temporal clause has no model instances".to_owned(),
-        });
-    }
+    // FR-125-AC-13: the typed empty claim names its outcome.
+    let instances = match system.claim_instances(&node.clause().over().1) {
+        Ok(instances) => instances.as_slice().to_vec(),
+        Err(NoClaimInstances::NotSimulated(error)) => return Err(error.into()),
+        Err(empty) => {
+            return Err(ModelBasedTestError::ClauseUndetermined {
+                clause: node.clause().name().to_owned(),
+                outcome: empty.to_string(),
+            })
+        }
+    };
     let len = u64::try_from(states.len()).map_err(|_| ModelBasedTestError::ClauseUndetermined {
         clause: node.clause().name().to_owned(),
         outcome: "trace length exceeds u64".to_owned(),

@@ -587,6 +587,17 @@ fn undefined_receive_unit() -> String {
 /// The in-process `finite-replay` item over the Kernel-checked `body` and
 /// the trace document `trace`: the settled outcome items.
 fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> {
+    kernel_replay_items_without(body, identity, trace, None)
+}
+
+/// [`kernel_replay_items`] over a subject whose universes omit the population
+/// `unbounded`, which leaves it without a bound.
+fn kernel_replay_items_without(
+    body: &str,
+    identity: &str,
+    trace: &Value,
+    unbounded: Option<&str>,
+) -> Vec<Value> {
     use fsl_analyze::analyze::document::{settle_run, AnalyzeRun, ResolvedClaim, ResolvedItem};
     use fsl_analyze::analyze::DeadlineSupply;
     use fsl_analyze::analyze::{
@@ -655,7 +666,13 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
                 packages: &documents.packages,
                 snapshots: &documents.snapshots,
                 initial: vec![documents.initial.clone()],
-                universes: documents.universes(),
+                universes: documents
+                    .universes()
+                    .into_iter()
+                    .filter(|universe| {
+                        unbounded.is_none_or(|name| universe.population != crate::litmus::key(name))
+                    })
+                    .collect(),
             },
             provision: SourceProvision::single(
                 package.graph().source(),
@@ -676,6 +693,32 @@ fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> 
     )
     .expect("a settled run");
     settled.items
+}
+
+/// FR-125-AC-13 (FR-941 over FR-125 "Instancing"): the `over` population of a
+/// finite-replay protocol that has no universe is refused `requires-bound`
+/// before any step replays, the way every other route reads it: the item takes
+/// `analyze`'s requires-bound row (`unbounded-extent`, FSpec FR-785), never the
+/// broken-invariant fault it settled before. No admission before the
+/// instancing refuses first: the subject admits (`ModelSystem::new`) and the
+/// trace is read.
+#[trace("TC-2621", "FR-125-AC-13")]
+#[test]
+fn a_finite_replay_over_a_population_with_no_universe_requires_a_bound() {
+    let body = order_protocol(true);
+    let items = kernel_replay_items_without(
+        &body,
+        "no-universe",
+        &trace_document("no-universe", &[]),
+        Some("cores"),
+    );
+    let item = &items[0];
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(
+        (diagnostic["code"].as_str(), diagnostic["cause"].as_str()),
+        (Some("unsupported_projection"), Some("unbounded-extent")),
+        "{item}"
+    );
 }
 
 /// FR-941-AC-5: a protocol expression undefined at a replayed state refutes
