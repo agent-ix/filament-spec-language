@@ -1085,7 +1085,7 @@ fn native_result_two_refuses_an_extraction_map_with_no_segments() {
         "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md", "bytes": []},
         "body": {"authority": "agent-ix", "identity": "body", "document": "Body", "bytes": []},
         "binding": {"clause": "check", "package": "fixture/package"},
-        "outcome": {"availability": {"state": "available", "reason": "partial", "lossy": true}, "clause_text": {"check": "true"}},
+        "outcome": {"availability": {"state": "available", "reason": "partial", "lossy": true}, "clause_text": {"check": "true"}, "diagnostics": []},
         "map": {"region": {"start": 0, "end": 1}, "segments": [
             {"body_start": 0, "body_end": 1, "original_start": 0, "original_end": 1}]}
     }))
