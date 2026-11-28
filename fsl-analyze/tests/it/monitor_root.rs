@@ -86,7 +86,12 @@ fn admitted(root: &PlanRoot) -> Box<CheckedPackageV2> {
 
 /// The final plan retains each body location under its rekeyed entry function,
 /// while a declared helper keeps its original origin and checker coordinates.
-#[trace("FR-251-AC-9", "FSpec-FR-322-AC-309", "FSpec-FR-322-AC-541")]
+#[trace(
+    "FR-251-AC-9",
+    "FSpec-FR-322-AC-309",
+    "FSpec-FR-322-AC-540",
+    "FSpec-FR-322-AC-541"
+)]
 #[test]
 fn monitor_body_locations_follow_entry_rekeys_and_preserve_helper_origins() {
     use filament_contract_model::{CheckedBodyLocationOrigin, CheckedTermDataV2};

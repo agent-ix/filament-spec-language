@@ -820,6 +820,7 @@ fn relabel_term_data_inner(
     data: &mut filament_contract_model::CheckedTermDataV2,
 ) {
     if by_id.is_empty() {
+        sort_body_rows(data);
         return;
     }
     // Some(true): the row moved, Some(false): unchanged, None: dropped.
@@ -891,9 +892,13 @@ fn relabel_term_data_inner(
     }
     data.body_locations
         .retain_mut(|row| relabel(&row.application, &mut row.occurrence).is_some());
-    // A record node's id also changes with a field rename (FR-487), which can
-    // move its place among the rows, so the rows are always put in key order
-    // again; a function's own rows keep their relative walk order.
+    sort_body_rows(data);
+}
+
+/// A record node's id also changes with a field rename (FR-487), which can
+/// move its place among the rows, so the rows are always put in key order
+/// again, with or without a renumbering.
+fn sort_body_rows(data: &mut filament_contract_model::CheckedTermDataV2) {
     data.body_locations.sort_by(|left, right| {
         (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
             &right.application,
@@ -1042,6 +1047,28 @@ mod rewalk_tests {
         let by_id: BTreeMap<_, _> = [(id("app"), mapping)].into_iter().collect();
         relabel_term_data(&by_id, &Synthetics::new(), &mut data);
         assert_eq!(functions(&data), [("h".to_owned(), 0), ("g".to_owned(), 1)]);
+    }
+
+    /// FSpec FR-322-AC-541 (QSL-3613): a rename with no renumbering still puts
+    /// the body rows in key order.
+    #[ix_trace_rs::trace("FSpec-FR-322-AC-541")]
+    #[test]
+    fn body_rows_are_sorted_when_nothing_is_renumbered() {
+        let mut first = body_row("g", 0);
+        first.application = id("b");
+        let mut second = body_row("h", 0);
+        second.application = id("a");
+        let mut data = CheckedTermDataV2 {
+            body_locations: vec![first, second],
+            ..CheckedTermDataV2::default()
+        };
+        relabel_term_data(&BTreeMap::new(), &Synthetics::new(), &mut data);
+        let order: Vec<_> = data
+            .body_locations
+            .iter()
+            .map(|row| row.application.clone())
+            .collect();
+        assert_eq!(order, [id("a"), id("b")]);
     }
 
     fn pairs(slots: &[Slot]) -> Vec<(bool, u64, u64)> {
