@@ -183,7 +183,10 @@ A typed `SemanticCheckRefusal` with a span, and no `CheckedRefinement`, on refus
   values recursively use this same lifting rule. A missing or extra record
   field, a tuple arity mismatch, or an active union tag absent from the paired
   union SHALL refuse `ill_typed`/`type-mismatch` at the first mismatched
-  component path; the checker SHALL produce no `CheckedRefinement`.
+  component path; the checker SHALL produce no `CheckedRefinement`. A record,
+  tuple or union pairs only with a composite of the same kind, and a composite
+  of another kind SHALL refuse `ill_typed`/`type-mismatch` at the row's
+  expression (FR-135-AC-20).
 - The checker SHALL refuse a refinement whose abstract model declares a
   relationship with `unsupported_construct`/`declaration-form` at the
   abstract alias of the declaration header, once per refinement, naming the
