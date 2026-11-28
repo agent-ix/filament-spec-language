@@ -13,7 +13,7 @@ const SHAPES: [(usize, usize); 3] = [(1, 1), (50, 4), (500, 8)];
 fn encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("key/encode");
     for (n, f) in SHAPES {
-        let world = mc::keys(n, f).expect("the state builds");
+        let world = mc::keys(n, f, &fsl_cst::ParserContext::new()).expect("the state builds");
         let system = ModelSystem::new(world.simulation()).expect("the subject admits");
         let work = mc::run_encode(&system).expect("the key encodes");
         group.throughput(Throughput::Bytes(work.key_bytes));

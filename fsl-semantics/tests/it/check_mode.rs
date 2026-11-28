@@ -22,6 +22,7 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 fn check(declarations: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("{HEADER}{declarations}\n");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "check-mode"),
         "check-mode.native",
         text.as_bytes(),

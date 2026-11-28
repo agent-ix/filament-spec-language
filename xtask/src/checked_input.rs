@@ -1139,7 +1139,6 @@ mod tests {
     #[test]
     #[trace("TC-745", "FR-270-AC-2")]
     fn tc_745_planted_reconstruction_fails_the_gate() {
-        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let parse = "fn plant(graph: &fsl_semantics::check::CheckedGraph) {\n    \
                      let _ = fsl_cst::parse_source(&qsl3309_parser_context, source, limits);\n}\n";
         assert_eq!(

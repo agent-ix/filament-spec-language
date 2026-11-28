@@ -28,7 +28,7 @@ fn workers(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(5));
     for branches in BRANCHES {
-        let world = mc::protocol(branches).expect("the protocol builds");
+        let world = mc::protocol(branches, &fsl_cst::ParserContext::new()).expect("the protocol builds");
         for (label, limit) in worker_limits() {
             let work = mc::run_reach(&world, limit).expect("the search completes");
             group.throughput(Throughput::Elements(work.states));

@@ -299,7 +299,7 @@ mod tests {
             for middle in Level::ALL {
                 for inner in Level::ALL {
                     let input = DeepInput::new(Shape::Expression(vec![outer, middle, inner]));
-                    if let Err(refusal) = input.compile() {
+                    if let Err(refusal) = input.compile_with_context(&ParserContext::new()) {
                         panic!("{refusal:?}\n{}", input.source);
                     }
                 }

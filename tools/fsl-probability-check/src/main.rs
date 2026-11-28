@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, CancelCause};
+use fsl_cst::ParserContext;
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_package::ObligationIdentity;
 use fsl_replay::spine::SourceComponent;
@@ -86,7 +87,7 @@ struct Request {
 }
 
 fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
-    let parser_context = fsl_replay::spine::ParserContext::new();
+    let parser_context = ParserContext::new();
     let named = request.source.as_ref().map(|source| {
         DefinitionSourceRef::from_wire((source.authority.clone(), source.identity.clone()))
     });

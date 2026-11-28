@@ -401,6 +401,7 @@ mod tests {
             profile v = \"filament.value.complete/v1\";\n\
             function seven using v(x: Int[0, 9], y: Int[0, 9]): Boolean pure { x < y }\n";
         let site = fsl_replay::call_site(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("tests", "inspect"),
             fsl_replay::CallSiteUnit::new(String::from("fixture"), "inspect.native", source),
             [],

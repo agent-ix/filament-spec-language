@@ -19,6 +19,7 @@ fn check(
          {declarations}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "option-values"),
         "option-values.native",
         text.as_bytes(),

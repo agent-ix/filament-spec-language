@@ -40,6 +40,7 @@ fn check(
          profile v = \"filament.value.complete/v1\";\n{headers}{declarations}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("a", "division-run"),
         "division-run.native",
         text.as_bytes(),

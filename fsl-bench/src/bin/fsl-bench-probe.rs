@@ -35,7 +35,7 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_semantics::model::domain_package::DomainPackageRecord;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::AdmissionOutcome;
-use ix_trace_rs::string_edge;
+use ix_trace_rs::{implements, string_edge};
 
 /// The parser volume sizes the probe reports (functions per source).
 const VOLUME_SIZES: [usize; 6] = [100, 500, 1_000, 2_000, 3_000, 4_000];

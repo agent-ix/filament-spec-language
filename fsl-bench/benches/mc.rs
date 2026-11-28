@@ -45,7 +45,7 @@ fn state_graph(c: &mut Criterion) {
     for symmetric in [false, true] {
         let label = if symmetric { "symmetric" } else { "plain" };
         for (n, k) in RINGS {
-            let world = mc::ring_state_graph(n, k, symmetric).expect("the ring builds");
+            let world = mc::ring_state_graph(n, k, symmetric, &fsl_cst::ParserContext::new()).expect("the ring builds");
             let work = mc::run_state_graph(&world, symmetric).expect("the graph completes");
             group.throughput(states(&work));
             group.bench_with_input(BenchmarkId::new(label, format!("{n}x{k}")), &(), |b, ()| {
@@ -61,7 +61,7 @@ fn safety(c: &mut Criterion) {
     for deadlock in [false, true] {
         let label = if deadlock { "deadlock" } else { "invariant" };
         for (n, k) in RINGS {
-            let world = mc::ring_safety(n, k).expect("the ring builds");
+            let world = mc::ring_safety(n, k, &fsl_cst::ParserContext::new()).expect("the ring builds");
             let (work, _) = mc::run_safety(&world, deadlock).expect("the item holds");
             group.throughput(states(&work));
             group.bench_with_input(BenchmarkId::new(label, format!("{n}x{k}")), &(), |b, ()| {
@@ -75,7 +75,7 @@ fn safety(c: &mut Criterion) {
 fn liveness(c: &mut Criterion) {
     let mut group = group(c, "mc/liveness");
     for (n, k) in RINGS {
-        let world = mc::ring_liveness(n, k).expect("the ring builds");
+        let world = mc::ring_liveness(n, k, &fsl_cst::ParserContext::new()).expect("the ring builds");
         let (work, _) = mc::run_liveness(&world).expect("the clause holds");
         group.throughput(states(&work));
         group.bench_with_input(
@@ -90,7 +90,7 @@ fn liveness(c: &mut Criterion) {
 fn frame_candidates(c: &mut Criterion) {
     let mut group = group(c, "mc/frame_candidates");
     for (m, r) in WIDES {
-        let world = mc::wide(m, r).expect("the model builds");
+        let world = mc::wide(m, r, &fsl_cst::ParserContext::new()).expect("the model builds");
         let work = mc::run_frame_candidates(&world).expect("the item holds");
         group.throughput(states(&work));
         group.bench_with_input(
@@ -105,7 +105,7 @@ fn frame_candidates(c: &mut Criterion) {
 fn observation(c: &mut Criterion) {
     let mut group = group(c, "mc/observation");
     for records in UNRELATED {
-        let world = mc::observation(records).expect("the model builds");
+        let world = mc::observation(records, &fsl_cst::ParserContext::new()).expect("the model builds");
         let work = mc::run_observation(&world).expect("the item holds");
         group.throughput(states(&work));
         group.bench_with_input(BenchmarkId::from_parameter(records), &(), |b, ()| {

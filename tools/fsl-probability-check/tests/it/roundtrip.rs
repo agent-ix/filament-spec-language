@@ -74,7 +74,7 @@ fn compile_source(
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let packages = package_input([DOMAIN]).unwrap();
-    let parsed = spine::parse(&qsl3309_parser_context,
+    let parsed = spine::parse_with_context(
         &ParseRequest {
             source: &identity,
             path: "certificate.native",
@@ -82,10 +82,11 @@ fn compile_source(
         },
         limits.source,
         &cancel,
+        &qsl3309_parser_context,
     )
     .unwrap()
     .into_value();
-    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .unwrap()
         .into_value();
     let checked = spine::check(

@@ -28,6 +28,7 @@ struct Checked {
 fn check(declarations: &str) -> Checked {
     let text = format!("{HEADER}{declarations}\n");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1001,6 +1002,7 @@ fn family_check(
 
     let text = format!("{HEADER}{declarations}\n");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

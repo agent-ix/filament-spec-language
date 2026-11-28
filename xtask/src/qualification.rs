@@ -893,8 +893,9 @@ fn execute_vector(
     overrides: &[String],
     schemas: &adapters::Schemas,
 ) -> (VectorReport, Option<Vec<u8>>) {
+    let parser_context = fsl_cst::ParserContext::new();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        adapters::execute(vector, root, limits, overrides, schemas)
+        adapters::execute(vector, root, limits, overrides, schemas, &parser_context)
     }))
     .unwrap_or_else(|payload| Err(adapters::Failure::panic(payload)));
     match result {

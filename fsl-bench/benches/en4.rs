@@ -16,7 +16,7 @@ fn sample(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(10));
     for epsilon in EPSILONS {
-        let world = mc::service(epsilon).expect("the model builds");
+        let world = mc::service(epsilon, &fsl_cst::ParserContext::new()).expect("the model builds");
         let work = mc::run_sample(&world).expect("the claim completes");
         group.throughput(Throughput::Elements(work.samples));
         group.bench_with_input(BenchmarkId::from_parameter(epsilon), &(), |b, ()| {

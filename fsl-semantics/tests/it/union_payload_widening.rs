@@ -17,6 +17,7 @@ const UNIT: &str = "profile v = \"filament.value.complete/v1\";\n\
 fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{UNIT}{declarations}\n");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "w17"),
         "w17.native",
         text.as_bytes(),

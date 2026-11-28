@@ -15,6 +15,7 @@ fn check(declarations: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>> 
          {declarations}\n"
     );
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("test", "collection-index"),
         "collection-index.native",
         text.as_bytes(),
