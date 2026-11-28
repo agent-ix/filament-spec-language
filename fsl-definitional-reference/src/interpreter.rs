@@ -678,6 +678,138 @@ impl ReferenceClockState {
         Ok(after.holds_every_invariant(model)?.then_some(after))
     }
 
+    /// Whether some schedule of `operations` from `self` reaches a state at
+    /// which one of `targets` is enabled after some delay. This is the
+    /// Alur-Dill region quotient decided directly: every constant in `model`
+    /// is an integer at most `max_constant`, so the delays that matter from a
+    /// state are the instants a clock meets an integer and the open intervals
+    /// between them (and one delay beyond the last), and two states with the
+    /// same region (each clock's integer part or "above `max_constant`", whether
+    /// it is an integer, and the order of the fractional parts) enable the
+    /// same steps. Exploration is over regions, so it terminates. A guard or
+    /// invariant bound above `max_constant` would merge regions that differ
+    /// for it, so the method refuses by name instead of answering.
+    pub fn can_enable_eventually(
+        &self,
+        model: &TimedModel,
+        operations: &[&str],
+        targets: &[&str],
+        max_constant: u32,
+    ) -> Result<bool, ReferenceRefusal> {
+        let ceiling =
+            Rational::from_integer(filament_exact::Integer::from(i64::from(max_constant)));
+        let bounds = model
+            .guards()
+            .iter()
+            .flat_map(|guard| guard.parts())
+            .flat_map(|part| part.clocks())
+            .chain(
+                model
+                    .invariants()
+                    .iter()
+                    .flat_map(|invariant| invariant.bounds()),
+            )
+            .map(|constraint| constraint.bound());
+        for bound in bounds {
+            if *bound > ceiling {
+                return Err(unsupported(
+                    "clock bound above the maximum constant of the region quotient",
+                ));
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut pending = vec![self.clone()];
+        while let Some(state) = pending.pop() {
+            if !seen.insert(state.region(max_constant)) {
+                continue;
+            }
+            if seen.len() > MAX_FINITE_STATES {
+                return Err(unsupported("timed reference state count beyond 2^16"));
+            }
+            for delay in state.critical_delays(max_constant)? {
+                for target in targets {
+                    if state.fire(model, &delay, target)?.is_some() {
+                        return Ok(true);
+                    }
+                }
+                for operation in operations {
+                    if let Some(next) = state.fire(model, &delay, operation)? {
+                        pending.push(next);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// The delays from this state that stand for every region its time
+    /// successors pass through: 0, each delay that brings a clock to an
+    /// integer up to `max_constant`, the midpoint of each two consecutive
+    /// ones, and one more than the last.
+    fn critical_delays(&self, max_constant: u32) -> Result<Vec<Rational>, ReferenceRefusal> {
+        let zero = Rational::from_integer(filament_exact::Integer::zero());
+        let mut points = vec![zero.clone()];
+        for clock in &self.clocks {
+            for constant in 0..=max_constant {
+                let at = Rational::from_integer(filament_exact::Integer::from(i64::from(constant)))
+                    .sub(clock);
+                if at >= zero {
+                    points.push(at);
+                }
+            }
+        }
+        points.sort();
+        points.dedup();
+        let two = Rational::from_integer(filament_exact::Integer::from(2_i64));
+        let mut delays = Vec::new();
+        for pair in points.windows(2) {
+            delays.push(pair[0].clone());
+            delays.push(
+                pair[0]
+                    .add(&pair[1])
+                    .div(&two)
+                    .ok_or_else(|| unsupported("division by two"))?,
+            );
+        }
+        let last = points.last().cloned().unwrap_or(zero);
+        delays.push(last.clone());
+        delays.push(last.add(&Rational::from_integer(filament_exact::Integer::one())));
+        Ok(delays)
+    }
+
+    /// The region of this valuation under constants up to `max_constant`.
+    fn region(&self, max_constant: u32) -> (Vec<(u32, bool)>, Vec<usize>) {
+        let constant = |k: u32| Rational::from_integer(filament_exact::Integer::from(i64::from(k)));
+        let mut parts = Vec::new();
+        let mut fractions: Vec<Option<Rational>> = Vec::new();
+        for clock in &self.clocks {
+            let floor = (0..=max_constant).rev().find(|k| constant(*k) <= *clock);
+            match floor {
+                Some(k) if *clock <= constant(max_constant) => {
+                    let whole = *clock == constant(k);
+                    parts.push((k, whole));
+                    fractions.push(Some(clock.sub(&constant(k))));
+                }
+                _ => {
+                    parts.push((max_constant + 1, false));
+                    fractions.push(None);
+                }
+            }
+        }
+        let ranks = fractions
+            .iter()
+            .map(|fraction| match fraction {
+                Some(own) => fractions
+                    .iter()
+                    .flatten()
+                    .filter(|other| *other < own)
+                    .count(),
+                None => usize::MAX,
+            })
+            .collect();
+        (parts, ranks)
+    }
+
     fn holds_every_invariant(&self, model: &TimedModel) -> Result<bool, ReferenceRefusal> {
         for index in 0..model.invariants().len() {
             if !self.satisfies_invariant(model, index)? {
