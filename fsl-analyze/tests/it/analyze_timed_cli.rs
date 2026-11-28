@@ -849,6 +849,25 @@ fn max_clocks_on_an_untimed_claim_beside_a_timed_model_is_unrouted() {
 /// on EN-6, then on EN-1 `digital-clocks`; each result is backend, value and
 /// cause kind.
 fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
+    stalling_items(name, resets)
+        .iter()
+        .map(|item| {
+            (
+                item["record"]["backend"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                label(item).to_owned(),
+                item["record"]["cause"]["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn stalling_items(name: &str, resets: bool) -> Vec<Value> {
     use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
     let (post, writes): (&str, &[&str]) = if resets {
         (
@@ -890,22 +909,7 @@ fn stalling(name: &str, resets: bool) -> Vec<(String, String, String)> {
             {"claim": "Live", "options": digital.clone()},
             {"claim": "Wrong", "options": digital}]}),
     ));
-    (0..6)
-        .map(|n| {
-            let item = run.item(n);
-            (
-                item["record"]["backend"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-                label(&item).to_owned(),
-                item["record"]["cause"]["kind"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            )
-        })
-        .collect()
+    (0..6).map(|n| run.item(n)).collect()
 }
 
 fn expected_on_both_routes<const N: usize>(
@@ -1969,6 +1973,13 @@ fn a_clock_owner_with_no_universe_requires_a_bound() {
         over_no_universe("timed-no-universe-clocked", &locking_document(), LOCKING),
         requires_bound_on_all_four()
     );
+#[test]
+fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
+    let items = stalling_items("timed-zone-resetting-deadline", true);
+    assert_eq!(label(&items[0]), "proved", "{}", items[0]);
+    assert_eq!(label(&items[1]), "proved", "{}", items[1]);
+}
+
 /// TC-2290: EN-1's digital-clock route agrees with the zone route on a true
 /// bounded eventual-always claim after the two-step subject reaches phase 2.
 #[test]
