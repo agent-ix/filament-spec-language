@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use filament_exact::Cancel;
 use fsl_analyze::provider::ProviderOptions;
 use fsl_command::command::{self, RequestOverrides, RunLimits};
-use fsl_foundation::Setting;
+use fsl_foundation::{Setting, SettingName};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -211,14 +211,18 @@ fn counter_model_with_one_thousand_enums() -> Vec<u8> {
                 "generatorVersion":"1.0.0",
                 "inputIdentities":[format!("{identity}/{suffix}")]}})
         };
+        let spanned = |line: u32| {
+            json!({"source":{"sourceIdentity":"ix://test/counter/spec",
+                "path":"spec.qspec","startLine":line,"startColumn":1}})
+        };
         types.push(json!({
             "identity":identity,"displayName":name,
             "kind":{"module":"test/counter","name":"variant_type"},
             "roles":[],"origin":generated("type"),"constraints":[],"extensions":[],
             "unknownPolicy":"reject",
             "variants":[
-                {"identity":format!("{identity}/A"),"name":"A","origin":generated("A")},
-                {"identity":format!("{identity}/B"),"name":"B","origin":generated("B")}
+                {"identity":format!("{identity}/A"),"name":"A","origin":spanned(1)},
+                {"identity":format!("{identity}/B"),"name":"B","origin":spanned(2)}
             ]
         }));
     }
@@ -285,12 +289,32 @@ fn counter_model_with_unbounded_sequence() -> Vec<u8> {
             "identity":"ix://test/counter/Counter/values","name":"values",
             "typeRef":"ix://filament/native/Integer","presence":"required","nullable":false,
             "defaultKind":"none",
-            "multiplicity":{"lower":0,"upper":null,"ordered":true,"unique":false},
+            "multiplicity":{"lower":0,"upper":100_000,"ordered":true,"unique":false},
             "origin":{"generated":{"generatorIdentity":"ix://test/counter/Counter/values",
                 "generatorVersion":"1.0.0",
                 "inputIdentities":["ix://test/counter/Counter/values"]}}
         }));
     serde_json::to_vec(&model).expect("sequence-capable counter model serializes")
+}
+
+/// The compile controls every analyze size cell states through the FR-255
+/// analyze caller-limit interface, as the compile cells do, so the fixture
+/// compiles and only the route's own `request_bytes` bound is asserted.
+fn analyze_size_limits() -> command::CommandLimits {
+    let mut limits = command::CommandLimits::analyze();
+    for (setting, bound) in [
+        (Setting::S1Tokens, 2_000_000),
+        (Setting::S1Nodes, 2_000_000),
+        (Setting::S1WorkUnits, 2_000_000),
+        (Setting::S3Nodes, 2_000_000),
+        (Setting::S3WorkUnits, 2_000_000),
+        (Setting::EmitOutputBytes, 1_073_741_824),
+    ] {
+        limits
+            .set(SettingName::Stage(setting), bound)
+            .expect("analyze exposes the compile controls");
+    }
+    limits
 }
 
 fn analyze_with_request_bound(
@@ -303,7 +327,7 @@ fn analyze_with_request_bound(
             request_bytes,
             ..RunLimits::default()
         },
-        &command::CommandLimits::analyze(),
+        &analyze_size_limits(),
         &FslNegotiate,
         Vec::new(),
         &ProviderOptions::default(),
