@@ -14,10 +14,10 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::cell::Cell;
 #[cfg(feature = "test-support")]
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
@@ -109,9 +109,10 @@ pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
 #[cfg(feature = "test-support")]
 static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "test-support")]
-static READ_INDEX_REWRITE_WORK_UNITS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(feature = "test-support")]
-static USE_REPEATED_READ_INDEX_REWRITE: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static READ_INDEX_REWRITE_WORK_UNITS: Cell<usize> = const { Cell::new(0) };
+    static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
+}
 
 #[cfg(feature = "test-support")]
 pub(crate) fn reset_node_id_rewrite_slot_visits() {
@@ -125,12 +126,19 @@ pub(crate) fn node_id_rewrite_slot_visits() -> usize {
 
 #[cfg(feature = "test-support")]
 pub(crate) fn reset_read_index_rewrite_work_units() {
-    READ_INDEX_REWRITE_WORK_UNITS.store(0, Ordering::Relaxed);
+    READ_INDEX_REWRITE_WORK_UNITS.with(|work| work.set(0));
 }
 
 #[cfg(feature = "test-support")]
 pub(crate) fn read_index_rewrite_work_units() -> usize {
-    READ_INDEX_REWRITE_WORK_UNITS.load(Ordering::Relaxed)
+    READ_INDEX_REWRITE_WORK_UNITS.with(Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+fn record_read_index_rewrite_work(units: usize) {
+    READ_INDEX_REWRITE_WORK_UNITS.with(|work| {
+        work.set(work.get().saturating_add(units));
+    });
 }
 
 #[cfg(feature = "test-support")]
@@ -138,11 +146,11 @@ pub(crate) fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
     struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {
-            USE_REPEATED_READ_INDEX_REWRITE.store(self.0, Ordering::Relaxed);
+            USE_REPEATED_READ_INDEX_REWRITE.with(|flag| flag.set(self.0));
         }
     }
 
-    let previous = USE_REPEATED_READ_INDEX_REWRITE.swap(true, Ordering::Relaxed);
+    let previous = USE_REPEATED_READ_INDEX_REWRITE.with(|flag| flag.replace(true));
     let _restore = Restore(previous);
     f()
 }
@@ -11457,7 +11465,7 @@ fn read_index_segments(
             .map_err(|_| EmitRefusal::SourceMapInvariant)?;
     let structural = |id: &CheckedNodeId| {
         #[cfg(feature = "test-support")]
-        READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + id.path.len(), Ordering::Relaxed);
+        record_read_index_rewrite_work(1 + id.path.len());
         graph
             .key(id)
             .map(|key| node_id(ids, &key))
@@ -11465,10 +11473,10 @@ fn read_index_segments(
     };
     for node in nodes.iter_mut() {
         #[cfg(feature = "test-support")]
-        if USE_REPEATED_READ_INDEX_REWRITE.load(Ordering::Relaxed) {
+        if USE_REPEATED_READ_INDEX_REWRITE.with(Cell::get) {
             let mut changes = Vec::new();
             for id in reachable_ids(node) {
-                READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + id.path.len(), Ordering::Relaxed);
+                record_read_index_rewrite_work(1 + id.path.len());
                 if holds_segment(id, is_index) {
                     changes.push((id.clone(), structural(id)?));
                 }
@@ -11478,7 +11486,7 @@ fn read_index_segments(
                 // ID. Count those visits with the same traversal the bulk
                 // rewrite uses, then account for the replacement scan.
                 node.map_node_ids(|_| {
-                    READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1, Ordering::Relaxed);
+                    record_read_index_rewrite_work(1);
                     None
                 });
                 node.replace_node_id(&old, &new);
@@ -11488,7 +11496,7 @@ fn read_index_segments(
         let mut invalid_index = false;
         node.map_node_ids(|id| {
             #[cfg(feature = "test-support")]
-            READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + id.path.len(), Ordering::Relaxed);
+            record_read_index_rewrite_work(1 + id.path.len());
             if invalid_index || !holds_segment(id, is_index) {
                 return None;
             }
@@ -11506,7 +11514,7 @@ fn read_index_segments(
     }
     for entry in source_map.iter_mut() {
         #[cfg(feature = "test-support")]
-        READ_INDEX_REWRITE_WORK_UNITS.fetch_add(1 + entry.node_id.path.len(), Ordering::Relaxed);
+        record_read_index_rewrite_work(1 + entry.node_id.path.len());
         if holds_segment(&entry.node_id, is_index) {
             entry.node_id = structural(&entry.node_id)?;
         }
