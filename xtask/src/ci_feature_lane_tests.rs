@@ -565,6 +565,7 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
         "seam-probe",
         "string-edge",
         "route-lint",
+        "limit-literals",
         "checked-input",
         "refinement-versioning",
         "cargo-deny-bans",

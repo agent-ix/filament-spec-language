@@ -1027,3 +1027,45 @@ fn a_nested_path_carries_option_value_and_index_steps() {
         )
     );
 }
+
+/// An `Order` whose `items` hold `count` `Money` elements.
+fn order_with_items(count: usize) -> serde_json::Map<String, Value> {
+    order_fields(money("1"), vec![money("1"); count])
+}
+
+/// QSL-3573, FR-106-AC-16: a snapshot sequence of 100,000 elements refuses
+/// typed at the defaults, first at `observation.input_bytes` (the document is
+/// far past 1 MiB), then, with the byte limit raised, at
+/// `observation.values` with the bound and the count the first value past it
+/// reaches, then, with both raised, at the declared collection maximum. It
+/// never crashes or runs on unbounded.
+#[trace("FR-255-AC-45", "FR-106-AC-16")]
+#[test]
+fn a_hundred_thousand_element_sequence_refuses_typed_at_the_default_limits() {
+    let Err(AdmissionFailure::Refused(record)) = admit_order(order_with_items(100_000)) else {
+        panic!("100,000 elements refuse at the default limits");
+    };
+    assert_eq!(record.catalog.code(), "stage_limit_exceeded");
+    assert_eq!(
+        record.fields.get("setting").map(String::as_str),
+        Some("observation.input_bytes")
+    );
+    let raised = ObservationLimits::default().with_document_bytes(u64::MAX / 2);
+    let Err(failure) = admit_order_within(order_with_items(100_000), raised) else {
+        panic!("100,000 elements exceed the default values bound");
+    };
+    assert_values_limit(failure, 100_000);
+    // With both raised the declared `Sequence<Money>` maximum of 8 refuses it.
+    let both = raised.with_values_per_document(10_000_000);
+    let Err(AdmissionFailure::Refused(record)) =
+        admit_order_within(order_with_items(100_000), both)
+    else {
+        panic!("100,000 elements exceed the declared maximum");
+    };
+    assert_eq!(record.catalog.code(), "cardinality_out_of_bound");
+    assert_eq!(
+        record.fields.get("count").map(String::as_str),
+        Some("100000")
+    );
+    assert_eq!(record.fields.get("maximum").map(String::as_str), Some("8"));
+}

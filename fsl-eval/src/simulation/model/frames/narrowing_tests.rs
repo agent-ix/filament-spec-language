@@ -18,7 +18,7 @@ use super::{Allowed, FieldTargets};
 use crate::simulation::model::domain::Domain;
 
 use super::super::application::{Applications, OperationRef};
-use super::super::walk::{rows_of, Budget};
+use super::super::walk::{rows_of, CandidateCount};
 use super::super::{explore_model, ModelSystem, StepEffect};
 use crate::simulation::expansion::ExpansionLimit;
 use crate::simulation::explore::{Limits, Outcome};
@@ -143,7 +143,7 @@ fn apply(system: &ModelSystem<'_>, name: &str) -> (Applications, u64) {
         name,
         receiver: row.type_id(),
     };
-    let mut budget = Budget::new(u64::MAX);
+    let mut budget = CandidateCount::new(u64::MAX);
     let applications = system
         .apply_operation_matching(&state, &operation, &|_| true, None, &mut budget)
         .expect("applies");

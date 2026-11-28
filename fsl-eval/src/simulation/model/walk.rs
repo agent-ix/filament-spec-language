@@ -34,7 +34,16 @@ pub(super) const fn exhausted(limit: ExpansionLimit) -> ExpansionStop {
 
 /// The candidates one expansion has generated, against its bound
 /// (FR-120 "Post-states", ADR-016 G-4).
-pub(crate) struct Budget {
+///
+/// This is not an FR-255 allowance and is not `fsl_foundation::budget::Budget`
+/// (QSL-3573): it counts the candidates of ONE expansion and starts at zero
+/// for each, where the shared `Budget` is cumulative over a whole item; its
+/// stop is an [`ExpansionStop`] that the expansion callers settle as an
+/// incomplete case (FR-752), not a `LimitExceeded`; and it also carries the
+/// request's shared evaluation meter and cancel handle for the lazy visitor.
+/// Its bound is the `expansion.max_candidates` the caller's limits give; it
+/// adds no limit of its own.
+pub(crate) struct CandidateCount {
     used: u64,
     max: Option<u64>,
     cancel: Option<filament_exact::Cancel>,
@@ -42,7 +51,7 @@ pub(crate) struct Budget {
     work_meter: Option<filament_exact::Meter>,
 }
 
-impl Budget {
+impl CandidateCount {
     /// A budget of `max` candidates, none used.
     pub(super) const fn new(max: u64) -> Self {
         Self {
@@ -495,7 +504,7 @@ pub(super) fn visit_plan_candidates(
     let mut walk = walk_of(system, state, None)?;
     walk.cancel = cancel.cloned();
     walk.candidate_visitor = Some(&visitor);
-    let mut budget = Budget::visiting(cancel, system);
+    let mut budget = CandidateCount::visiting(cancel, system);
     for (declaring, name) in operations {
         match frames::visit_operation(&walk, declaring, name, &mut budget) {
             Ok(()) => {}

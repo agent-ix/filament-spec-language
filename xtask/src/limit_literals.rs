@@ -4,14 +4,17 @@
 //! limit goes. FR-255 gives every limit a published value, so no layer
 //! substitutes one of these for it.
 //!
-//! The report is advisory: it never fails, and a person reads each line.
-//! The scan is syntactic. It does not look inside macro invocations, and it
-//! skips `#[cfg(test)]` items and `tests` and `*_tests` files.
+//! The gate fails (QSL-3573) when a file holds more findings of a kind than
+//! `limit-literals.allow` allows it, or fewer: each row names why the sites
+//! may stay, so the list can only shrink. The scan is syntactic. It does not
+//! look inside macro invocations, and it skips `#[cfg(test)]` items and `tests` and `*_tests` files.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ix_trace_rs::implements;
 use syn::spanned::Spanned;
 use syn::visit::Visit;
 
@@ -182,16 +185,144 @@ fn production_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// The allowlist: one `path<TAB>kind<TAB>count<TAB>reason` row per file and
+/// kind, `#` lines and blank lines ignored.
+const ALLOWLIST: &str = include_str!("../limit-literals.allow");
+
+/// The ticket the baseline rows were written under. A row naming only this
+/// ticket cannot be raised above its `baseline N`.
+const BASELINE_TICKET: &str = "QSL-3573";
+
+/// One (path, kind) the gate reads.
+type Key = (String, String);
+
+/// One allowlist row: the sites allowed and why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Row {
+    count: usize,
+    reason: String,
+}
+
+/// The allowed rows of [`ALLOWLIST`].
+fn allowed(text: &str) -> BTreeMap<Key, Row> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut columns = line.split('\t');
+            let (path, kind, count) = (columns.next()?, columns.next()?, columns.next()?);
+            let reason = columns.next().unwrap_or_default().to_owned();
+            Some((
+                (path.to_owned(), kind.to_owned()),
+                Row {
+                    count: count.parse().ok()?,
+                    reason,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// The ticket ids (`QSL-3573`) a reason names.
+#[ix_trace_rs::string_edge]
+fn tickets(reason: &str) -> Vec<&str> {
+    reason
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        .filter(|word| {
+            word.split_once('-').is_some_and(|(team, number)| {
+                team.len() >= 2
+                    && team.chars().all(|c| c.is_ascii_uppercase())
+                    && !number.is_empty()
+                    && number.chars().all(|c| c.is_ascii_digit())
+            })
+        })
+        .collect()
+}
+
+/// The count a reason of the form `baseline N ...` gives, if it is one.
+#[ix_trace_rs::string_edge]
+fn baseline_of(reason: &str) -> Option<usize> {
+    reason
+        .strip_prefix("baseline ")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// Whether `reason` names a ticket other than the baseline one.
+fn names_another_ticket(reason: &str) -> bool {
+    tickets(reason)
+        .iter()
+        .any(|ticket| *ticket != BASELINE_TICKET)
+}
+
+/// What the allowlist itself gets wrong: a reason without a ticket, and a
+/// baseline row raised above its baseline under the baseline ticket alone.
+#[implements("FR-255-AC-48")]
+fn row_problems(allow: &BTreeMap<Key, Row>) -> Vec<String> {
+    let mut problems = Vec::new();
+    for ((path, kind), row) in allow {
+        if tickets(&row.reason).is_empty() {
+            problems.push(format!(
+                "{path} {kind}: the reason names no ticket; name the ticket that reviewed the exception"
+            ));
+        }
+        if baseline_of(&row.reason).is_some_and(|baseline| row.count > baseline)
+            && !names_another_ticket(&row.reason)
+        {
+            problems.push(format!(
+                "{path} {kind}: raised above its baseline; a raise needs a reason naming a ticket other than {BASELINE_TICKET}"
+            ));
+        }
+    }
+    problems
+}
+
+/// What `found` (the lines of each key) holds beyond, or short of, what
+/// `allowed` permits. A key over its allowance lists each of its
+/// `path:line: kind` sites.
+#[implements("FR-255-AC-48")]
+fn violations(found: &BTreeMap<Key, Vec<usize>>, allowed: &BTreeMap<Key, Row>) -> Vec<String> {
+    let mut problems = row_problems(allowed);
+    for (key, lines) in found {
+        let permitted = allowed.get(key).map_or(0, |row| row.count);
+        if lines.len() > permitted {
+            problems.push(format!(
+                "{} {}: {} found, {permitted} allowed; bound each with the Budget, or name an exception with a reason and a ticket in limit-literals.allow for review",
+                key.0,
+                key.1,
+                lines.len()
+            ));
+            for line in lines {
+                problems.push(format!("  {}:{line}: {}", key.0, key.1));
+            }
+        }
+    }
+    for (key, row) in allowed {
+        let count = found.get(key).map_or(0, Vec::len);
+        if count < row.count {
+            problems.push(format!(
+                "{} {}: {count} found, {} allowed; lower the row in limit-literals.allow",
+                key.0, key.1, row.count
+            ));
+        }
+    }
+    problems
+}
+
 /// Report every finding of the workspace's production crates, one
-/// `path:line: kind` line each, then the count.
+/// `path:line: kind` line each, then the count, and fail when they differ
+/// from the allowlist.
 ///
 /// # Errors
 ///
-/// A source root that cannot be read or a file that does not parse.
+/// A source root that cannot be read or a file that does not parse, or
+/// [`Error::LimitLiteralsFound`] when the findings differ from the allowlist.
 #[ix_trace_rs::string_edge]
 pub fn run(workspace_root: &Path) -> Result<String> {
     let mut report = String::new();
     let mut count = 0_usize;
+    let mut found = BTreeMap::<Key, Vec<usize>>::new();
     for root in crate_roots() {
         if root.starts_with("tests") {
             continue;
@@ -207,6 +338,10 @@ pub fn run(workspace_root: &Path) -> Result<String> {
             let shown = path.strip_prefix(workspace_root).unwrap_or(&path);
             for finding in findings {
                 count += 1;
+                found
+                    .entry((shown.display().to_string(), finding.kind.to_owned()))
+                    .or_default()
+                    .push(finding.line);
                 let _ = writeln!(
                     report,
                     "{}:{}: {}",
@@ -218,14 +353,22 @@ pub fn run(workspace_root: &Path) -> Result<String> {
         }
     }
     let _ = writeln!(report, "limit-literals: {count} to read");
-    Ok(report)
+    let problems = violations(&found, &allowed(ALLOWLIST));
+    if problems.is_empty() {
+        return Ok(report);
+    }
+    Err(Error::LimitLiteralsFound {
+        summary: problems.join("\n"),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use ix_trace_rs::trace;
 
-    use super::{scan_source, Finding};
+    use std::collections::BTreeMap;
+
+    use super::{allowed, scan_source, violations, Finding};
 
     #[trace("FR-255")]
     #[test]
@@ -256,5 +399,80 @@ mod tests {
         ]
         .map(|(line, kind)| Finding { line, kind });
         assert_eq!(found, expected);
+    }
+
+    fn row(count: usize, reason: &str) -> super::Row {
+        super::Row {
+            count,
+            reason: reason.to_owned(),
+        }
+    }
+
+    #[trace("FR-255-AC-48")]
+    #[test]
+    fn the_gate_fails_on_a_new_finding_and_on_a_stale_allowance() {
+        let key = |kind: &str| ("a.rs".to_owned(), kind.to_owned());
+        let allow = allowed(
+            "# comment\n\na.rs\tUNLIMITED\t2\tQSL-1 why\nb.rs\tunbounded()\t1\tQSL-1 why\n",
+        );
+        let found = BTreeMap::from([
+            (key("UNLIMITED"), vec![3, 9]),
+            (key("u64::MAX field"), vec![7]),
+        ]);
+        let problems = violations(&found, &allow);
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(problems[0].starts_with("a.rs u64::MAX field: 1 found, 0 allowed"));
+        // The failing key's sites are printed as path:line: kind, and the
+        // message does not invite adding a row.
+        assert_eq!(problems[1], "  a.rs:7: u64::MAX field");
+        assert!(problems[0].contains("bound each with the Budget"));
+        assert!(!problems[0].contains("add a row"));
+        assert!(problems[2].starts_with("b.rs unbounded(): 0 found, 1 allowed"));
+        let exact = BTreeMap::from([
+            (key("UNLIMITED"), vec![3, 9]),
+            (("b.rs".to_owned(), "unbounded()".to_owned()), vec![1]),
+        ]);
+        assert!(violations(&exact, &allow).is_empty());
+    }
+
+    #[trace("FR-255-AC-48")]
+    #[test]
+    fn a_row_without_a_ticket_or_raised_past_its_baseline_fails() {
+        let key = |name: &str| (name.to_owned(), "UNLIMITED".to_owned());
+        let allow = BTreeMap::from([
+            (key("a.rs"), row(1, "why, but no ticket")),
+            (key("b.rs"), row(5, "baseline 4 at QSL-3573: unclassified")),
+            (
+                key("c.rs"),
+                row(5, "baseline 4 at QSL-3573: raised for QSL-4000"),
+            ),
+            (key("d.rs"), row(4, "baseline 4 at QSL-3573: unclassified")),
+        ]);
+        let problems = super::row_problems(&allow);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].starts_with("a.rs UNLIMITED: the reason names no ticket"));
+        assert!(problems[1].starts_with("b.rs UNLIMITED: raised above its baseline"));
+    }
+
+    #[trace("FR-255-AC-48")]
+    #[test]
+    fn every_allowlist_row_has_a_count_a_reason_and_a_ticket() {
+        let rows = super::ALLOWLIST
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with('#'));
+        for row in rows {
+            let columns: Vec<_> = row.split('\t').collect();
+            assert_eq!(columns.len(), 4, "{row}");
+            assert!(
+                columns[2].parse::<usize>().is_ok_and(|count| count > 0),
+                "{row}"
+            );
+            assert!(!columns[3].trim().is_empty(), "{row}");
+            assert!(!super::tickets(columns[3]).is_empty(), "no ticket: {row}");
+        }
+        assert!(
+            super::row_problems(&allowed(super::ALLOWLIST)).is_empty(),
+            "the allowlist breaks its own rules"
+        );
     }
 }

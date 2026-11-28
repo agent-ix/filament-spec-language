@@ -8,8 +8,10 @@
 use alloc::{borrow::ToOwned, collections::BTreeMap, string::String, string::ToString};
 
 use super::LimitExceeded;
+use crate::setting::CountKind;
 use crate::Setting;
 use filament_semantic_value::catalog::CatalogCoded;
+use ix_trace_rs::implements;
 
 /// The stage and accounting contract that own a budget.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -31,7 +33,9 @@ pub struct DeniedCharge {
     pub charge_point: &'static str,
     /// The counter's value before the denied charge.
     pub consumed: u64,
-    /// The denied amount.
+    /// The denied amount: what the step adds for a cumulative counter, the
+    /// size the step reaches for a high-water one
+    /// ([`Setting::count_kind`]).
     pub next_charge: u64,
 }
 
@@ -58,13 +62,20 @@ impl BudgetDenial {
         }
     }
 
-    /// A denied meter charge: `charge.next_charge` more on top of
-    /// `charge.consumed` would pass `limit`.
+    /// A denied meter charge: for a cumulative counter `charge.next_charge`
+    /// more on top of `charge.consumed` would pass `limit`; for a high-water
+    /// counter the size `charge.next_charge` passes it.
+    #[implements("FR-255-AC-46")]
     pub fn charge(setting: Setting, limit: u64, charge: DeniedCharge) -> Self {
         Self {
             setting,
             limit,
-            actual: u128::from(charge.consumed) + u128::from(charge.next_charge),
+            actual: match setting.count_kind() {
+                CountKind::Cumulative => {
+                    u128::from(charge.consumed) + u128::from(charge.next_charge)
+                }
+                CountKind::HighWater => u128::from(charge.next_charge),
+            },
             charge: Some(charge),
         }
     }
@@ -112,5 +123,50 @@ impl BudgetDenial {
             ("charge_point", charge.charge_point.to_owned()),
         ]);
         fields
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BudgetDenial, BudgetOwner, DeniedCharge};
+    use crate::Setting;
+    use ix_trace_rs::trace;
+
+    fn denied(setting: Setting, consumed: u64, next_charge: u64) -> BudgetDenial {
+        BudgetDenial::charge(
+            setting,
+            10,
+            DeniedCharge {
+                owner: BudgetOwner {
+                    stage: "test",
+                    accounting_contract: "test",
+                },
+                limit_kind: "test",
+                charge_point: "test",
+                consumed,
+                next_charge,
+            },
+        )
+    }
+
+    #[trace("FR-255-AC-46")]
+    #[test]
+    fn a_denied_high_water_charge_reports_its_size_and_a_cumulative_one_its_total() {
+        for setting in [
+            Setting::ModelDeclarationRecords,
+            Setting::ModelDerivationFacts,
+            Setting::ModelEffectiveDeclarations,
+            Setting::ModelDispatchCandidates,
+            Setting::AdmissionPopulationMembers,
+        ] {
+            assert_eq!(denied(setting, 10, 11).actual(), 11, "{setting:?}");
+        }
+        for setting in [
+            Setting::ModelWorkUnits,
+            Setting::ModelFamilySteps,
+            Setting::AdmissionWorkUnits,
+        ] {
+            assert_eq!(denied(setting, 8, 3).actual(), 11, "{setting:?}");
+        }
     }
 }

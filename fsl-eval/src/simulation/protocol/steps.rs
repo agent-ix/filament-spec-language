@@ -47,7 +47,7 @@ use crate::simulation::footprint::Location;
 use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
 use crate::simulation::model::FootprintError;
 use crate::simulation::model::{
-    verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
+    verdict, Applied, CandidateCount, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
     Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
@@ -92,7 +92,7 @@ pub(super) type ProtocolExpansion<M> =
 /// What one expansion gathers: its candidate budget, its successors and its
 /// findings.
 pub(super) struct Gathered<M: MemoryModel> {
-    pub(super) budget: Budget,
+    pub(super) budget: CandidateCount,
     pub(super) successors: Vec<Successor<M>>,
     pub(super) findings: Vec<ModelFinding>,
     /// What a method bound left unexpanded (ADR-025 MB-3, ADR-027 AE-4).
@@ -361,7 +361,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     pub(super) fn state_accesses(
         &self,
         state: &ProtocolState<M>,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
     ) -> Result<StateWeakAccesses, ExpansionStop> {
         self.state_accesses_observing(state, budget, &ObservedIdentities::new(&state.model))
     }
@@ -371,7 +371,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     fn state_accesses_observing(
         &self,
         state: &ProtocolState<M>,
-        budget: &mut Budget,
+        budget: &mut CandidateCount,
         identities: &ObservedIdentities<'_>,
     ) -> Result<StateWeakAccesses, ExpansionStop> {
         let mut applications = Vec::new();

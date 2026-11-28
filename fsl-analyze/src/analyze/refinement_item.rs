@@ -19,7 +19,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    open_systems, replay_refinement_trace, settle_refinement, settle_refinement_refusal,
+    open_systems, replay_refinement_trace_retained, settle_refinement, settle_refinement_refusal,
     AbstractInitial, RefinementTraceSettlement, SimulationCertificateRequest,
     TemporalCounterexample,
 };
@@ -160,7 +160,13 @@ fn run(
                     "the-refinement-subjects-reopen",
                 ))
             })?;
-        let settled = replay_refinement_trace(refinement, &systems, payload, &form.limits)?;
+        let settled = replay_refinement_trace_retained(
+            refinement,
+            &systems,
+            payload,
+            &form.limits,
+            Some(retained),
+        )?;
         if let RefinementTraceSettlement::Reproduced { mapped, .. } = &settled {
             steps = Some(counterexample_steps(refinement, &systems, mapped)?);
         }

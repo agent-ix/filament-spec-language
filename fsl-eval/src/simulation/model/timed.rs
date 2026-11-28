@@ -61,8 +61,8 @@ pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass
 pub mod admission;
 mod race;
 pub use race::{
-    advance_timed, sample_timed, sample_timed_from, sample_timed_race, TimedAdvance, TimedRace,
-    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    advance_timed, sample_timed, sample_timed_from, sample_timed_race, step_rewards, TimedAdvance,
+    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
     TimedSampleEnd, TimedSampleStop, TimedSchedulerChoice,
 };
 
@@ -2803,7 +2803,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         site: &dyn Fn() -> TimedSite,
     ) -> Result<Vec<Vec<PlaceConstraint>>, TimedStop> {
         let mut alternatives = vec![base];
-        let mut budget = super::walk::Budget::new(self.system.limits.max_candidates);
+        let mut budget = super::walk::CandidateCount::new(self.system.limits.max_candidates);
         for family in families {
             let held = self.held(state, receiver, family.path());
             let mut per_slot = Vec::with_capacity(held);
