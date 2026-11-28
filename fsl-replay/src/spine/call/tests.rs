@@ -3334,10 +3334,13 @@ fn a_unit_bound_path_is_spelled_in_the_canonical_form_the_caller_wrote() {
 #[test]
 #[trace("TC-1702", "FR-056-AC-74")]
 fn a_constant_beyond_a_unit_bound_is_refused_where_a_body_writes_it() {
-    let check = |function: &str| {
-        let fixture = bounded_record_fixture(&format!(
+    let fixture_of = |function: &str| {
+        bounded_record_fixture(&format!(
             "{function}\nfunction probe using v(): Boolean pure {{ true }}"
-        ));
+        ))
+    };
+    let check = |function: &str| {
+        let fixture = fixture_of(function);
         run(
             source(),
             "fixture".to_owned(),
@@ -3402,17 +3405,20 @@ fn a_constant_beyond_a_unit_bound_is_refused_where_a_body_writes_it() {
             "{accepted}: {outcome:?}"
         );
     }
-    for refused in [
-        span("4 ms"),
-        span("2 ms + 2 ms"),
-        span("2 ms * 2"),
-        pair("4 ms"),
-        branch("4 ms"),
-        set("4 ms"),
-        some("4 ms"),
-        arm("4 ms"),
-        inside("4 ms"),
-    ] {
+    // (function, the bounded member by hand from the fixture's records, the
+    // text of the outermost constant, where FR-056-AC-74 puts the refusal).
+    let refused_at = [
+        (span("4 ms"), "Span/d", "4 ms"),
+        (span("2 ms + 2 ms"), "Span/d", "2 ms + 2 ms"),
+        (span("2 ms * 2"), "Span/d", "2 ms * 2"),
+        (pair("4 ms"), "Pair/p1", "4 ms"),
+        (branch("4 ms"), "Span/d", "4 ms"),
+        (set("4 ms"), "Many/s", "4 ms"),
+        (some("4 ms"), "Maybe/p", "4 ms"),
+        (arm("4 ms"), "Span/d", "4 ms"),
+        (inside("4 ms"), "Span/d", "4 ms"),
+    ];
+    for (refused, member, constant) in refused_at {
         let refusal = check(&refused).expect_err(&refused);
         let RunRefusal::Compile(compile) = *refusal else {
             panic!("{refused}: a constant beyond the bound refuses at checking: {refusal:?}");
@@ -3428,5 +3434,29 @@ fn a_constant_beyond_a_unit_bound_is_refused_where_a_body_writes_it() {
         ] {
             assert!(named.contains(expected), "{refused}: {expected}: {named}");
         }
+        // The member the bound is on: the slot written, not the function.
+        let CompileRefusal::Check { refusals, region } = &*compile else {
+            panic!("{refused}: a check refusal: {compile:?}");
+        };
+        assert_eq!(refusals.len(), 1, "{refused}: one refusal: {refusals:?}");
+        let fsl_semantics::check::CheckCause::UnitBound {
+            member: bounded, ..
+        } = &*refusals[0].cause
+        else {
+            panic!("{refused}: a unit-bound cause: {refusals:?}");
+        };
+        assert_eq!(
+            bounded.node,
+            format!("ix://acme/orders/{member}"),
+            "{refused}: member"
+        );
+        // The site: the source text of the outermost constant expression.
+        let region = region.as_ref().expect(&refused);
+        let text = fixture_of(&refused).source;
+        assert_eq!(
+            &text.as_bytes()[region.start() as usize..region.end() as usize],
+            constant.as_bytes(),
+            "{refused}: the refusal lands at the constant"
+        );
     }
 }

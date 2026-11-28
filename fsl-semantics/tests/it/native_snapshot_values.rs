@@ -3835,7 +3835,7 @@ fn typed_nested_steps_are_identical_under_a_field_and_a_parameter() {
 
 /// FSpec FR-154 "Unit bounds" (TC-465): a field of an initial state that
 /// violates the bound refuses the state; the bound itself admits.
-#[trace("TC-465", "FR-106-AC-85", "FSpec-FR-154-AC-28")]
+#[trace("TC-465", "FSpec-FR-154-AC-28")]
 #[test]
 fn an_initial_state_field_beyond_its_unit_bound_refuses() {
     let replay = bounded_quantity_replay();
