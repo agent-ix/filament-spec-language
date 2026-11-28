@@ -403,6 +403,16 @@ impl PackageAdmissionRefusal {
 #[implements("FR-110-AC-16")]
 struct CauseSpellingSerializer;
 
+macro_rules! reject_non_unit_variant_methods {
+    ($(fn $name:ident($($argument:ident: $kind:ty),*);)+) => {
+        $(
+            fn $name(self, $($argument: $kind),*) -> Result<Self::Ok, Self::Error> {
+                Err(serde::ser::Error::custom("expected a unit variant"))
+            }
+        )+
+    };
+}
+
 impl serde::Serializer for CauseSpellingSerializer {
     type Ok = &'static str;
     type Error = serde_json::Error;
@@ -414,6 +424,42 @@ impl serde::Serializer for CauseSpellingSerializer {
     type SerializeStruct = serde::ser::Impossible<Self::Ok, Self::Error>;
     type SerializeStructVariant = serde::ser::Impossible<Self::Ok, Self::Error>;
 
+    reject_non_unit_variant_methods! {
+        fn serialize_bool(value: bool);
+        fn serialize_i8(value: i8);
+        fn serialize_i16(value: i16);
+        fn serialize_i32(value: i32);
+        fn serialize_i64(value: i64);
+        fn serialize_u8(value: u8);
+        fn serialize_u16(value: u16);
+        fn serialize_u32(value: u32);
+        fn serialize_u64(value: u64);
+        fn serialize_f32(value: f32);
+        fn serialize_f64(value: f64);
+        fn serialize_char(value: char);
+        fn serialize_str(value: &str);
+        fn serialize_bytes(value: &[u8]);
+    }
+
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_some<T: ?Sized + serde::Serialize>(
+        self,
+        _value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
     #[implements("FR-110-AC-16")]
     fn serialize_unit_variant(
         self,
@@ -422,6 +468,75 @@ impl serde::Serializer for CauseSpellingSerializer {
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
         Ok(variant)
+    }
+
+    fn serialize_newtype_struct<T: ?Sized + serde::Serialize>(
+        self,
+        _name: &'static str,
+        _value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_newtype_variant<T: ?Sized + serde::Serialize>(
+        self,
+        _name: &'static str,
+        _index: u32,
+        _variant: &'static str,
+        _value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_seq(
+        self,
+        _len: Option<usize>,
+    ) -> Result<Self::SerializeSeq, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_tuple_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        _name: &'static str,
+        _index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeStruct, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_struct_variant(
+        self,
+        _name: &'static str,
+        _index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
     }
 }
 
