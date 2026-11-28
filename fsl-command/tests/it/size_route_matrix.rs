@@ -313,14 +313,14 @@ fn analyze_size_limits() -> command::CommandLimits {
         (Setting::S3Nodes, 2_000_000),
         (Setting::S3WorkUnits, 2_000_000),
         (Setting::ModelSequenceMaximum, 100_000),
-        (Setting::I2InputBytes, 4_294_967_296),
+        (Setting::I2InputBytes, 1_073_741_824),
         (Setting::I2Nodes, 10_000_000),
         (Setting::I2Edges, 10_000_000),
         (Setting::I2Occurrences, 10_000_000),
         (Setting::I2WorkUnits, 100_000_000),
-        (Setting::ReplayInputBytes, 4_294_967_296),
+        (Setting::ReplayInputBytes, 1_073_741_824),
         (Setting::ObservationInputBytes, 1_073_741_824),
-        (Setting::EmitOutputBytes, 4_294_967_296),
+        (Setting::EmitOutputBytes, 1_073_741_824),
     ] {
         limits
             .set(SettingName::Stage(setting), bound)
@@ -437,17 +437,81 @@ fn analyze_admits_one_thousand_enums_at_its_request_byte_bound() {
     assert_analyze_request_exact_and_one_byte_over(&path);
 }
 
+/// The analyze request over the checked package of the 1,000-link
+/// operation-redefinition model. FR-869-AC-8 refuses that compile at the
+/// default `emit.output_bytes` and its package exceeds 1 GiB, so the request
+/// carries a prebuilt valid checked package of the same shape (TC-3242) with
+/// the emit bound raised for the one build, and the analysis reads it back
+/// under the bounds `analyze_size_limits` states.
+fn redefinition_package_request(directory: &Path) -> PathBuf {
+    let model = counter_model_with_one_thousand_links(true);
+    let model_value: Value = serde_json::from_slice(&model).expect("link model is JSON");
+    let compile = compile_request_with_semantic_model(
+        directory,
+        &analyze_source(""),
+        &model_value,
+    );
+    let limits = std::collections::BTreeMap::from([
+        (Setting::S1Tokens, 2_000_000),
+        (Setting::S1Nodes, 2_000_000),
+        (Setting::S1WorkUnits, 2_000_000),
+        (Setting::S3Nodes, 2_000_000),
+        (Setting::S3WorkUnits, 2_000_000),
+        (Setting::EmitOutputBytes, 4_294_967_296),
+    ]);
+    let overrides = RequestOverrides {
+        limits: Some(&limits),
+        ..RequestOverrides::default()
+    };
+    let outcome =
+        command::compile_outcome_with_limits_and_overrides(&compile, RunLimits::default(), &overrides)
+            .expect("the redefinition package builds with the emit bound raised");
+    std::fs::write(directory.join("package.json"), outcome.package_bytes())
+        .expect("package writes");
+    drop(outcome);
+    std::fs::write(directory.join("counter.json"), &model).expect("model writes");
+    let start = json!({"format":"filament.state.snapshot/v1",
+        "identity":{"authority":"contracts","identity":"queue-start"},
+        "observation":"current","model":{"identity":"test/counter"},
+        "anchor":{"kind":"initialization","name":"queue-start"},
+        "populations":[{"population":"ix://test/counter/counters","complete":true,
+            "objects":[{"key":"queue-east","type":"ix://test/counter/Counter",
+                "fields":{"value":{"integer":"0"}}}]}]});
+    std::fs::write(
+        directory.join("start.json"),
+        serde_json::to_vec(&start).expect("snapshot serializes"),
+    )
+    .expect("snapshot writes");
+    let request = json!({"format":"native-analyze/1","request":{
+        "package":{"file":"package.json"},
+        "models":[{"format":"semantic-ir/2.0.0","source":{"file":"counter.json",
+            "authority":"agent-ix","identity":"test:qsl-3570-model",
+            "document":"SizeMatrixModel","formal_revision":1}}],
+        "documents":[{"file":"start.json"}],"items":[{"claim":"Bounded"}]}});
+    let path = directory.join("analyze.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&request).expect("analyze request serializes"),
+    )
+    .expect("analyze request writes");
+    path
+}
+
 /// Analyze admits both 1,000-link model fixtures at exact request bytes and
 /// settles the bounded claim; one extra request byte stays document-level.
+/// The redefinition fixture is analyzed over its prebuilt checked package
+/// (FR-620-AC-15).
 #[trace("TC-3242", "FR-620-AC-15")]
 #[test]
 fn analyze_admits_both_thousand_link_models_at_the_request_byte_bound() {
-    for redefines in [false, true] {
-        let directory = tempfile::tempdir().expect("analyze workspace");
-        let model = counter_model_with_one_thousand_links(redefines);
-        let path = analyze_request_with_model(directory.path(), &analyze_source(""), &model);
-        assert_analyze_request_exact_and_one_byte_over(&path);
-    }
+    let directory = tempfile::tempdir().expect("analyze workspace");
+    let model = counter_model_with_one_thousand_links(false);
+    let path = analyze_request_with_model(directory.path(), &analyze_source(""), &model);
+    assert_analyze_request_exact_and_one_byte_over(&path);
+
+    let directory = tempfile::tempdir().expect("redefinition workspace");
+    let path = redefinition_package_request(directory.path());
+    assert_analyze_request_exact_and_one_byte_over(&path);
 }
 
 /// Analyze admits an unbounded sequence field carrying exactly 100,000
@@ -489,7 +553,7 @@ fn analyze_admits_one_hundred_thousand_observation_values_at_their_bound() {
             "authority":"contracts","identity":"counter-sequence-reference",
             "document":"CounterSequenceInput","formal_revision":1}}],
         "documents":[{"file":"start.json"}],"items":[{"claim":"Bounded"}],
-        "limits":{"observation":{"values":100001}}}});
+        "limits":{"observation":{"values":100002}}}});
     std::fs::write(
         directory.path().join("counter.json"),
         counter_model_with_unbounded_sequence(),
@@ -526,7 +590,7 @@ fn analyze_admits_one_hundred_thousand_observation_values_at_their_bound() {
     assert_eq!(value["items"], json!([]));
 
     let mut below: Value = serde_json::from_slice(&request).expect("request parses");
-    below["request"]["limits"]["observation"]["values"] = json!(100_000);
+    below["request"]["limits"]["observation"]["values"] = json!(100_001);
     let below = serde_json::to_vec(&below).expect("one-under request serializes");
     assert_eq!(
         below.len(),
@@ -534,15 +598,84 @@ fn analyze_admits_one_hundred_thousand_observation_values_at_their_bound() {
         "request byte ceiling is independent"
     );
     std::fs::write(&path, below).expect("one-under observation limit writes");
-    let result = analyze_with_request_bound(&path, request_bytes)
-        .expect("the observation limit is an item-level typed result");
-    assert_eq!(result.exit_code, 22);
-    let result = result.value.as_value();
-    let rendered = result.to_string();
+    let (exit_code, rendered) = match analyze_with_request_bound(&path, request_bytes) {
+        Ok(result) => (result.exit_code, result.value.as_value().to_string()),
+        Err(error) => (error.category().exit_code(), format!("{error:?}")),
+    };
+    assert_eq!(exit_code, 22, "{rendered}");
     assert!(rendered.contains("stage_limit_exceeded"), "{rendered}");
     assert!(rendered.contains("observation.values"), "{rendered}");
-    assert!(rendered.contains("100000"), "{rendered}");
     assert!(rendered.contains("100001"), "{rendered}");
+    assert!(rendered.contains("100002"), "{rendered}");
+}
+
+/// Every value form of the observation counts exactly one against
+/// `observation.values` (FR-106-AC-27): the scalar `value` field and the
+/// sequence form are one each and each element is one more, so the count is
+/// `elements + 2`, admitted at that bound and refused one under it with the
+/// count reached.
+#[trace("TC-3242", "FR-106-AC-16", "FR-106-AC-27")]
+#[test]
+fn each_observation_value_form_moves_the_count_by_exactly_one() {
+    for elements in [0_usize, 1, 5] {
+        let count = elements + 2;
+        for (bound, admits) in [(count, true), (count - 1, false)] {
+            let directory = tempfile::tempdir().expect("analyze workspace");
+            let program = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile paths = \"filament.temporal.infinite-trace/v1\";\n\
+                 model Queue = \"test/counter\";\n\
+                 temporal Bounded using paths over (q: Queue::Counter) clock \"model-steps\" on origin {{\n\
+                   always holds(size(q.values) = {elements})\n\
+                 }}\n"
+            );
+            std::fs::write(directory.path().join("workflow.fsl"), program).expect("program writes");
+            let values = (0..elements)
+                .map(|value| json!({"integer":value.to_string()}))
+                .collect::<Vec<_>>();
+            let start = json!({"format":"filament.state.snapshot/v1",
+                "identity":{"authority":"contracts","identity":"queue-count-start"},
+                "observation":"current","model":{"identity":"test/counter"},
+                "anchor":{"kind":"initialization","name":"queue-count-start"},
+                "populations":[{"population":"ix://test/counter/counters","complete":true,
+                    "objects":[{"key":"queue-east","type":"ix://test/counter/Counter",
+                        "fields":{"value":{"integer":"0"},"values":{"sequence":values}}}]}]});
+            std::fs::write(
+                directory.path().join("start.json"),
+                serde_json::to_vec(&start).expect("snapshot serializes"),
+            )
+            .expect("snapshot writes");
+            std::fs::write(
+                directory.path().join("counter.json"),
+                counter_model_with_unbounded_sequence(),
+            )
+            .expect("model writes");
+            let request = json!({"format":"native-analyze/1","request":{
+                "program":{"source":{"file":"workflow.fsl","authority":"contracts",
+                    "identity":"qsl-3634-count","document":"CountMatrix","formal_revision":1}},
+                "models":[{"format":"semantic-ir/2.0.0","source":{"file":"counter.json",
+                    "authority":"contracts","identity":"counter-count-reference",
+                    "document":"CounterCountInput","formal_revision":1}}],
+                "documents":[{"file":"start.json"}],"items":[{"claim":"Bounded"}],
+                "limits":{"observation":{"values":bound}}}});
+            let path = directory.path().join("analyze.json");
+            let request = serde_json::to_vec(&request).expect("request serializes");
+            std::fs::write(&path, &request).expect("request writes");
+            let outcome = analyze_with_request_bound(&path, request.len());
+            if admits {
+                let result = outcome.expect("the exact count admits");
+                assert_eq!(result.exit_code, 0, "{elements} elements");
+            } else {
+                let (exit_code, rendered) = match outcome {
+                    Ok(result) => (result.exit_code, result.value.as_value().to_string()),
+                    Err(error) => (error.category().exit_code(), format!("{error:?}")),
+                };
+                assert_eq!(exit_code, 22, "{rendered}");
+                assert!(rendered.contains("observation.values"), "{rendered}");
+                assert!(rendered.contains(&count.to_string()), "{rendered}");
+            }
+        }
+    }
 }
 
 fn chain_model(prefix: &str, redefines: bool) -> String {
