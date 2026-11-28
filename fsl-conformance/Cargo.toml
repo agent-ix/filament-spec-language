@@ -38,7 +38,7 @@ ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" 
 fsl-conformance = { path = ".", features = ["test-support"] }
 serde = { version = "1.0.228", features = ["derive"] }
 filament-contract-model = { workspace = true }
-filament-verification-contracts = { git = "https://github.com/agent-ix/filament-verification-contracts", rev = "e6eebb660c6d9b3dee25d643923d3984cbc745b6" }
+filament-verification-contracts = { git = "https://github.com/agent-ix/filament-verification-contracts", rev = "16ba4da3141b524305d49cb630f30ac4d20f2881" }
 fsl-command = { path = "../fsl-command" }
 serde_json = "1.0.151"
 tempfile = "3.27.0"
