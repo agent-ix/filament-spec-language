@@ -1767,24 +1767,6 @@ fn lock_world(claim: &str) -> crate::timed_world::World {
     )
 }
 
-/// The timed state `go` reaches at 1/2 ms, after delaying to the invariant's
-/// bound `x = 1 ms`.
-fn locked_state(world: &crate::timed_world::World) -> fsl_eval::simulation::StateKey {
-    let system = world.system();
-    let timed = TimedSystem::new(&system, "M").expect("the subject is timed");
-    let initial = timed.initial().remove(0);
-    let delayed = timed
-        .delay(&initial, &ratio(1, 2))
-        .expect("the delay reads")
-        .expect("the delay is admissible");
-    let (_, after) = timed.steps(&delayed).expect("the steps read").remove(0);
-    let locked = timed
-        .delay(&after, &ratio(1, 2))
-        .expect("the delay reads")
-        .expect("the delay reaches the bound");
-    timed.state_key(&locked).expect("the state encodes")
-}
-
 /// FR-254-AC-4: each sample ends at the time-lock and is read over its
 /// positions. The position stamped 1/2 ms is in phase 1, `always` over those
 /// positions holds where they satisfy it, and a measure the run never
@@ -1827,24 +1809,21 @@ fn a_time_locked_sample_is_read_over_the_positions_it_has() {
     }
 }
 
-/// FR-254-AC-4: how a fraction reads a time-locked run is not decided, so the
-/// item is unsupported at the locked state and keeps no witness.
-#[trace("TC-709", "FR-254-AC-4", "FSpec-FR-420-AC-7")]
+/// FSpec FR-420-AC-19: a fraction over a run that ends in a time-lock counts
+/// 0, weighted by delay or not, so the sample is not unsupported. This runs
+/// the sampled route only; the exact route (FR-421-AC-14) is not asserted here.
+#[trace("TC-709", "FR-254-AC-4", "FSpec-FR-420-AC-7", "FSpec-FR-420-AC-19")]
 #[test]
-fn a_fraction_over_a_time_locked_sample_is_unsupported() {
+fn a_fraction_over_a_time_locked_sample_counts_zero() {
     for claim in [
         "mean of (fraction holds(c.phase = 1) over [0, 2 ms]) <= 0.5",
         "mean of (fraction holds(c.phase = 1) over [0, 2 ms] weighted by delay) <= 0.5",
     ] {
-        let world = lock_world(claim);
-        let expected = locked_state(&world);
-        match probe(&world) {
-            StatisticalOutcome::Unsupported {
-                cause: StatisticalUnsupported::TimeLockedSample { state },
-                ..
-            } => assert_eq!(state, expected, "{claim}"),
-            other => panic!("{claim}: {other:?}"),
-        }
+        assert_eq!(
+            measured(&lock_world(claim)),
+            (Some(ratio(0, 1)), Decision::Accepted),
+            "{claim}"
+        );
     }
 }
 
@@ -1874,15 +1853,12 @@ fn a_bounded_delay_with_no_mass_in_any_window_is_a_time_lock() {
         )),
         (Some(ratio(0, 1)), Decision::Accepted)
     );
-    assert!(matches!(
-        probe(&world(
+    assert_eq!(
+        measured(&world(
             "mean of (fraction holds(c.phase = 1) over [0, 8 ms]) <= 0.5"
         )),
-        StatisticalOutcome::Unsupported {
-            cause: StatisticalUnsupported::TimeLockedSample { .. },
-            ..
-        }
-    ));
+        (Some(ratio(0, 1)), Decision::Accepted)
+    );
 }
 
 /// An exponential delay over the bounded window of an invariant is conditioned
@@ -3047,11 +3023,12 @@ fn a_return_with_a_tied_step_pending_cuts_no_cycle() {
     );
 }
 
-/// FSpec FR-420-AC-11: a time-locked state reached by a delay-weighted
-/// long-run behaviour settles `unsupported`, `time-locked-sample{state}`.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11", "FSpec-FR-420-AC-7")]
+/// FSpec FR-420-AC-19: a time-locked state reached by a delay-weighted
+/// long-run behaviour counts 0 in numerator and denominator: the estimate is
+/// 0 and `>= 1/10` is rejected, with no `time-locked-sample` result.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11", "FSpec-FR-420-AC-19")]
 #[test]
-fn a_time_locked_long_run_behaviour_is_unsupported() {
+fn a_time_locked_long_run_behaviour_counts_zero() {
     let claims = format!(
         "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
          post Went using v on M::Call::go {{ self.phase = 1 }}\n\
@@ -3071,15 +3048,75 @@ fn a_time_locked_long_run_behaviour_is_unsupported() {
         1,
     )
     .expect("the run ends with an outcome");
-    assert!(
-        matches!(
-            outcome,
-            StatisticalOutcome::Unsupported {
-                cause: StatisticalUnsupported::TimeLockedSample { .. },
-                ..
-            }
-        ),
-        "{outcome:?}"
+    let verdict = completed(Ok(outcome));
+    assert_eq!(
+        (verdict.estimate, verdict.decision),
+        (Some(ratio(0, 1)), Decision::Rejected)
+    );
+}
+
+/// FSpec FR-420-AC-19 (TC-374 ST-15): the unweighted long-run fraction of the
+/// same locked model is read the same way: each locked behaviour counts 0 in
+/// numerator and denominator, never the unweighted fall-back, so the estimate
+/// is 0 and `>= 1/10` is rejected.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-19")]
+#[test]
+fn an_unweighted_long_run_over_a_time_lock_counts_zero() {
+    let claims = format!(
+        "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Went using v on M::Call::go {{ self.phase = 1 }}\n\
+         delay M::Call::go ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant Deadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         workload Even on M {{ weight Call::go = 1; }}\n\
+         probabilistic Locked using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 1) >= rational(1, 10) }}\n"
+    );
+    let world = timed_world_with(&[("go", &["phase"])], &claims);
+    let outcome = run_timed_method(
+        &world,
+        "Locked",
+        StatisticalMethod::Regenerative { min_cycles: 5 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    )
+    .expect("the run ends with an outcome");
+    let verdict = completed(Ok(outcome));
+    assert_eq!(
+        (verdict.estimate, verdict.decision),
+        (Some(ratio(0, 1)), Decision::Rejected)
+    );
+}
+
+/// FSpec FR-420-AC-19: a reward-weighted long-run fraction counts a locked
+/// behaviour 0 as well: the estimate is 0 and `>= 1/10` is rejected.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-19")]
+#[test]
+fn a_reward_weighted_long_run_over_a_time_lock_counts_zero() {
+    let claims = format!(
+        "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Went using v on M::Call::go {{ self.phase = 1 }}\n\
+         delay M::Call::go ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant Deadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         reward cost on M::Call::go = 1;\n\
+         workload Even on M {{ weight Call::go = 1; }}\n\
+         probabilistic Locked using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 1) weighted by cost >= rational(1, 10) }}\n"
+    );
+    let world = timed_world_with(&[("go", &["phase"])], &claims);
+    let outcome = run_timed_method(
+        &world,
+        "Locked",
+        StatisticalMethod::Regenerative { min_cycles: 5 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    )
+    .expect("the run ends with an outcome");
+    let verdict = completed(Ok(outcome));
+    assert_eq!(
+        (verdict.estimate, verdict.decision),
+        (Some(ratio(0, 1)), Decision::Rejected)
     );
 }
 

@@ -703,7 +703,6 @@ const UNSUPPORTED: Table = &[
     ),
     // Exactly one of `identity` and `idle_tail` (`check_not_stochastic`).
     ("not-stochastic", &["state"], &["identity", "idle_tail"]),
-    ("time-locked-sample", &["state"], &[]),
     ("total-above-draw-range", &["total"], &[]),
     ("zero-weight-component", &["component"], &[]),
     ("delay-distribution", &["operation"], &[]),
