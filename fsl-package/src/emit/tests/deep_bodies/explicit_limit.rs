@@ -109,7 +109,11 @@ fn rss(stage: &str) {
             .map_or("?", |rest| rest.trim().trim_end_matches(" kB").trim())
             .to_owned()
     };
-    eprintln!("RSS stage={stage} vm_rss_kb={} vm_hwm_kb={}", kib("VmRSS:"), kib("VmHWM:"));
+    eprintln!(
+        "RSS stage={stage} vm_rss_kb={} vm_hwm_kb={}",
+        kib("VmRSS:"),
+        kib("VmHWM:")
+    );
 }
 
 fn qualify(family: Family, count: usize, require_default_denial: bool) {
@@ -267,33 +271,30 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         work: limits.read_work,
     };
     rss("before-read");
-    let admitted = match CheckedPackageV2::read_with_budget(
-        wire.bytes(),
-        read_limits,
-        &evidence,
-        &mut budget,
-    ) {
-        CheckedPackageV2BudgetedReadResult::Admitted(package) => package,
-        CheckedPackageV2BudgetedReadResult::Refused(refusal) => panic!(
-            "{family:?}: strict read refused code={:?} cause={:?}",
-            refusal.code, refusal.cause
-        ),
-        CheckedPackageV2BudgetedReadResult::Incomplete(failure) => {
-            panic!("{family:?}: strict read incomplete {failure:?}")
-        }
-        CheckedPackageV2BudgetedReadResult::BudgetIncomplete(failure) => {
-            panic!("{family:?}: strict read budget {failure:?}")
-        }
-        CheckedPackageV2BudgetedReadResult::Exhausted(failure) => {
-            panic!("{family:?}: strict read exhausted {failure:?}")
-        }
-        CheckedPackageV2BudgetedReadResult::CatalogUnavailable(_) => {
-            panic!("{family:?}: catalog unavailable")
-        }
-        CheckedPackageV2BudgetedReadResult::HostAllocationFailed(failure) => {
-            panic!("{family:?}: host allocation failed {failure:?}")
-        }
-    };
+    let admitted =
+        match CheckedPackageV2::read_with_budget(wire.bytes(), read_limits, &evidence, &mut budget)
+        {
+            CheckedPackageV2BudgetedReadResult::Admitted(package) => package,
+            CheckedPackageV2BudgetedReadResult::Refused(refusal) => panic!(
+                "{family:?}: strict read refused code={:?} cause={:?}",
+                refusal.code, refusal.cause
+            ),
+            CheckedPackageV2BudgetedReadResult::Incomplete(failure) => {
+                panic!("{family:?}: strict read incomplete {failure:?}")
+            }
+            CheckedPackageV2BudgetedReadResult::BudgetIncomplete(failure) => {
+                panic!("{family:?}: strict read budget {failure:?}")
+            }
+            CheckedPackageV2BudgetedReadResult::Exhausted(failure) => {
+                panic!("{family:?}: strict read exhausted {failure:?}")
+            }
+            CheckedPackageV2BudgetedReadResult::CatalogUnavailable(_) => {
+                panic!("{family:?}: catalog unavailable")
+            }
+            CheckedPackageV2BudgetedReadResult::HostAllocationFailed(failure) => {
+                panic!("{family:?}: host allocation failed {failure:?}")
+            }
+        };
     let charged = budget.consumed();
     let read_storage = budget.read_storage_consumed();
     assert!(charged.work <= limits.read_work && charged.storage <= limits.storage);

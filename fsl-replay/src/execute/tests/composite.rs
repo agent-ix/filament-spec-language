@@ -851,7 +851,11 @@ fn rss(stage: &str) {
             .map_or("?", |rest| rest.trim().trim_end_matches(" kB").trim())
             .to_owned()
     };
-    eprintln!("RSS stage={stage} vm_rss_kb={} vm_hwm_kb={}", kib("VmRSS:"), kib("VmHWM:"));
+    eprintln!(
+        "RSS stage={stage} vm_rss_kb={} vm_hwm_kb={}",
+        kib("VmRSS:"),
+        kib("VmHWM:")
+    );
 }
 
 /// The `replay.input_bytes` bound the deep requests fit under.
