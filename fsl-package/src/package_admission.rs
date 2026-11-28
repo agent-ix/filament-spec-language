@@ -374,8 +374,8 @@ impl PackageAdmissionRefusal {
                 host_allocation_failure: None,
             }),
         };
-        let exhausted = || Self {
-            limit: None,
+        let exhausted = |limit: &fsl_foundation::diagnostic::LimitExceeded| Self {
+            limit: Some(Box::new(limit.clone())),
             code: Code::ResourceExhausted,
             cause: None,
             pointer: None,
@@ -385,7 +385,9 @@ impl PackageAdmissionRefusal {
         let found = match refusal.as_ref() {
             StageFailure::Refused(refusal) => reader(refusal),
             StageFailure::RefusedWithPayload(refusal, _) => reader(refusal),
-            StageFailure::Limit(_) | StageFailure::LimitWithPayload(_, _) => Some(exhausted()),
+            StageFailure::Limit(limit) | StageFailure::LimitWithPayload(limit, _) => {
+                Some(exhausted(limit))
+            }
             StageFailure::Cancelled(_) | StageFailure::Fault(_) => None,
         };
         found.map(|found| found.naming_identity_in(bytes))

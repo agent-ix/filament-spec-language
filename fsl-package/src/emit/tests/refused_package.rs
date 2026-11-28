@@ -71,3 +71,21 @@ fn a_refusal_spells_the_readers_cause_or_its_codes_default() {
         "missing-selection"
     );
 }
+
+/// A reader ceiling reached inside an evaluation read keeps the limit the
+/// reader named, so the refusal names its setting (FR-255 Behavior 1).
+#[test]
+#[trace("FR-255-AC-24")]
+fn a_reached_read_ceiling_names_its_setting_bound_and_actual() {
+    use fsl_foundation::diagnostic::{LimitExceeded, StageFailure};
+    use fsl_foundation::Setting;
+
+    let ceiling = LimitExceeded::new(Setting::I2Nodes, 10_000, 10_001);
+    let refusal = crate::ImportViewRefusal::Read {
+        package: library(),
+        refusal: Box::new(StageFailure::Limit(ceiling.clone())),
+    };
+    let typed = PackageAdmissionRefusal::of_import_view(&refusal, None).expect("a read ceiling");
+    assert_eq!(typed.code, Code::ResourceExhausted);
+    assert_eq!(typed.limit.as_deref(), Some(&ceiling));
+}
