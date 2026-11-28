@@ -142,7 +142,10 @@ pub fn check_single_existential(
     let system = ModelSystem::for_alias(request.subject.simulation.clone(), alias.as_str())
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
-    let bindings = instances(clause, std::slice::from_ref(&system), &|_| Ok(0))?;
+    // An empty claim lists no instance; the run then carries none and its
+    // consumer settles the typed outcome from the subject (FR-125-AC-13).
+    let bindings =
+        instances(clause, std::slice::from_ref(&system), &|_| Ok(0))?.unwrap_or_default();
     if no_initial {
         return Ok(SingleExistentialRun {
             instances: bindings

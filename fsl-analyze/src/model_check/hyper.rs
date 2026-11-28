@@ -121,7 +121,8 @@ use fsl_eval::hyper::{
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ModelFinding, ModelKey, ModelSimState, ModelSystem, NoClaimInstances,
+    check_model_bounds, EmptyClaim, ModelFinding, ModelKey, ModelSimState, ModelSystem,
+    NoClaimInstances,
 };
 use fsl_eval::simulation::{
     Expansion, ExpansionLimit, ExpansionStop, Limit, Limits, Outcome, SymmetryClass, SymmetryGroup,
@@ -143,7 +144,7 @@ use fsl_semantics::check::{CheckedHyperClause, CopyGroup, FormulaNodeId, HyperFo
 use ix_trace_rs::implements;
 
 use super::check::{
-    atom_refusal, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS,
+    atom_refusal, empty_cause, fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS,
     EN1_STATE_OVERHEAD_BYTES,
 };
 use super::fair_walk::{tree_path, FairModel};
@@ -346,7 +347,10 @@ pub fn check_hyper(
         Err(outcome) => return Ok(outcome),
     };
     let symmetric = !request.reductions.symmetry.is_empty();
-    let instances = instances(clause, &systems, &slot_of)?;
+    let (instances, empty) = match instances(clause, &systems, &slot_of)? {
+        Ok(tuples) => (tuples, None),
+        Err(empty) => (Vec::new(), Some(empty)),
+    };
     let admitted = admitted_keys(&instances);
     let instances = if symmetric && clause.parameters().len() == 1 {
         orbit_representatives(instances, &keys, &admitted)
@@ -363,6 +367,7 @@ pub fn check_hyper(
         symmetric,
         copy,
         slots,
+        empty,
         witness: matches!(clause.form(), Some(HyperForm::ForallExistsSafety)),
         projected,
         cancel,
@@ -494,12 +499,13 @@ fn orbit_representatives(
 /// parameter to a key of its population's universe, over the product of the
 /// universes in parameter order (ADR-023 HS-3), through the one rule of
 /// FR-125 "Instancing". A subject with no initial state and a clause with no
-/// instance give no tuple here: `decide` settles them, in that order.
+/// instance are the typed [`EmptyClaim`], in that order: `decide` settles it
+/// after the cancellation poll, as before.
 fn instances(
     clause: &CheckedHyperClause,
     systems: &[ModelSystem<'_>],
     slot_of: &impl Fn(&str) -> Result<usize, ModelCheckRefusal>,
-) -> Result<Vec<Vec<ParameterBinding>>, ModelCheckRefusal> {
+) -> Result<Result<Vec<Vec<ParameterBinding>>, EmptyClaim>, ModelCheckRefusal> {
     let mut requests = Vec::with_capacity(clause.parameters().len());
     for parameter in clause.parameters() {
         let system = systems
@@ -513,9 +519,10 @@ fn instances(
     }
     let subjects: Vec<&ModelSystem<'_>> = systems.iter().collect();
     match fsl_eval::hyper::claim_instance_tuples(&subjects, &requests) {
-        Ok(tuples) => Ok(tuples),
+        Ok(tuples) => Ok(Ok(tuples)),
         Err(NoClaimInstances::NotSimulated(refusal)) => Err(not_simulated(refusal)),
-        Err(NoClaimInstances::NoInitialState | NoClaimInstances::NoInstance) => Ok(Vec::new()),
+        Err(NoClaimInstances::NoInitialState) => Ok(Err(EmptyClaim::NoInitialState)),
+        Err(NoClaimInstances::NoInstance) => Ok(Err(EmptyClaim::NoInstance)),
     }
 }
 
@@ -928,6 +935,9 @@ struct Run<'r, 'a> {
     copy: CopyGroup,
     /// The index in `systems` of each trace variable's subject.
     slots: Vec<usize>,
+    /// Why the clause has no instance (FR-125-AC-13), settled by `decide`
+    /// before any state is explored.
+    empty: Option<EmptyClaim>,
     /// Whether the clause is HP-3: its leading `universals` variables are
     /// universal and the rest existential.
     witness: bool,
@@ -1009,14 +1019,9 @@ impl<'a> Run<'_, 'a> {
                 ));
             }
         }
-        if self
-            .request
-            .subjects
-            .iter()
-            .any(|subject| subject.simulation.initial.is_empty())
-        {
+        if let Some(empty) = self.empty {
             return Ok(HyperOutcome::Undecided {
-                cause: UndecidedCause::NoInitialState,
+                cause: empty_cause(empty),
                 stats: totals.stats(),
             });
         }
