@@ -973,7 +973,7 @@ fn c10_a_zero_family_steps_limit_denies_the_first_followed_edge() {
 /// A chain of `n` links holds `n + 1` types and 0 + 1 + ... + n inherited
 /// members besides its `n + 1` declared ones, so 1,001 + 501,501 = 502,502
 /// effective declarations at `n` = 1,000.
-#[trace("FR-083-AC-5")]
+#[trace("FR-083-AC-5", "FR-255-AC-45", "FR-255-AC-46")]
 #[test]
 fn a_thousand_link_chain_normalizes_and_links_at_every_published_default() {
     const EDGES: u64 = 1_000;
@@ -999,6 +999,8 @@ fn a_thousand_link_chain_normalizes_and_links_at_every_published_default() {
     };
     assert_eq!(refused.limit_kind, NormalizationLimitKind::DerivationFacts);
     assert_eq!(refused.limit, 1_504_501);
+    // A size counter reports the size reached, not consumed + size.
+    assert_eq!(refused.denial().actual(), 1_504_502);
 }
 
 /// FR-083-AC-6: twice the length is past the default fact budget.
@@ -1028,4 +1030,27 @@ fn link_chain_at_defaults(
         GeneralizationClosure::Closed,
         &mut NormalizationMeter::new(limits),
     )
+}
+
+/// QSL-3573: a 1,000-link `redefines` chain refuses typed at `family_steps`
+/// 999, naming the setting, the bound and the count the first edge past it
+/// would reach, and links at 1,000. The refusal is a stop, not a crash.
+#[trace("FR-255-AC-45", "FR-083-AC-5")]
+#[test]
+fn a_thousand_link_chain_refuses_typed_one_edge_short_of_family_steps() {
+    const EDGES: u64 = 1_000;
+    let package = chain_package(EDGES);
+    let at = |family_steps: u64| ModelNormalizationLimits {
+        family_steps,
+        ..ModelNormalizationLimits::UNLIMITED
+    };
+    assert_links_the_chain(link_chain(&package, at(EDGES)), EDGES);
+    let LinkCheckOutcome::Incomplete(stop) = link_chain(&package, at(EDGES - 1)) else {
+        panic!("the family walk is denied at the edge past 999");
+    };
+    assert_eq!(stop.limit_kind, NormalizationLimitKind::FamilySteps);
+    assert_eq!((stop.limit, stop.consumed), (EDGES - 1, EDGES - 1));
+    let denial = stop.denial();
+    assert_eq!(denial.setting(), fsl_foundation::Setting::ModelFamilySteps);
+    assert_eq!(denial.actual(), u128::from(EDGES));
 }

@@ -16,6 +16,17 @@ use crate::diagnostic::LimitKind;
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use ix_trace_rs::implements;
 
+/// How a setting's counter accumulates: what a denied charge's count is.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CountKind {
+    /// Each charge adds to a running total; a denied charge would have
+    /// reached `consumed + next_charge`.
+    Cumulative,
+    /// The counter keeps the largest size admitted; a charge states the size
+    /// the step reaches, so a denied charge would have reached `next_charge`.
+    HighWater,
+}
+
 /// Declares [`Setting`] and its table from one list, so a name, its stage, its
 /// limit kind and its published default are written once.
 macro_rules! settings {
@@ -203,6 +214,23 @@ settings! {
 impl Setting {
     /// How many settings there are.
     pub const COUNT: usize = Self::ALL.len();
+
+    /// How a charge to this setting's counter accumulates (FR-255 Behavior 1,
+    /// "count"): the counters of model normalization that hold the largest
+    /// size reached, and the admitted population size, are high-water; every
+    /// other counter is cumulative.
+    #[must_use]
+    #[implements("FR-255-AC-46")]
+    pub const fn count_kind(self) -> CountKind {
+        match self {
+            Self::ModelDeclarationRecords
+            | Self::ModelDerivationFacts
+            | Self::ModelEffectiveDeclarations
+            | Self::ModelDispatchCandidates
+            | Self::AdmissionPopulationMembers => CountKind::HighWater,
+            _ => CountKind::Cumulative,
+        }
+    }
 
     /// The setting's position in [`Self::ALL`], below [`Self::COUNT`].
     #[must_use]

@@ -1781,9 +1781,9 @@ fn conformance_tick_timed_model_has_operation_anchor_and_no_clock_places() {
         .any(|node| serde_json::to_value(&node.node_id).unwrap() == *operation_id));
 }
 
-/// FR-415-AC-17 / FR-322-AC-122: the typed timed-model writer re-emits all
-/// eight structural forms and the resulting package is admitted by I2.
-#[trace("TC-367", "FR-415-AC-17", "FR-322-AC-122")]
+/// FSpec-FR-415-AC-17 / FSpec-FR-322-AC-122: the typed timed-model writer
+/// re-emits all eight structural forms and the resulting package is admitted by I2.
+#[trace("TC-367", "FSpec-FR-415-AC-17", "FSpec-FR-322-AC-122")]
 #[test]
 fn conformance_typed_timed_model_writer_emits_an_admitted_package() {
     let (_fspec, directory, _) = fspec_v2_fixtures();
@@ -1845,7 +1845,7 @@ fn conformance_typed_timed_model_writer_emits_an_admitted_package() {
 
 /// FR-322-AC-120: a dense timed model with no clock places reconstructs and
 /// re-emits even though its timed nodes contain no integer literals.
-#[trace("TC-367", "FR-322-AC-120", "FR-415-AC-17")]
+#[trace("TC-367", "FSpec-FR-322-AC-120")]
 #[test]
 fn a_no_clock_dense_timed_model_needs_no_integer_literal_type() {
     let (_fspec, directory, _) = fspec_v2_fixtures();

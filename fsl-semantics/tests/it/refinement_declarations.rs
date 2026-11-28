@@ -1701,6 +1701,36 @@ fn mismatched_composite_reference_shapes_are_refused() {
     }
 }
 
+/// FR-135-AC-20 (TC-540 step 14): a record, a tuple and a union pair with
+/// their own kind only; each row naming a field of another composite kind
+/// refuses `ill_typed`/`type-mismatch` at the row's expression.
+#[trace("TC-540", "FR-135-AC-20")]
+#[test]
+fn a_row_never_pairs_composites_of_different_kinds() {
+    let (spec, concrete) = nested_models();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+    for (row, at) in [
+        ("box = self.pair;", "self.pair"),
+        ("box = self.holder;", "self.holder"),
+        ("pair = self.box;", "self.box"),
+        ("pair = self.holder;", "self.holder"),
+        ("holder = self.box;", "self.box"),
+        ("holder = self.pair;", "self.pair"),
+    ] {
+        let found = refused(&models, &nested_refinement(row));
+        let refusal = only(&found);
+        assert_eq!(
+            refusal.code_and_cause(),
+            (Code::IllTyped, Some("type-mismatch")),
+            "{row}"
+        );
+        assert_eq!(refusal.at, at, "{row}");
+    }
+}
+
 /// FR-135-AC-4 (TC-540 step 4): with the `value` row removed the abstract
 /// field is hidden. With the row reading `self.tmpA` in place of `self.value`,
 /// in a package of the same identity, the refinement's node key is equal and
