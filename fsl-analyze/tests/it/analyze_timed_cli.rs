@@ -1973,12 +1973,46 @@ fn a_clock_owner_with_no_universe_requires_a_bound() {
         over_no_universe("timed-no-universe-clocked", &locking_document(), LOCKING),
         requires_bound_on_all_four()
     );
+}
+
 #[trace("FR-245-AC-2")]
 #[test]
 fn zones_certify_a_safety_claim_under_a_resetting_deadline() {
     let items = stalling_items("timed-zone-resetting-deadline", true);
     assert_eq!(label(&items[0]), "proved", "{}", items[0]);
     assert_eq!(label(&items[1]), "proved", "{}", items[1]);
+}
+
+#[test]
+fn digital_invariant_stall_does_not_create_a_divergent_tail() {
+    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+
+    let unit = unit_text(
+        PACKAGE,
+        crate::zone_search::TIMED,
+        &format!(
+            "{DENSE}\
+             time invariant Boundary when {{ true }} {{ self.x <= 0 ms }}\n\
+             temporal Safe using tt over (c: M::Call) clock \"model-time\" on origin \
+             {{ always holds(true) }}\n"
+        ),
+    );
+    let ws = Workspace::new("digital-idle-tail-invariant-boundary");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &document(&["x"], &[]),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "Safe", "options": {"method": "digital-clocks"}}]}),
+    ));
+    assert_eq!(run.exit, 22, "{}", run.document());
+    let item = run.item(0);
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(
+        item["record"]["cause"]["kind"], "no-admitted-behaviour",
+        "{item}"
+    );
 }
 
 /// TC-2290: EN-1's digital-clock route agrees with the zone route on a true

@@ -932,19 +932,16 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         at: usize,
     ) -> Result<Result<Vec<usize>, UndefinedAt>, Halt> {
         let vertex = product.vertices[at].clone();
+        let Some(later) = self.delayed(&vertex.state)? else {
+            return Ok(Ok(Vec::new()));
+        };
         let delay = self
             .timed()
             .tick_period()
             .cloned()
             .unwrap_or_else(|| Rational::from_integer(Integer::one()));
         let clocks = Self::capped(&vertex.clocks.delayed(&delay), &self.automaton_cap);
-        let letter = match self.reading(
-            instance,
-            automaton,
-            universal,
-            vertex.state.discrete(),
-            false,
-        )? {
+        let letter = match self.reading(instance, automaton, universal, later.discrete(), false)? {
             Reading::Defined(letter) => letter,
             Reading::Undefined(locus, cause) => {
                 let mut path = Self::path_to(product, at);
@@ -964,6 +961,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let mut created = Vec::new();
         for (q, clocks) in self.reads(automaton, universal, vertex.q, letter, &clocks)? {
             let next = DVertex {
+                state: later.clone(),
                 q,
                 clocks,
                 positioned: true,
