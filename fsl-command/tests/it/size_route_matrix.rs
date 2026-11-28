@@ -120,6 +120,8 @@ fn analyze_source(extra: &str) -> String {
          profile paths = \"filament.temporal.infinite-trace/v1\";\n\
          model Queue = \"test/counter\";\n\
          {extra}\
+         pre SpaceAvailable using values on Queue::Counter::inc {{ self.value < 2 }}\n\
+         post AppendOne using values on Queue::Counter::inc {{ self.value - pre(self.value) = 1 }}\n\
          temporal Bounded using paths over (q: Queue::Counter) clock \"model-steps\" on origin {{\n\
            always holds(q.value <= 2)\n\
          }}\n"
@@ -144,6 +146,8 @@ fn flat_analyze_source() -> String {
          profile paths = \"filament.temporal.infinite-trace/v1\";\n\
          model Queue = \"test/counter\";\n\
          function total using values(): Integer pure {{ {terms} }}\n\
+         pre SpaceAvailable using values on Queue::Counter::inc {{ self.value < 2 }}\n\
+         post AppendOne using values on Queue::Counter::inc {{ self.value - pre(self.value) = 1 }}\n\
          temporal Bounded using paths over (q: Queue::Counter) clock \"model-steps\" on origin {{\n\
            always holds(q.value <= 2)\n\
          }}\n"
@@ -221,8 +225,8 @@ fn counter_model_with_one_thousand_enums() -> Vec<u8> {
             "roles":[],"origin":generated("type"),"constraints":[],"extensions":[],
             "unknownPolicy":"reject",
             "variants":[
-                {"identity":format!("{identity}/A"),"name":"A","origin":spanned(1)},
-                {"identity":format!("{identity}/B"),"name":"B","origin":spanned(2)}
+                {"identity":format!("ix://test/counter/variant/{name}-A"),"name":"A","origin":spanned(1)},
+                {"identity":format!("ix://test/counter/variant/{name}-B"),"name":"B","origin":spanned(2)}
             ]
         }));
     }
@@ -308,6 +312,10 @@ fn analyze_size_limits() -> command::CommandLimits {
         (Setting::S1WorkUnits, 2_000_000),
         (Setting::S3Nodes, 2_000_000),
         (Setting::S3WorkUnits, 2_000_000),
+        (Setting::ModelSequenceMaximum, 100_000),
+        (Setting::I2InputBytes, 1_073_741_824),
+        (Setting::ReplayInputBytes, 1_073_741_824),
+        (Setting::ObservationInputBytes, 1_073_741_824),
         (Setting::EmitOutputBytes, 1_073_741_824),
     ] {
         limits
@@ -340,7 +348,7 @@ fn assert_analyze_request_exact_and_one_byte_over(path: &Path) {
         .expect("request size fits usize");
     let result = analyze_with_request_bound(path, request_bytes)
         .expect("the request at its exact byte count is admitted");
-    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.exit_code, 0, "{}", result.value.as_value());
     assert_eq!(
         result.value.as_value()["items"][0]["record"]["result"],
         "proved"
