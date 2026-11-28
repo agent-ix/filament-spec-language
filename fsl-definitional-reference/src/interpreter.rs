@@ -686,7 +686,9 @@ impl ReferenceClockState {
     /// between them (and one delay beyond the last), and two states with the
     /// same region (each clock's integer part or "above `max_constant`", whether
     /// it is an integer, and the order of the fractional parts) enable the
-    /// same steps. Exploration is over regions, so it terminates.
+    /// same steps. Exploration is over regions, so it terminates. A guard or
+    /// invariant bound above `max_constant` would merge regions that differ
+    /// for it, so the method refuses by name instead of answering.
     pub fn can_enable_eventually(
         &self,
         model: &TimedModel,
@@ -694,6 +696,27 @@ impl ReferenceClockState {
         targets: &[&str],
         max_constant: u32,
     ) -> Result<bool, ReferenceRefusal> {
+        let ceiling =
+            Rational::from_integer(filament_exact::Integer::from(i64::from(max_constant)));
+        let bounds = model
+            .guards()
+            .iter()
+            .flat_map(|guard| guard.parts())
+            .flat_map(|part| part.clocks())
+            .chain(
+                model
+                    .invariants()
+                    .iter()
+                    .flat_map(|invariant| invariant.bounds()),
+            )
+            .map(|constraint| constraint.bound());
+        for bound in bounds {
+            if *bound > ceiling {
+                return Err(unsupported(
+                    "clock bound above the maximum constant of the region quotient",
+                ));
+            }
+        }
         let mut seen = std::collections::BTreeSet::new();
         let mut pending = vec![self.clone()];
         while let Some(state) = pending.pop() {

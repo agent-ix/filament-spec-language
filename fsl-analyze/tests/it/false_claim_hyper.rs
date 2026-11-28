@@ -20,6 +20,8 @@ use fsl_replay::{
     ProductClosureClause, ProductClosureRequest,
 };
 
+use ix_trace_rs::trace;
+
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{instance, Vault, World};
 
@@ -32,6 +34,7 @@ fn world() -> World {
 }
 
 /// Seed QSL-923, analysis half: the engine finds the lasso and refutes.
+#[trace("FR-1051")]
 #[test]
 fn seed_qsl_923_analysis_does_not_prove_the_never_set_output_claim() {
     let world = world();
@@ -47,6 +50,7 @@ fn seed_qsl_923_analysis_does_not_prove_the_never_set_output_claim() {
 /// Seed QSL-923, checker half: the closed product of the clause, in one
 /// component with the witness "no state lies in acceptance set 0", is not
 /// accepted. The lasso's states lie in that set.
+#[trace("FR-1051")]
 #[test]
 fn seed_qsl_923_a_certificate_that_the_lasso_misses_the_acceptance_set_is_rejected() {
     let world = world();

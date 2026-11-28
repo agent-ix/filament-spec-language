@@ -9,29 +9,57 @@
 
 use std::collections::BTreeSet;
 
-/// The routes with a corpus entry: route, seed ticket, and the test that
-/// forges the certificate (or the witness) for it.
-const CORPUS: &[(&str, &str, &str)] = &[
-    (
-        "R-18",
-        "QSL-3444",
-        "false_claim_timed::seed_qsl_3444_a_certificate_of_maximum_zero_is_rejected_for_the_strict_two_clock_claim",
-    ),
-    (
-        "R-27",
-        "QSL-3478",
-        "zone_check::certificate::false_claim_tests::seed_qsl_3478_always_possible_forgery_is_rejected",
-    ),
-    (
-        "R-28",
-        "QSL-3478",
-        "zone_check::certificate::false_claim_tests::seed_qsl_3478_unique_path_is_decided_violated",
-    ),
-    (
-        "R-38",
-        "QSL-923",
-        "false_claim_hyper::seed_qsl_923_a_certificate_that_the_lasso_misses_the_acceptance_set_is_rejected",
-    ),
+use ix_trace_rs::trace;
+
+/// A corpus entry: the route, the seed ticket, the file of the test relative
+/// to this crate, the test's name, and what the test asserts of the check
+/// entry (a rule name its file must mention).
+struct Entry {
+    route: &'static str,
+    ticket: &'static str,
+    file: &'static str,
+    test: &'static str,
+    /// The rule the test pins, or "Violated" where the check entry decides
+    /// the claim violated and no certificate is forged (R-28).
+    asserts: &'static str,
+    /// Whether the test forges a certificate the check entry rejects.
+    forged: bool,
+}
+
+const CORPUS: &[Entry] = &[
+    Entry {
+        route: "R-18",
+        ticket: "QSL-3444",
+        file: "tests/it/false_claim_timed.rs",
+        test:
+            "seed_qsl_3444_a_certificate_of_maximum_zero_is_rejected_for_the_strict_two_clock_claim",
+        asserts: "InequalityFails",
+        forged: true,
+    },
+    Entry {
+        route: "R-27",
+        ticket: "QSL-3478",
+        file: "src/zone_check/certificate/false_claim_tests.rs",
+        test: "seed_qsl_3478_always_possible_forgery_is_rejected",
+        asserts: "RankBroken",
+        forged: true,
+    },
+    Entry {
+        route: "R-28",
+        ticket: "QSL-3478",
+        file: "src/zone_check/certificate/false_claim_tests.rs",
+        test: "seed_qsl_3478_unique_path_is_decided_violated",
+        asserts: "Violated",
+        forged: false,
+    },
+    Entry {
+        route: "R-38",
+        ticket: "QSL-923",
+        file: "tests/it/false_claim_hyper.rs",
+        test: "seed_qsl_923_a_certificate_that_the_lasso_misses_the_acceptance_set_is_rejected",
+        asserts: "WitnessFails",
+        forged: true,
+    },
 ];
 
 fn spec() -> String {
@@ -76,37 +104,60 @@ fn table_routes() -> Vec<u32> {
     routes
 }
 
-/// The Routes table names R-1 to R-62 once each, and every corpus entry
-/// names a route of the table.
+/// The Routes table names R-1 to R-62 once each, every corpus entry names a
+/// route of the table, and each entry's test exists in its file as a test
+/// whose file mentions the rule the entry says it asserts.
+#[trace("FR-1051")]
 #[test]
 fn the_routes_table_names_sixty_two_routes_and_the_corpus_names_only_them() {
     let routes = table_routes();
     assert_eq!(routes, (1..=62).collect::<Vec<_>>());
     let table: BTreeSet<String> = routes.iter().map(|route| format!("R-{route}")).collect();
-    for (route, ticket, test) in CORPUS {
+    for entry in CORPUS {
         assert!(
-            table.contains(*route),
-            "{route} is not a route of the table"
+            table.contains(entry.route),
+            "{} is not a route of the table",
+            entry.route
         );
         assert!(
-            ticket.starts_with("QSL-"),
-            "{route}: a seed names its ticket"
+            entry.ticket.starts_with("QSL-"),
+            "{}: a ticket",
+            entry.route
         );
-        assert!(!test.is_empty(), "{route}: a seed names its test");
+        let path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), entry.file);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {path} reads: {error}", entry.route));
+        assert!(
+            source.contains(&format!("#[test]\nfn {}(", entry.test)),
+            "{}: {} is not a test of {}",
+            entry.route,
+            entry.test,
+            entry.file
+        );
+        assert!(
+            source.contains(entry.asserts),
+            "{}: {} does not mention {}",
+            entry.route,
+            entry.file,
+            entry.asserts
+        );
     }
-    let named: BTreeSet<_> = CORPUS.iter().map(|(route, _, _)| *route).collect();
+    let named: BTreeSet<_> = CORPUS.iter().map(|entry| entry.route).collect();
     assert_eq!(named.len(), CORPUS.len(), "a route has one corpus entry");
+    assert_eq!(
+        CORPUS.iter().filter(|entry| entry.forged).count(),
+        3,
+        "R-18, R-27 and R-38 forge a certificate; R-28 is decided violated"
+    );
 }
 
 /// FR-1051-AC-16's gate: every route of the table has a corpus entry. It
 /// fails naming each route without one.
+#[trace("FR-1051")]
 #[test]
 #[ignore = "QSL-3550: 58 of the 62 routes have no corpus entry yet"]
 fn every_route_of_the_routes_table_has_a_corpus_entry() {
-    let covered: BTreeSet<String> = CORPUS
-        .iter()
-        .map(|(route, _, _)| (*route).to_owned())
-        .collect();
+    let covered: BTreeSet<String> = CORPUS.iter().map(|entry| entry.route.to_owned()).collect();
     let missing: Vec<String> = table_routes()
         .into_iter()
         .map(|route| format!("R-{route}"))

@@ -3,8 +3,10 @@
 //! two clocks in dense time, `first` at 1/2 ms leaves a state from which no
 //! run reaches phase 2, so both claims are false. The definitional
 //! reference decides that by its own region quotient, the analysis does not
-//! settle either claim `proved`, and a certificate that says the trapped
-//! state reaches phase 2 is not accepted by the check entry.
+//! settle either claim `proved`. For `always possible` a certificate whose
+//! `ef_nodes` say the trapped state reaches phase 2 is rejected by the check
+//! entry (a forgery). For `unique path` the certificate has nothing to forge:
+//! the check entry decides the claim violated.
 //!
 //! The model is data-free in its clock clauses (the reference reads no data
 //! predicate): `first` runs while `y < 1 ms` and resets `x`; `zero` needs
@@ -22,6 +24,7 @@ use fsl_replay::{
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_semantics::check::StateGraphForm;
+use ix_trace_rs::trace;
 
 const TIMED: &str = "profile tt = \"filament.temporal.timed/v1\";\n";
 const CLAIMS: &str = "always possible Done using v over (c: M::Call) { c.phase >= 2 }\n\
@@ -59,6 +62,7 @@ fn world() -> crate::timed_world::World {
 /// Seed QSL-3478, reference half: from both clocks at zero
 /// the reference's region quotient reaches an enabled `zero`, and after
 /// `first` at 1/2 ms (clocks `x = 0`, `y = 1/2`) it reaches none.
+#[trace("FR-1051")]
 #[test]
 fn seed_qsl_3478_the_reference_region_quotient_finds_the_trap() {
     let world = world();
@@ -196,6 +200,7 @@ fn settle(claim_name: &str) -> Settled {
 /// `always possible Done`, a certificate whose `ef_nodes` name every node
 /// (the trapped one included) is rejected by the check entry, and the honest
 /// certificate decides the claim violated, never holds.
+#[trace("FR-1051")]
 #[test]
 fn seed_qsl_3478_always_possible_forgery_is_rejected() {
     let settled = settle("Done");
@@ -217,9 +222,12 @@ fn seed_qsl_3478_always_possible_forgery_is_rejected() {
     );
 }
 
-/// Seed QSL-3478, R-28 checker half: the analysis refutes
-/// `unique path OnlyWay`, and no certificate makes the check entry decide it
-/// holds: it decides violated.
+/// Seed QSL-3478, R-28: the analysis refutes `unique path OnlyWay`, and the
+/// check entry, given the certificate of the real closed graph, decides the
+/// claim violated. This is not a forgery: a `UniquePath` certificate carries
+/// no `ef_nodes`, so the certificate here is the only one there is and the
+/// checker's decision does not depend on anything it claims.
+#[trace("FR-1051")]
 #[test]
 fn seed_qsl_3478_unique_path_is_decided_violated() {
     let settled = settle("OnlyWay");
@@ -230,4 +238,42 @@ fn seed_qsl_3478_unique_path_is_decided_violated() {
         "{:?}",
         settled.forged
     );
+}
+
+/// The reference refuses a model whose bounds exceed the maximum constant it
+/// was given, by name, instead of merging regions.
+#[trace("FR-1051")]
+#[test]
+fn seed_qsl_3478_the_reference_refuses_a_bound_above_the_maximum_constant() {
+    let world = world();
+    let timed = &world.package.graph().timed_models()[0];
+    let start = fsl_definitional_reference::ReferenceClockState::new(
+        timed,
+        vec![rational(0, 1), rational(0, 1)],
+    )
+    .expect("both clocks start at zero");
+    let refusal = start
+        .can_enable_eventually(timed, &["first", "zero", "one"], &["zero", "one"], 1)
+        .expect_err("the model's bound 2 exceeds the maximum constant 1");
+    assert_eq!(
+        refusal.construct,
+        "clock bound above the maximum constant of the region quotient"
+    );
+}
+
+/// A clock above the maximum constant is its own region: from x = 3, y = 3
+/// the cap `y <= 2` already fails, so nothing is enabled.
+#[trace("FR-1051")]
+#[test]
+fn seed_qsl_3478_the_reference_decides_clocks_above_the_maximum_constant() {
+    let world = world();
+    let timed = &world.package.graph().timed_models()[0];
+    let beyond = fsl_definitional_reference::ReferenceClockState::new(
+        timed,
+        vec![rational(3, 1), rational(3, 1)],
+    )
+    .expect("both clocks start above the maximum constant");
+    assert!(!beyond
+        .can_enable_eventually(timed, &["first", "zero", "one"], &["zero", "one"], 2)
+        .expect("the reference decides the state above the constant"));
 }
