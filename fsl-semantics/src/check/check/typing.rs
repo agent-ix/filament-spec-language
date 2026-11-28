@@ -1278,7 +1278,7 @@ impl<'a> Typer<'a> {
     /// or a branch, satisfies every bound on the slot. A value that is not
     /// constant is left to the run-time invariant.
     #[implements("FR-056-AC-74")]
-    fn admit_unit_bounds(&self, built: &Node) -> Result<(), CheckRefusal> {
+    fn admit_unit_bounds(&self, built: &Node) -> Result<(), SemanticCheckRefusal> {
         let declaration = match &built.kind {
             NodeKind::Record { declaration, .. } | NodeKind::Tuple { declaration, .. } => {
                 declaration
