@@ -17,7 +17,6 @@ use std::{
 #[cfg(any(test, feature = "test-support"))]
 use std::cell::Cell;
 #[cfg(feature = "test-support")]
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
@@ -107,9 +106,8 @@ pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(feature = "test-support")]
-static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(feature = "test-support")]
 thread_local! {
+    static NODE_ID_REWRITE_SLOT_VISITS: Cell<usize> = const { Cell::new(0) };
     static READ_INDEX_REWRITE_WORK_UNITS: Cell<usize> = const { Cell::new(0) };
     static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
     static USE_REPEATED_COMPILE_INDEX_REWRITES: Cell<bool> = const { Cell::new(false) };
@@ -341,12 +339,12 @@ pub(crate) fn s4_retained_counts() -> S4RetainedCounts {
 
 #[cfg(feature = "test-support")]
 pub(crate) fn reset_node_id_rewrite_slot_visits() {
-    NODE_ID_REWRITE_SLOT_VISITS.store(0, Ordering::Relaxed);
+    NODE_ID_REWRITE_SLOT_VISITS.with(|visits| visits.set(0));
 }
 
 #[cfg(feature = "test-support")]
 pub(crate) fn node_id_rewrite_slot_visits() -> usize {
-    NODE_ID_REWRITE_SLOT_VISITS.load(Ordering::Relaxed)
+    NODE_ID_REWRITE_SLOT_VISITS.with(Cell::get)
 }
 
 #[cfg(feature = "test-support")]
@@ -11490,14 +11488,14 @@ pub fn write_operand_slots(
         } else {
             node.map_node_ids(|id| {
                 #[cfg(feature = "test-support")]
-                NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
+                NODE_ID_REWRITE_SLOT_VISITS.with(|visits| visits.set(visits.get() + 1));
                 changes.get(id).cloned()
             });
         }
         #[cfg(not(test))]
         node.map_node_ids(|id| {
             #[cfg(feature = "test-support")]
-            NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
+            NODE_ID_REWRITE_SLOT_VISITS.with(|visits| visits.set(visits.get() + 1));
             changes.get(id).cloned()
         });
         rows.push(row);

@@ -935,6 +935,11 @@ fn compile_has_bounded_operand_rewrite_candidates_at_ten_thousand() {
 
     let slot_visits = fsl_package::test_support::node_id_rewrite_slot_visits();
     assert!(
+        slot_visits >= N,
+        "10,000-value operand rewrite visited {slot_visits} ID slots on this thread; \
+         expected at least {N}, so the counter is still on the compile thread"
+    );
+    assert!(
         slot_visits <= 60_000,
         "10,000-value operand rewrite visited {slot_visits} ID slots; expected at most 60,000"
     );
