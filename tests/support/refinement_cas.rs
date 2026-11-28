@@ -652,6 +652,7 @@ pub fn check_with_internals_mode(
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new("agent-ix", "refinement"),
         "refinement.native",
         text.as_bytes(),
@@ -667,7 +668,11 @@ pub fn check_with_internals_mode(
     )
     .expect("the model selections admit")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(
+            &fsl_cst::ParserContext::new(),
+            text,
+            fsl_cst::Limits::default(),
+        )
     })
     .expect("the operation clauses parse");
     let declarations = PackageDeclarations::assemble(

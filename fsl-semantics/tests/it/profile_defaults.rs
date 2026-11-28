@@ -20,8 +20,9 @@ fn outcome(profiles: &str, body: &str) -> Result<(), String> {
 /// [`outcome`] keeping the catalog codes of the check refusals (none for a
 /// refusal of an earlier stage) beside the debug text.
 fn detail(profiles: &str, body: &str) -> Result<(), (Vec<fsl_foundation::Code>, String)> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{profiles}{body}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "profile-defaults"),
         "profile-defaults.native",
         text.as_bytes(),

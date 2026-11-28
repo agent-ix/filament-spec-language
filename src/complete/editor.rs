@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Revision-bound formatter and editor snapshot over the lossless CST.
 use fsl_foundation::{Phase, SourceIdentity, Span};
+use ix_trace_rs::implements;
 use std::collections::BTreeSet;
 
 use super::SourceEdit;
@@ -194,7 +195,9 @@ pub fn analyze_document(
 /// is reparsed under the same profile catalog and explicit limits, then every
 /// non-whitespace token must correspond exactly before edits are returned. The
 /// later checked-package authority owns semantic-identity validation.
+#[implements("NFR-141-AC-10")]
 pub fn format_document(
+    parser: &super::CompleteParser,
     parsed: &ParsedSource,
     binding: DocumentBinding,
     catalog: &ProfileCatalog,
@@ -224,7 +227,7 @@ pub fn format_document(
     }
     let formatted = fsl_cst::format::format_with_limit(parsed, limits.source_bytes)
         .map_err(fsl_cst::format::FormatRefusal::into_diagnostic)?;
-    let candidate = super::parse_with_catalog(
+    let candidate = super::parse_with_catalog(parser,
         binding.source.clone(),
         parsed.source().path(),
         formatted.as_bytes(),

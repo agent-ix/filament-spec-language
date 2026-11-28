@@ -44,6 +44,7 @@ mod steps;
 mod tso;
 mod wire;
 
+use ix_trace_rs::implements;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -55,7 +56,6 @@ use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{CheckedActivation, CheckedProtocol};
 use fsl_semantics::family::ClaimExtent;
-use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use crate::fairness::{Constraint, Identity};
@@ -1290,20 +1290,11 @@ pub type ProtocolSuccessorsAndTerminal<M> = (
     TerminalClass,
 );
 
-#[cfg(feature = "test-support")]
-thread_local! {
-    static CONSTRUCTED_INITIAL: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// The number of protocol initial-state constructions started by this thread.
-#[cfg(feature = "test-support")]
-pub fn constructed_initial_states() -> u64 {
-    CONSTRUCTED_INITIAL.with(std::cell::Cell::get)
-}
-
 /// FR-215: the transition system of a protocol subject.
 pub struct ProtocolSystem<'a, M: MemoryModel> {
     model: ModelSystem<'a>,
+    #[cfg(feature = "test-support")]
+    constructed_initial: std::sync::atomic::AtomicU64,
     evaluator: &'a dyn ModelEvaluator,
     protocol: Option<&'a CheckedProtocol>,
     protocol_name: String,
@@ -1521,6 +1512,12 @@ pub const fn live_instance_bound(requested: Option<u64>) -> u64 {
 }
 
 impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
+    #[cfg(feature = "test-support")]
+    #[implements("FR-126-AC-26")]
+    pub fn constructed_initial_count(&self) -> u64 {
+        self.constructed_initial
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
     /// FR-205 "Subject": build the protocol subject's system over the
     /// admitted `model` of the subject's model subject, with the memory
     /// model `memory` for its resolved models (FR-219). Initial protocol
@@ -1682,6 +1679,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             universes: Vec::new(),
             max_live_instances: DEFAULT_MAX_LIVE_INSTANCES,
             model_footprints: std::sync::Mutex::default(),
+            #[cfg(feature = "test-support")]
+            constructed_initial: std::sync::atomic::AtomicU64::new(0),
         };
         if let Some(target) = system.loop_proof_target {
             if !system
@@ -1877,6 +1876,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             universes: Vec::new(),
             max_live_instances: DEFAULT_MAX_LIVE_INSTANCES,
             model_footprints: std::sync::Mutex::default(),
+            #[cfg(feature = "test-support")]
+            constructed_initial: std::sync::atomic::AtomicU64::new(0),
         };
         if let Some(target) = system.loop_proof_target {
             if !system
@@ -1986,13 +1987,18 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     /// FO-3: for each initial model state, instance 0 with its root thread
     /// settled from the start of `run`; under `activation on each`, no
     /// instance (ADR-027 AE-1).
+    #[implements("FR-126-AC-26")]
     fn initial_state(
         &self,
         model: &ModelSimState,
         over: &Value,
     ) -> Result<ProtocolState<M>, ProtocolRefusal> {
         #[cfg(feature = "test-support")]
-        CONSTRUCTED_INITIAL.with(|count| count.set(count.get().saturating_add(1)));
+        let _ = self.constructed_initial.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |count| Some(count.saturating_add(1)),
+        );
         let (instances, initial_findings) = if self.program.activation.is_some() {
             (BTreeMap::new(), Vec::new())
         } else {
@@ -3372,6 +3378,18 @@ impl<'a, M: MemoryModel> TransitionSystem for ProtocolSystem<'a, M> {
 }
 
 impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
+    #[cfg(feature = "test-support")]
+    #[implements("FR-126-AC-26")]
+    fn generated_model_initial_states(&self) -> u64 {
+        self.model.generated_initial_count()
+    }
+
+    #[cfg(feature = "test-support")]
+    #[implements("FR-126-AC-26")]
+    fn constructed_protocol_initial_states(&self) -> u64 {
+        self.constructed_initial_count()
+    }
+
     fn initial_for_check(
         &self,
         max_states: usize,

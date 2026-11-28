@@ -128,7 +128,14 @@ fn assert_format_identity(
     // its formatted layout, retaining its model/dependency/checking authority.
     let format_limits = fsl_cst::format::FormatLimits::default().with_output_bytes(usize::MAX);
     let formatted = {
-        let parsed = fsl_cst::parse(source.clone(), path, bytes, limits.source).unwrap();
+        let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
+            source.clone(),
+            path,
+            bytes,
+            limits.source,
+        )
+        .unwrap();
         fsl_cst::format::format_with_limits(&parsed, format_limits).unwrap()
     };
     let mut formatted_limits = limits;
@@ -137,6 +144,7 @@ fn assert_format_identity(
     let formatted_source = source;
     {
         let reparsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             formatted_source.clone(),
             path,
             formatted.as_bytes(),
@@ -339,10 +347,17 @@ pub fn dependency_fixture_identity(
     libraries: Vec<SuppliedLibrary>,
 ) {
     let format = |source: SourceIdentity, path: &str, bytes: &[u8]| {
-        let parsed =
-            fsl_cst::parse(source.clone(), path, bytes, fsl_cst::Limits::default()).unwrap();
+        let parsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
+            source.clone(),
+            path,
+            bytes,
+            fsl_cst::Limits::default(),
+        )
+        .unwrap();
         let formatted = fsl_cst::format::format(&parsed).unwrap();
         let reparsed = fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             source,
             path,
             formatted.as_bytes(),

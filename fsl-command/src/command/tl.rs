@@ -1548,3 +1548,30 @@ fn package_interval(
         }
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    /// FR-267-AC-8, FSpec FR-352-AC-8: the lowering document carries the
+    /// run-result label with no clause-run or command-error members, so the
+    /// strict reader refuses it at its unknown `tl_lowering` member (the
+    /// defect that it is no FR-352 form is tracked separately).
+    #[trace("FR-267-AC-8")]
+    #[test]
+    fn the_lowering_document_is_refused_by_the_run_result_reader() {
+        let value = super::document(serde_json::json!({}));
+        let bytes = fsl_foundation::canonical_json::encode(&value).expect("canonical bytes");
+        let Err(fsl_replay::spine::NativeRunReadError::MalformedMember { source, .. }) =
+            fsl_replay::spine::read_native_run_result(&bytes)
+        else {
+            panic!("expected a refusal at the unknown member");
+        };
+        assert!(
+            source
+                .to_string()
+                .starts_with("unknown field `tl_lowering`"),
+            "{source}"
+        );
+    }
+}

@@ -3,7 +3,6 @@
 use ix_trace_rs::implements;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
 
 use super::{ExtensionForms, ExtensionProduction, Production as P};
 
@@ -211,21 +210,19 @@ fn bound_parameter() -> Rule {
     s(vec![x("("), r(P::Parameter), x(")")])
 }
 
-pub(super) fn complete_v1() -> &'static Grammar {
-    static GRAMMAR: OnceLock<Grammar> = OnceLock::new();
-    GRAMMAR.get_or_init(|| complete_v1_with(&ExtensionForms::default()))
+#[implements("FR-284-AC-4", "NFR-141-AC-10")]
+pub(super) fn complete_v1() -> Grammar {
+    complete_v1_with(&ExtensionForms::default())
 }
 
-pub(super) fn default_reserved_words() -> &'static BTreeSet<&'static str> {
-    static RESERVED_WORDS: OnceLock<BTreeSet<&'static str>> = OnceLock::new();
-    RESERVED_WORDS.get_or_init(|| complete_reserved_words(complete_v1()))
+#[implements("FR-284-AC-4", "NFR-141-AC-10")]
+pub(super) fn default_reserved_words(grammar: &Grammar) -> BTreeSet<&'static str> {
+    complete_reserved_words(grammar)
 }
 
-pub(super) fn default_compound_spellings() -> &'static [&'static str] {
-    static COMPOUND_SPELLINGS: OnceLock<Box<[&'static str]>> = OnceLock::new();
-    COMPOUND_SPELLINGS
-        .get_or_init(|| complete_compound_spellings(complete_v1()).into_boxed_slice())
-        .as_ref()
+#[implements("FR-284-AC-4", "NFR-141-AC-10")]
+pub(super) fn default_compound_spellings(grammar: &Grammar) -> Box<[&'static str]> {
+    complete_compound_spellings(grammar).into_boxed_slice()
 }
 
 /// The complete-V1 grammar where each production of `forms` is also a
@@ -3788,16 +3785,46 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{complete_compound_spellings, complete_reserved_words, complete_v1};
-    use crate::{parse, ExtensionForms, ExtensionProduction, Limits};
+    use crate::{ExtensionForms, ExtensionProduction, Limits, ParserContext, parse};
     use fsl_foundation::SourceIdentity;
 
     #[trace("NFR-141-AC-10")]
     #[test]
-    fn default_grammar_table_is_shared_and_custom_forms_are_built() {
-        let first = complete_v1();
-        let second = complete_v1();
-        assert!(std::ptr::eq(first, second));
-        assert!(!first.contains_key(&super::P::ExtensionDeclaration));
+    fn caller_owned_grammar_context_reuses_default_tables_and_builds_custom_forms() {
+        let context = ParserContext::new();
+        let grammar_address = std::ptr::addr_of!(context.grammar);
+        assert!(
+            !context
+                .grammar
+                .contains_key(&super::P::ExtensionDeclaration)
+        );
+        let first = context
+            .parse(
+                SourceIdentity {
+                    authority: "test".into(),
+                    identity: "test:parser-context-one".into(),
+                },
+                "one.native",
+                b"",
+                Limits::default(),
+            )
+            .unwrap();
+        let second = context
+            .parse(
+                SourceIdentity {
+                    authority: "test".into(),
+                    identity: "test:parser-context-two".into(),
+                },
+                "two.native",
+                b"",
+                Limits::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            first.cst().root().production(),
+            second.cst().root().production()
+        );
+        assert_eq!(grammar_address, std::ptr::addr_of!(context.grammar));
 
         let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by"])]);
         let custom = super::complete_v1_with(&forms);
@@ -3807,7 +3834,7 @@ mod tests {
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]
     #[test]
     fn every_declarative_compound_is_one_budgeted_cst_leaf() {
-        let compounds = complete_compound_spellings(complete_v1());
+        let compounds = complete_compound_spellings(&complete_v1());
         assert!(!compounds.is_empty());
         for compound in compounds {
             let parsed = parse(
@@ -3853,7 +3880,7 @@ mod tests {
             "profile Complete = \"filament.value.complete/v1\";\n",
             "record "
         );
-        for word in complete_reserved_words(complete_v1()) {
+        for word in complete_reserved_words(&complete_v1()) {
             let text = format!("{prefix}{word} {{ datum: Integer; }}");
             let parsed = parse(
                 SourceIdentity {

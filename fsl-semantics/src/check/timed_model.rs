@@ -6004,8 +6004,8 @@ mod tests {
     use super::DataLiteral;
 
     /// The data literal that the clause text `text` spells.
-    fn literal(text: &str) -> (DataLiteral, bool) {
-        let expression = parse_clause_text(text, fsl_cst::Limits::default()).expect("one clause");
+    fn literal(parser: &fsl_forms::cst::ParserContext, text: &str) -> (DataLiteral, bool) {
+        let expression = parse_clause_text(parser, text, fsl_cst::Limits::default()).expect("one clause");
         let spans = ExpressionSpans::at_point(&expression, 0).expect("spans fit");
         (
             DataLiteral::EmptyCollection(ExpressionForm { expression, spans }),
@@ -6016,13 +6016,14 @@ mod tests {
     /// FR-091-AC-70: two spellings of one text are one data literal, because a
     /// literal compares by the text it spells and not by its spelling; a
     /// different text stays a second literal.
-    #[trace("FR-091-AC-70", "TC-1052")]
+    #[trace("FR-091-AC-70", "TC-1052", "NFR-141-AC-10")]
     #[test]
     fn two_spellings_of_one_text_dedup_to_one_data_literal() {
-        let mut same = vec![literal("x = \"\u{e9}\""), literal("x = \"\\u00e9\"")];
+        let parser = fsl_forms::cst::ParserContext::new();
+        let mut same = vec![literal(&parser, "x = \"\u{e9}\""), literal(&parser, "x = \"\\u00e9\"")];
         same.dedup();
         assert_eq!(same.len(), 1);
-        let mut different = vec![literal("x = \"\u{e9}\""), literal("x = \"e\\u0301\"")];
+        let mut different = vec![literal(&parser, "x = \"\u{e9}\""), literal(&parser, "x = \"e\\u0301\"")];
         different.dedup();
         assert_eq!(different.len(), 2);
     }

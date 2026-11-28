@@ -12,8 +12,9 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 
 fn package(source: &str, mode: CheckMode) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{source}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "narrowing"),
         "narrowing.native",
         text.as_bytes(),

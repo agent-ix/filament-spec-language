@@ -16,8 +16,9 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n";
 
 fn parse(declarations: &str) -> (String, ParsedSource) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -846,6 +847,7 @@ fn deep_not_chains_build_with_no_s2_limit() {
 #[trace("FR-096-AC-3", "TC-427")]
 #[test]
 fn s1_bounds_the_body_and_s2_builds_it() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let declaration = format!(
         "function f using v(a: Boolean): Boolean pure {{ {} }}",
         nots(8)
@@ -853,7 +855,7 @@ fn s1_bounds_the_body_and_s2_builds_it() {
     let (_, parsed) = admissible(&declaration);
     let nodes = parsed.cst().nodes().len();
     let text = format!("{HEADER}{declaration}\n");
-    let refusal = fsl_cst::parse(
+    let refusal = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -1309,6 +1311,7 @@ fn deep_bodies() -> [(String, usize); 5] {
 #[trace("TC-724", "FR-257-AC-1")]
 #[test]
 fn deep_bodies_build_clone_compare_format_and_drop_on_a_small_stack() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for (body, expected_depth) in deep_bodies() {
         std::thread::Builder::new()
             .stack_size(512 * 1024)
@@ -1316,7 +1319,7 @@ fn deep_bodies_build_clone_compare_format_and_drop_on_a_small_stack() {
                 let text = format!(
                     "{HEADER}function f using v(a: Boolean, x: Integer): Integer pure {{ {body} }}\n"
                 );
-                let parsed = fsl_cst::parse(
+                let parsed = fsl_cst::parse(&qsl3309_parser_context,
                     SourceIdentity::new("a", "u"),
                     "unit.native",
                     text.as_bytes(),
@@ -1348,6 +1351,7 @@ fn deep_bodies_build_clone_compare_format_and_drop_on_a_small_stack() {
 #[trace("TC-724", "FR-257-AC-1")]
 #[test]
 fn a_deep_parameter_type_builds_clones_compares_formats_and_drops_on_a_small_stack() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     std::thread::Builder::new()
         .stack_size(512 * 1024)
         .spawn(|| {
@@ -1357,7 +1361,7 @@ fn a_deep_parameter_type_builds_clones_compares_formats_and_drops_on_a_small_sta
                 "Option<".repeat(DEPTH),
                 ">".repeat(DEPTH)
             );
-            let parsed = fsl_cst::parse(
+            let parsed = fsl_cst::parse(&qsl3309_parser_context,
                 SourceIdentity::new("a", "u"),
                 "unit.native",
                 text.as_bytes(),
@@ -1848,10 +1852,11 @@ fn malformed_compound_quantity_type_expressions_refuse_as_syntax() {
 #[trace("TC-483", "FR-091-AC-75")]
 #[test]
 fn compound_quantity_type_products_remain_subject_to_the_existing_syntax_node_ceiling() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let declaration = format!("type Q = Quantity<{}>;", vec!["m^2"; 64].join("*"));
     let (text, parsed) = admissible(&declaration);
     let nodes = parsed.cst().nodes().len();
-    let refusal = fsl_cst::parse(
+    let refusal = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

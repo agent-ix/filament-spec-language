@@ -155,6 +155,7 @@ fn replay_of(document: Value, base: Vec<(String, Value)>) -> Replay {
 
 /// [`replay_of`] with `declarations` added to the source unit.
 fn replay_with(document: Value, base: Vec<(String, Value)>, declarations: &str) -> Replay {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(&document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -165,7 +166,7 @@ fn replay_with(document: Value, base: Vec<(String, Value)>, declarations: &str) 
          function keep using v(): Boolean pure {{ true }}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "native-values"),
         "native-values.native",
         source.as_bytes(),

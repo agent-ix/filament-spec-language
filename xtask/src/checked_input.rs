@@ -64,7 +64,7 @@ use syn::visit::Visit;
 
 use crate::definition_scan::has_cfg_test;
 use crate::error::{Error, Result};
-use crate::typestate_scan::{shipped_files, S3_CONSTRUCTOR, S3_ENTRY_NAMES};
+use crate::typestate_scan::{S3_CONSTRUCTOR, S3_ENTRY_NAMES, shipped_files};
 
 /// The pre-check crates (ADR-011 layers I3, 1 and 2): source directory and
 /// the crate name as a path spells it.
@@ -1045,12 +1045,24 @@ mod tests {
             (
                 EVAL_PLANT,
                 "pub fn plant(e: &fsl_forms::Expression) {}\n",
-                finding(EVAL_PLANT, 1, Rule::Signature, "plant", "fsl_forms::Expression"),
+                finding(
+                    EVAL_PLANT,
+                    1,
+                    Rule::Signature,
+                    "plant",
+                    "fsl_forms::Expression",
+                ),
             ),
             (
                 EVAL_PLANT,
                 "use fsl_forms::Expression as Expr;\npub fn plant(e: &Expr) {}\n",
-                finding(EVAL_PLANT, 2, Rule::Signature, "plant", "fsl_forms::Expression"),
+                finding(
+                    EVAL_PLANT,
+                    2,
+                    Rule::Signature,
+                    "plant",
+                    "fsl_forms::Expression",
+                ),
             ),
             (
                 EVAL_PLANT,
@@ -1127,8 +1139,9 @@ mod tests {
     #[test]
     #[trace("TC-745", "FR-270-AC-2")]
     fn tc_745_planted_reconstruction_fails_the_gate() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let parse = "fn plant(graph: &fsl_semantics::check::CheckedGraph) {\n    \
-                     let _ = fsl_cst::parse_source(source, limits);\n}\n";
+                     let _ = fsl_cst::parse_source(&qsl3309_parser_context, source, limits);\n}\n";
         assert_eq!(
             scan_planted(&[(EVAL_PLANT, parse)]),
             vec![finding(
@@ -1297,8 +1310,10 @@ mod tests {
         let error = run(copy.path()).expect_err("the planted signature fails the gate");
         assert_eq!(error.code(), crate::error::Code::CheckedInput);
         assert_eq!(error.exit_code(), 1);
-        assert!(error
-            .to_string()
-            .contains("fsl-eval/src/plant.rs:1: signature"));
+        assert!(
+            error
+                .to_string()
+                .contains("fsl-eval/src/plant.rs:1: signature")
+        );
     }
 }

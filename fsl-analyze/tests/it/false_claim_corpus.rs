@@ -964,6 +964,7 @@ fn reference_refuses_state_dependent_hybrid_rates() {
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
          hybrid H using p { mode A invariant { x >= 0 } flow { x' = x; } }\n";
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("false-claim-corpus", "hybrid-rate"),
         "unit.native",
         source.as_bytes(),
@@ -1080,6 +1081,7 @@ fn the_parser_refuses_a_non_literal_probability_weight() {
              random Coin::toss(b) ~ {{ 0: {weight}, 1: 1 }};\n"
         );
         fsl_cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("test", "weight"),
             "weight.native",
             unit.as_bytes(),

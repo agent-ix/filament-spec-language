@@ -588,6 +588,7 @@ mod tests {
     #[trace("FR-383", "FR-383-AC-35", "TC-1063")]
     #[test]
     fn query_and_equality_keep_actual_parent_operands_and_checked_locations() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         fn application_form(key: &NodeKey) -> String {
             match key.path().get(1) {
                 Some(PathSegment::Text(form)) => form.clone(),
@@ -611,6 +612,7 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
 }
 "#;
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:query-locations"),
             "query.native",
             source.as_bytes(),

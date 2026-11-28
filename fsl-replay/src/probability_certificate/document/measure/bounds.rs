@@ -10,7 +10,7 @@ pub(in crate::probability_certificate) const PROFILE: &str =
 #[serde(deny_unknown_fields)]
 struct WireBoundObjective {
     profile: String,
-    base: WireObjective,
+    base: ReadObjective,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

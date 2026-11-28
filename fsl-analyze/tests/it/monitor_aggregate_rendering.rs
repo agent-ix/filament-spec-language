@@ -50,6 +50,7 @@ fn unit_text(profile: &str, model: &str, body: &str) -> String {
 }
 
 fn compile(documents: &Documents, text: &str, clock: ClockConfiguration) -> Compiled {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let source = identity();
@@ -67,8 +68,14 @@ fn compile(documents: &Documents, text: &str, clock: ClockConfiguration) -> Comp
     let models = spine::select(&parsed, &documents.packages, limits.model, &cancel)
         .expect("the model selects")
         .into_value();
-    let cst = fsl_cst::parse(source, PATH, text.as_bytes(), fsl_cst::Limits::default())
-        .expect("the source parses for its declaration span");
+    let cst = fsl_cst::parse(
+        &qsl3309_parser_context,
+        source,
+        PATH,
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the source parses for its declaration span");
     let forms = fsl_forms::build_unit(&cst).expect("the source forms");
     let declaration = forms
         .forms()

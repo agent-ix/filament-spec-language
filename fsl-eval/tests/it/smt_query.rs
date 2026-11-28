@@ -231,6 +231,7 @@ fn world_with_edited_graph(
     formulas: &[&str],
     start: &[(&str, Json)],
 ) -> World {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input([document]).unwrap();
     let clauses: String = formulas
         .iter()
@@ -249,6 +250,7 @@ fn world_with_edited_graph(
          function Noop using v(): Boolean pure {{ true }}\n{contracts}{clauses}",
     );
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "smt"),
         "smt.native",
         unit.as_bytes(),

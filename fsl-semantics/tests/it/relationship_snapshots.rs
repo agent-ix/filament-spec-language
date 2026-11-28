@@ -412,6 +412,7 @@ struct Admission {
 }
 
 fn checked(variant: &Variant) -> Admission {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = package(variant);
     let packages = package_input([document.as_slice()]).unwrap();
     let clauses = if variant.clauses {
@@ -433,7 +434,7 @@ fn checked(variant: &Variant) -> Admission {
         ModelNormalizationLimits::default(),
     )
     .unwrap_or_else(|refusal| panic!("I1 refused: {refusal:?}"));
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-1035"),
         "unit.native",
         unit.as_bytes(),

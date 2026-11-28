@@ -268,11 +268,17 @@ pub use filament_contract_model::{
 // compiles into no shipped build.
 #[cfg(all(feature = "std", feature = "test-support"))]
 pub use emit::{checked_node_id_of, emit_checked_with_fault};
+#[cfg(all(feature = "std", any(test, feature = "test-support")))]
+pub use emit::{
+    emit_checked_with_probe,
+    emit_checked_with_protocol_results_and_temporal_selections_and_cancel_with_probe,
+};
 
 /// Test-only instrumentation for focused emitter regression tests.
-#[cfg(all(feature = "std", feature = "test-support"))]
+#[cfg(all(feature = "std", any(test, feature = "test-support")))]
 #[doc(hidden)]
 pub mod test_support {
+    pub use crate::emit::EmitProbe;
     /// Timings for major S4 emission subphases, in microseconds.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct S4PhaseTimes {
@@ -347,104 +353,36 @@ pub mod test_support {
         pub document_node_count: usize,
     }
 
-    /// Reset the S4 emission phase timing accumulator for the current thread.
-    pub fn reset_s4_phase_times() {
-        crate::emit::reset_s4_phase_times();
+    pub use crate::emit::{EmitProbeEvent, S4Phase};
+
+    /// Configuration and event forwarding for one emission. The observer
+    /// closure belongs to the caller, which owns all counters and timing.
+    pub struct EmissionProbe<'a> {
+        repeated_operand_rewrite: bool,
+        repeated_read_index_rewrite: bool,
+        repeated_compile_index_rewrites: bool,
+        observer: &'a mut (dyn for<'event> FnMut(EmitProbeEvent<'event>) + 'a),
     }
 
-    /// Read S4 emission phase timings accumulated on the current thread.
-    pub fn s4_phase_times() -> S4PhaseTimes {
-        let times = crate::emit::s4_phase_times();
-        S4PhaseTimes {
-            pre_lock_graph_temporal_us: times.pre_lock_graph_temporal_us,
-            lock_us: times.lock_us,
-            inspection_us: times.inspection_us,
-            index_us: times.index_us,
-            producer_temporal_claim_term_us: times.producer_temporal_claim_term_us,
-            source_requirement_operand_us: times.source_requirement_operand_us,
-            final_encode_us: times.final_encode_us,
-            retained_post_encode_us: times.retained_post_encode_us,
-            retained_summary_us: times.retained_summary_us,
-            retained_disposition_us: times.retained_disposition_us,
-            retained_emission_assembly_us: times.retained_emission_assembly_us,
-            retained_identity_selection_us: times.retained_identity_selection_us,
+    impl<'a> EmissionProbe<'a> {
+        pub fn new(observer: &'a mut (dyn for<'event> FnMut(EmitProbeEvent<'event>) + 'a)) -> Self {
+            Self {
+                repeated_operand_rewrite: false,
+                repeated_read_index_rewrite: false,
+                repeated_compile_index_rewrites: false,
+                observer,
+            }
         }
+        pub fn force_repeated_operand_rewrite(&mut self) { self.repeated_operand_rewrite = true; }
+        pub fn force_repeated_read_index_rewrite(&mut self) { self.repeated_read_index_rewrite = true; }
+        pub fn force_repeated_compile_index_rewrites(&mut self) { self.repeated_compile_index_rewrites = true; }
     }
 
-    /// Reset write-index diagnostic work for the current thread.
-    pub fn reset_write_index_diagnostics() {
-        crate::emit::reset_write_index_diagnostics();
-    }
-
-    /// Read the current thread's write-index diagnostic work.
-    pub fn write_index_diagnostics() -> WriteIndexDiagnostics {
-        let diagnostics = crate::emit::write_index_diagnostics();
-        WriteIndexDiagnostics {
-            linear_work_units: diagnostics.linear_work_units,
-            repeated_scan_work_units: diagnostics.repeated_scan_work_units,
-            one_pass_id_slots: diagnostics.one_pass_id_slots,
-            changed_ids: diagnostics.changed_ids,
-            structural_key_lookups: diagnostics.structural_key_lookups,
-        }
-    }
-
-    /// Read document-node rewrite work diagnostics for this thread.
-    pub fn document_node_diagnostics() -> DocumentNodeDiagnostics {
-        let diagnostics = crate::emit::document_node_diagnostics();
-        DocumentNodeDiagnostics {
-            linear_work_units: diagnostics.linear_work_units,
-            repeated_scan_work_units: diagnostics.repeated_scan_work_units,
-            one_pass_id_slots: diagnostics.one_pass_id_slots,
-            changed_ids: diagnostics.changed_ids,
-            operand_row_lookups: diagnostics.operand_row_lookups,
-        }
-    }
-
-    /// Read retained/post-encode path counts for the current thread.
-    pub fn s4_retained_counts() -> S4RetainedCounts {
-        let counts = crate::emit::s4_retained_counts();
-        S4RetainedCounts {
-            graph_node_count: counts.graph_node_count,
-            exact_declaration_count: counts.exact_declaration_count,
-            exact_field_count: counts.exact_field_count,
-            keep_nodes: counts.keep_nodes,
-            document_node_count: counts.document_node_count,
-        }
-    }
-
-    /// Reset the number of node-ID slots visited during operand-slot emission.
-    pub fn reset_node_id_rewrite_slot_visits() {
-        crate::emit::reset_node_id_rewrite_slot_visits();
-    }
-
-    /// The number of node-ID slots visited during operand-slot emission.
-    pub fn node_id_rewrite_slot_visits() -> usize {
-        crate::emit::node_id_rewrite_slot_visits()
-    }
-
-    /// Reset the read-index rewrite work-unit counter.
-    pub fn reset_read_index_rewrite_work_units() {
-        crate::emit::reset_read_index_rewrite_work_units();
-    }
-
-    /// Read-index rewrite units: ID-slot visits, full path-length inspection
-    /// allowances, structural-key lookups, and slots scanned by each repeated
-    /// replacement in the test-support reference path.
-    pub fn read_index_rewrite_work_units() -> usize {
-        crate::emit::read_index_rewrite_work_units()
-    }
-
-    /// Run a closure with the historical per-ID replacement path enabled.
-    /// The path exists only to prove the focused work counter detects the
-    /// repeated node-ID slot scans that the bulk rewrite avoids.
-    pub fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
-        crate::emit::with_repeated_read_index_rewrite(f)
-    }
-
-    /// Run a closure with the historical repeated-replacement path enabled
-    /// for compile-time structural/index and operand/index rewrites.
-    pub fn with_repeated_compile_index_rewrites<T>(f: impl FnOnce() -> T) -> T {
-        crate::emit::with_repeated_compile_index_rewrites(f)
+    impl crate::emit::EmitProbe for EmissionProbe<'_> {
+        fn repeated_operand_rewrite(&self) -> bool { self.repeated_operand_rewrite }
+        fn repeated_read_index_rewrite(&self) -> bool { self.repeated_read_index_rewrite }
+        fn repeated_compile_index_rewrites(&self) -> bool { self.repeated_compile_index_rewrites }
+        fn event(&mut self, event: crate::emit::EmitProbeEvent<'_>) { (self.observer)(event); }
     }
 }
 

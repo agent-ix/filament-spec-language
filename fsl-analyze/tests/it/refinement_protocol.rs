@@ -113,9 +113,8 @@ fn a_twice_protocol_refinement_holds_uncertified() {
         &outcome.safety,
         &ModelCheckLimits::default(),
         &SimulationCertificateRequest {
-            refinement: world.refinement(),
             concrete: world.concrete_request(UNLIMITED),
-            abstract_package: world.package(),
+            refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
             abstract_initial: vec![world.abstract_initial()].into(),
         },
         &Cancel::new(),
@@ -1121,9 +1120,8 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
     );
 
     let certificate_request = SimulationCertificateRequest {
-        refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
-        abstract_package: world.package(),
+        refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
     let refinement = world.refinement();
@@ -1634,9 +1632,8 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
         ProtocolAssumptionReplaySettlement::Inconclusive(_)
     ));
     let certificate_request = SimulationCertificateRequest {
-        refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
-        abstract_package: world.package(),
+        refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
     let refinement = world.refinement();
@@ -3132,9 +3129,8 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
     let world = World::new(&protocol_refinement());
     let refused = check_simulation_certificate(
         &SimulationCertificateRequest {
-            refinement: world.refinement(),
             concrete: world.concrete_request(UNLIMITED),
-            abstract_package: world.package(),
+            refinement: fsl_replay::RefinementRead::name(world.refinement()).to_owned(),
             abstract_initial: vec![world.abstract_initial()].into(),
         },
         &certificate,

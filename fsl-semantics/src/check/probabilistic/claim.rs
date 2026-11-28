@@ -2891,7 +2891,9 @@ mod conversion_budget_tests {
     }
 
     fn declarations(text: &str) -> super::super::super::PackageDeclarations {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "conversion-budget"),
             "conversion.native",
             text.as_bytes(),

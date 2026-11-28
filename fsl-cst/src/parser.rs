@@ -10,12 +10,12 @@ use super::cst::{
 };
 use super::diagnostic::{CompleteCause, HostCause};
 use super::grammar::{self, Grammar, Rule, Terminal};
-use super::{CompleteCode, CompleteDiagnostic, ExtensionForms, ParsedSource};
+use super::{CompleteCode, CompleteDiagnostic, ExtensionForms, ParsedSource, ParserContext};
 use crate::lexer::Limits;
 use crate::token::{Kind, LexError};
 use filament_exact::Cancel;
 use fsl_foundation::selection::{
-    valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
+    ImportSelection, ModelSelection, ProfileSelection, SourceSelections, valid_selection_identity,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
 use ix_trace_rs::implements;
@@ -249,34 +249,35 @@ fn format_expected(
     format!("expected {}", alternatives.join(" or "))
 }
 
-#[implements("FR-762-AC-7", "NFR-141-AC-8", "NFR-141-AC-9")]
+#[implements(
+    "FR-762-AC-7",
+    "NFR-141-AC-8",
+    "NFR-141-AC-9",
+    "NFR-141-AC-10"
+)]
 #[ix_trace_rs::string_edge]
 pub(super) fn parse(
     source: Source,
     limits: Limits,
     cancel: &Cancel,
     forms: &ExtensionForms,
+    context: &ParserContext,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
     let custom_grammar =
         (!forms.productions().is_empty()).then(|| grammar::complete_v1_with(forms));
-    let grammar = match custom_grammar.as_ref() {
-        Some(grammar) => grammar,
-        None => grammar::complete_v1(),
-    };
+    let grammar = custom_grammar.as_ref().unwrap_or(&context.grammar);
     let custom_compounds = custom_grammar
         .as_ref()
         .map(grammar::complete_compound_spellings);
-    let compounds = match custom_compounds.as_deref() {
-        Some(compounds) => compounds,
-        None => grammar::default_compound_spellings(),
-    };
+    let compounds = custom_compounds
+        .as_deref()
+        .unwrap_or(&context.compound_spellings);
     let custom_reserved_words = custom_grammar
         .as_ref()
         .map(grammar::complete_reserved_words);
-    let reserved_words = match custom_reserved_words.as_ref() {
-        Some(reserved_words) => reserved_words,
-        None => grammar::default_reserved_words(),
-    };
+    let reserved_words = custom_reserved_words
+        .as_ref()
+        .unwrap_or(&context.reserved_words);
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, compounds, cancel)?;
     if diagnostics.len() > limits.diagnostics {
@@ -599,7 +600,7 @@ fn parse_with_declaration_recovery(
     }
 
     loop {
-        let mut engine = Engine::new(grammar, reserved_words, &tokens, limits, cancel);
+        let mut engine = Engine::new(&grammar, reserved_words, &tokens, limits, cancel);
         match engine.production(Production::CompleteUnit, 0) {
             Outcome::Match(_) => {
                 append_omitted_diagnostic(
@@ -869,7 +870,8 @@ fn parse_with_declaration_recovery(
                             spelling: ";".into(),
                         },
                     );
-                    let mut retry = Engine::new(grammar, reserved_words, &inserted, limits, cancel);
+                    let mut retry =
+                        Engine::new(&grammar, reserved_words, &inserted, limits, cancel);
                     if let Outcome::Match(_) = retry.production(Production::CompleteUnit, 0) {
                         let span = failure_span(source, &tokens, failure.position);
                         let expected = failure.expected.joined_descriptions();
@@ -1388,7 +1390,7 @@ fn recover_at_protocol_delimiter(
             },
         );
     }
-    let mut engine = Engine::new(grammar, reserved_words, &recovered, limits, cancel);
+    let mut engine = Engine::new(&grammar, reserved_words, &recovered, limits, cancel);
     let Outcome::Match(_) = engine.production(Production::CompleteUnit, 0) else {
         return None;
     };
@@ -1411,7 +1413,7 @@ fn selection_prelude_nodes(
         }
     }
 
-    let mut engine = Engine::new(grammar, reserved_words, tokens, limits, cancel);
+    let mut engine = Engine::new(&grammar, reserved_words, tokens, limits, cancel);
     let Outcome::Match(mut position) = engine.production(Production::Header, 0) else {
         return Vec::new();
     };
@@ -3222,14 +3224,15 @@ mod tests {
     fn work(text: &str) -> (usize, usize) {
         let source = source(text);
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(grammar);
+        let compounds = grammar::complete_compound_spellings(&grammar);
+        let reserved_words = grammar::complete_reserved_words(&grammar);
         let cancel = Cancel::new();
         let (_, significant, diagnostics, _) =
             scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let mut engine = Engine::new(
-            grammar,
-            grammar::default_reserved_words(),
+            &grammar,
+            &reserved_words,
             &significant,
             Limits::default(),
             &cancel,
@@ -3313,18 +3316,14 @@ mod tests {
             )
             .expect("test source");
             let grammar = grammar::complete_v1();
-            let compounds = grammar::complete_compound_spellings(grammar);
+            let compounds = grammar::complete_compound_spellings(&grammar);
+            let reserved_words = grammar::complete_reserved_words(&grammar);
             let cancel = Cancel::new();
             let (_, significant, diagnostics, _) =
                 scan(&source, unlimited, &compounds, &cancel).expect("scan");
             assert!(diagnostics.is_empty(), "{diagnostics:?}");
-            let mut engine = Engine::new(
-                grammar,
-                grammar::default_reserved_words(),
-                &significant,
-                unlimited,
-                &cancel,
-            );
+            let mut engine =
+                Engine::new(&grammar, &reserved_words, &significant, unlimited, &cancel);
             let outcome = engine.production(Production::CompleteUnit, 0);
             assert!(matches!(outcome, Outcome::Match(_)), "{outcome:?}");
             let tokens = significant.len();
@@ -3396,15 +3395,16 @@ mod tests {
     #[test]
     fn nested_trailing_comma_work_is_linear_in_depth() {
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(grammar);
+        let compounds = grammar::complete_compound_spellings(&grammar);
+        let reserved_words = grammar::complete_reserved_words(&grammar);
         let steps = |depth: usize| {
             let source = source(&nested_trailing_comma(depth));
             let cancel = Cancel::new();
             let (_, significant, _, _) =
                 scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
             let mut engine = Engine::new(
-                grammar,
-                grammar::default_reserved_words(),
+                &grammar,
+                &reserved_words,
                 &significant,
                 Limits::default(),
                 &cancel,
@@ -3440,6 +3440,7 @@ mod tests {
     #[test]
     fn deep_brackets_never_overflow_the_stack() {
         on_bounded_stack(|| {
+            let parser_context = ParserContext::new();
             let limits = Limits::default();
             // Deeper than the node ceiling can hold for parentheses.
             let depth = 6_000;
@@ -3463,6 +3464,7 @@ mod tests {
                     limits,
                     &Cancel::new(),
                     &ExtensionForms::default(),
+                    &parser_context,
                 ) {
                     Ok(parsed) => assert!(parsed.is_admissible()),
                     Err(refusal) => {
@@ -3491,6 +3493,7 @@ mod tests {
                 limits,
                 &Cancel::new(),
                 &ExtensionForms::default(),
+                &parser_context,
             )
             .expect("2000 nested Option<...> fit the node ceiling");
             assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());

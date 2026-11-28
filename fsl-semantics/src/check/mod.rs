@@ -5388,7 +5388,9 @@ impl PackageDeclarations {
         let probabilistic_model = checked_probabilistic.model;
         // FR-354: each declaration form of a selected extension, checked
         // against the typed-node schema entry of its production.
+        let parser_context = fsl_cst::ParserContext::new();
         let extension_input = extension::ExtensionInput {
+            parser: &parser_context,
             scope: &scope,
             signatures: &signatures,
             held: &self.held_extensions,

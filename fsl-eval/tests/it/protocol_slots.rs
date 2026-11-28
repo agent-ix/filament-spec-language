@@ -61,7 +61,8 @@ fn package() -> CheckedPackage {
 }
 
 fn package_from_source(source: &str) -> CheckedPackage {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),
@@ -95,6 +96,7 @@ fn package_from_source(source: &str) -> CheckedPackage {
 }
 
 fn compensation_package() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let model = serde_json::to_vec(&compensation_model::document())
         .expect("the compensation model fixture serializes");
     let package_input = fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap();
@@ -127,7 +129,7 @@ fn compensation_package() -> CheckedPackage {
          }}\n",
         compensation_model::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("protocol-slots", "unit.native"),
         "unit.native",
         source.as_bytes(),

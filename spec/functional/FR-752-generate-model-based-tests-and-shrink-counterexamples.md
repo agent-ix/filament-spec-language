@@ -9,6 +9,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-190
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
 ---
 # FR-752: Generate model-based tests from a checked model and shrink failing cases to a 1-minimal counterexample
 

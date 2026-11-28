@@ -570,11 +570,12 @@ pub use proof_result::{
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
     read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
     BackendProviderSource, BoundsExploration, BoundsMethod, Certification, CertificationPolicy,
-    DeclineCode, EmptyEnvelopeSet, ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum,
-    FslOnlyCause, IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound,
-    MemoryBoundMember, PluginReplayContext, PluginReplayRefusal, PluginResultRefusal,
-    PremiseOutcome, ProofBasis, ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal,
-    Proviso, ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
+    CrossCheck, CrossCheckRefusal, CrossCheckRefused, CrossCheckRun, CrossCheckVerdict, DeclineCode, EmptyEnvelopeSet,
+    ExactBound, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
+    IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
+    PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
+    ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, RecordedWarning,
+    ReportedInconclusiveCause, SettlementBasis, StaleIdentity, StatedInstanceBound,
     StatedMemoryBound, StatisticalRequestRefusal, SymmetryBrokenCause, SymmetryRefusal,
     TerminalRecord, TerminalRecordRefusal, TerminalValue, ToolFailure, TransferReason,
     UnavailabilityCause, ValueCheckUnsupported, ValueFault, WeakAccessFailure,
@@ -625,10 +626,10 @@ pub use spine::{
 // writes the exact result bytes without naming `spine` (ADR-011 FB-05).
 pub use spine::{
     read_native_run_result_bounded, temporal_disposition_json, write_clause_run_result,
-    CallLocationRead, CallLocusRead, CallOriginRead, ClauseDisposition, ClauseRunRecord,
-    ClauseRunReport, ClauseRunUsage, CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits,
-    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead,
-    SourceRefRead, SpanRead, TemporalRecord,
+    CallLocation, CallLocusRecord, CallOrigin, ClauseDisposition, ClauseRunRecord, ClauseRunReport,
+    ClauseRunUsage, CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits, NativeRunOutcome,
+    NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocus, RunSpan, SourceRef,
+    TemporalRecord,
 };
 // The input refusal a `ReplayRefusal::Input` and a value-parity
 // `ValueParityResult::RefusedInput` carry.

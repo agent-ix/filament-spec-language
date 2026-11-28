@@ -9,12 +9,13 @@ use ix_trace_rs::trace;
 /// The code and cause of the first diagnostic of a function whose body is
 /// `body`, or `None` when S1 admits it.
 fn refusal(body: &str) -> Option<(CompleteCode, CompleteCause)> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function f using v(): Boolean pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -88,10 +89,11 @@ fn the_well_formed_constructors_are_admitted() {
 #[trace("FR-091-AC-58", "TC-1232")]
 #[test]
 fn the_name_decimal_is_reserved_at_a_declaration() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = "language \"ix:native\" edition \"1-draft\";\n\
                 profile v = \"filament.value.complete/v1\";\n\
                 function decimal using v(): Boolean pure { true }\n";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

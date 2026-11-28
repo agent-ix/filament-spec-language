@@ -912,7 +912,7 @@ fn text_partitions_are_independent_of_max_value_bits() {
     assert_eq!(wide.evidence, ModelBasedTestEvidence::Tested);
 }
 
-/// FR-752-AC-9 / FR-190-AC-19: Text boundaries precede normalized seeded
+/// Text boundaries precede normalized seeded
 /// draws, while the unicode-scalars profile keeps all witness spellings.
 #[trace("TC-2102", "FR-752-AC-9")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-19")]

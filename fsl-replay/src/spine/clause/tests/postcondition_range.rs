@@ -282,6 +282,7 @@ fn withdraw() -> OperationName {
 /// `call_site` over the bank unit with `Bank::Account::withdraw`.
 fn bank_site(bank: Bank, unit: &str) -> Result<CallSite<OperationSite>, Box<CallSiteRefusal>> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         source(),
         crate::CallSiteUnit::new("fixture".to_owned(), "bank.native", unit.as_bytes()),
         [bank.document().as_slice()],
@@ -458,6 +459,7 @@ fn function_site(
     name: &str,
 ) -> Result<CallSite<crate::FunctionSite>, Box<CallSiteRefusal>> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         source(),
         crate::CallSiteUnit::new("fixture".to_owned(), "function.native", unit.as_bytes()),
         std::iter::empty::<&[u8]>(),

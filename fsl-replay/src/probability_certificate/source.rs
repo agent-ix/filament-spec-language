@@ -108,7 +108,9 @@ pub enum ProbabilitySourceError {
     #[error("probability certificate package names {0} sources, not one")]
     PackageSources(usize),
     /// The request names a package name other than the emitted package's.
-    #[error("conflicting_identity: probability certificate package name {requested:?} is not {actual:?}")]
+    #[error(
+        "conflicting_identity: probability certificate package name {requested:?} is not {actual:?}"
+    )]
     PackageName {
         /// The name the request stated.
         requested: String,
@@ -152,11 +154,12 @@ pub struct ProbabilityPackageRequest<'a> {
 /// ambient I/O or analyzer implementation enters this path.
 #[implements("FR-282-AC-11")]
 pub fn check_probability_certificate_source(
+    parser_context: &fsl_cst::ParserContext,
     request: ProbabilitySourceRequest<'_>,
     limits: ProbabilitySourceLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilitySourceError> {
-    check_recompiled(request, None, limits, cancel)
+    check_recompiled(parser_context, request, None, limits, cancel)
 }
 
 /// Check a certificate over an emitted package: the package names its
@@ -165,6 +168,7 @@ pub fn check_probability_certificate_source(
 /// document is checked.
 #[implements("FR-282-AC-1")]
 pub fn check_probability_certificate_package(
+    parser_context: &fsl_cst::ParserContext,
     request: ProbabilityPackageRequest<'_>,
     limits: ProbabilitySourceLimits,
     cancel: &Cancel,
@@ -212,6 +216,7 @@ pub fn check_probability_certificate_package(
         content: text.text().to_owned(),
     };
     check_recompiled(
+        parser_context,
         ProbabilitySourceRequest {
             source,
             expected_source: &expected,
@@ -230,6 +235,7 @@ pub fn check_probability_certificate_package(
 }
 
 fn check_recompiled(
+    parser_context: &fsl_cst::ParserContext,
     request: ProbabilitySourceRequest<'_>,
     emitted: Option<&[u8]>,
     limits: ProbabilitySourceLimits,
@@ -310,7 +316,7 @@ fn check_recompiled(
     }
     let packages = package_input(request.provision.package_documents())
         .map_err(|refusal| ProbabilitySourceError::Packages(Box::new(refusal)))?;
-    let parsed = spine::parse(
+    let parsed = spine::parse_with_context(
         &ParseRequest {
             source: &identity,
             path: request.source.identity(),
@@ -318,6 +324,7 @@ fn check_recompiled(
         },
         limits.spine.source,
         cancel,
+        parser_context,
     )
     .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
     .into_value();
@@ -410,7 +417,7 @@ fn refuse_foreign_claim(
         Err(error) => {
             return super::document::document_admission_error(error)
                 .map(|_| ())
-                .map_err(Into::into)
+                .map_err(Into::into);
         }
     };
     if &identity != item {

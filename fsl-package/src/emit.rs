@@ -14,10 +14,6 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(any(test, feature = "test-support"))]
-use std::cell::Cell;
-#[cfg(feature = "test-support")]
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use filament_contract_model::{
     encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
@@ -87,77 +83,24 @@ fn is_body_binding(name: &str) -> bool {
 /// The FR-322 graph schema version every node carries.
 const GRAPH_V2: &str = "filament.checked-semantic-graph/v2";
 
-#[cfg(test)]
-thread_local! {
-    static USE_REPEATED_OPERAND_REWRITE: Cell<bool> = const { Cell::new(false) };
+/// One explicit observer supplied for one emission. Production entrypoints
+/// use `NoopEmitProbe`; test-support callers own all accumulated state.
+#[allow(missing_docs)]
+pub trait EmitProbe {
+    fn repeated_operand_rewrite(&self) -> bool { false }
+    fn repeated_read_index_rewrite(&self) -> bool { false }
+    fn repeated_compile_index_rewrites(&self) -> bool { false }
+    fn event(&mut self, event: EmitProbeEvent<'_>);
 }
 
-#[cfg(test)]
-pub(crate) fn with_repeated_operand_rewrite<T>(f: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            USE_REPEATED_OPERAND_REWRITE.with(|flag| flag.set(self.0));
-        }
-    }
-
-    let previous = USE_REPEATED_OPERAND_REWRITE.with(|flag| flag.replace(true));
-    let _restore = Restore(previous);
-    f()
+pub(crate) struct NoopEmitProbe;
+impl EmitProbe for NoopEmitProbe {
+    fn event(&mut self, _event: EmitProbeEvent<'_>) {}
 }
 
-#[cfg(feature = "test-support")]
-static NODE_ID_REWRITE_SLOT_VISITS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(feature = "test-support")]
-thread_local! {
-    static READ_INDEX_REWRITE_WORK_UNITS: Cell<usize> = const { Cell::new(0) };
-    static USE_REPEATED_READ_INDEX_REWRITE: Cell<bool> = const { Cell::new(false) };
-    static USE_REPEATED_COMPILE_INDEX_REWRITES: Cell<bool> = const { Cell::new(false) };
-    static S4_PHASE_TIMES: Cell<S4PhaseTimes> = const { Cell::new(S4PhaseTimes::ZERO) };
-    static WRITE_INDEX_DIAGNOSTICS: Cell<WriteIndexDiagnostics> = const { Cell::new(WriteIndexDiagnostics::ZERO) };
-    static DOCUMENT_NODE_DIAGNOSTICS: Cell<DocumentNodeDiagnostics> = const { Cell::new(DocumentNodeDiagnostics::ZERO) };
-    static S4_RETAINED_COUNTS: Cell<S4RetainedCounts> = const { Cell::new(S4RetainedCounts::ZERO) };
-}
-
-/// S4 emitter subphase durations accumulated by the test-support build.
-#[cfg(feature = "test-support")]
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct S4PhaseTimes {
-    pub(crate) pre_lock_graph_temporal_us: u128,
-    pub(crate) lock_us: u128,
-    pub(crate) inspection_us: u128,
-    pub(crate) index_us: u128,
-    pub(crate) producer_temporal_claim_term_us: u128,
-    pub(crate) source_requirement_operand_us: u128,
-    pub(crate) final_encode_us: u128,
-    pub(crate) retained_post_encode_us: u128,
-    pub(crate) retained_summary_us: u128,
-    pub(crate) retained_disposition_us: u128,
-    pub(crate) retained_emission_assembly_us: u128,
-    pub(crate) retained_identity_selection_us: u128,
-}
-
-#[cfg(feature = "test-support")]
-impl S4PhaseTimes {
-    const ZERO: Self = Self {
-        pre_lock_graph_temporal_us: 0,
-        lock_us: 0,
-        inspection_us: 0,
-        index_us: 0,
-        producer_temporal_claim_term_us: 0,
-        source_requirement_operand_us: 0,
-        final_encode_us: 0,
-        retained_post_encode_us: 0,
-        retained_summary_us: 0,
-        retained_disposition_us: 0,
-        retained_emission_assembly_us: 0,
-        retained_identity_selection_us: 0,
-    };
-}
-
-#[cfg(feature = "test-support")]
-#[derive(Clone, Copy)]
-enum S4Phase {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(missing_docs)]
+pub enum S4Phase {
     PreLockGraphTemporal,
     Lock,
     Inspection,
@@ -172,226 +115,47 @@ enum S4Phase {
     RetainedIdentitySelection,
 }
 
-#[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct WriteIndexDiagnostics {
-    pub(crate) linear_work_units: usize,
-    pub(crate) repeated_scan_work_units: usize,
-    pub(crate) one_pass_id_slots: usize,
-    pub(crate) changed_ids: usize,
-    pub(crate) structural_key_lookups: usize,
+#[allow(missing_docs)]
+pub struct WriteIndexDiagnostics {
+    pub linear_work_units: usize,
+    pub repeated_scan_work_units: usize,
+    pub one_pass_id_slots: usize,
+    pub changed_ids: usize,
+    pub structural_key_lookups: usize,
 }
 
-#[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct DocumentNodeDiagnostics {
-    pub(crate) linear_work_units: usize,
-    pub(crate) repeated_scan_work_units: usize,
-    pub(crate) one_pass_id_slots: usize,
-    pub(crate) changed_ids: usize,
-    pub(crate) operand_row_lookups: usize,
+#[allow(missing_docs)]
+pub struct DocumentNodeDiagnostics {
+    pub linear_work_units: usize,
+    pub repeated_scan_work_units: usize,
+    pub one_pass_id_slots: usize,
+    pub changed_ids: usize,
+    pub operand_row_lookups: usize,
 }
 
-#[cfg(feature = "test-support")]
-impl DocumentNodeDiagnostics {
-    const ZERO: Self = Self {
-        linear_work_units: 0,
-        repeated_scan_work_units: 0,
-        one_pass_id_slots: 0,
-        changed_ids: 0,
-        operand_row_lookups: 0,
-    };
-}
-
-#[cfg(feature = "test-support")]
-impl WriteIndexDiagnostics {
-    const ZERO: Self = Self {
-        linear_work_units: 0,
-        repeated_scan_work_units: 0,
-        one_pass_id_slots: 0,
-        changed_ids: 0,
-        structural_key_lookups: 0,
-    };
-}
-
-#[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct S4RetainedCounts {
-    pub(crate) graph_node_count: usize,
-    pub(crate) exact_declaration_count: usize,
-    pub(crate) exact_field_count: usize,
-    pub(crate) keep_nodes: bool,
-    pub(crate) document_node_count: usize,
+#[allow(missing_docs)]
+pub struct S4RetainedCounts {
+    pub graph_node_count: usize,
+    pub exact_declaration_count: usize,
+    pub exact_field_count: usize,
+    pub keep_nodes: bool,
+    pub document_node_count: usize,
 }
 
-#[cfg(feature = "test-support")]
-impl S4RetainedCounts {
-    const ZERO: Self = Self {
-        graph_node_count: 0,
-        exact_declaration_count: 0,
-        exact_field_count: 0,
-        keep_nodes: false,
-        document_node_count: 0,
-    };
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn reset_s4_phase_times() {
-    S4_PHASE_TIMES.with(|times| times.set(S4PhaseTimes::ZERO));
-    S4_RETAINED_COUNTS.with(|counts| counts.set(S4RetainedCounts::ZERO));
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn s4_phase_times() -> S4PhaseTimes {
-    S4_PHASE_TIMES.with(Cell::get)
-}
-
-#[cfg(feature = "test-support")]
-fn record_s4_phase(phase: S4Phase, elapsed: std::time::Duration) {
-    S4_PHASE_TIMES.with(|held| {
-        let mut times = held.get();
-        let elapsed = elapsed.as_micros();
-        match phase {
-            S4Phase::PreLockGraphTemporal => {
-                times.pre_lock_graph_temporal_us =
-                    times.pre_lock_graph_temporal_us.saturating_add(elapsed)
-            }
-            S4Phase::Lock => times.lock_us = times.lock_us.saturating_add(elapsed),
-            S4Phase::Inspection => {
-                times.inspection_us = times.inspection_us.saturating_add(elapsed)
-            }
-            S4Phase::Index => times.index_us = times.index_us.saturating_add(elapsed),
-            S4Phase::ProducerTemporalClaimTerm => {
-                times.producer_temporal_claim_term_us = times
-                    .producer_temporal_claim_term_us
-                    .saturating_add(elapsed)
-            }
-            S4Phase::SourceRequirementOperand => {
-                times.source_requirement_operand_us =
-                    times.source_requirement_operand_us.saturating_add(elapsed)
-            }
-            S4Phase::FinalEncode => {
-                times.final_encode_us = times.final_encode_us.saturating_add(elapsed)
-            }
-            S4Phase::RetainedPostEncode => {
-                times.retained_post_encode_us =
-                    times.retained_post_encode_us.saturating_add(elapsed)
-            }
-            S4Phase::RetainedSummary => {
-                times.retained_summary_us = times.retained_summary_us.saturating_add(elapsed)
-            }
-            S4Phase::RetainedDisposition => {
-                times.retained_disposition_us =
-                    times.retained_disposition_us.saturating_add(elapsed)
-            }
-            S4Phase::RetainedEmissionAssembly => {
-                times.retained_emission_assembly_us =
-                    times.retained_emission_assembly_us.saturating_add(elapsed)
-            }
-            S4Phase::RetainedIdentitySelection => {
-                times.retained_identity_selection_us =
-                    times.retained_identity_selection_us.saturating_add(elapsed)
-            }
-        }
-        held.set(times);
-    });
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn reset_write_index_diagnostics() {
-    WRITE_INDEX_DIAGNOSTICS.with(|diagnostics| diagnostics.set(WriteIndexDiagnostics::ZERO));
-    DOCUMENT_NODE_DIAGNOSTICS.with(|diagnostics| diagnostics.set(DocumentNodeDiagnostics::ZERO));
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn write_index_diagnostics() -> WriteIndexDiagnostics {
-    WRITE_INDEX_DIAGNOSTICS.with(Cell::get)
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn document_node_diagnostics() -> DocumentNodeDiagnostics {
-    DOCUMENT_NODE_DIAGNOSTICS.with(Cell::get)
-}
-
-#[cfg(feature = "test-support")]
-fn record_write_index_diagnostics(additional: WriteIndexDiagnostics) {
-    WRITE_INDEX_DIAGNOSTICS.with(|held| {
-        let mut current = held.get();
-        current.linear_work_units = current
-            .linear_work_units
-            .saturating_add(additional.linear_work_units);
-        current.repeated_scan_work_units = current
-            .repeated_scan_work_units
-            .saturating_add(additional.repeated_scan_work_units);
-        current.one_pass_id_slots = current
-            .one_pass_id_slots
-            .saturating_add(additional.one_pass_id_slots);
-        current.changed_ids = current.changed_ids.saturating_add(additional.changed_ids);
-        current.structural_key_lookups = current
-            .structural_key_lookups
-            .saturating_add(additional.structural_key_lookups);
-        held.set(current);
-    });
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn s4_retained_counts() -> S4RetainedCounts {
-    S4_RETAINED_COUNTS.with(Cell::get)
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn reset_node_id_rewrite_slot_visits() {
-    NODE_ID_REWRITE_SLOT_VISITS.store(0, Ordering::Relaxed);
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn node_id_rewrite_slot_visits() -> usize {
-    NODE_ID_REWRITE_SLOT_VISITS.load(Ordering::Relaxed)
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn reset_read_index_rewrite_work_units() {
-    READ_INDEX_REWRITE_WORK_UNITS.with(|work| work.set(0));
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn read_index_rewrite_work_units() -> usize {
-    READ_INDEX_REWRITE_WORK_UNITS.with(Cell::get)
-}
-
-#[cfg(feature = "test-support")]
-fn record_read_index_rewrite_work(units: usize) {
-    READ_INDEX_REWRITE_WORK_UNITS.with(|work| {
-        work.set(work.get().saturating_add(units));
-    });
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn with_repeated_read_index_rewrite<T>(f: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            USE_REPEATED_READ_INDEX_REWRITE.with(|flag| flag.set(self.0));
-        }
-    }
-
-    let previous = USE_REPEATED_READ_INDEX_REWRITE.with(|flag| flag.replace(true));
-    let _restore = Restore(previous);
-    f()
-}
-
-#[cfg(feature = "test-support")]
-pub(crate) fn with_repeated_compile_index_rewrites<T>(f: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            USE_REPEATED_COMPILE_INDEX_REWRITES.with(|flag| flag.set(self.0));
-        }
-    }
-
-    let previous = USE_REPEATED_COMPILE_INDEX_REWRITES.with(|flag| flag.replace(true));
-    let _restore = Restore(previous);
-    f()
+#[derive(Clone, Copy)]
+#[allow(missing_docs)]
+pub enum EmitProbeEvent<'a> {
+    NodeIdSlotVisited,
+    ReadIndexWork(usize),
+    WriteIndexDiagnostics(WriteIndexDiagnostics),
+    DocumentNodeDiagnostics(DocumentNodeDiagnostics),
+    PhaseStarted(S4Phase),
+    PhaseFinished(S4Phase),
+    RetainedCounts(S4RetainedCounts),
+    TypedGraph(&'a [CheckedSemanticNodeV2], &'a [CheckedSourceMapEntry]),
 }
 
 /// The diagnostics catalog the package's (empty) diagnostics are qualified
@@ -1063,15 +827,6 @@ pub enum OmissionCause {
     NamesAbsentNode(CheckedNodeId),
     /// The node names a node the wire omits.
     NamesOmittedNode(CheckedNodeId),
-}
-
-// The typed timed graph the last emission on this thread built, for tests:
-// IR's typed bodies cannot be decoded from JSON outside its reader.
-#[cfg(test)]
-thread_local! {
-    pub(crate) static TIMED_GRAPH: std::cell::RefCell<
-        Option<(Vec<CheckedSemanticNodeV2>, Vec<CheckedSourceMapEntry>)>,
-    > = const { std::cell::RefCell::new(None) };
 }
 
 /// One source-owned record's FSL-stage declaration witness (FR-092 "Source
@@ -6049,6 +5804,37 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
     cancel: &Cancel,
     limits: EmitLimits,
 ) -> Result<ProtocolEmission, EmitRefusal> {
+    let mut probe = NoopEmitProbe;
+    emit_checked_protocol_results_impl(
+        package,
+        selections,
+        cancel,
+        limits,
+        &mut probe,
+    )
+}
+
+/// Test-support form of [`emit_checked_with_protocol_results_and_temporal_selections_and_cancel`]
+/// with an explicit observer for this one emission.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel_with_probe(
+    package: &CheckedPackage,
+    selections: &[TemporalClockSelection],
+    cancel: &Cancel,
+    limits: EmitLimits,
+    probe: &mut dyn EmitProbe,
+) -> Result<ProtocolEmission, EmitRefusal> {
+    emit_checked_protocol_results_impl(package, selections, cancel, limits, probe)
+}
+
+fn emit_checked_protocol_results_impl(
+    package: &CheckedPackage,
+    selections: &[TemporalClockSelection],
+    cancel: &Cancel,
+    limits: EmitLimits,
+    probe: &mut dyn EmitProbe,
+) -> Result<ProtocolEmission, EmitRefusal> {
     let graph = package.graph();
     let (emission, structural_nodes) = match emit_package_nodes(
         package,
@@ -6059,6 +5845,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
         selections,
         limits,
         true,
+        probe,
     )
     .map_err(|refusal| locate_output_limit(refusal, graph))
     {
@@ -6071,7 +5858,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
     let ids = StructuralIds::default();
     let mut structural_nodes = structural_nodes;
     if let Some(nodes) = structural_nodes.as_mut() {
-        read_index_segments(&ids, nodes, &mut Vec::new())?;
+        read_index_segments(&ids, nodes, &mut Vec::new(), probe)?;
     }
     let mut results = Vec::with_capacity(graph.protocol_order().len());
     let mut first_refusal = None;
@@ -7603,7 +7390,8 @@ pub fn emit_timed_models(
 
     let lock = base.lock().clone();
     let mut source_map = base.source_map().to_vec();
-    read_index_segments(ids, &mut nodes, &mut source_map)?;
+    let mut probe = NoopEmitProbe;
+    read_index_segments(ids, &mut nodes, &mut source_map, &mut probe)?;
     let mut checked_term_data = base.checked_term_data().cloned();
     rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut checked_term_data)?;
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
@@ -7614,6 +7402,7 @@ pub fn emit_timed_models(
         &mut [],
         &mut [],
         &ForeignNodes::default(),
+        &mut probe,
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
     let (requirement_rows, path_condition_frames, renumbered, synthetics) =
@@ -7725,6 +7514,30 @@ pub fn emit_checked_with_cancel(
     let emission = emit_checked_uncached(package, cancel, limits)?;
     package.remember_emission(&emission);
     Ok(emission)
+}
+
+/// Emit a checked package while sending test observations to this explicit
+/// per-emission probe. Available only to test-support dependents.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn emit_checked_with_probe(
+    package: &CheckedPackage,
+    limits: EmitLimits,
+    probe: &mut crate::test_support::EmissionProbe,
+) -> Result<Emission, EmitRefusal> {
+    require_protocol_results_for_refusals(package)?;
+    let graph = package.graph();
+    emit_package_inner_with_probe(
+        package,
+        |location| graph.region(location),
+        |_| None,
+        &Cancel::new(),
+        &ir_decodes,
+        &[],
+        limits,
+        probe,
+    )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// Emit `package` as `filament.checked-package/v2` bytes (FR-322). `regions`
@@ -8083,6 +7896,29 @@ fn emit_package_inner(
     temporal_selections: &[TemporalClockSelection],
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
+    let mut probe = NoopEmitProbe;
+    emit_package_inner_with_probe(
+        package,
+        regions,
+        fault,
+        cancel,
+        decodes,
+        temporal_selections,
+        limits,
+        &mut probe,
+    )
+}
+
+fn emit_package_inner_with_probe(
+    package: &CheckedPackage,
+    regions: impl Fn(&Location) -> Option<SourceRegion>,
+    fault: impl Fn(&CheckedNodeId) -> Option<EmitRefusal>,
+    cancel: &Cancel,
+    decodes: &dyn Fn(CheckedNodeTag, &str) -> bool,
+    temporal_selections: &[TemporalClockSelection],
+    limits: EmitLimits,
+    probe: &mut dyn EmitProbe,
+) -> Result<Emission, EmitRefusal> {
     emit_package_nodes(
         package,
         regions,
@@ -8092,6 +7928,7 @@ fn emit_package_inner(
         temporal_selections,
         limits,
         false,
+        probe,
     )
     .map(|(emission, _)| emission)
 }
@@ -8105,6 +7942,7 @@ pub(crate) fn emitted_document_nodes(
     regions: impl Fn(&Location) -> Option<SourceRegion>,
     limits: EmitLimits,
 ) -> Result<Vec<CheckedSemanticNodeV2>, EmitRefusal> {
+    let mut probe = NoopEmitProbe;
     emit_package_nodes(
         package,
         regions,
@@ -8114,6 +7952,7 @@ pub(crate) fn emitted_document_nodes(
         &[],
         limits,
         true,
+        &mut probe,
     )
     .map(|(_, nodes)| nodes)
 }
@@ -8136,9 +7975,9 @@ fn emit_package_nodes(
     temporal_selections: &[TemporalClockSelection],
     limits: EmitLimits,
     keep_nodes: bool,
+    probe: &mut dyn EmitProbe,
 ) -> Result<(Emission, Vec<CheckedSemanticNodeV2>), EmitRefusal> {
-    #[cfg(feature = "test-support")]
-    let s4_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::PreLockGraphTemporal));
     let ids_table = StructuralIds::default();
     let ids = &ids_table;
     let denied = || {
@@ -8630,7 +8469,7 @@ fn emit_package_nodes(
             merge_equal_timed_nodes(&mut nodes, &mut source_map)?;
         }
         #[cfg(test)]
-        TIMED_GRAPH.with(|held| *held.borrow_mut() = Some((nodes.clone(), source_map.clone())));
+        probe.event(EmitProbeEvent::TypedGraph(&nodes, &source_map));
     }
     // FSpec FR-370: a `duration` window typed by a model-owned time unit
     // names that unit's nodes, which S3 does not lower; each is written once,
@@ -8748,10 +8587,8 @@ fn emit_package_nodes(
     let (edition, definition_selections) =
         catalog_selections(graph.header_layers(), &laws, graph.extension_selections());
     let root = DefinitionRole::Root.identity();
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::PreLockGraphTemporal, s4_started.elapsed());
-    #[cfg(feature = "test-support")]
-    let phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::PreLockGraphTemporal));
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::Lock));
     let lock = CheckedPackageLockV2 {
         sources: sources.into_iter().collect(),
         edition: edition.clone(),
@@ -8762,17 +8599,13 @@ fn emit_package_nodes(
         refinement_internals: None,
         dependency_clock_selections: dependency_clock_selections(package),
     };
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::Lock, phase_started.elapsed());
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::Lock));
 
-    #[cfg(feature = "test-support")]
-    let phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::Inspection));
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::Inspection, phase_started.elapsed());
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::Inspection));
 
-    #[cfg(feature = "test-support")]
-    let phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::Index));
     let emitted_node_ids = write_index_segments(
         ids,
         &mut nodes,
@@ -8780,16 +8613,15 @@ fn emit_package_nodes(
         &mut step_rows,
         &mut schedulability_claim_rows,
         &foreign,
+        probe,
     )?;
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::Index, phase_started.elapsed());
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::Index));
     // The source map is complete and is written verbatim into the package, so
     // its canonical bytes are a floor on the package's. Charge them, and each
     // typed row section below as it is built, rather than after the final
     // encode.
     meter.charge(&source_map)?;
-    #[cfg(feature = "test-support")]
-    let phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::ProducerTemporalClaimTerm));
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let WrittenTemporalRows {
@@ -8856,11 +8688,9 @@ fn emit_package_nodes(
             &source_map,
         );
     }
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::ProducerTemporalClaimTerm, phase_started.elapsed());
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::ProducerTemporalClaimTerm));
 
-    #[cfg(feature = "test-support")]
-    let phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::SourceRequirementOperand));
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
         .map(|(key, mut row)| {
@@ -8953,9 +8783,8 @@ fn emit_package_nodes(
         .filter(|rows| operation_effects_are_carried(rows, &nodes));
     let operation_body_rows = operation_body_rows(graph, &emitted_node_ids, &nodes);
     let correlation_rows = protocol_correlation_rows(graph, &producer_node_ids, &source_map)?;
-    let operand_rows = write_operand_slots(&mut nodes, limits)?;
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::SourceRequirementOperand, phase_started.elapsed());
+    let operand_rows = write_operand_slots_with_probe(&mut nodes, limits, probe)?;
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::SourceRequirementOperand));
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: GRAPH_V2.into(),
         nodes,
@@ -8991,8 +8820,7 @@ fn emit_package_nodes(
     drop((candidates, external, foreign));
     drop((declared_forms, source_keys));
     drop(ids_table);
-    #[cfg(feature = "test-support")]
-    let phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::FinalEncode));
     let package = EmittedPackage::new(graph.package_name(), |name| {
         encode_checked_package_v2_with_path_condition_frames(
             name,
@@ -9023,20 +8851,13 @@ fn emit_package_nodes(
         )
         .map_err(EmitRefusal::from)
     })?;
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::FinalEncode, phase_started.elapsed());
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::FinalEncode));
 
-    #[cfg(feature = "test-support")]
-    let retained_started = std::time::Instant::now();
-    #[cfg(feature = "test-support")]
-    let retained_phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::RetainedPostEncode));
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::RetainedSummary));
     let retained_nodes = RetainedNodes::of(&semantic_graph);
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::RetainedSummary, retained_phase_started.elapsed());
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::RetainedSummary));
 
-    #[cfg(feature = "test-support")]
-    let retained_phase_started = std::time::Instant::now();
-    #[cfg(feature = "test-support")]
     let graph_node_count = semantic_graph.nodes.len();
     // The typed nodes outlive the bytes only for a caller that reads them,
     // or for the identity-row selection when the acquisition selected
@@ -9048,29 +8869,21 @@ fn emit_package_nodes(
         || !selected_exact_declaration_rows.is_empty()
         || !selected_exact_field_rows.is_empty()
     {
-        document_nodes(semantic_graph)?
+        document_nodes(semantic_graph, probe)?
     } else {
         drop(semantic_graph);
         Vec::new()
     };
-    #[cfg(feature = "test-support")]
-    record_s4_phase(
-        S4Phase::RetainedDisposition,
-        retained_phase_started.elapsed(),
-    );
-    #[cfg(feature = "test-support")]
-    S4_RETAINED_COUNTS.with(|counts| {
-        counts.set(S4RetainedCounts {
-            graph_node_count,
-            exact_declaration_count: selected_exact_declaration_rows.len(),
-            exact_field_count: selected_exact_field_rows.len(),
-            keep_nodes,
-            document_node_count: document.len(),
-        });
-    });
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::RetainedDisposition));
+    probe.event(EmitProbeEvent::RetainedCounts(S4RetainedCounts {
+        graph_node_count,
+        exact_declaration_count: selected_exact_declaration_rows.len(),
+        exact_field_count: selected_exact_field_rows.len(),
+        keep_nodes,
+        document_node_count: document.len(),
+    }));
 
-    #[cfg(feature = "test-support")]
-    let retained_phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::RetainedEmissionAssembly));
     let emission = Emission {
         package,
         artifact_identity: graph.source().clone(),
@@ -9108,21 +8921,11 @@ fn emit_package_nodes(
             bindings: temporal_bindings,
         },
     };
-    #[cfg(feature = "test-support")]
-    record_s4_phase(
-        S4Phase::RetainedEmissionAssembly,
-        retained_phase_started.elapsed(),
-    );
-    #[cfg(feature = "test-support")]
-    let retained_phase_started = std::time::Instant::now();
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::RetainedEmissionAssembly));
+    probe.event(EmitProbeEvent::PhaseStarted(S4Phase::RetainedIdentitySelection));
     let emission = emission.with_identity_row_selection(&document);
-    #[cfg(feature = "test-support")]
-    record_s4_phase(
-        S4Phase::RetainedIdentitySelection,
-        retained_phase_started.elapsed(),
-    );
-    #[cfg(feature = "test-support")]
-    record_s4_phase(S4Phase::RetainedPostEncode, retained_started.elapsed());
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::RetainedIdentitySelection));
+    probe.event(EmitProbeEvent::PhaseFinished(S4Phase::RetainedPostEncode));
     Ok((emission, if keep_nodes { document } else { Vec::new() }))
 }
 
@@ -11443,6 +11246,14 @@ pub fn write_operand_slots(
     nodes: &mut [CheckedSemanticNodeV2],
     limits: EmitLimits,
 ) -> Result<Vec<Vec<CheckedOperandEntry>>, EmitRefusal> {
+    write_operand_slots_with_probe(nodes, limits, &mut NoopEmitProbe)
+}
+
+fn write_operand_slots_with_probe(
+    nodes: &mut [CheckedSemanticNodeV2],
+    limits: EmitLimits,
+    probe: &mut dyn EmitProbe,
+) -> Result<Vec<Vec<CheckedOperandEntry>>, EmitRefusal> {
     use filament_contract_model::CheckedNodePathSegment as Segment;
     let mut rows = Vec::with_capacity(nodes.len());
     for node in nodes.iter_mut() {
@@ -11482,24 +11293,17 @@ pub fn write_operand_slots(
                 return Err(EmitRefusal::SourceMapInvariant);
             }
         }
-        #[cfg(test)]
-        if USE_REPEATED_OPERAND_REWRITE.with(Cell::get) {
+        if probe.repeated_operand_rewrite() {
             for (old, new) in changes {
                 node.replace_node_id(&old, &new);
             }
         } else {
             node.map_node_ids(|id| {
                 #[cfg(feature = "test-support")]
-                NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
+                probe.event(EmitProbeEvent::NodeIdSlotVisited);
                 changes.get(id).cloned()
             });
         }
-        #[cfg(not(test))]
-        node.map_node_ids(|id| {
-            #[cfg(feature = "test-support")]
-            NODE_ID_REWRITE_SLOT_VISITS.fetch_add(1, Ordering::Relaxed);
-            changes.get(id).cloned()
-        });
         rows.push(row);
     }
     Ok(rows)
@@ -11517,12 +11321,13 @@ fn operand_entries(
 #[implements("FR-869-AC-11")]
 pub(crate) fn document_nodes(
     mut graph: CheckedSemanticGraphV2,
+    probe: &mut dyn EmitProbe,
 ) -> Result<Vec<CheckedSemanticNodeV2>, EmitRefusal> {
     use filament_contract_model::{CheckedNodePathSegment as Segment, CheckedOperandEntry};
     #[cfg(feature = "test-support")]
     let mut diagnostics = DocumentNodeDiagnostics::default();
     #[cfg(feature = "test-support")]
-    let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+    let repeated_reference = probe.repeated_compile_index_rewrites();
     #[cfg(not(feature = "test-support"))]
     let repeated_reference = false;
     for (node, row) in graph.nodes.iter_mut().zip(&graph.operand_rows) {
@@ -11647,23 +11452,8 @@ pub(crate) fn document_nodes(
         }
     }
     #[cfg(feature = "test-support")]
-    DOCUMENT_NODE_DIAGNOSTICS.with(|held| {
-        let mut current = held.get();
-        current.linear_work_units = current
-            .linear_work_units
-            .saturating_add(diagnostics.linear_work_units);
-        current.repeated_scan_work_units = current
-            .repeated_scan_work_units
-            .saturating_add(diagnostics.repeated_scan_work_units);
-        current.one_pass_id_slots = current
-            .one_pass_id_slots
-            .saturating_add(diagnostics.one_pass_id_slots);
-        current.changed_ids = current.changed_ids.saturating_add(diagnostics.changed_ids);
-        current.operand_row_lookups = current
-            .operand_row_lookups
-            .saturating_add(diagnostics.operand_row_lookups);
-        held.set(current);
-    });
+    #[cfg(feature = "test-support")]
+    probe.event(EmitProbeEvent::DocumentNodeDiagnostics(diagnostics));
     Ok(graph.nodes)
 }
 
@@ -11791,6 +11581,7 @@ fn write_index_segments(
     step_rows: &mut [filament_contract_model::CheckedRefinementStepRowRegion],
     schedulability_rows: &mut [filament_contract_model::CheckedSchedulabilityClaimRow],
     foreign: &ForeignNodes,
+    probe: &mut dyn EmitProbe,
 ) -> Result<HashMap<NodeKey, CheckedNodeId>, EmitRefusal> {
     use filament_contract_model::CheckedNodePathSegment as Segment;
     let is_operand = |segment: &Segment| matches!(segment, Segment::Node(_));
@@ -11841,7 +11632,7 @@ fn write_index_segments(
     #[cfg(feature = "test-support")]
     let mut diagnostics = WriteIndexDiagnostics::default();
     #[cfg(feature = "test-support")]
-    let repeated_reference = USE_REPEATED_COMPILE_INDEX_REWRITES.with(Cell::get);
+    let repeated_reference = probe.repeated_compile_index_rewrites();
     #[cfg(not(feature = "test-support"))]
     let repeated_reference = false;
     for (node, key) in nodes.iter_mut().zip(&graph_keys) {
@@ -11986,7 +11777,7 @@ fn write_index_segments(
     #[cfg(feature = "test-support")]
     drop(sidecar);
     #[cfg(feature = "test-support")]
-    record_write_index_diagnostics(diagnostics);
+    probe.event(EmitProbeEvent::WriteIndexDiagnostics(diagnostics));
     Ok(graph_wire)
 }
 
@@ -11999,6 +11790,7 @@ fn read_index_segments(
     ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
+    probe: &mut dyn EmitProbe,
 ) -> Result<(), EmitRefusal> {
     use filament_contract_model::CheckedNodePathSegment as Segment;
     let is_index = |segment: &Segment| matches!(segment, Segment::Index(_));
@@ -12006,8 +11798,6 @@ fn read_index_segments(
         fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .map_err(|_| EmitRefusal::SourceMapInvariant)?;
     let structural = |id: &CheckedNodeId| {
-        #[cfg(feature = "test-support")]
-        record_read_index_rewrite_work(1 + id.path.len());
         graph
             .key(id)
             .map(|key| node_id(ids, &key))
@@ -12015,11 +11805,12 @@ fn read_index_segments(
     };
     for node in nodes.iter_mut() {
         #[cfg(feature = "test-support")]
-        if USE_REPEATED_READ_INDEX_REWRITE.with(Cell::get) {
+        if probe.repeated_read_index_rewrite() {
             let mut changes = Vec::new();
             for id in reachable_ids(node) {
-                record_read_index_rewrite_work(1 + id.path.len());
+                probe.event(EmitProbeEvent::ReadIndexWork(1 + id.path.len()));
                 if holds_segment(id, is_index) {
+                    probe.event(EmitProbeEvent::ReadIndexWork(1 + id.path.len()));
                     changes.push((id.clone(), structural(id)?));
                 }
             }
@@ -12028,7 +11819,7 @@ fn read_index_segments(
                 // ID. Count those visits with the same traversal the bulk
                 // rewrite uses, then account for the replacement scan.
                 node.map_node_ids(|_| {
-                    record_read_index_rewrite_work(1);
+                    probe.event(EmitProbeEvent::ReadIndexWork(1));
                     None
                 });
                 node.replace_node_id(&old, &new);
@@ -12038,10 +11829,12 @@ fn read_index_segments(
         let mut invalid_index = false;
         node.map_node_ids(|id| {
             #[cfg(feature = "test-support")]
-            record_read_index_rewrite_work(1 + id.path.len());
+            probe.event(EmitProbeEvent::ReadIndexWork(1 + id.path.len()));
             if invalid_index || !holds_segment(id, is_index) {
                 return None;
             }
+            #[cfg(feature = "test-support")]
+            probe.event(EmitProbeEvent::ReadIndexWork(1 + id.path.len()));
             match structural(id) {
                 Ok(new) => Some(new),
                 Err(_) => {
@@ -12056,8 +11849,10 @@ fn read_index_segments(
     }
     for entry in source_map.iter_mut() {
         #[cfg(feature = "test-support")]
-        record_read_index_rewrite_work(1 + entry.node_id.path.len());
+        probe.event(EmitProbeEvent::ReadIndexWork(1 + entry.node_id.path.len()));
         if holds_segment(&entry.node_id, is_index) {
+            #[cfg(feature = "test-support")]
+            probe.event(EmitProbeEvent::ReadIndexWork(1 + entry.node_id.path.len()));
             entry.node_id = structural(&entry.node_id)?;
         }
     }

@@ -18,7 +18,8 @@ use serde_json::{json, Value};
 mod tc1070;
 
 fn checked(source: &str, package: Option<&[u8]>) -> CheckedPackage {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:protocol-rows"),
         "program.native",
         source.as_bytes(),

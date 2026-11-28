@@ -30,6 +30,7 @@ fn unit() -> String {
 
 fn site(source: &str, function: &str) -> crate::CallSite<crate::FunctionSite> {
     crate::call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new(AUTHORITY, IDENTITY),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, source.as_bytes()),
         [],

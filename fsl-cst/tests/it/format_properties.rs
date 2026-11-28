@@ -31,7 +31,8 @@ fn identity() -> SourceIdentity {
 }
 
 fn parse(source: &str) -> Option<ParsedSource> {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         identity(),
         "unit.native",
         source.as_bytes(),

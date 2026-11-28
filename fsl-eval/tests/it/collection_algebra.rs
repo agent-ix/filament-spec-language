@@ -1195,11 +1195,12 @@ mod map_source {
         { m[k] }\n";
 
     fn package(mode: CheckMode, functions: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let text = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n{functions}"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

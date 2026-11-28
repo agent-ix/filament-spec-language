@@ -43,7 +43,8 @@ fn source(formula: &str) -> String {
 }
 
 fn forms(text: &str) -> fsl_forms::ParsedUnit {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "test:qsl-2094-fr393-ac4"),
         "unit.native",
         text.as_bytes(),
@@ -136,6 +137,7 @@ fn source_span(text: &str, span: Span) -> &str {
 #[trace("TC-1078", "FR-393-AC-4")]
 #[test]
 fn decimal_timed_magnitude_builds_and_invalid_meanings_refuse_only_at_s3() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let positive = source("eventually[0 s, 0.003 s] holds(true)");
     let operator = interval(&positive);
     let Some(OperatorInterval::Timed(timed)) = operator.interval else {
@@ -239,7 +241,7 @@ fn decimal_timed_magnitude_builds_and_invalid_meanings_refuse_only_at_s3() {
     );
 
     let malformed = source("eventually[0 ms, x] holds(true)");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "test:qsl-2094-fr393-ac4"),
         "unit.native",
         malformed.as_bytes(),

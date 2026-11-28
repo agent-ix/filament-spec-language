@@ -19,11 +19,62 @@ pub use editor::{
     DocumentNavigation, DocumentSnapshot, DocumentSymbol, FormatCorrespondence, FormatResponse,
 };
 
+use ix_trace_rs::implements;
+
+use fsl_cst::ParserContext;
 use fsl_cst::{CompleteDiagnostic, Limits, ParsedSource};
 use fsl_foundation::selection::ProfileCatalog;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::library::extension::HeldExtensions;
 use fsl_semantics::value::HeaderLayer;
+
+/// Process-owned parser for repeated complete-V1 tooling operations.
+pub struct CompleteParser {
+    context: ParserContext,
+}
+
+impl CompleteParser {
+    /// Construct the parser context once for a process entry.
+    #[must_use]
+    #[implements("NFR-141-AC-10")]
+    pub fn new() -> Self {
+        Self {
+            context: ParserContext::new(),
+        }
+    }
+
+    /// Parse while validating profiles against `catalog`, reusing this process context.
+    #[implements("NFR-141-AC-10")]
+    pub fn parse_with_catalog(
+        &self,
+        identity: SourceIdentity,
+        path: impl Into<String>,
+        bytes: &[u8],
+        catalog: &ProfileCatalog,
+        limits: Limits,
+    ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+        parse_with_catalog_using(&self.context, identity, path, bytes, catalog, limits)
+    }
+
+    /// Parse with held extension forms using this process context.
+    #[implements("NFR-141-AC-10")]
+    pub fn parse_with_extensions(
+        &self,
+        identity: SourceIdentity,
+        path: impl Into<String>,
+        bytes: &[u8],
+        held: &HeldExtensions,
+        limits: Limits,
+    ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+        parse_with_extensions_using(&self.context, identity, path, bytes, held, limits)
+    }
+}
+
+impl Default for CompleteParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// The current build's header-selectable layer and division-law identities.
 pub fn header_profile_catalog() -> ProfileCatalog {
@@ -43,7 +94,20 @@ pub fn header_profile_catalog() -> ProfileCatalog {
 /// Parse while validating every selected profile against an exact definition
 /// catalog. An older catalog retains all bytes and reports the unknown profile
 /// at its source selection.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_catalog(
+    parser: &CompleteParser,
+    identity: SourceIdentity,
+    path: impl Into<String>,
+    bytes: &[u8],
+    catalog: &ProfileCatalog,
+    limits: Limits,
+) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+    parser.parse_with_catalog(identity, path, bytes, catalog, limits)
+}
+
+fn parse_with_catalog_using(
+    context: &ParserContext,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
@@ -51,7 +115,7 @@ pub fn parse_with_catalog(
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
     let source = fsl_cst::diagnostic::read_source(identity, path, bytes, limits.source_bytes)?;
-    let mut base = fsl_cst::parse_source(source.clone(), limits)?;
+    let mut base = context.parse_source(source.clone(), limits)?;
     let refused = base.selections().profiles.iter().find_map(|selection| {
         editor::profile_refusal(catalog, &selection.identity)
             .map(|refusal| (selection.identity_span, refusal))
@@ -74,7 +138,20 @@ pub fn parse_with_catalog(
 /// held definitions' productions only: a held leading keyword begins a
 /// declaration form at the first token of a top-level declaration and is an
 /// ordinary identifier anywhere else.
+#[implements("NFR-141-AC-10")]
 pub fn parse_with_extensions(
+    parser: &CompleteParser,
+    identity: SourceIdentity,
+    path: impl Into<String>,
+    bytes: &[u8],
+    held: &HeldExtensions,
+    limits: Limits,
+) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
+    parser.parse_with_extensions(identity, path, bytes, held, limits)
+}
+
+fn parse_with_extensions_using(
+    context: &ParserContext,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
@@ -82,7 +159,7 @@ pub fn parse_with_extensions(
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
     let forms = fsl_replay::spine::extension_forms(held);
-    fsl_cst::parse_with_extensions(
+    context.parse_with_extensions(
         identity,
         path,
         bytes,

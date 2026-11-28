@@ -5,7 +5,7 @@ resolver = "2"
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "ef4f027ae29f92cca557fbdff117de1ec9c55b89" }
+filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "d19b3a7e5ee71ed352a8c04137b8e44d3d5fbea6" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
@@ -30,7 +30,7 @@ filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "5d85
 # `fsl-replay` reads and writes and `fsl-source` produces: one pin, one type.
 quire-rs = { git = "https://github.com/agent-ix/quire-rs", tag = "v0.62.3", default-features = false }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "e3849c3b78fd9c8f9dec2e577a1b040c6f0b5c39" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "4a45e6936141e161535a9af6e6d8d2cb51d7d5b9" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "b7929dd9b807ee9291fb4f6b5cf9d15e288a9b45" }
 
@@ -211,8 +211,9 @@ opt-level = 3
 
 # Workspace crates and the CG dev-dependency both name FSL through this git
 # source. Patching these FSL packages to workspace members keeps one identity
-# for the typed request, evidence, and proof outcome in the cross-crate test.
+# for ParserContext, typed requests, evidence, and proof outcomes in cross-crate tests.
 [patch."https://github.com/agent-ix/filament-spec-language"]
+fsl-cst = { path = "fsl-cst" }
 fsl-foundation = { path = "fsl-foundation" }
 fsl-replay = { path = "fsl-replay" }
 fsl-package = { path = "fsl-package" }

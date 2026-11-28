@@ -56,6 +56,7 @@ fn package_over(document: &serde_json::Value, alias: &str) -> CheckedPackage {
 }
 
 fn package_functions(document: &serde_json::Value, alias: &str, functions: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -65,7 +66,7 @@ fn package_functions(document: &serde_json::Value, alias: &str, functions: &str)
          {functions}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "variant-fields"),
         "variant-fields.native",
         source.as_bytes(),

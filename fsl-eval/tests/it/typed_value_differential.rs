@@ -439,8 +439,9 @@ struct Checked {
 
 /// The declarations of one parsed function.
 fn parsed_unit(function: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{function}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "typed-value-differential"),
         "typed.native",
         text.as_bytes(),

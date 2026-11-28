@@ -498,9 +498,10 @@ fn declarations_over(
     profiles: &str,
     body: &str,
 ) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = unit_text_with(profiles, body);
     let packages = package_input([document.as_slice()]).unwrap();
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "counter"),
         "counter.native",
         text.as_bytes(),
@@ -520,7 +521,7 @@ fn declarations_over(
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     PackageDeclarations::assemble(
@@ -537,10 +538,11 @@ fn declarations_over(
 /// Runtime fixtures use this when they exercise interpreter behavior that
 /// the finite-global wire profile does not emit.
 pub(crate) fn package_without_protocol_profile_selection(body: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = document();
     let text = unit_text_with(PROTOCOL_PROFILE, body);
     let packages = package_input([document.as_slice()]).unwrap();
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "counter"),
         "counter.native",
         text.as_bytes(),
@@ -560,7 +562,7 @@ pub(crate) fn package_without_protocol_profile_selection(body: &str) -> CheckedP
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let mut declarations = PackageDeclarations::assemble(

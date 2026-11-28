@@ -473,6 +473,7 @@ fn union_declaration(name: &str, members: Vec<(&str, Vec<ValueType>)>) -> Compos
 #[trace("FR-093-AC-23", "TC-415")]
 #[test]
 fn union_leaf_vectors_match_the_complete_ordered_contract() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text_definition = json!({
         "authority": "agent-ix",
         "identity": "filament.value.text.unicode-17.0.0/v1"
@@ -564,7 +565,7 @@ fn union_leaf_vectors_match_the_complete_ordered_contract() {
              union Choice {{ Right(Text[0, 8; binary-utf8], Text[0, 8; nfc]), Left(Text[0, 8; nfc]), Empty }} \
              function f using v(a: Choice, b: Choice): Boolean pure {{ case a {{ {arms} }} }}"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("union-vector", "source-arm-order"),
             "union.native",
             source.as_bytes(),

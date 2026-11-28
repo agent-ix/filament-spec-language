@@ -591,6 +591,7 @@ fn the_independent_measure_checker_preserves_caller_limits_and_cancellation() {
 #[trace("TC-2066", "FR-1043-AC-4", "FR-203-AC-1")]
 #[test]
 fn p95_quantity_ratio_is_accepted_from_its_emitted_package_and_two_ms_refutes() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let claims="probabilistic P95 using ev on M over (s:M::Server) under Steady on origin { quantile 0.95 of (accumulate duration from holds(s.phase = 1) until holds(s.phase = 2) within 10) <= 5 ms }\nprobabilistic TooFast using ev on M over (s:M::Server) under Steady on origin { quantile 0.95 of (accumulate duration from holds(s.phase = 1) until holds(s.phase = 2) within 10) <= 2 ms }";
     let mut model = prob_world::quantity_service("1 ms:90,3 ms:7,12 ms:3", claims);
     model.body = model.body.replace(
@@ -680,6 +681,7 @@ fn p95_quantity_ratio_is_accepted_from_its_emitted_package_and_two_ms_refutes() 
     let check = |document: &Value| {
         let bytes = serde_json::to_vec(document).unwrap();
         fsl_replay::check_probability_certificate_package(
+            &qsl3309_parser_context,
             fsl_replay::ProbabilityPackageRequest {
                 package: emitted.package().bytes(),
                 package_name: Some("package"),

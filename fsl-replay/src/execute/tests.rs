@@ -1554,6 +1554,7 @@ fn call_site_with_a_dependency_input_keys_a_request_replay_accepts() {
     let importing = Importing::new();
     let locate = |dependencies: &crate::DependencyInput| {
         crate::call_site(
+            &fsl_cst::ParserContext::new(),
             SourceIdentity::new(AUTHORITY, IDENTITY),
             crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
             [],
@@ -1611,6 +1612,7 @@ fn locate_q_with_units(
     }])
     .expect("one library under one identity");
     crate::call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new(AUTHORITY, IDENTITY),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
         [],
@@ -1682,6 +1684,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     let proved_source = proved();
     let compiled = spine(&proved_source, &BTreeMap::new());
     let refusal = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         unit_source.clone(),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, proved_source.as_bytes()),
         [],
@@ -1704,6 +1707,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     // A unit with a syntax error: `Compile` carries the recompile's code.
     let broken = format!("language \"ix:native\" edition \"1-draft\";\n{PROFILE}function {{\n");
     let refusal = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         unit_source.clone(),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, broken.as_bytes()),
         [],
@@ -1740,6 +1744,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
 
     // AC-4's `Import`: no dependency input, and no `dependencies` entry.
     let refusal = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         unit_source,
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
         [],
@@ -2449,6 +2454,7 @@ fn parity_request(function: &str, bind: impl FnOnce(NodeKey) -> ReplaySource) ->
 /// replay refuses before the identity is read.
 fn minted_identity(source: &str, function: &str) -> crate::ObligationIdentity {
     let site = crate::call_site(
+        &fsl_cst::ParserContext::new(),
         SourceIdentity::new(AUTHORITY, IDENTITY),
         crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, source.as_bytes()),
         [],

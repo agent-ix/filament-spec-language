@@ -1940,10 +1940,12 @@ fn import_protocol_dependency(
     unit: &str,
     documents: &[Vec<u8>],
 ) -> ProtocolDependency {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let dependency_models =
         fsl_semantics::model::intake::package_input(dependency_documents.iter().map(Vec::as_slice))
             .expect("dependency model package");
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:protocol-dependency"),
         "dependency.native",
         dependency_unit.as_bytes(),
@@ -1990,6 +1992,7 @@ fn import_protocol_dependency(
     .expect("dependency import view is admitted");
 
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:root"),
         "program.native",
         unit.as_bytes(),
@@ -2100,6 +2103,7 @@ fn a_dependency_protocol_over_another_model_is_not_an_abstract_subject() {
 #[trace("TC-552", "FR-147-AC-15")]
 #[test]
 fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (local_unit, documents) = protocol_subject();
     let dependency_unit = local_unit
         .replace(
@@ -2415,6 +2419,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
          refinement R using inf abstract Spec::Twice concrete C {{}}\n"
     );
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:wrong-owner"),
         "wrong-owner.native",
         wrong_owner.as_bytes(),
@@ -2462,6 +2467,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     for absent in ["Thrice", "Counter", "LocalTwice"] {
         let missing_clause = unit.replace("Spec::Twice", &format!("Spec::{absent}"));
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", format!("test:missing-{absent}")),
             "missing.native",
             missing_clause.as_bytes(),
@@ -2524,6 +2530,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
 /// applies `inc`: `a1(self)` is checked against the admitted receiver binder,
 /// and a Boolean cannot substitute for that binder.
 fn assert_dependency_node_rows_check_the_receiver() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let dependency_model = counter_model_document("example/refinement-abstract", &["inc"]);
     let concrete_model = counter_model_document("example/refinement-concrete", &["commitA"]);
     let library = fsl_semantics::library::LibraryName::new("test/protocol-dependency")
@@ -2541,6 +2548,7 @@ fn assert_dependency_node_rows_check_the_receiver() {
         fsl_semantics::model::intake::package_input([dependency_model.as_slice()])
             .expect("dependency model package");
     let parsed = fsl_cst::parse(
+        &qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:dep-protocol"),
         "dependency.native",
         dependency_unit.as_bytes(),
@@ -2597,6 +2605,7 @@ fn assert_dependency_node_rows_check_the_receiver() {
     };
     let check = |source: &str| {
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:root"),
             "root.native",
             source.as_bytes(),

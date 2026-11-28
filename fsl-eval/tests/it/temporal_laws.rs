@@ -148,6 +148,7 @@ fn the_derived_forms_carry_previous_next_and_weak_until() {
 /// The S1 diagnostics of a unit with one temporal clause whose formula is
 /// `body`, over a record with a field `next`.
 fn parse_diagnostics(body: &str) -> Vec<fsl_cst::CompleteDiagnostic> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -155,7 +156,7 @@ fn parse_diagnostics(body: &str) -> Vec<fsl_cst::CompleteDiagnostic> {
          record Counter {{ level: Int[0, 9]; next: Int[0, 9]; }}\n\
          temporal C using t0 over (c: Counter) clock \"events\" on origin {{ {body} }}\n"
     );
-    fsl_cst::parse(
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

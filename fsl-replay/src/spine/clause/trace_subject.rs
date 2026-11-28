@@ -51,10 +51,12 @@ pub struct TraceSubjectClauseRequest {
 
 /// Run one temporal clause on a closed finite event-position trace of record
 /// samples. Model-subject clauses continue to use [`super::run_clause`].
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn run_trace_subject_clause(
     request: TraceSubjectClauseRequest,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
+    let parser_context = fsl_cst::ParserContext::new();
     if unit.bytes.is_empty() {
         return Err(ClauseRunRefusal::EmptySource);
     }
@@ -82,7 +84,7 @@ pub fn run_trace_subject_clause(
     }
     let cancel = Cancel::new();
     let compile = || -> Result<_, front_end::FrontEndFailure> {
-        let parsed = front_end::parse(
+        let parsed = front_end::parse_with_context(
             &front_end::ParseRequest {
                 source: unit.identity,
                 path: unit.path,
@@ -90,6 +92,7 @@ pub fn run_trace_subject_clause(
             },
             request.limits.source,
             &cancel,
+            &parser_context,
         )?
         .into_value();
         if let Some(actual) = super::extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
@@ -1477,11 +1480,12 @@ mod tests {
     }
 
     fn checked_types() -> (ValueType, ValueType) {
+        let parser_context = fsl_cst::ParserContext::new();
         let identity = SourceIdentity::new("agent-ix", "trace-subject-test");
         let bytes = SOURCE.as_bytes();
         let limits = super::super::super::SpineLimits::default();
         let cancel = Cancel::new();
-        let parsed = front_end::parse(
+        let parsed = front_end::parse_with_context(
             &front_end::ParseRequest {
                 source: &identity,
                 path: "trace-subject.native",
@@ -1489,6 +1493,7 @@ mod tests {
             },
             limits.source,
             &cancel,
+            &parser_context,
         )
         .expect("source parses")
         .into_value();
@@ -1522,6 +1527,7 @@ mod tests {
     }
 
     fn model_subject() -> (String, PackageInput, ValueType) {
+        let parser_context = fsl_cst::ParserContext::new();
         let document = serde_json::to_vec(&model_fixture::document(&[], &[]))
             .expect("model fixture serializes");
         let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
@@ -1538,7 +1544,7 @@ mod tests {
         let identity = SourceIdentity::new("agent-ix", "trace-subject-model-test");
         let limits = super::super::super::SpineLimits::default();
         let cancel = Cancel::new();
-        let parsed = front_end::parse(
+        let parsed = front_end::parse_with_context(
             &front_end::ParseRequest {
                 source: &identity,
                 path: "trace-subject-model.native",
@@ -1546,6 +1552,7 @@ mod tests {
             },
             limits.source,
             &cancel,
+            &parser_context,
         )
         .expect("model source parses")
         .into_value();

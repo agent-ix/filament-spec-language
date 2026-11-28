@@ -39,12 +39,13 @@ const NEG_THREE_QUARTER_ULP: u64 = 0xbca8_0000_0000_0000;
 /// Compiles `function add using v(f: T, g: T): T pure { f + g }` for the
 /// float type spelling `float`, and returns the outcome of `left + right`.
 fn add(float: &str, left: u64, right: u64) -> Outcome<Value> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function add using v(f: {float}, g: {float}): {float} pure {{ f + g }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -92,12 +93,13 @@ fn add(float: &str, left: u64, right: u64) -> Outcome<Value> {
 /// Evaluates the source IEEE square-root intrinsic at the selected width and
 /// rounding mode.
 fn sqrt(float: &str, operand: u64) -> Outcome<Value> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function root using v(a: {float}): {float} pure {{ filament::value::ieee::sqrt(a) }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -141,12 +143,13 @@ fn sqrt(float: &str, operand: u64) -> Outcome<Value> {
 
 /// Evaluates same-width IEEE equality through source lowering.
 fn equal(left: u64, right: u64, operator: &str) -> Outcome<Value> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function compare using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure {{ a {operator} b }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -322,13 +325,14 @@ fn an_ordering_over_unlike_rounding_modes_is_a_type_mismatch() {
 /// Float64[nearest-even]): <result> pure { <body> }` and asserts it refuses
 /// `ill_typed`/`type-mismatch`, returning its precise typed cause.
 fn mixed_mode_refusal(result: &str, body: &str) -> CheckCause {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function h using v(f: Float64[toward-zero], g: Float64[nearest-even]): \
          {result} pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

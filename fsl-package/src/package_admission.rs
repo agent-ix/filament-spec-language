@@ -4,12 +4,14 @@
 //! reader with the request's supplied domain package documents as evidence,
 //! with no fallback to source compilation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use ix_trace_rs::implements;
+
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageRefusal, CheckedPackageRefusalCode, CheckedPackageV2,
+    CheckedPackageRefusal, CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::value::DefinitionRole;
@@ -18,6 +20,7 @@ use crate::checked_v2::{ImportViewRefusal, V2ReadLimits, V2ReadRefusal};
 
 /// A package the strict reader refused.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[implements("FR-110-AC-16")]
 pub struct PackageAdmissionRefusal {
     /// Original cumulative read-budget denial, when admission exhausted it.
     pub limit: Option<Box<fsl_foundation::diagnostic::LimitExceeded>>,
@@ -27,7 +30,7 @@ pub struct PackageAdmissionRefusal {
     /// denial, and `invalid_package` for every other refusal.
     pub code: Code,
     /// The reader's typed cause tag, such as `missing-selection`.
-    pub cause: Option<String>,
+    pub cause: Option<CheckedPackageRefusalCause>,
     /// The RFC 6901 pointer the reader names, absent for a byte-stream defect.
     pub pointer: Option<String>,
     /// The domain or library identity a `missing-selection` refusal names.
@@ -152,6 +155,7 @@ pub fn admit_checked_package_with_budget(
 ///
 /// # Errors
 /// Preserves strict-reader refusals and cumulative typed budget denials.
+#[implements("FR-110-AC-16")]
 pub fn admit_checked_package_with_evidence(
     bytes: &[u8],
     evidence: &CheckedPackageEvidence,
@@ -166,7 +170,7 @@ pub fn admit_checked_package_with_evidence(
             actual,
         ))),
         code: Code::StageLimitExceeded,
-        cause: Some("insufficient-next-charge".to_owned()),
+        cause: Some(CheckedPackageRefusalCause::InsufficientNextCharge),
         pointer,
         identity: None,
         host_allocation_failure: None,
@@ -216,6 +220,7 @@ pub fn admit_checked_package_with_evidence(
 ///
 /// # Errors
 /// Refuses conflicting documents or library identities through IR's insertion API.
+#[implements("FR-110-AC-16")]
 pub fn checked_package_evidence(
     documents: &BTreeMap<String, Vec<u8>>,
     dependencies: &BTreeMap<String, Arc<CheckedPackageV2>>,
@@ -232,7 +237,7 @@ pub fn checked_package_evidence(
             return Err(PackageAdmissionRefusal {
                 limit: None,
                 code: Code::InvalidPackage,
-                cause: Some("conflicting-definition".to_owned()),
+                cause: Some(CheckedPackageRefusalCause::ConflictingDefinition),
                 pointer: None,
                 identity: Some(identity.clone()),
                 host_allocation_failure: None,
@@ -245,7 +250,7 @@ pub fn checked_package_evidence(
             .map_err(|_| PackageAdmissionRefusal {
                 limit: None,
                 code: Code::InvalidPackage,
-                cause: Some("conflicting-definition".to_owned()),
+                cause: Some(CheckedPackageRefusalCause::ConflictingDefinition),
                 pointer: None,
                 identity: Some(identity.clone()),
                 host_allocation_failure: None,
@@ -257,22 +262,19 @@ pub fn checked_package_evidence(
 /// The refusal IR's reader raised, with its pointer and typed cause. The
 /// identity at fault is the caller's to read from the bytes.
 #[ix_trace_rs::string_edge]
+#[implements("FR-110-AC-16")]
 fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal {
     let pointer = refusal
         .loci
         .first()
         .and_then(|locus| locus.path.as_ref())
         .map(|path| path.as_str().to_owned());
-    let cause = refusal.cause.as_ref().and_then(|cause| {
-        serde_json::to_value(cause)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-    });
+    let cause = refusal.cause;
     // FR-940 "Claim names": a name shared by two `claim_names` rows is the one
     // ambiguous declaration, whichever reader found it. QSL-2545: the
     // contract-ir reader still reports `invalid_package` here; delete this
     // remap once the reader returns `ambiguous_declaration` itself.
-    let ambiguous_claim = cause.as_deref() == Some("ambiguous-name")
+    let ambiguous_claim = cause == Some(CheckedPackageRefusalCause::AmbiguousName)
         && pointer
             .as_deref()
             .is_some_and(|pointer| pointer.starts_with("/claim_names/"));
@@ -294,9 +296,17 @@ fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal
 }
 
 impl PackageAdmissionRefusal {
+    /// The strict reader's cause, when the reader supplied one.
+    #[must_use]
+    #[implements("FR-110-AC-16")]
+    pub fn reader_cause(&self) -> Option<&'static str> {
+        self.cause.and_then(|cause| cause_spelling(cause).ok())
+    }
+
     /// The refusal spelled `code/cause for identity at pointer`, each part
     /// when present.
     #[must_use]
+    #[implements("FR-110-AC-16")]
     pub fn label(&self) -> String {
         if let Some(failure) = self.host_allocation_failure.as_deref() {
             return format!(
@@ -305,9 +315,11 @@ impl PackageAdmissionRefusal {
             );
         }
         let mut label = self.code.as_str().to_owned();
-        if let Some(cause) = &self.cause {
-            label.push('/');
-            label.push_str(cause);
+        if let Some(cause) = self.cause {
+            if let Ok(spelling) = cause_spelling(cause) {
+                label.push('/');
+                label.push_str(spelling);
+            }
         }
         if let Some(identity) = &self.identity {
             label.push_str(" for ");
@@ -323,33 +335,16 @@ impl PackageAdmissionRefusal {
     /// The cause as a catalog spelling: the reader's own cause, else the
     /// catalog default of the code (`insufficient-next-charge` for a reached
     /// ceiling, `missing-selection` for a missing import, `invalid-value`
-    /// otherwise). The reader's causes are a closed set, so interning them
-    /// holds a bounded number of strings for the process.
     #[must_use]
+    #[implements("FR-110-AC-16")]
     pub fn catalog_cause(&self) -> &'static str {
-        use std::sync::{Mutex, OnceLock};
-        static CAUSES: OnceLock<Mutex<BTreeSet<&'static str>>> = OnceLock::new();
-        match &self.cause {
-            Some(cause) => {
-                let mut known = CAUSES
-                    .get_or_init(Mutex::default)
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(known) = known.get(cause.as_str()) {
-                    return known;
-                }
-                let leaked: &'static str = Box::leak(cause.clone().into_boxed_str());
-                known.insert(leaked);
-                leaked
-            }
-            None => match self.code {
-                Code::ResourceExhausted => "insufficient-next-charge",
-                Code::MissingImport => "missing-selection",
-                _ => "invalid-value",
-            },
-        }
+        let default = match self.code {
+            Code::ResourceExhausted => "insufficient-next-charge",
+            Code::MissingImport => "missing-selection",
+            _ => "invalid-value",
+        };
+        self.reader_cause().unwrap_or(default)
     }
-
     /// The strict reader's refusal inside a failed evaluation read of a
     /// package the run compiled, with the reader's code, cause and pointer;
     /// `bytes` are the package bytes the read refused, from which a missing
@@ -403,6 +398,150 @@ impl PackageAdmissionRefusal {
         }
         self
     }
+}
+
+#[implements("FR-110-AC-16")]
+pub(crate) struct CauseSpellingSerializer;
+
+macro_rules! reject_non_unit_variant_methods {
+    ($(fn $name:ident($($argument:ident: $kind:ty),*);)+) => {
+        $(
+            fn $name(self, $($argument: $kind),*) -> Result<Self::Ok, Self::Error> {
+                Err(serde::ser::Error::custom("expected a unit variant"))
+            }
+        )+
+    };
+}
+
+impl serde::Serializer for CauseSpellingSerializer {
+    type Ok = &'static str;
+    type Error = serde_json::Error;
+    type SerializeSeq = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeTuple = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeTupleStruct = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeTupleVariant = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeMap = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeStruct = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeStructVariant = serde::ser::Impossible<Self::Ok, Self::Error>;
+
+    reject_non_unit_variant_methods! {
+        fn serialize_bool(_value: bool);
+        fn serialize_i8(_value: i8);
+        fn serialize_i16(_value: i16);
+        fn serialize_i32(_value: i32);
+        fn serialize_i64(_value: i64);
+        fn serialize_u8(_value: u8);
+        fn serialize_u16(_value: u16);
+        fn serialize_u32(_value: u32);
+        fn serialize_u64(_value: u64);
+        fn serialize_f32(_value: f32);
+        fn serialize_f64(_value: f64);
+        fn serialize_char(_value: char);
+        fn serialize_str(_value: &str);
+        fn serialize_bytes(_value: &[u8]);
+    }
+
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_some<T: ?Sized + serde::Serialize>(
+        self,
+        _value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    #[implements("FR-110-AC-16")]
+    fn serialize_unit_variant(
+        self,
+        _name: &'static str,
+        _index: u32,
+        variant: &'static str,
+    ) -> Result<Self::Ok, Self::Error> {
+        Ok(variant)
+    }
+
+    fn serialize_newtype_struct<T: ?Sized + serde::Serialize>(
+        self,
+        _name: &'static str,
+        _value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_newtype_variant<T: ?Sized + serde::Serialize>(
+        self,
+        _name: &'static str,
+        _index: u32,
+        _variant: &'static str,
+        _value: &T,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_tuple_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        _name: &'static str,
+        _index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeStruct, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+
+    fn serialize_struct_variant(
+        self,
+        _name: &'static str,
+        _index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeStructVariant, Self::Error> {
+        Err(serde::ser::Error::custom("expected a unit variant"))
+    }
+}
+
+#[implements("FR-110-AC-16")]
+pub(crate) fn cause_spelling(
+    cause: CheckedPackageRefusalCause,
+) -> Result<&'static str, serde_json::Error> {
+    serde::Serialize::serialize(&cause, CauseSpellingSerializer)
 }
 
 /// The domain package identity the value at `pointer` of the package JSON

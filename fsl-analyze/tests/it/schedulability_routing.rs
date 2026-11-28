@@ -93,6 +93,7 @@ fn checked_graph(source: &str) -> Result<CheckedGraph, Vec<SemanticCheckRefusal>
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no model documents");
     let parsed = fsl_cst::parse(
+        &fsl_cst::ParserContext::new(),
         fsl_foundation::SourceIdentity::new("agent-ix", "test:schedulability-routing"),
         "ctl.native",
         source.as_bytes(),

@@ -464,7 +464,7 @@ fn a_condition_refusal_reads_its_position_and_catalog_outcome() {
             .fields()
             .expect("refusal fields")
             .get("reason")
-            .map(String::as_str),
+            .as_deref(),
         Some("condition-input")
     );
     let locus = record.outcome_locus().expect("condition source locus");

@@ -1493,18 +1493,16 @@ fn a_stopped_exploration_leaves_sampled_witnesses_unchecked() {
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn a_state_limit_below_the_initial_states_decides_nothing() {
-    use fsl_eval::simulation::model::generated_initial_states;
 
     let world = config_world(REACHES_TWO, &[(0, 0), (1, 1), (2, 2)]);
     let end = stopped_at(ModelCheckLimit::MaxStates, 1);
-    let before = generated_initial_states();
     let result = run(world.request(
         AB,
         vec![world.item("ReachesTwo")],
         max_states(ModelCheckLimits::default(), 1),
     ));
     assert_eq!(result.graph.end, end);
-    assert_eq!(generated_initial_states() - before, 1);
+    assert_eq!(result.graph.stats.generated_model_initial_states, 1);
     assert!(result.graph.nodes.is_empty());
     for instance in &result.items[0] {
         assert!(instance.sampled.is_empty());
@@ -1523,7 +1521,6 @@ fn a_state_limit_below_the_initial_states_decides_nothing() {
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn state_graph_symmetry_closure_respects_max_states_before_sampling() {
-    use fsl_eval::simulation::model::generated_initial_states;
 
     let keys = &["a", "b", "c"];
     let world = crate::graph_world::symmetric_config_world_over(
@@ -1547,10 +1544,9 @@ fn state_graph_symmetry_closure_respects_max_states_before_sampling() {
             },
             classes: vec![vec!["b".to_owned(), "c".to_owned()]],
         });
-    let before = generated_initial_states();
     let result = run(request);
     assert_eq!(result.graph.end, stopped_at(ModelCheckLimit::MaxStates, 1));
-    assert_eq!(generated_initial_states() - before, 1);
+    assert_eq!(result.graph.stats.generated_model_initial_states, 1);
     assert!(result.items[0]
         .iter()
         .all(|instance| instance.sampled.is_empty()));
@@ -1602,7 +1598,6 @@ fn state_graph_symmetry_closure_keeps_concrete_initial_roots() {
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn sampled_state_graph_generates_each_initial_state_once() {
-    use fsl_eval::simulation::model::generated_initial_states;
 
     let starts = [(0, 0), (1, 1), (1, 2), (2, 2)];
     let world = config_world(REACHES_TWO, &starts);
@@ -1612,9 +1607,8 @@ fn sampled_state_graph_generates_each_initial_state_once() {
     };
     let mut request = world.request(AB, vec![world.item("ReachesTwo")], limits);
     request.max_depth = Some(0);
-    let before = generated_initial_states();
     let result = run(request);
-    assert_eq!(generated_initial_states() - before, starts.len() as u64);
+    assert_eq!(result.graph.stats.generated_model_initial_states, starts.len() as u64);
     assert_eq!(result.graph.initial().len(), starts.len());
     for instance in &result.items[0] {
         assert_eq!(instance.sampled.len(), starts.len());

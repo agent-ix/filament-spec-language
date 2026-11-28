@@ -31,22 +31,22 @@ mod transfer;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
 pub use limits::{
     CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch, PreparationBound,
     PreparationRefusal, SettingUnavailable,
 };
 pub use monitor::{
-    monitor, monitor_with_target_preparer, MonitorEvent, MonitorPreparation, MonitorProviders,
-    MonitorSummary, TargetPreparer,
+    MonitorEvent, MonitorPreparation, MonitorProviders, MonitorSummary, TargetPreparer, monitor,
+    monitor_with_target_preparer,
 };
 pub use output::NativeResult;
 pub use replay::replay_with_limits;
-pub use request_shape::{request_example, RequestExampleError};
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use request_shape::{RequestExampleError, request_example};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -416,7 +416,7 @@ fn check_outcome_inner(
             check_source_read_ceiling(inputs.limits.source.source_bytes),
         )?;
         if fsl_semantics::model::intake::is_model_unit_source(source.source().text().as_bytes()) {
-            compile_formal_model_unit(&source)?;
+            compile_formal_model_unit(intake.parser_context(), &source)?;
             return Ok(fsl_replay::OutcomeDocument::new(
                 fsl_replay::Operation::Check,
                 Some(fsl_replay::OutcomeStage::I1),
@@ -425,7 +425,7 @@ fn check_outcome_inner(
         }
         let extension_catalog = extension_catalog(&extensions, &mut intake)?;
         let cancel = filament_exact::Cancel::new();
-        let parsed = match fsl_replay::spine::parse_selecting_extensions(
+        let parsed = match fsl_replay::spine::parse_selecting_extensions_context(
             &fsl_replay::spine::ParseRequest {
                 source: source.source().identity(),
                 path: source.source().path(),
@@ -437,6 +437,7 @@ fn check_outcome_inner(
             },
             inputs.limits.source,
             &cancel,
+            intake.parser_context(),
         ) {
             Ok(parsed) => parsed.into_value(),
             Err(failure) => {
@@ -1516,15 +1517,17 @@ impl RunError {
                 Some(fsl_replay::OutcomeStage::I1),
                 self.category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::new(
-                Some(refusal.cause.as_str()),
-                refusal.code.as_str(),
-                None,
-                refusal.detail.clone(),
-            )
-            .with_selection(
-                fsl_replay::outcome::hint::MissingSelection::of_model_refusal(refusal),
-            )]),
+            .with_diagnostics(vec![
+                OutcomeDiagnostic::new(
+                    Some(refusal.cause.as_str()),
+                    refusal.code.as_str(),
+                    None,
+                    refusal.detail.clone(),
+                )
+                .with_selection(
+                    fsl_replay::outcome::hint::MissingSelection::of_model_refusal(refusal),
+                ),
+            ]),
             RunCause::SynthesisSnapshot { file, record } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
@@ -1880,6 +1883,7 @@ fn read_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
 
 struct Intake<'a> {
     directory: &'a Path,
+    parser: fsl_cst::ParserContext,
     remaining: usize,
     maximum: usize,
     dependent_limit: Option<DependentLimit>,
@@ -1895,6 +1899,10 @@ enum DependentLimit {
 }
 
 impl Intake<'_> {
+    fn parser_context(&self) -> &fsl_cst::ParserContext {
+        &self.parser
+    }
+
     fn additional_file(&mut self) -> Result<()> {
         if self.additional_files == 0 {
             return Err(RunCause::Limit(LimitKind::SelectedFiles {
@@ -2294,7 +2302,7 @@ fn run_extracted_clause_bytes(
     }
     let request =
         read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes), overrides)?;
-    let (extraction, map) = extraction_record(&request, &value)?;
+    let (extraction, map) = extraction_record(&request.source, &value)?;
     let selection = request.selection.clone();
     let report =
         fsl_replay::spine::run_clause(request).map_err(|error| RunCause::ClauseRequest {
@@ -3025,13 +3033,13 @@ fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
 #[cfg(feature = "quire-extraction")]
 #[implements("FR-267-AC-17")]
 fn extraction_record(
-    request: &fsl_replay::spine::ClauseRunRequest,
+    source: &fsl_replay::spine::ClauseRunSource,
     envelope: &serde_json::Value,
 ) -> Result<(
     fsl_replay::spine::ExtractionRecord,
     fsl_foundation::source_map::SourceMap,
 )> {
-    let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = &request.source else {
+    let fsl_replay::spine::ClauseRunSource::Extracted(extracted) = source else {
         return Err(RunCause::ClauseRequest {
             member: "program.extraction".to_owned(),
             reason: "extraction request did not produce an extracted source".to_owned(),
@@ -3069,7 +3077,7 @@ fn extraction_record(
     let original = map.original();
     let body = map.body();
     let outcome = extracted.extraction();
-    let segments: Vec<_> = map
+    let segments = map
         .segments()
         .iter()
         .map(|segment| fsl_replay::spine::ExtractionSegment {
@@ -3078,7 +3086,13 @@ fn extraction_record(
             original_start: segment.original.start as u64,
             original_end: segment.original.end as u64,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let segments = fsl_replay::spine::ExtractionSegments::new(segments).ok_or_else(|| {
+        RunCause::ClauseRequest {
+            member: "extraction.map.segments".to_owned(),
+            reason: "an extraction map has at least one segment".to_owned(),
+        }
+    })?;
     let record = fsl_replay::spine::ExtractionRecord {
         original: fsl_replay::spine::ExtractionOriginal {
             authority: original.identity().authority.clone(),
@@ -3127,6 +3141,8 @@ pub fn compile_outcome(path: &Path) -> std::result::Result<CompileOutcome, Box<R
         RunLimits::default(),
         &RequestOverrides::default(),
         false,
+        #[cfg(feature = "test-support")]
+        None,
     )
 }
 
@@ -3144,7 +3160,14 @@ pub fn compile_outcome_with_overrides(
     path: &Path,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_inner(path, RunLimits::default(), overrides, false)
+    compile_outcome_inner(
+        path,
+        RunLimits::default(),
+        overrides,
+        false,
+        #[cfg(feature = "test-support")]
+        None,
+    )
 }
 
 /// Compile with caller-configured request/dependent byte ceilings and request
@@ -3154,7 +3177,26 @@ pub fn compile_outcome_with_limits_and_overrides(
     run_limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_inner(path, run_limits, overrides, true)
+    compile_outcome_inner(
+        path,
+        run_limits,
+        overrides,
+        true,
+        #[cfg(feature = "test-support")]
+        None,
+    )
+}
+
+/// Compile with an explicit test observer passed through the complete emit route.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn compile_outcome_with_probe(
+    path: &Path,
+    run_limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    probe: &mut dyn fsl_package::test_support::EmitProbe,
+) -> std::result::Result<CompileOutcome, Box<RunError>> {
+    compile_outcome_inner(path, run_limits, overrides, true, Some(probe))
 }
 
 fn compile_outcome_inner(
@@ -3162,8 +3204,9 @@ fn compile_outcome_inner(
     run_limits: RunLimits,
     overrides: &RequestOverrides<'_>,
     request_limit_is_configured: bool,
+    #[cfg(feature = "test-support")] mut probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
+    let result = with_request_limits(path, run_limits.request_bytes, move |directory, bytes| {
         request_shape::admit(request_shape::Family::Compile, bytes)?;
         overrides::admit(overrides::RunRoute::Compile, overrides)?;
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
@@ -3272,7 +3315,7 @@ fn compile_outcome_inner(
                     });
                 }
             }
-            let compiled = compile_formal_model_unit(&sources[0])?;
+            let compiled = compile_formal_model_unit(intake.parser_context(), &sources[0])?;
             let document = fsl_replay::OutcomeDocument::new(
                 fsl_replay::Operation::Package,
                 Some(fsl_replay::OutcomeStage::I1),
@@ -3310,6 +3353,8 @@ fn compile_outcome_inner(
             &sources,
             overrides.limits.map(|_| overrides.spine_limits()).as_ref(),
             integer_division,
+            #[cfg(feature = "test-support")]
+            probe.take(),
         )?;
         outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         if let Some(handoff) = &request.handoff {
@@ -3607,11 +3652,15 @@ fn model_unit_outcome_diagnostic(
 }
 
 fn compile_formal_model_unit(
+    context: &fsl_cst::ParserContext,
     source: &FormalSource,
 ) -> std::result::Result<fsl_semantics::model::intake::CompiledModelUnit, RunCause> {
-    let parsed =
-        fsl_forms::cst::parse_source(source.source().clone(), fsl_forms::cst::Limits::default())
-            .map_err(|diagnostic| model_unit_refusal(source.source(), *diagnostic))?;
+    let parsed = fsl_forms::cst::parse_source(
+        context,
+        source.source().clone(),
+        fsl_forms::cst::Limits::default(),
+    )
+    .map_err(|diagnostic| model_unit_refusal(source.source(), *diagnostic))?;
     fsl_semantics::model::intake::compile_model_unit_with_causes(
         &parsed,
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
@@ -3690,6 +3739,7 @@ fn package_input_from_formal_sources(
 
 #[ix_trace_rs::string_edge]
 fn package_input_from_selected_models(
+    context: &fsl_cst::ParserContext,
     models: &[wire::Model],
     sources: &[FormalSource],
 ) -> Result<fsl_semantics::model::intake::PackageInput> {
@@ -3706,7 +3756,8 @@ fn package_input_from_selected_models(
                             "native-model-unit/1 requires a model unit with a domain identity",
                         ));
                     }
-                    compile_formal_model_unit(source).map(|compiled| compiled.bytes().to_vec())
+                    compile_formal_model_unit(context, source)
+                        .map(|compiled| compiled.bytes().to_vec())
                 }
                 DOMAIN_PACKAGE_PROFILE => {
                     if fsl_semantics::model::intake::is_model_unit_source(bytes) {
@@ -3755,12 +3806,29 @@ fn complete(
     sources: &[FormalSource],
     supplied_limits: Option<&fsl_replay::spine::SpineLimits>,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
     let limits = supplied_limits.copied().unwrap_or_default();
     if sources.len() == 1 {
-        return complete_single(request, intake, &sources[0], limits, integer_division);
+        return complete_single(
+            request,
+            intake,
+            &sources[0],
+            limits,
+            integer_division,
+            #[cfg(feature = "test-support")]
+            probe,
+        );
     }
-    complete_units(request, intake, sources, limits, integer_division)
+    complete_units(
+        request,
+        intake,
+        sources,
+        limits,
+        integer_division,
+        #[cfg(feature = "test-support")]
+        probe,
+    )
 }
 
 fn complete_single(
@@ -3769,6 +3837,7 @@ fn complete_single(
     source: &FormalSource,
     limits: fsl_replay::spine::SpineLimits,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
     complete_sources(
         request,
@@ -3777,6 +3846,8 @@ fn complete_single(
         false,
         limits,
         integer_division,
+        #[cfg(feature = "test-support")]
+        probe,
     )
 }
 
@@ -3787,8 +3858,18 @@ fn complete_units(
     sources: &[FormalSource],
     limits: fsl_replay::spine::SpineLimits,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, sources, true, limits, integer_division)
+    complete_sources(
+        request,
+        intake,
+        sources,
+        true,
+        limits,
+        integer_division,
+        #[cfg(feature = "test-support")]
+        probe,
+    )
 }
 
 /// Shared request, dependency, parsing, and emission pipeline for one source
@@ -3801,6 +3882,7 @@ fn complete_sources(
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    #[cfg(feature = "test-support")] mut probe: Option<&mut dyn fsl_package::test_support::EmitProbe>,
 ) -> Result<CompileOutcome> {
     check_sources(
         request,
@@ -3821,6 +3903,24 @@ fn complete_sources(
          inventory,
          failure| {
             let cancel = filament_exact::Cancel::new();
+            #[cfg(feature = "test-support")]
+            let result = if let Some(probe) = probe.as_deref_mut() {
+                fsl_replay::spine::package_with_temporal_selections_and_probe(
+                    &checked,
+                    selections,
+                    limits.package,
+                    &cancel,
+                    probe,
+                )
+            } else {
+                fsl_replay::spine::package_with_temporal_selections(
+                    &checked,
+                    selections,
+                    limits.package,
+                    &cancel,
+                )
+            };
+            #[cfg(not(feature = "test-support"))]
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
                 selections,
@@ -3987,7 +4087,8 @@ fn check_sources<T>(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = package_input_from_selected_models(selected_models, &documents)?;
+    let packages =
+        package_input_from_selected_models(intake.parser_context(), selected_models, &documents)?;
     let libraries = library_sources(request, intake)?;
     // FR-660: read definitions after the program and library sources, under
     // the same aggregate dependent-file ceiling.
@@ -4080,7 +4181,7 @@ fn check_sources<T>(
     let parsed = parse_requests
         .iter()
         .map(|parse_request| {
-            fsl_replay::spine::parse_selecting_extensions(
+            fsl_replay::spine::parse_selecting_extensions_context(
                 parse_request,
                 fsl_replay::spine::ProfileCatalogInput {
                     catalog: &extension_catalog,
@@ -4088,6 +4189,7 @@ fn check_sources<T>(
                 },
                 limits.source,
                 &cancel,
+                intake.parser_context(),
             )
             .map(|stage| stage.into_value())
             .map_err(failure)
@@ -4520,6 +4622,7 @@ fn intake(directory: &Path, counts: FileCounts) -> Result<Intake<'_>> {
     let additional_files =
         FILES - counts.programs - counts.models - counts.observations - counts.extensions;
     Ok(Intake {
+        parser: fsl_cst::ParserContext::new(),
         additional_files,
         directory,
         remaining: TOTAL_BYTES,
@@ -4535,6 +4638,7 @@ fn intake_with_bytes(directory: &Path, counts: FileCounts, maximum: usize) -> Re
     let additional_files =
         FILES - counts.programs - counts.models - counts.observations - counts.extensions;
     Ok(Intake {
+        parser: fsl_cst::ParserContext::new(),
         additional_files,
         directory,
         remaining: maximum,
@@ -4554,6 +4658,7 @@ fn intake_with_fixed_bytes(
     let additional_files =
         FILES - counts.programs - counts.models - counts.observations - counts.extensions;
     Ok(Intake {
+        parser: fsl_cst::ParserContext::new(),
         additional_files,
         directory,
         remaining: maximum,
@@ -5127,7 +5232,8 @@ fn prepare_complete_run(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = package_input_from_selected_models(&request.models, &documents)?;
+    let packages =
+        package_input_from_selected_models(intake.parser_context(), &request.models, &documents)?;
     let libraries = request
         .libraries
         .iter()
@@ -5173,7 +5279,7 @@ fn prepare_complete_run(
             bytes: source.source().text().as_bytes(),
         };
         let cancel = filament_exact::Cancel::new();
-        let parsed = fsl_replay::spine::parse_selecting_extensions(
+        let parsed = fsl_replay::spine::parse_selecting_extensions_context(
             &parse_request,
             fsl_replay::spine::ProfileCatalogInput {
                 catalog: &extension_catalog,
@@ -5181,6 +5287,7 @@ fn prepare_complete_run(
             },
             stage_limits.source,
             &cancel,
+            intake.parser_context(),
         )
         .map(|stage| stage.into_value())
         .map_err(
@@ -5333,7 +5440,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
         PreparedRun::Package(prepared) => {
-            return package_run::execute_with_settle(*prepared, settle)
+            return package_run::execute_with_settle(*prepared, settle);
         }
         PreparedRun::ModelBasedTest(prepared) => {
             return Ok(RunResult {
@@ -5653,6 +5760,49 @@ mod tests {
     use filament_semantic_value::catalog::InternalFault;
     use ix_trace_rs::trace;
 
+    /// FR-267-AC-17, FSpec FR-352-AC-13: an extraction whose source map has
+    /// no segments is refused naming `extraction.map.segments`, an invalid
+    /// request at exit 20, and writes no extraction record.
+    #[cfg(feature = "quire-extraction")]
+    #[trace("FR-267-AC-17")]
+    #[test]
+    fn an_extraction_with_no_map_segments_is_refused_at_the_member() {
+        let text = "# Doc\n\n## Invariants\n\n### empty\n```ix:native\n```\n";
+        let identity = fsl_foundation::SourceIdentity::new("agent-ix", "ix://example/empty");
+        let original =
+            fsl_foundation::Source::read(identity, "empty.md", text.as_bytes(), text.len())
+                .expect("the fixture document reads");
+        let context = fsl_source::clause_context("example/empty", &original)
+            .expect("the clause-only context validates");
+        let extracted = fsl_source::extract(
+            original,
+            &context,
+            fsl_source::Selection {
+                clause_id: "empty".to_owned(),
+                package: "example/empty".to_owned(),
+                body: fsl_foundation::SourceIdentity::new("agent-ix", "empty-body"),
+            },
+            fsl_source::Limits::default(),
+        )
+        .expect("an empty fence extracts");
+        let envelope = serde_json::json!({"request": {"program": {
+            "extraction": {"body": {"document": "Body"}},
+            "clauses": [{"clause": "empty", "package": "example/empty"}],
+        }}});
+        let source = fsl_replay::spine::ClauseRunSource::Extracted(extracted);
+        let Err(cause) = extraction_record(&source, &envelope) else {
+            panic!("a map with no segments must be refused");
+        };
+        assert!(
+            matches!(
+                &cause,
+                RunCause::ClauseRequest { member, .. } if member == "extraction.map.segments"
+            ),
+            "{cause:?}"
+        );
+        assert_eq!(cause.category().exit_code(), 20);
+    }
+
     /// FR-286-AC-15: the command's forms wrapper preserves a blank source
     /// label without inventing a region, and retains the exact region for a
     /// located model-unit source diagnostic.
@@ -5673,6 +5823,7 @@ mod tests {
         assert!(blank_json["locus"].is_null(), "{blank_json}");
 
         let parsed = fsl_forms::cst::parse(
+            &fsl_cst::ParserContext::new(),
             fsl_foundation::SourceIdentity::new("agent-ix", "test:model"),
             "model.fsl",
             b"@",
@@ -5697,8 +5848,8 @@ mod tests {
     #[test]
     #[trace("TC-3154", "FR-621-AC-17")]
     fn a_package_without_a_graph_ends_the_run_with_the_typed_emission_cause() {
-        use fsl_analyze::analyze::document::HeldIdentityError;
         use fsl_analyze::analyze::GraphUnavailable;
+        use fsl_analyze::analyze::document::HeldIdentityError;
         let cause = identity_cause(HeldIdentityError::NoGraph(GraphUnavailable::EmitRefused(
             Box::new(fsl_package::EmitRefusal::OutputLimit(
                 fsl_foundation::diagnostic::LimitExceeded::new(

@@ -12,8 +12,9 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 
 /// The unit text and the functions its S2 forms hold, in source order.
 fn functions(declarations: &str) -> (String, Vec<FunctionDeclaration>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -105,6 +106,7 @@ fn two_references_in_one_unit_build_two_forms_in_source_order() {
 #[trace("FR-308-AC-6", "TC-1021")]
 #[test]
 fn a_protocol_declaration_and_a_reference_build_side_by_side() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "{HEADER}function a using v(): Boolean pure {{ protocol Flow }}\n\
          protocol Flow using v over (input: Boolean) on origin {{\n\
@@ -113,7 +115,7 @@ fn a_protocol_declaration_and_a_reference_build_side_by_side() {
          finish End as (outcome: Boolean) {{ true }};\n\
          }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -139,9 +141,10 @@ fn a_protocol_declaration_and_a_reference_build_side_by_side() {
 #[trace("FR-308-AC-6", "TC-1021")]
 #[test]
 fn a_target_that_is_no_qualified_name_is_not_admissible() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for body in ["protocol", "protocol 3", "protocol (Fill)"] {
         let text = format!("{HEADER}function a using v(): Boolean pure {{ {body} }}\n");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),
@@ -165,9 +168,10 @@ fn a_target_that_is_no_qualified_name_is_not_admissible() {
 #[trace("FR-308-AC-6", "TC-1021")]
 #[test]
 fn a_protocol_reference_formats_and_reparses_to_the_same_bytes() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}function a using v(): Boolean pure {{ protocol M::Fill }}\n");
     let parse = |text: &str| {
-        fsl_cst::parse(
+        fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("a", "u"),
             "unit.native",
             text.as_bytes(),

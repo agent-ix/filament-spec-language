@@ -12,15 +12,14 @@ description = "ADR-011 §6.1 layer 6: the CG-facing replay facade -- the TK-01 r
 # `fsl-package`) and the S6a call (`fsl-eval`) of the TK-01 executor.
 [features]
 default = []
+test-support = ["fsl-package/test-support"]
 # ADR-011 §6.1 layer-6 row: "I3 under feature `quire-extraction`". FR-109's
 # `run_clause` accepts an I3 extracted source (`fsl_source::ExtractedSource`)
 # as its unit only with this feature. It gates the adapter alone: the result
 # reader and writer handle `extraction` in every build.
 quire-extraction = ["dep:fsl-source", "fsl-source/quire-extraction"]
-# FR-237's `replay_timed_counterexample`: the timed replay core without
-# FR-128's recompile and identity checks, for tests only until S4 writes
-# timed members (QSL-580). Only dev-dependencies enable it.
-test-support = []
+# FR-237's test seams and the explicit FSL emitter probe. Only dev-dependencies
+# enable this feature in test targets.
 # The benchmark-only, caller-owned source parser invocation counter.
 bench-counters = []
 

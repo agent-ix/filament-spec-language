@@ -76,6 +76,7 @@ fn orders_package_with_population_clause_source(
     clause_body: &str,
     population_members: &[&str],
 ) -> (CheckedPackage, Vec<u8>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let end = |object: &str, role: &str| RelationshipEnd {
         type_identity: key(object),
         role: Some(role.to_owned()),
@@ -134,7 +135,7 @@ fn orders_package_with_population_clause_source(
         ModelNormalizationLimits::UNLIMITED,
     )
     .expect("the model admits");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-1040"),
         "unit.native",
         unit.as_bytes(),

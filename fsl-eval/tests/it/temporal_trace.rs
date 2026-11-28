@@ -64,6 +64,7 @@ pub(crate) fn try_fixture_within(
     body: &str,
     limits: fsl_cst::Limits,
 ) -> Result<Fixture, fsl_foundation::diagnostic::LimitExceeded> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"{VALUE}\";\n\
@@ -72,7 +73,7 @@ pub(crate) fn try_fixture_within(
          record Config {{ versionNumber: Int[0, 9]; }}\n\
          temporal C using t0 over ({over}) clock \"events\" {activation} {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -108,6 +109,7 @@ pub(crate) fn modelled(body: &str) -> Fixture {
 
 /// [`modelled`] over a model that declares `operations`.
 fn modelled_with(operations: Vec<serde_json::Value>, body: &str) -> Fixture {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = counters_document(operations, false);
     let packages = package_input([document.as_slice()]).unwrap();
     let text = format!(
@@ -117,7 +119,7 @@ fn modelled_with(operations: Vec<serde_json::Value>, body: &str) -> Fixture {
          model M = \"{PACKAGE}\";\n\
          temporal C using t0 over (c: M::Counter) clock \"model-steps\" on origin {{ {body} }}\n",
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

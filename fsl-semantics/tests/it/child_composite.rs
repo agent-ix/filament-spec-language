@@ -30,6 +30,7 @@ fn assemble_as(alias: &str, declarations: &str) -> PackageDeclarations {
 }
 
 fn assemble_document(document: &Value, alias: &str, declarations: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -39,7 +40,7 @@ fn assemble_document(document: &Value, alias: &str, declarations: &str) -> Packa
          {declarations}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "child-composite"),
         "child-composite.native",
         source.as_bytes(),

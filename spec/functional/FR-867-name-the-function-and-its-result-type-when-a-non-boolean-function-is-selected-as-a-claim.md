@@ -13,6 +13,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-286
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
 ---
 # FR-867: Name the function and its result type when a non-Boolean function is selected as a claim
 

@@ -136,7 +136,8 @@ protocol SlotReads using P over (view: M::Node) on origin {
 
 /// Build a checked package with an additional population of `Node` values.
 fn package(source: &str) -> (CheckedPackage, fsl_semantics::model::intake::PackageInput) {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("qsl-2216", "unit.native"),
         "unit.native",
         source.as_bytes(),
@@ -468,6 +469,7 @@ fn an_undefined_missing_lookup_in_a_protocol_capture_keeps_absent_key() {
 #[trace("TC-2507", "FR-883-AC-4")]
 #[test]
 fn all_instances_in_a_check_guard_is_refused_at_checking() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for (name, source, expected_node, expected_slot) in [
         (
             "check",
@@ -482,7 +484,7 @@ fn all_instances_in_a_check_guard_is_refused_at_checking() {
             fsl_semantics::check::SlotKind::Guard,
         ),
     ] {
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("qsl-2216", format!("{name}-guard.native")),
             format!("{name}-guard.native"),
             source.as_bytes(),

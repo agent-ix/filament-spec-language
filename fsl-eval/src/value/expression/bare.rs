@@ -25,13 +25,12 @@ use ix_trace_rs::implements;
 
 use super::evaluate::reader_source::ReaderNode;
 use super::evaluate::{Machine, World};
-use super::protocol_slot::{resolve, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
-use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView};
+use super::protocol_slot::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, resolve};
+use super::slot_supply::{AdmittedSupply, SlotHost, SourceView, admit_slot_supply};
 use super::{
-    unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
-    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
-    ValueInvariantEvaluation,
+    ApplicationObservation, ApplicationObservationOptions, CheckedPackageEvaluation,
+    ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation, QualifiedName, Separation,
+    SuppliedFailure, SuppliedLimits, SuppliedRun, ValueInvariantEvaluation, unsupported_projection,
 };
 
 /// Evaluate a reader projection over the local frame with the shared
@@ -1598,6 +1597,7 @@ mod tests {
         fsl_package::CheckedPackage,
         fsl_semantics::model::intake::PackageInput,
     ) {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let model_bytes =
             include_bytes!("../../../../examples/config-version/model.semantic-ir.json");
         let models = fsl_semantics::model::intake::package_input([model_bytes.as_slice()])
@@ -1609,6 +1609,7 @@ mod tests {
              function gives using v(): Sequence<Integer>[0, 3] pure { sequence[1] }\n\
              function population_source using v(p: Population<M::ConfigVersion>[3]): Integer pure { 1 }\n";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "bare-call-types"),
             "bare-call-types.native",
             source_text.as_bytes(),
@@ -1648,6 +1649,7 @@ mod tests {
     #[trace("FR-390-AC-23", "FR-230-AC-71", "TC-3084")]
     #[test]
     fn generated_owner_without_population_keeps_public_admission_strict_and_clock_closed() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         use super::super::protocol_slot::{ProtocolSuppliedValue, SuppliedValue};
         use fsl_semantics::model::accounting::ModelNormalizationLimits;
         let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(
@@ -1683,6 +1685,7 @@ mod tests {
               finish End as (outcome: Boolean) { true };\n\
             }";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "generated-origins"),
             "generated-origins.native",
             source.as_bytes(),
@@ -2033,12 +2036,14 @@ mod tests {
     #[trace("FR-945-AC-2", "FR-650-AC-6")]
     #[test]
     fn unsupported_body_root_operation_keeps_generic_refusal_details() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let models = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
             .expect("the package selects no models");
         let source_text = "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
              function gives using v(): Set<Integer>[0, 3] pure { set[1] }\n";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "bare-call-operation"),
             "bare-call-operation.native",
             source_text.as_bytes(),

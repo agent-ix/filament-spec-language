@@ -9,7 +9,7 @@ use fsl_replay::spine::{
     SuppliedLibrary, SuppliedObservation,
 };
 
-use super::{wire, FormalSource, Intake, Result, RunCause};
+use super::{FormalSource, Intake, Result, RunCause, wire};
 
 fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
     RunCause::ClauseRequest {
@@ -109,12 +109,15 @@ pub(super) fn read_observation_inputs(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = super::package_input_from_selected_models(&request.models, &documents).map_err(
-        |cause| match cause {
-            RunCause::ClauseRequest { member, reason } => invalid(member, reason),
-            cause => cause,
-        },
-    )?;
+    let packages = super::package_input_from_selected_models(
+        intake.parser_context(),
+        &request.models,
+        &documents,
+    )
+    .map_err(|cause| match cause {
+        RunCause::ClauseRequest { member, reason } => invalid(member, reason),
+        cause => cause,
+    })?;
     let libraries = request
         .libraries
         .iter()

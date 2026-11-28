@@ -234,6 +234,7 @@ fn run_unit(
     packages: &fsl_semantics::model::intake::PackageInput,
     extra: Option<u64>,
 ) -> Run {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let n = admit_n(unit, packages);
     let limits = ModelNormalizationLimits {
         work_units: extra.map_or(u64::MAX, |extra| n + extra),
@@ -243,7 +244,7 @@ fn run_unit(
     let selected = admit_unit(&built.selections().models, packages, limits)
         .expect("normalization fits before the conformance stage")
         .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
         })
         .expect("kept clauses parse");
     assert_eq!(
@@ -251,7 +252,7 @@ fn run_unit(
         n,
         "the admission operation's own work"
     );
-    let raw = fsl_cst::parse(
+    let raw = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-196"),
         "unit.native",
         unit.as_bytes(),
@@ -1678,6 +1679,7 @@ fn diamond_redefinition_walks_every_lineage_and_reports_each_verdict() {
 #[trace("FSpec-FR-110-AC-3", "FSpec-TC-196")]
 #[test]
 fn staged_admission_spends_the_work_of_strict_admission() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for bytes in [chain(3), diamond(3, false)] {
         let (unit, packages) = config_unit_with_body(&bytes, NOOP);
         let built = parse_and_build(&unit);
@@ -1687,7 +1689,7 @@ fn staged_admission_spends_the_work_of_strict_admission() {
             ModelNormalizationLimits::UNLIMITED,
         )
         .expect("admits");
-        let raw = fsl_cst::parse(
+        let raw = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "tc-196"),
             "unit.native",
             unit.as_bytes(),

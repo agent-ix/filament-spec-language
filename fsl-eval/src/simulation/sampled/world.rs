@@ -19,12 +19,12 @@ use fsl_semantics::check::{PackageDeclarations, Workload};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
+use crate::simulation::TransitionSystem;
 use crate::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use crate::simulation::TransitionSystem;
 
 /// The native Boolean type reference.
 pub(crate) const BOOLEAN: &str = "ix://filament/native/Boolean";
@@ -274,6 +274,7 @@ impl World {
         queries: &[(&str, &str)],
         evaluator: &dyn fsl_semantics::check::RewardEvaluator,
     ) -> Self {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let profiles = profiles
             .iter()
             .map(|(name, identity)| format!("profile {name} = \"{identity}\";\n"))
@@ -286,6 +287,7 @@ impl World {
             model.package, model.body
         );
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "fr-188"),
             "fr-188.native",
             unit.as_bytes(),
@@ -301,7 +303,7 @@ impl World {
         )
         .expect("the model selection admits")
         .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
         })
         .expect("the kept operation clauses parse");
         let mut declarations = PackageDeclarations::assemble(

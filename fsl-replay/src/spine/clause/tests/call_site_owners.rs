@@ -326,6 +326,7 @@ fn locate(
     selection: &OperationName,
 ) -> Result<CallSite<OperationSite>, Box<CallSiteRefusal>> {
     call_site(
+        &fsl_cst::ParserContext::new(),
         source(),
         crate::CallSiteUnit::new(
             "fixture".to_owned(),
@@ -624,6 +625,7 @@ fn a_field_of_a_process_or_state_machine_is_not_selectable() {
             field: identifier(field),
         };
         let refusal = call_site(
+            &fsl_cst::ParserContext::new(),
             source(),
             crate::CallSiteUnit::new(
                 "fixture".to_owned(),

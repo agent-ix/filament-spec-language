@@ -33,7 +33,8 @@ fn temporal(formula: &str) -> String {
 }
 
 fn parse(text: &str) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         identity("nesting"),
         "nesting.native",
         text.as_bytes(),
@@ -165,11 +166,12 @@ fn nested_options(depth: usize) -> String {
 
 /// The deepest `Option<…>` nest whose unit `limits` admit, by bisection.
 fn deepest_options(limits: Limits) -> usize {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (mut low, mut high) = (0_usize, 200_000_usize);
     while low + 1 < high {
         let middle = (low + high) / 2;
         let text = nested_options(middle);
-        if fsl_cst::parse(
+        if fsl_cst::parse(&qsl3309_parser_context,
             identity("options"),
             "options.native",
             text.as_bytes(),
@@ -191,6 +193,7 @@ fn deepest_options(limits: Limits) -> usize {
 #[trace("TC-723", "FR-256-AC-3")]
 #[test]
 fn ten_thousand_nested_brackets_parse_at_the_default_limits() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = Limits::default()
         .with_source_bytes(7)
         .with_tokens(8)
@@ -207,7 +210,7 @@ fn ten_thousand_nested_brackets_parse_at_the_default_limits() {
         }
     );
     let text = nested_options(3);
-    let starved = fsl_cst::parse(
+    let starved = fsl_cst::parse(&qsl3309_parser_context,
         identity("options"),
         "options.native",
         text.as_bytes(),
@@ -233,11 +236,12 @@ fn ten_thousand_nested_brackets_parse_at_the_default_limits() {
 #[trace("TC-723", "FR-256-AC-2")]
 #[test]
 fn brackets_nest_to_the_default_token_ceiling() {
-    on_bounded_stack(|| {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    on_bounded_stack(move || {
         let limits = Limits::default().with_nodes(200_000);
         let deepest = deepest_options(limits);
         let text = nested_options(deepest);
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             identity("options"),
             "options.native",
             text.as_bytes(),
@@ -245,7 +249,7 @@ fn brackets_nest_to_the_default_token_ceiling() {
         )
         .expect("the deepest nest within the token ceiling parses");
         assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-        let error = fsl_cst::parse(
+        let error = fsl_cst::parse(&qsl3309_parser_context,
             identity("options"),
             "options.native",
             nested_options(deepest + 1).as_bytes(),
@@ -326,12 +330,13 @@ fn nested_trailing_comma_typo_recovery_points_at_the_offending_comma() {
 #[trace("TC-012")]
 #[test]
 fn a_work_budget_refusal_names_the_work_limit() {
-    on_bounded_stack(|| {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    on_bounded_stack(move || {
         let text = function("not not not not true");
         assert!(parse(&text)
             .expect("valid under default limits")
             .is_admissible());
-        let error = fsl_cst::parse(
+        let error = fsl_cst::parse(&qsl3309_parser_context,
             identity("work-limit"),
             "work-limit.native",
             text.as_bytes(),
@@ -349,11 +354,12 @@ fn a_work_budget_refusal_names_the_work_limit() {
 #[trace("TC-012", "NFR-001-M-3")]
 #[test]
 fn exhausting_the_node_ceiling_names_the_node_ceiling() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = Limits {
         nodes: 20,
         ..Limits::default()
     };
-    let error = fsl_cst::parse(
+    let error = fsl_cst::parse(&qsl3309_parser_context,
         identity("nodes"),
         "nodes.native",
         function("x + x + x + x").as_bytes(),
@@ -366,11 +372,12 @@ fn exhausting_the_node_ceiling_names_the_node_ceiling() {
 #[trace("TC-012", "NFR-001-M-2")]
 #[test]
 fn exhausting_the_token_ceiling_names_the_token_ceiling() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = Limits {
         tokens: 40,
         ..Limits::default()
     };
-    let error = fsl_cst::parse(
+    let error = fsl_cst::parse(&qsl3309_parser_context,
         identity("tokens"),
         "tokens.native",
         function("x + x + x + x").as_bytes(),
