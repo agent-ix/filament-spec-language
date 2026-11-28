@@ -2,15 +2,15 @@
 //! The replay handoff supply admits one artifact per library identity
 //! (FR-850 "Admission").
 
-use super::{HandoffSupply, ReplayRefusal, handoff_identities_refusal, handoff_join_refusal};
+use super::{handoff_identities_refusal, handoff_join_refusal, HandoffSupply, ReplayRefusal};
 use crate::execute::PackageReadRefusal;
 use filament_contract_model::{
-    CheckedDependencySelection, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, NativeJoinBudget, encode_checked_package_v2,
+    encode_checked_package_v2, CheckedDependencySelection, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, NativeJoinBudget,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_foundation::Setting;
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::Setting;
 use fsl_package::{DependencyArtifact, Emission, EmitLimits, V2ReadLimits};
 use fsl_semantics::check::PackageDeclarations;
 use ix_trace_rs::trace;

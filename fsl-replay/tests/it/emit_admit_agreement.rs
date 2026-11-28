@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 mod catalog_bound_mutations;
 
 use filament_contract_model::{
-    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageReadLimits,
-    CheckedPackageV2, read_checked_package,
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
+    CheckedPackageReadLimits, CheckedPackageV2,
 };
 use filament_exact::Cancel;
 use fsl_bench::prop::{self, near_miss, unit};

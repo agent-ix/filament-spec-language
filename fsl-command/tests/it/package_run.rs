@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[path = "../../../tests/support/catalog_bound_mutations.rs"]
 mod catalog_bound_mutations;
