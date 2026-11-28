@@ -384,7 +384,10 @@ fn command_replays_one_hundred_thousand_ordered_values() {
         .join(",");
     let source = model_function(
         None,
-        &format!("size(sequence[{values}]) = {COUNT}"),
+        &format!(
+            "let values: Sequence<Integer>[0, {COUNT}] = sequence[{values}] in \
+             size<Integer>(values) = {COUNT}"
+        ),
         "Boolean",
     );
     let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
