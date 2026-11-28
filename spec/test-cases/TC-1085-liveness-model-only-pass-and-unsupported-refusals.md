@@ -15,7 +15,7 @@ letters and contracts of the positions past it read, that the read is charged
 to the run's budgets and joins no product total, and that the
 unbuilt-certificate case refuses.
 
-Scope: FR-126-AC-12 to FR-126-AC-15 and FR-126-AC-27 to FR-126-AC-29, and
+Scope: FR-126-AC-12 to FR-126-AC-15 and FR-126-AC-27 to FR-126-AC-31, and
 FR-126 "Bindings and ranking" and "Model-only pass (TP-4)".
 
 ## Test Procedure

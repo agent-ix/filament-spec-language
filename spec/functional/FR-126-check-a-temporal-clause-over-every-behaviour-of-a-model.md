@@ -427,10 +427,12 @@ item, safety (TP-1 to TP-3) and TP-4 alike.
 - The item SHALL be refuted by the first refuted binding of the clause's
   `over` parameter in FR-125's canonical instance order (population, then
   universe list order) (FR-621 "Items over several claim instances", FSpec
-  FR-361), also when an earlier binding is undecided, reached a bound or
-  stopped. A refutation the run found SHALL NOT be replaced by an earlier
-  binding's outcome that is not a refutation. The counterexample SHALL name
-  the reported binding.
+  FR-361), also when an earlier binding is undecided, reached a bound, reached
+  a constraint or ended on a per-binding limit (`max_candidates`,
+  `max_automaton_states`). A refutation the run found SHALL NOT be replaced by
+  an earlier binding's outcome that is not a refutation. The counterexample
+  SHALL name the reported binding. A run-level end (the bullets of "TP-4
+  items") is not a per-binding end.
 - Depth, state order and lasso length SHALL rank findings within one
   binding only, never findings of different bindings.
 
@@ -462,10 +464,17 @@ outcomes, which precede every product, are the item's.
   every outcome that reports a method bound or a constraint reached. Each
   such limit applies to one binding: each binding's product has its own
   depth horizon and its own automaton-state count, and `max_candidates`
-  counts one expansion (FR-120).
-- `max_states`, `max_transitions`, the evaluation meter and cancellation end
-  the whole run: when one stops a binding, the engine SHALL decide no later
-  binding.
+  counts one expansion (FR-120). An expansion that stops with no named limit
+  also ends that binding only. A binding's own bound-limited, message-limited,
+  instance-limited and constraint-boundary states settle that binding only
+  (ADR-025 MB-4 within a binding), and another binding's refutation SHALL be
+  reported past them.
+- The run-level ends are exactly `max_states`, `max_transitions`, the
+  evaluation meter, `analysis.retained_bytes` (FR-255) and cancellation. When
+  one stops a binding, the engine SHALL decide no later binding. After an
+  earlier binding that is not proved, a run-level end other than cancellation
+  gives the outcome of the first such binding, and gives the stopped
+  binding's own outcome only when no earlier binding is not proved.
 - When no binding is refuted, the engine SHALL return a proof only when
   every binding is proved, and otherwise the outcome of the first binding in
   canonical order that is not proved. A binding the run did not decide is
@@ -644,6 +653,8 @@ outcomes, which precede every product, are the item's.
 | FR-126-AC-27 | A later binding's refutation is reported past an earlier binding that reached a bound. Over the example subject with initial versions `a` 0 and `b` 1 and `mod_defined` of AC-11, `always holds(mod_defined(c.versionNumber))` with `max_depth` 1 returns `Violated` bound to `b` with the prefix `(0,1) -upd(b)-> (0,2)` and `kind: UndefinedEvaluation{where: position 1, cause: division-by-zero}`, although binding `a`, whose version is at most 1 to depth 1, has only reached the horizon; with `max_depth` 2 it returns AC-11's finding for `a`. The TP-4 claim `always eventually holds(mod_defined(c.versionNumber))` with no fairness constraint and `max_depth` 1 returns the same violation bound to `b`. | Test (TC-1085) |
 | FR-126-AC-28 | A run limit does not discard a refutation the run found. AC-27's safety request with `max_depth` 2 and `max_states` 3 returns AC-27's violation bound to `b`: the product states of `(0,1)`, `(1,1)` and `(0,2)` use the budget, so the engine cannot reach the state `(2,1)` at which `a` is violated. | Test (TC-1085) |
 | FR-126-AC-29 | A later binding's refutation is reported past an earlier undecided binding. Given to the engine as a test `TransitionSystem` (FR-101) whose initial state and expansions are those of AC-27's subject except that the expansion of `(1,1)` records FR-120's `ContractUndetermined` with one `Refused` evaluation and no `Undefined` one, `always holds(mod_defined(c.versionNumber))` returns `Violated` bound to `b` with AC-27's prefix and `kind`: a search for `a`'s violation ends undecided at the expansion of `(1,1)`, the first state after the initial one in breadth-first order, while `b`'s undefined letter is read at `(0,2)`, a successor of the initial state. | Test (TC-1085) |
+| FR-126-AC-30 | A TP-4 binding that ends on `max_candidates` does not end the item. Given to the engine as AC-29's test `TransitionSystem`, except that the expansion of `(1,1)` ends with FR-120's `max_candidates` stop (`ExpansionLimit::MaxCandidates`) in place of `ContractUndetermined`, `always eventually holds(mod_defined(c.versionNumber))` with no fairness constraint and no `max_depth` over the universe list `[a, b]` returns `Violated` bound to `b` with the prefix `(0,1) -upd(b)-> (0,2)` and `kind: UndefinedEvaluation{where: position 1, cause: division-by-zero}`: binding `a` expands `(0,1)` to `(1,1)` and `(0,2)`, the expansion of `(1,1)` stops, and `a` has no finding; binding `b` meets the same stop, but `(0,2)`, where `b` is undefined, was discovered by the expansion of `(0,1)` and every state shallower than depth 1 was expanded. The universe list `[b, a]` returns the same violation and does not decide `a`. | Test (TC-1085) |
+| FR-126-AC-31 | A cancellation overrides an earlier binding's outcome. Over AC-27's subject, `always eventually holds(mod_defined(c.versionNumber))` with no fairness constraint and `max_depth` 1 over `[a, b]`, with the run cancelled when binding `b` is first read, returns `Stopped{cause: Cancelled, limit: None}`, not binding `a`'s `BoundReached{depth: 1}`. | Test (TC-1085) |
 
 ## Dependencies
 
