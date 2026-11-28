@@ -288,8 +288,10 @@ impl<'a> Walk<'a> {
         let mut syntax_visits = HashMap::<(usize, usize), usize>::new();
         // The nodes whose bodies the walk is inside. A reference back to one is
         // a recursive call: the walk does not enter it again, so a recursive
-        // owner is walked once, not without end.
-        let mut active = HashSet::<usize>::new();
+        // owner is walked once, not without end. The owner's own function node
+        // is inside its body and measure from the start, so a self-call does
+        // not enter it (FSpec FR-825).
+        let mut active = HashSet::from([root_owner]);
         while let Some(task) = pending.pop() {
             match task {
                 Task::Leave(position) => {

@@ -218,9 +218,8 @@ function example using v(): Boolean pure { let q: Sequence<Int[0, 9]> = sequence
         .collect();
     assert_eq!(
         size_ordinals,
-        [0, 1, 2],
-        "the owner walk visits size(s) in tally's body (0), in the measure reached \
-         through the recursive call (1) and in tally's own measure (2)"
+        [0, 1],
+        "the measure and body each retain their size(s) occurrence"
     );
     let mut size_source_rows: Vec<_> = wire["source_map"]
         .as_array()
@@ -229,11 +228,7 @@ function example using v(): Boolean pure { let q: Sequence<Int[0, 9]> = sequence
         .filter(|row| row["node_id"] == size["node_id"] && row["role"] == "expression")
         .collect();
     size_source_rows.sort_by_key(|row| row["ordinal"].as_u64().expect("ordinal is an integer"));
-    assert_eq!(
-        size_source_rows.len(),
-        3,
-        "one source row per size(s) occurrence, the second copying the measure region"
-    );
+    assert_eq!(size_source_rows.len(), 2, "one source row per size(s) use");
     let actual_starts: Vec<_> = size_source_rows
         .iter()
         .map(|row| {
@@ -242,16 +237,14 @@ function example using v(): Boolean pure { let q: Sequence<Int[0, 9]> = sequence
                 .expect("a size(s) source span has an integer start")
         })
         .collect();
-    let start_of = |text: &str| {
-        u64::try_from(source.find(text).expect("fixture source holds the text"))
-            .expect("fixture source offset fits u64")
-    };
-    let measure_start = start_of("size(s))");
-    let body_start = start_of("size(s) > 0");
+    let mut source_order_starts: Vec<_> = source
+        .match_indices("size(s)")
+        .map(|(start, _)| u64::try_from(start).expect("fixture source offset fits u64"))
+        .collect();
+    source_order_starts.reverse();
     assert_eq!(
-        actual_starts,
-        [body_start, measure_start, measure_start],
-        "ordinal 0 is the body's use, 1 repeats the measure syntax reached through the call, 2 is the measure's use"
+        actual_starts, source_order_starts,
+        "body traversal assigns ordinal 0 and decreases-measure traversal ordinal 1"
     );
     for name in ["tally", "example"] {
         assert!(
