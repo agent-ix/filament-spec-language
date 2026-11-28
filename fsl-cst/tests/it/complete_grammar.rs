@@ -1249,3 +1249,30 @@ fn default_and_caller_forms_preserve_parser_outputs() {
         .iter()
         .any(|node| node.production() == Production::ExtensionDeclaration));
 }
+
+#[trace("FR-611-AC-1", "NFR-141-AC-8")]
+#[test]
+fn extension_keyword_expectations_preserve_derived_form_messages() {
+    let forms = ExtensionForms::new([ExtensionProduction::new("once", ["by"])]);
+    let text = source("temporal T using Complete over (s: Integer) on origin { previous true }");
+    let parsed = fsl_cst::parse_with_extensions(
+        SourceIdentity {
+            authority: "test".into(),
+            identity: "test:extension-keyword-expectation".into(),
+        },
+        "extension-keyword-expectation.native",
+        text.as_bytes(),
+        Limits::default(),
+        &forms,
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap();
+
+    assert!(
+        parsed.diagnostics().iter().any(|diagnostic| diagnostic
+            .message
+            .contains("strong previous is written `once[1,1] p`")),
+        "{:?}",
+        parsed.diagnostics()
+    );
+}

@@ -75,6 +75,7 @@ impl Expected<'_> {
             Self::Terminal(
                 Terminal::Exact(value) | Terminal::Literal(value) | Terminal::ContextualWord(value),
             ) => *value == spelling,
+            Self::Terminal(Terminal::ExtensionKeyword(value)) => value.as_ref() == spelling,
             _ => false,
         }
     }
@@ -3264,6 +3265,27 @@ mod tests {
             expected.descriptions().into_iter().collect::<Vec<_>>(),
             ["`a`", "`z`"]
         );
+    }
+
+    #[ix_trace_rs::trace("FR-611-AC-1", "NFR-141-AC-8")]
+    #[test]
+    fn derived_form_matches_extension_keyword_expectations() {
+        let tokens = [
+            Significant {
+                kind: None,
+                span: Span { start: 0, end: 8 },
+                spelling: "previous".into(),
+            },
+            Significant {
+                kind: None,
+                span: Span { start: 9, end: 13 },
+                spelling: "true".into(),
+            },
+        ];
+        let once = Terminal::ExtensionKeyword("once".into());
+        let failure = Failure::expected(0, Expected::Terminal(&once));
+
+        assert!(derived_form(&tokens, &failure).is_some());
     }
 
     /// The parser's `frames` and `pending` stacks grow by at most a
