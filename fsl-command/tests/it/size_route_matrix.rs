@@ -446,11 +446,7 @@ fn analyze_admits_one_thousand_enums_at_its_request_byte_bound() {
 fn redefinition_package_request(directory: &Path) -> PathBuf {
     let model = counter_model_with_one_thousand_links(true);
     let model_value: Value = serde_json::from_slice(&model).expect("link model is JSON");
-    let compile = compile_request_with_semantic_model(
-        directory,
-        &analyze_source(""),
-        &model_value,
-    );
+    let compile = compile_request_with_semantic_model(directory, &analyze_source(""), &model_value);
     let limits = std::collections::BTreeMap::from([
         (Setting::S1Tokens, 2_000_000),
         (Setting::S1Nodes, 2_000_000),
@@ -463,9 +459,12 @@ fn redefinition_package_request(directory: &Path) -> PathBuf {
         limits: Some(&limits),
         ..RequestOverrides::default()
     };
-    let outcome =
-        command::compile_outcome_with_limits_and_overrides(&compile, RunLimits::default(), &overrides)
-            .expect("the redefinition package builds with the emit bound raised");
+    let outcome = command::compile_outcome_with_limits_and_overrides(
+        &compile,
+        RunLimits::default(),
+        &overrides,
+    )
+    .expect("the redefinition package builds with the emit bound raised");
     std::fs::write(directory.join("package.json"), outcome.package_bytes())
         .expect("package writes");
     drop(outcome);
